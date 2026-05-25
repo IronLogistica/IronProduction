@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar"><div class="page-title">🔨 Terzisti e Lavorazioni Esterne</div></div>
+<div id="terzisti-app" style="font-size:13px;color:#666;padding:20px;background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow)">Caricamento...</div>
+{% endblock %}
+{% block scripts %}
+fetch('/api/terzisti').then(r=>r.json()).then(data=>{
+  const app=document.getElementById('terzisti-app');
+  if(!data.length){app.innerHTML='<p style="color:#aaa;font-style:italic">Nessun terzista registrato.</p>';return;}
+  let html=`<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Nome</th><th>Tipo</th><th>Email</th><th>Telefono</th></tr></thead><tbody>`;
+  data.forEach(t=>{html+=`<tr><td class="prod-name">${t.nome}</td><td class="lav-td">${t.tipo||'—'}</td><td class="lav-td">${t.email||'—'}</td><td class="lav-td">${t.telefono||'—'}</td></tr>`;});
+  html+='</tbody></table></div>';
+  app.innerHTML=html;
+});
+{% endblock %}

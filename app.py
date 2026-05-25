@@ -1,0 +1,43 @@
+import os
+from datetime import datetime
+from flask import Flask, redirect, url_for
+from config import Config
+from models import db, init_db
+
+def create_app():
+    app = Flask(__name__)
+    app.config.from_object(Config)
+    db.init_app(app)
+
+    from blueprints.monitor.routes import monitor_bp
+    from blueprints.kanban.routes import kanban_bp
+    from blueprints.commesse.routes import commesse_bp
+    from blueprints.kpi.routes import kpi_bp
+    from blueprints.terzisti.routes import terzisti_bp
+    from blueprints.magazzino.routes import magazzino_bp
+
+    app.register_blueprint(monitor_bp)
+    app.register_blueprint(kanban_bp)
+    app.register_blueprint(commesse_bp)
+    app.register_blueprint(kpi_bp)
+    app.register_blueprint(terzisti_bp)
+    app.register_blueprint(magazzino_bp)
+
+    @app.context_processor
+    def inject_globals():
+        return {'now': datetime.now().strftime('%d/%m/%y')}
+
+    @app.route('/')
+    def index():
+        return redirect(url_for('monitor.index'))
+
+    with app.app_context():
+        db.create_all()
+        init_db()
+
+    return app
+
+app = create_app()
+
+if __name__ == '__main__':
+    app.run(debug=True)

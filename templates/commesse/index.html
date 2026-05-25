@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">📋 Gestione Commesse</div>
+</div>
+<div id="commesse-app" style="font-size:13px;color:#666;padding:20px;background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow)">
+  Caricamento commesse...
+</div>
+{% endblock %}
+{% block scripts %}
+fetch('/api/commesse').then(r=>r.json()).then(data=>{
+  const app=document.getElementById('commesse-app');
+  if(!data.length){app.innerHTML='<p style="color:#aaa;font-style:italic">Nessuna commessa trovata.</p>';return;}
+  let html=`<div class="kanban-stats" style="margin-bottom:16px">
+    <div class="kstat kstat-total"><span class="kstat-num">${data.length}</span><span class="kstat-lbl">Commesse</span></div>
+    <div class="kstat kstat-warn"><span class="kstat-num">${data.filter(c=>c.stato==='IN_PRODUZIONE').length}</span><span class="kstat-lbl">🚧 In Produzione</span></div>
+    <div class="kstat kstat-ok"><span class="kstat-num">${data.filter(c=>c.stato==='APERTA').length}</span><span class="kstat-lbl">✅ Aperte</span></div>
+  </div>
+  <div style="overflow-x:auto"><table class="kanban-table">
+    <thead><tr><th>N°</th><th>Cliente</th><th>Data Consegna</th><th>Prio</th><th>Stato</th><th>Righe</th><th>Aggiornato</th></tr></thead>
+    <tbody>`;
+  data.forEach(c=>{
+    const statoHtml=c.stato==='APERTA'?'<span class="badge badge-ok">✅ Aperta</span>':
+      c.stato==='IN_PRODUZIONE'?'<span class="badge badge-prod">🚧 In Prod.</span>':
+      c.stato==='COMPLETATA'?'<span class="badge badge-ok">✔ Completata</span>':
+      `<span class="badge badge-warn">${c.stato}</span>`;
+    html+=`<tr><td class="codice">${c.numero}</td><td class="prod-name">${c.cliente_nome||'—'}</td>
+      <td class="comm-id">${c.data_consegna||'—'}</td><td class="num">${c.priorita}</td>
+      <td>${statoHtml}</td><td class="num">${c.righe.length}</td>
+      <td class="comm-id">${c.aggiornato_il||'—'}</td></tr>`;
+  });
+  html+='</tbody></table></div>';
+  app.innerHTML=html;
+}).catch(()=>{document.getElementById('commesse-app').innerHTML='<p style="color:var(--red)">Errore nel caricamento.</p>';});
+{% endblock %}

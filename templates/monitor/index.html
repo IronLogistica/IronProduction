@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar"><div class="page-title">📊 Monitor Segatrice</div></div>
+<div class="monitor-grid">
+{% for col_sezioni in [['lavorazione','da_iniziare','in_attesa'],['in_saldatura','postazione','terminati']] %}
+<div>
+{% for sezione in col_sezioni %}
+{% set label, hdr_class = sezioni_map[sezione] %}
+<div class="mon-section">
+  <div class="section-hdr {{ hdr_class }}">{{ label }}</div>
+  <table class="mon-table">
+    <thead><tr><th>Prio</th><th>Commessa</th><th>Codice</th><th>Saldo</th><th>✂️</th><th>⌒</th><th>↪️</th><th>🔩</th><th>Descrizione</th><th>%</th><th>Tot.</th></tr></thead>
+    <tbody>
+    {% set righe = righe_per_sezione[sezione] %}
+    {% if righe %}
+      {% for r in righe %}
+      <tr>
+        <td>{% if r.priority %}<span class="prio prio-num">{{ r.priority }}</span>{% else %}<span class="prio"></span>{% endif %}</td>
+        <td class="comm-id">{{ r.comm_id }}</td>
+        <td class="codice">{{ r.codice }}</td>
+        <td class="num {% if r.saldo > 0 %}num-pos{% elif r.saldo < 0 %}num-neg{% endif %}">{{ r.saldo }}</td>
+        {% for fase_val in [r.taglio, r.sgola, r.piega, r.saldatura] %}
+        <td><span class="phase {{ fase_val }}" data-id="{{ r.id }}" data-fase="{% if loop.index==1 %}taglio{% elif loop.index==2 %}sgola{% elif loop.index==3 %}piega{% else %}saldatura{% endif %}">{{ icone[fase_val] }}</span></td>
+        {% endfor %}
+        <td class="descr-td">{{ r.descrizione }}</td>
+        <td><div class="pct-bar"><div class="pct-fill" style="width:{{ [r.pct,100]|min }}%"></div><span>{{ r.pct }}%</span></div></td>
+        <td class="num">{{ r.totale }}</td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="11" style="text-align:center;color:#aaa;padding:10px;font-style:italic">Nessuna riga</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+</div>
+{% endfor %}
+</div>
+{% endblock %}
+{% block scripts %}
+const STATI=['done','wip','todo','na','nd'];
+const ICONE={done:'✅',wip:'🚧',todo:'🔜',na:'✗',nd:'·'};
+document.querySelectorAll('.phase').forEach(ph=>{
+  ph.addEventListener('click',function(){
+    const cur=STATI.find(s=>this.classList.contains(s))||'nd';
+    const next=STATI[(STATI.indexOf(cur)+1)%STATI.length];
+    STATI.forEach(s=>this.classList.remove(s));
+    this.classList.add(next);this.textContent=ICONE[next];
+    fetch(`/api/monitor/${this.dataset.id}/fase`,{method:'PATCH',headers:{'Content-Type':'application/json'},body:JSON.stringify({fase:this.dataset.fase,stato:next})})
+    .then(r=>r.json()).then(d=>showToast(d.ok?'✅ Fase aggiornata':'❌ Errore'));
+  });
+});
+{% endblock %}

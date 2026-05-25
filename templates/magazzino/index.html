@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar"><div class="page-title">📦 Magazzino Materie Prime</div></div>
+<div id="mag-app" style="font-size:13px;color:#666;padding:20px;background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow)">Caricamento...</div>
+{% endblock %}
+{% block scripts %}
+fetch('/api/materiali').then(r=>r.json()).then(data=>{
+  const app=document.getElementById('mag-app');
+  if(!data.length){app.innerHTML='<p style="color:#aaa;font-style:italic">Nessun materiale registrato.</p>';return;}
+  let html=`<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>UM</th><th>Stock</th><th>Scorta Min</th><th>Stato</th><th>Fornitore</th></tr></thead><tbody>`;
+  data.forEach(m=>{
+    const sc=m.stato==='ok'?'<span class="badge badge-ok">✅ OK</span>':m.stato==='sottoscorta'?'<span class="badge badge-warn">⚠️ Sottoscorta</span>':'<span class="badge badge-warn">❌ Esaurito</span>';
+    html+=`<tr><td class="codice">${m.codice}</td><td class="prod-name">${m.descrizione||'—'}</td><td class="lav-td">${m.unita_misura}</td>
+      <td class="num ${m.stock<=0?'num-neg':'num-pos'}">${m.stock}</td><td class="num">${m.scorta_min}</td><td>${sc}</td><td class="lav-td">${m.fornitore||'—'}</td></tr>`;
+  });
+  html+='</tbody></table></div>';
+  app.innerHTML=html;
+});
+{% endblock %}

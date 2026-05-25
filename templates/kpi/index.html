@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar"><div class="page-title">📈 Cruscotto KPI</div></div>
+<div class="kpi-grid">
+  <div class="kpi-card"><div class="kpi-value">{{ kpi.tot_prodotti_kanban }}</div><div class="kpi-label">Prodotti Totali a Kanban</div></div>
+  <div class="kpi-card warn"><div class="kpi-value">{{ kpi.da_programmare }}</div><div class="kpi-label">⚠️ Da Programmare</div></div>
+  <div class="kpi-card"><div class="kpi-value">{{ kpi.scorte_ok }}</div><div class="kpi-label">✅ Scorte OK</div></div>
+  <div class="kpi-card info"><div class="kpi-value">{{ kpi.commesse_segatrice }}</div><div class="kpi-label">Commesse in Segatrice</div></div>
+  <div class="kpi-card accent"><div class="kpi-value">€ {{ "{:,.0f}".format(kpi.valore_magazzino).replace(",",".") }}</div><div class="kpi-label">Valore Magazzino P.V.</div></div>
+  <div class="kpi-card"><div class="kpi-value">{{ kpi.in_lavorazione }}</div><div class="kpi-label">🚧 In Lavorazione</div></div>
+  <div class="kpi-card accent"><div class="kpi-value">{{ kpi.in_saldatura_mon }}</div><div class="kpi-label">👨‍🏭 In Saldatura</div></div>
+  <div class="kpi-card warn"><div class="kpi-value">{{ kpi.commesse_aperte }}</div><div class="kpi-label">Commesse Aperte</div></div>
+</div>
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px">
+  <div style="font-weight:800;font-size:14px;color:var(--dark);margin-bottom:12px">⚠️ Prodotti da Programmare per Categoria</div>
+  <table class="kanban-table">
+    <thead><tr><th>Categoria</th><th>Tot. Prodotti</th><th>Da Programmare</th><th>OK</th><th>% Saturazione</th></tr></thead>
+    <tbody>
+    {% for row in cat_rows %}
+    <tr>
+      <td class="prod-name">{{ row.label }}</td>
+      <td class="num">{{ row.tot }}</td>
+      <td class="num" style="color:var(--red);font-weight:800">{{ row.warn }}</td>
+      <td class="num" style="color:var(--teal)">{{ row.ok }}</td>
+      <td><div class="pct-bar" style="width:100px"><div class="pct-fill" style="width:{{ row.pct }}%;background:{{ row.color }}"></div><span>{{ row.pct }}%</span></div></td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}

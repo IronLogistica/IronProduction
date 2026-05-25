@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MES Carpenteria — MasterProduction v2</title>
+<style>
+  :root{--dark:#1b3d2f;--dark2:#16342a;--green:#27ae60;--green2:#219a52;--teal:#0e7d68;--orange:#e8760a;--yellow:#e6b800;--red:#c0392b;--blue:#2980b9;--grey:#7f8c8d;--bg:#f0f3f0;--white:#fff;--shadow:0 2px 8px rgba(0,0,0,.12);--radius:8px}
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:#1a1a1a}
+  .app{display:flex;height:100vh;overflow:hidden}
+  .sidebar{width:220px;min-width:200px;background:var(--dark);color:#fff;display:flex;flex-direction:column;overflow-y:auto;box-shadow:3px 0 10px rgba(0,0,0,.3)}
+  .sidebar-logo{padding:16px 14px;background:var(--dark2);border-bottom:2px solid var(--green);font-size:13px;font-weight:700;letter-spacing:.5px}
+  .sidebar-logo .logo-icon{font-size:22px}.sidebar-logo .logo-title{color:#7dcea0;font-size:11px}
+  .nav-group{padding:10px 0 4px}
+  .nav-group-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#5d8a73;padding:0 14px 4px}
+  .nav-item{display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:12px;transition:all .15s;color:#b2d8c5;border-left:3px solid transparent;text-decoration:none}
+  .nav-item:hover{background:rgba(255,255,255,.07);color:#fff}
+  .nav-item.active{background:var(--green2);color:#fff;border-left-color:#7dcea0;font-weight:600}
+  .nav-item .nav-icon{font-size:15px}
+  .main{flex:1;overflow-y:auto;display:flex;flex-direction:column}
+  .topbar{background:var(--dark);color:#fff;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 8px rgba(0,0,0,.2);flex-shrink:0;position:sticky;top:0;z-index:100}
+  .topbar-title{font-size:16px;font-weight:700}.topbar-date{font-size:11px;color:#7dcea0}
+  .topbar-badge{background:var(--green);color:#fff;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600}
+  .content{padding:20px 24px;flex:1}
+  .monitor-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:1100px){.monitor-grid{grid-template-columns:1fr}}
+  .mon-section{background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px}
+  .section-hdr{padding:10px 16px;font-size:13px;font-weight:700;letter-spacing:.3px;color:#fff;display:flex;align-items:center;gap:6px}
+  .lavorazione-hdr{background:linear-gradient(135deg,#e8760a,#d4650a)}
+  .da_iniziare-hdr{background:linear-gradient(135deg,#c9a800,#e6b800);color:#333!important}
+  .in_attesa-hdr{background:linear-gradient(135deg,#a93226,#c0392b)}
+  .in_saldatura-hdr{background:linear-gradient(135deg,#0a6e5c,#0e7d68)}
+  .postazione-hdr{background:linear-gradient(135deg,#2471a3,#2980b9)}
+  .terminati-hdr{background:linear-gradient(135deg,#616a6b,#7f8c8d)}
+  .mon-table{width:100%;border-collapse:collapse;font-size:12px}
+  .mon-table th{background:#f8faf8;color:var(--dark);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:8px 6px;border-bottom:2px solid #c8e6c9;text-align:center}
+  .mon-table td{padding:7px 6px;border-bottom:1px solid #e8f0e8;vertical-align:middle}
+  .mon-table tr:hover td{background:#f0faf0}.mon-table tr:last-child td{border-bottom:none}
+  .phase{display:inline-flex;align-items:center;justify-content:center;width:28px;height:22px;border-radius:4px;font-size:14px;cursor:pointer;transition:transform .1s}
+  .phase:hover{transform:scale(1.15)}.phase.done{background:#e8f8ef}.phase.wip{background:#fff3e0}
+  .phase.todo{background:#e8f0ff}.phase.na{background:#f5f5f5;color:#aaa;font-size:12px}.phase.nd{background:#f5f5f5;color:#ccc}
+  .prio{display:inline-flex;align-items:center;justify-content:center;width:28px;height:22px;border-radius:4px;font-weight:700;font-size:12px}
+  .prio-warn{background:#fff176;color:#e65100}.prio-num{background:#c8e6c9;color:var(--dark)}
+  .pct-bar{position:relative;width:70px;height:14px;background:#e0e0e0;border-radius:7px;overflow:hidden;display:inline-flex;align-items:center}
+  .pct-fill{position:absolute;left:0;top:0;height:100%;background:var(--green);border-radius:7px}
+  .pct-bar span{position:relative;z-index:1;font-size:9px;font-weight:700;width:100%;text-align:center;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4)}
+  .num{text-align:right;font-family:monospace;font-weight:600;font-size:12px}
+  .num-neg{color:var(--red)}.num-pos{color:var(--teal)}
+  .comm-id{font-size:10px;color:#666;white-space:nowrap}.codice{font-weight:700;font-size:12px;white-space:nowrap}
+  .descr-td{font-size:11px;color:#444;max-width:180px}
+  .kanban-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  .kstat{background:var(--white);border-radius:var(--radius);padding:12px 18px;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;min-width:120px;flex:1;border-top:3px solid var(--grey)}
+  .kstat-total{border-top-color:var(--dark)}.kstat-ok{border-top-color:var(--green)}.kstat-warn{border-top-color:var(--red)}.kstat-val{border-top-color:var(--teal)}
+  .kstat-num{font-size:22px;font-weight:800;color:var(--dark)}.kstat-lbl{font-size:11px;color:#666;margin-top:2px}
+  .kanban-table{width:100%;border-collapse:collapse;font-size:12px;min-width:900px}
+  .kanban-table th{background:var(--dark);color:#7dcea0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:9px 8px;text-align:center;position:sticky;top:0;z-index:10}
+  .kanban-table td{padding:8px 8px;border-bottom:1px solid #e0ece4;vertical-align:middle}
+  .kanban-table tr:hover td{background:#f0faf4}.kanban-table tr:last-child td{border-bottom:none}
+  td.editable{cursor:pointer;border-radius:4px;transition:background .15s}
+  td.editable:hover{background:#fff9c4!important}
+  td.editing{padding:0!important}
+  td.editing input{width:100%;padding:7px 8px;border:2px solid var(--green);border-radius:4px;font-size:12px;font-weight:600;text-align:right;font-family:monospace;outline:none;background:#fffde7}
+  .badge{display:inline-block;padding:3px 8px;border-radius:12px;font-size:10px;font-weight:700;white-space:nowrap}
+  .badge-warn{background:#fde8e8;color:#c0392b;border:1px solid #f5b7b1}
+  .badge-ok{background:#e8f8ef;color:#1a7a44;border:1px solid #a9dfbf}
+  .badge-prod{background:#e8f0ff;color:#2471a3;border:1px solid #aed6f1}
+  .lav-td{font-size:10px;color:#666}.prod-name{font-weight:700;color:var(--dark);font-size:12px}
+  .modello{font-weight:700}.fatturato{color:var(--teal);font-weight:800}
+  .page-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .page-title{font-size:18px;font-weight:800;color:var(--dark);flex:1}
+  .btn{padding:7px 16px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:700;transition:all .15s;display:inline-flex;align-items:center;gap:5px;text-decoration:none}
+  .btn-primary{background:var(--green);color:#fff}.btn-primary:hover{background:var(--green2)}
+  .btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#a93226}
+  .btn-ghost{background:#fff;color:var(--dark);border:1px solid #c8e6c9}.btn-ghost:hover{background:#e8f8ef}
+  .search-box{padding:7px 12px;border:1.5px solid #c8e6c9;border-radius:6px;font-size:12px;outline:none;width:200px;transition:border .15s}
+  .search-box:focus{border-color:var(--green)}
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--dark);color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.3);z-index:9999;transform:translateY(60px);opacity:0;transition:all .3s}
+  .toast.show{transform:translateY(0);opacity:1}
+  .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+  .kpi-card{background:var(--white);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);border-left:4px solid var(--green);display:flex;flex-direction:column;gap:4px}
+  .kpi-card.warn{border-left-color:var(--red)}.kpi-card.info{border-left-color:var(--blue)}.kpi-card.accent{border-left-color:var(--orange)}
+  .kpi-value{font-size:28px;font-weight:900;color:var(--dark)}.kpi-label{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px}
+  ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:#f0f3f0}::-webkit-scrollbar-thumb{background:#a8d5b5;border-radius:3px}
+  @media print{.sidebar,.topbar{display:none!important}.main{overflow:visible}.content{padding:0}}
+</style>
+</head>
+<body>
+<div class="app">
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">🏗️</div>
+    <div style="font-size:13px;margin:4px 0 2px">MES CARPENTERIA</div>
+    <div class="logo-title">MasterProduction v2.0</div>
+  </div>
+  <div class="nav-group">
+    <div class="nav-group-label">Produzione</div>
+    <a class="nav-item {% if active=='monitor' %}active{% endif %}" href="/monitor"><span class="nav-icon">📊</span> Monitor Segatrice</a>
+    <a class="nav-item {% if active=='kpi' %}active{% endif %}" href="/kpi"><span class="nav-icon">📈</span> Cruscotto KPI</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-group-label">Kanban Prodotti</div>
+    <a class="nav-item {% if active=='kb-1_Cavalletti' %}active{% endif %}" href="/kanban/1_Cavalletti"><span class="nav-icon">🏗️</span> Cavalletti</a>
+    <a class="nav-item {% if active=='kb-2_Transenne' %}active{% endif %}" href="/kanban/2_Transenne"><span class="nav-icon">🚧</span> Transenne</a>
+    <a class="nav-item {% if active=='kb-3_Archetti' %}active{% endif %}" href="/kanban/3_Archetti"><span class="nav-icon">🔲</span> Archetti</a>
+    <a class="nav-item {% if active=='kb-4_Paletti_48' %}active{% endif %}" href="/kanban/4_Paletti_48"><span class="nav-icon">📍</span> Paletti ⌀48</a>
+    <a class="nav-item {% if active=='kb-5_Paletti_60' %}active{% endif %}" href="/kanban/5_Paletti_60"><span class="nav-icon">📌</span> Paletti ⌀60</a>
+    <a class="nav-item {% if active=='kb-6_Paletti_Vari' %}active{% endif %}" href="/kanban/6_Paletti_Vari"><span class="nav-icon">🗂️</span> Paletti Vari</a>
+    <a class="nav-item {% if active=='kb-7_Parapetti' %}active{% endif %}" href="/kanban/7_Parapetti"><span class="nav-icon">🛡️</span> Parapetti</a>
+    <a class="nav-item {% if active=='kb-8_Rastrelliere' %}active{% endif %}" href="/kanban/8_Rastrelliere"><span class="nav-icon">🚲</span> Rastrelliere</a>
+    <a class="nav-item {% if active=='kb-9_Tubi_Scanalati' %}active{% endif %}" href="/kanban/9_Tubi_Scanalati"><span class="nav-icon">🔩</span> Tubi Scanalati</a>
+    <a class="nav-item {% if active=='kb-10_Staffe_e_NJ' %}active{% endif %}" href="/kanban/10_Staffe_e_NJ"><span class="nav-icon">🔧</span> Staffe e NJ</a>
+    <a class="nav-item {% if active=='kb-11_Barriere' %}active{% endif %}" href="/kanban/11_Barriere"><span class="nav-icon">🚦</span> Barriere</a>
+    <a class="nav-item {% if active=='kb-12_Varie_Altre_Produzioni' %}active{% endif %}" href="/kanban/12_Varie_Altre_Produzioni"><span class="nav-icon">📦</span> Varie Altre</a>
+    <a class="nav-item {% if active=='kb-Pannelli_Transenne' %}active{% endif %}" href="/kanban/Pannelli_Transenne"><span class="nav-icon">🪟</span> Pannelli</a>
+  </div>
+  <div class="nav-group">
+    <div class="nav-group-label">Commesse</div>
+    <a class="nav-item {% if active=='commesse' %}active{% endif %}" href="/commesse"><span class="nav-icon">📋</span> Gestione Commesse</a>
+    <a class="nav-item {% if active=='terzisti' %}active{% endif %}" href="/terzisti"><span class="nav-icon">🔨</span> Terzisti</a>
+    <a class="nav-item {% if active=='magazzino' %}active{% endif %}" href="/magazzino"><span class="nav-icon">📦</span> Magazzino</a>
+  </div>
+</nav>
+<div class="main">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">{{ topbar_title|default('MES Carpenteria') }}</div>
+      <div class="topbar-date">Aggiornato al {{ now }} — DB Live</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="topbar-badge">{{ topbar_badge|default('') }}</span>
+      <button class="btn btn-ghost" onclick="window.print()">🖨️ Stampa</button>
+    </div>
+  </div>
+  <div class="content">
+    {% block content %}{% endblock %}
+  </div>
+</div>
+</div>
+<div class="toast" id="toast"></div>
+<script>
+let _tt;
+function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>t.classList.remove('show'),2500)}
+{% block scripts %}{% endblock %}
+</script>
+</body>
+</html>
