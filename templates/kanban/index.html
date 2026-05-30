@@ -5,25 +5,47 @@
   <input class="search-box" type="text" placeholder="🔍 Cerca prodotto..." oninput="filterTable(this.value)">
   <button class="btn btn-primary" onclick="showToast('💾 Modifiche salvate automaticamente nel DB')">💾 Salvato</button>
 </div>
+
 <div class="kanban-stats">
-  <div class="kstat kstat-total"><span class="kstat-num">{{ stats.tot }}</span><span class="kstat-lbl">Prodotti</span></div>
-  <div class="kstat kstat-ok"><span class="kstat-num">{{ stats.ok }}</span><span class="kstat-lbl">✅ OK</span></div>
-  <div class="kstat kstat-warn"><span class="kstat-num">{{ stats.warn }}</span><span class="kstat-lbl">⚠️ Da Produrre</span></div>
-  <div class="kstat kstat-val"><span class="kstat-num">€ {{ "{:,.0f}".format(stats.valore).replace(",",".") }}</span><span class="kstat-lbl">Valore Totale</span></div>
+  <div class="kstat kstat-total">
+    <span class="kstat-num">{{ stats.tot }}</span>
+    <span class="kstat-lbl">Prodotti</span>
+  </div>
+  <div class="kstat kstat-ok">
+    <span class="kstat-num">{{ stats.ok }}</span>
+    <span class="kstat-lbl">✅ OK</span>
+  </div>
+  <div class="kstat kstat-warn">
+    <span class="kstat-num">{{ stats.warn }}</span>
+    <span class="kstat-lbl">⚠️ Da Produrre</span>
+  </div>
+  <div class="kstat kstat-val">
+    <span class="kstat-num">€ {{ "{:,.0f}".format(stats.valore).replace(",",".") }}</span>
+    <span class="kstat-lbl">Valore Totale</span>
+  </div>
 </div>
-<div style="overflow-x:auto">
+
+<div style="overflow-x:auto;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow)">
 <table class="kanban-table" id="kbtable">
   <thead><tr>
-    <th>Prodotto</th><th>Riserva<br>KANBAN</th><th>Lotto<br>Prod.</th>
-    <th>Riservato<br>Clienti</th><th>Magazzino<br>Grezzi</th><th>Magazzino<br>Verniciati</th>
-    <th>In<br>Verniciatura</th><th>In<br>Produzione</th><th>Saldo<br>Contabile</th>
-    <th>STATO</th><th>Lavorazioni</th><th>Valore P.V.</th>
+    <th style="text-align:left;padding-left:14px">Prodotto</th>
+    <th>Riserva<br>KANBAN</th>
+    <th>Lotto<br>Prod.</th>
+    <th>Riservato<br>Clienti</th>
+    <th>Magazzino<br>Grezzi</th>
+    <th>Magazzino<br>Verniciati</th>
+    <th>In<br>Verniciatura</th>
+    <th>In<br>Produzione</th>
+    <th>Saldo<br>Contabile</th>
+    <th>STATO</th>
+    <th>Lavorazioni</th>
+    <th>Valore P.V.</th>
   </tr></thead>
   <tbody>
   {% for p in prodotti %}
   {% set saldo = p.saldo_contabile %}
   <tr data-pid="{{ p.id }}">
-    <td class="prod-name">{{ p.prodotto }}</td>
+    <td class="prod-name" style="padding-left:14px">{{ p.prodotto }}</td>
     <td class="num">{{ p.riserva }}</td>
     <td class="num">{{ p.lotto }}</td>
     <td class="num editable" data-field="riservato" data-pid="{{ p.id }}">{{ p.riservato }}</td>
@@ -41,12 +63,13 @@
     <td class="num">{% if p.val_pv %}{{ "{:,.2f}".format(p.val_pv).replace(",",".") }} €{% else %}—{% endif %}</td>
   </tr>
   {% else %}
-  <tr><td colspan="12" style="text-align:center;color:#aaa;padding:20px;font-style:italic">Nessun prodotto in questa categoria.</td></tr>
+  <tr><td colspan="12" style="text-align:center;color:var(--text-dim);padding:32px;font-style:italic">Nessun prodotto in questa categoria.</td></tr>
   {% endfor %}
   </tbody>
 </table>
 </div>
 {% endblock %}
+
 {% block scripts %}
 document.querySelectorAll('td.editable').forEach(td=>{
   td.addEventListener('click',function(){
@@ -74,7 +97,7 @@ document.querySelectorAll('td.editable').forEach(td=>{
             }
             const lv=row.querySelector('.lav-val');if(lv)lv.textContent=d.lavorazioni||'';
             showToast('💾 Salvato');
-          }else{this.classList.remove('editing');this.textContent=orig;showToast('❌ Errore');}
+          }else{this.classList.remove('editing');this.textContent=orig;showToast('❌ Errore',true);}
         });
       }else{this.classList.remove('editing');this.textContent=orig;}
     };
@@ -82,5 +105,12 @@ document.querySelectorAll('td.editable').forEach(td=>{
     inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();commit();}if(e.key==='Escape'){this.classList.remove('editing');this.textContent=orig;}});
   });
 });
-function filterTable(q){q=q.toLowerCase();document.querySelectorAll('#kbtable tbody tr').forEach(tr=>{const n=tr.querySelector('.prod-name');tr.style.display=(!q||(n&&n.textContent.toLowerCase().includes(q)))?'':'none';});}
+
+function filterTable(q){
+  q=q.toLowerCase();
+  document.querySelectorAll('#kbtable tbody tr').forEach(tr=>{
+    const n=tr.querySelector('.prod-name');
+    tr.style.display=(!q||(n&&n.textContent.toLowerCase().includes(q)))?'':'none';
+  });
+}
 {% endblock %}
