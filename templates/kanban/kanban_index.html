@@ -1,0 +1,366 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">{{ info.icona }} {{ info.label }}</div>
+  <input class="search-box" type="text" placeholder="🔍 Cerca prodotto..." oninput="filterTable(this.value)">
+  {% if ml_connesso %}
+  <span style="font-size:11px;padding:4px 10px;background:rgba(26,158,92,.15);border:1px solid rgba(26,158,92,.3);border-radius:12px;color:#5debb0">🔗 WMS Live</span>
+  {% else %}
+  <span style="font-size:11px;padding:4px 10px;background:rgba(192,57,43,.12);border:1px solid rgba(192,57,43,.3);border-radius:12px;color:#f07070" title="Imposta MASTERLOGISTIC_URL nelle variabili Railway">⚠️ WMS non connesso</span>
+  {% endif %}
+  <button class="btn btn-primary" onclick="showToast('💾 Modifiche salvate automaticamente nel DB')">💾 Salvato</button>
+</div>
+
+<div class="kanban-stats">
+  <div class="kstat kstat-total"><span class="kstat-num">{{ stats.tot }}</span><span class="kstat-lbl">Prodotti</span></div>
+  <div class="kstat kstat-ok"><span class="kstat-num">{{ stats.ok }}</span><span class="kstat-lbl">✅ OK</span></div>
+  <div class="kstat kstat-warn"><span class="kstat-num">{{ stats.warn }}</span><span class="kstat-lbl">⚠️ Da Produrre</span></div>
+  <div class="kstat kstat-val"><span class="kstat-num">€ {{ "{:,.0f}".format(stats.valore).replace(",",".") }}</span><span class="kstat-lbl">Valore Totale</span></div>
+</div>
+
+<div style="overflow-x:auto;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow)">
+<table class="kanban-table" id="kbtable">
+  <thead><tr>
+    <th style="text-align:left;padding-left:14px">Prodotto</th>
+    <th>Riserva<br>KANBAN</th>
+    <th>Lotto<br>Prod.</th>
+    <th>Riservato<br>Clienti</th>
+    <th>Magazzino<br>Grezzi</th>
+    <th>Magazzino<br>Verniciati</th>
+    <th>In<br>Verniciatura</th>
+    <th>In<br>Produzione</th>
+    <th>Saldo<br>Contabile</th>
+    <th>STATO</th>
+    <th>Lavorazioni</th>
+    <th>Valore P.V.</th>
+    <th>WMS</th>
+  </tr></thead>
+  <tbody>
+  {% for p in prodotti %}
+  {% set saldo = p.saldo_contabile %}
+  <tr data-pid="{{ p.id }}">
+    <td class="prod-name" style="padding-left:14px">{{ p.prodotto }}</td>
+    <td class="num">{{ p.riserva }}</td>
+    <td class="num">{{ p.lotto }}</td>
+    <td class="num editable" data-field="riservato" data-pid="{{ p.id }}">{{ p.riservato }}</td>
+    <td class="num editable" data-field="grezzi"    data-pid="{{ p.id }}">{{ p.grezzi }}</td>
+    <td class="num editable" data-field="verniciati" data-pid="{{ p.id }}">{{ p.verniciati }}</td>
+    <td class="num editable" data-field="in_vern"   data-pid="{{ p.id }}">{{ p.in_vern }}</td>
+    <td class="num editable" data-field="in_prod"   data-pid="{{ p.id }}">{{ p.in_prod }}</td>
+    <td class="num saldo-td {% if saldo < 0 %}num-neg{% else %}num-pos{% endif %}">{{ saldo }}</td>
+    <td class="stato-td">
+      {% if p.stato == 'OK' %}<span class="badge badge-ok">✅ OK</span>
+      {% elif 'PROGRAMMARE' in p.stato %}<span class="badge badge-warn">⚠️ PROGRAMMARE</span>
+      {% else %}<span class="badge badge-prod">🚧 IN PROD.</span>{% endif %}
+    </td>
+    <td class="lav-td lav-val">{{ p.lavorazioni or '' }}</td>
+    <td class="num">{% if p.val_pv %}{{ "{:,.2f}".format(p.val_pv).replace(",",".") }} €{% else %}—{% endif %}</td>
+    <td style="text-align:center">
+      <button class="btn-wms" onclick="apriScheda({{ p.id }}, '{{ p.prodotto|e }}')" title="Apri scheda WMS live">
+        {% if p.sku_verniciato or p.sku_grezzo %}📊{% else %}🔗{% endif %}
+      </button>
+    </td>
+  </tr>
+  {% else %}
+  <tr><td colspan="13" style="text-align:center;color:var(--text-dim);padding:32px;font-style:italic">Nessun prodotto in questa categoria.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+<!-- ══════════════════════════════════════════════════════
+     MODAL SCHEDA WMS
+══════════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="modalScheda">
+<div class="scheda-box">
+
+  <div class="scheda-header">
+    <div>
+      <div class="scheda-title" id="schedaTitolo">—</div>
+      <div class="scheda-sub" id="schedaSku">SKU: —</div>
+    </div>
+    <button class="btn btn-ghost" style="font-size:18px;padding:4px 10px" onclick="closeScheda()">✕</button>
+  </div>
+
+  <!-- SKU configurazione -->
+  <div class="scheda-sku-row" id="schedaSkuRow">
+    <div class="sku-field">
+      <label>SKU Verniciato (WMS)</label>
+      <input type="text" id="inputSkuVern" placeholder="es. TTD101INOX" class="modal-input">
+    </div>
+    <div class="sku-field">
+      <label>SKU Grezzo (WMS)</label>
+      <input type="text" id="inputSkuGrezzo" placeholder="es. TTD101INOXgr" class="modal-input">
+    </div>
+    <button class="btn btn-primary" style="align-self:flex-end;white-space:nowrap" onclick="salvaSkuERecalcola()">💾 Collega &amp; Aggiorna</button>
+  </div>
+
+  <!-- Loading -->
+  <div id="schedaLoading" style="text-align:center;padding:40px;color:var(--text-dim)">
+    <div style="font-size:28px;margin-bottom:8px">⏳</div>
+    <div>Interrogazione WMS MasterLogistic...</div>
+  </div>
+
+  <!-- Errore WMS -->
+  <div id="schedaErrore" style="display:none;padding:16px;background:rgba(192,57,43,.12);border-radius:8px;border:1px solid rgba(192,57,43,.3);color:#f07070;margin-bottom:16px"></div>
+
+  <!-- Contenuto scheda -->
+  <div id="schedaContent" style="display:none">
+
+    <!-- PROGRAMMI IN CORSO -->
+    <div class="scheda-section-title">📋 Programmi Produzioni in Corso</div>
+    <table class="scheda-table" id="tblProgrammi">
+      <thead><tr>
+        <th>Programma Nr</th><th>Nr in Produzione</th><th>Evasi</th><th>SALDO</th>
+        <th>A Mag. Grezzi</th><th style="background:rgba(232,184,0,.15);color:#f0c040">A Mag. Verniciati</th>
+        <th style="background:rgba(30,111,165,.15)">In Vern. Lavorazione</th>
+      </tr></thead>
+      <tbody id="bodyProgrammi">
+        <tr><td colspan="7" style="color:var(--text-dim);text-align:center;padding:12px;font-style:italic">Nessun programma attivo</td></tr>
+      </tbody>
+      <tfoot>
+        <tr style="background:rgba(255,255,255,.04);font-weight:700">
+          <td>Rimanenza Produzione</td>
+          <td class="num" id="totInProd">0</td>
+          <td class="num" id="totEvasi">0</td>
+          <td class="num" id="totSaldo">0</td>
+          <td class="num" id="totGrezzi">—</td>
+          <td class="num" id="totVern" style="background:rgba(232,184,0,.1)">—</td>
+          <td class="num" id="totInVern" style="background:rgba(30,111,165,.1)">—</td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <!-- RISERVATO A CLIENTI -->
+    <div class="scheda-section-title" style="margin-top:20px">👥 Riservato a Clienti</div>
+    <table class="scheda-table" id="tblClienti">
+      <thead><tr>
+        <th>Cliente</th><th>Qta Ordinata</th><th>Evasi</th><th style="color:#f07070">SALDO</th>
+        <th>Ord.Cliente / Commessa</th><th>Rif. Ordine Cliente</th><th>Ultima Partenza</th>
+      </tr></thead>
+      <tbody id="bodyClienti">
+        <tr><td colspan="7" style="color:var(--text-dim);text-align:center;padding:12px;font-style:italic">Nessun ordine cliente aperto</td></tr>
+      </tbody>
+      <tfoot>
+        <tr style="background:rgba(255,255,255,.04);font-weight:700">
+          <td colspan="3">Totale Riservato</td>
+          <td class="num num-neg" id="totRiservato">0</td>
+          <td colspan="3"></td>
+        </tr>
+      </tfoot>
+    </table>
+
+    <!-- SALDI FINALI -->
+    <div style="margin-top:20px;display:grid;grid-template-columns:1fr 1fr;gap:12px" id="schedaSaldi">
+      <div class="saldo-box">
+        <div class="saldo-label">SALDO CONTABILE</div>
+        <div class="saldo-val" id="saldoContabile">—</div>
+      </div>
+      <div class="saldo-box">
+        <div class="saldo-label">SALDO CONTABILE DISPONIBILE</div>
+        <div class="saldo-val" id="saldoDisponibile">—</div>
+      </div>
+      <div class="saldo-box">
+        <div class="saldo-label">SALDO CONTABILE DOPO 🖌️ VERNICIATURA</div>
+        <div class="saldo-val" id="saldoDopoVern">—</div>
+      </div>
+      <div class="saldo-box">
+        <div class="saldo-label">SALDO CONTABILE 📦 GREZZI E 🖌️ VERNICIATURA</div>
+        <div class="saldo-val" id="saldoGrezziVern">—</div>
+      </div>
+    </div>
+
+  </div><!-- /schedaContent -->
+</div>
+</div>
+
+<style>
+.btn-wms{background:none;border:1px solid var(--border);border-radius:4px;padding:3px 8px;cursor:pointer;font-size:14px;transition:all .15s;color:var(--text-dim)}
+.btn-wms:hover{background:rgba(30,111,165,.2);border-color:var(--accent);color:#fff}
+.scheda-box{background:var(--dark);border:1px solid var(--border);border-radius:14px;padding:24px;width:860px;max-width:97vw;max-height:92vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.7)}
+.scheda-header{display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid var(--border)}
+.scheda-title{font-size:18px;font-weight:800;color:#e0eefc}
+.scheda-sub{font-size:11px;color:var(--text-dim);margin-top:3px;font-family:monospace}
+.scheda-sku-row{display:flex;gap:10px;align-items:flex-end;margin-bottom:16px;padding:12px;background:rgba(30,111,165,.07);border-radius:8px;border:1px solid var(--border);flex-wrap:wrap}
+.sku-field{display:flex;flex-direction:column;gap:4px;flex:1;min-width:180px}
+.sku-field label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim)}
+.scheda-section-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--steel2);font-weight:700;margin-bottom:8px;padding:6px 10px;background:rgba(30,111,165,.1);border-radius:4px;border-left:3px solid var(--accent)}
+.scheda-table{width:100%;border-collapse:collapse;font-size:12px}
+.scheda-table th{background:var(--dark2);color:var(--steel2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:8px 10px;border-bottom:2px solid var(--border);text-align:center}
+.scheda-table td{padding:7px 10px;border-bottom:1px solid var(--border);color:var(--text);text-align:center;vertical-align:middle}
+.scheda-table tr:hover td{background:rgba(30,111,165,.06)}
+.scheda-table tfoot td{background:rgba(255,255,255,.03);font-weight:700;color:#e0eefc;border-top:2px solid var(--border)}
+.saldo-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 18px;display:flex;flex-direction:column;gap:4px}
+.saldo-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim)}
+.saldo-val{font-size:26px;font-weight:900;color:#5debb0}
+.saldo-val.negativo{color:#f07070}
+</style>
+
+{% endblock %}
+
+{% block scripts %}
+// ── Edit inline celle ────────────────────────────────────────────────────────
+document.querySelectorAll('td.editable').forEach(td=>{
+  td.addEventListener('click',function(){
+    if(this.classList.contains('editing'))return;
+    const field=this.dataset.field,pid=this.dataset.pid,orig=this.textContent.trim();
+    const curVal=parseFloat(orig)||0;
+    this.classList.add('editing');
+    this.innerHTML=`<input type="number" value="${curVal}" step="1">`;
+    const inp=this.querySelector('input');inp.focus();inp.select();
+    const commit=()=>{
+      const nv=parseFloat(inp.value);
+      if(!isNaN(nv)){
+        fetch(`/api/kanban/${pid}`,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({[field]:nv})})
+        .then(r=>r.json()).then(d=>{
+          if(d.ok){
+            this.classList.remove('editing');this.textContent=nv;
+            const row=this.closest('tr');
+            const s=row.querySelector('.saldo-td');
+            if(s){s.textContent=d.saldo;s.className='num saldo-td '+(d.saldo<0?'num-neg':'num-pos');}
+            const st=row.querySelector('.stato-td');
+            if(st){
+              if(d.stato==='OK')st.innerHTML='<span class="badge badge-ok">✅ OK</span>';
+              else if(d.stato.includes('PROGRAMMARE'))st.innerHTML='<span class="badge badge-warn">⚠️ PROGRAMMARE</span>';
+              else st.innerHTML='<span class="badge badge-prod">🚧 IN PROD.</span>';
+            }
+            const lv=row.querySelector('.lav-val');if(lv)lv.textContent=d.lavorazioni||'';
+            showToast('💾 Salvato');
+          }else{this.classList.remove('editing');this.textContent=orig;showToast('❌ Errore',true);}
+        });
+      }else{this.classList.remove('editing');this.textContent=orig;}
+    };
+    inp.addEventListener('blur',commit);
+    inp.addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();commit();}if(e.key==='Escape'){this.classList.remove('editing');this.textContent=orig;}});
+  });
+});
+
+function filterTable(q){
+  q=q.toLowerCase();
+  document.querySelectorAll('#kbtable tbody tr').forEach(tr=>{
+    const n=tr.querySelector('.prod-name');
+    tr.style.display=(!q||(n&&n.textContent.toLowerCase().includes(q)))?'':'none';
+  });
+}
+
+// ── MODAL SCHEDA WMS ─────────────────────────────────────────────────────────
+let _schedaPid = null;
+
+function apriScheda(pid, nome){
+  _schedaPid = pid;
+  document.getElementById('schedaTitolo').textContent = nome;
+  document.getElementById('schedaSku').textContent = 'SKU: caricamento...';
+  document.getElementById('schedaLoading').style.display='block';
+  document.getElementById('schedaContent').style.display='none';
+  document.getElementById('schedaErrore').style.display='none';
+  document.getElementById('modalScheda').classList.add('open');
+  caricaScheda(pid);
+}
+
+function closeScheda(){
+  document.getElementById('modalScheda').classList.remove('open');
+  _schedaPid = null;
+}
+
+function caricaScheda(pid){
+  fetch(`/api/kanban-scheda/${pid}`)
+  .then(r=>r.json())
+  .then(d=>{
+    document.getElementById('schedaLoading').style.display='none';
+
+    // SKU fields
+    document.getElementById('inputSkuVern').value   = d.sku_vern   || '';
+    document.getElementById('inputSkuGrezzo').value = d.sku_grezzo || '';
+    document.getElementById('schedaSku').textContent =
+      `SKU Verniciato: ${d.sku_vern||'—'}  |  SKU Grezzo: ${d.sku_grezzo||'—'}`;
+
+    if(d.wms_errore && !d.wms_ok){
+      const el = document.getElementById('schedaErrore');
+      el.style.display='block';
+      el.textContent = '⚠️ ' + d.wms_errore;
+      // mostra solo la sezione SKU per configurare
+      document.getElementById('schedaContent').style.display='none';
+      return;
+    }
+
+    document.getElementById('schedaContent').style.display='block';
+
+    // ── Programmi in corso (da IronProduction — per ora placeholder) ──
+    // In futuro: interroga /api/commesse?codice=SKU
+    const bodyProg = document.getElementById('bodyProgrammi');
+    bodyProg.innerHTML = `<tr><td colspan="7" style="color:var(--text-dim);text-align:center;padding:12px;font-style:italic">Nessun programma attivo su questo codice</td></tr>`;
+    document.getElementById('totGrezzi').textContent  = d.stock_grezzi;
+    document.getElementById('totVern').textContent    = d.stock_verniciati;
+    document.getElementById('totInVern').textContent  = d.in_vern;
+    document.getElementById('totInProd').textContent  = 0;
+    document.getElementById('totEvasi').textContent   = 0;
+    document.getElementById('totSaldo').textContent   = 0;
+
+    // ── Riservato a clienti ──
+    const bodyClienti = document.getElementById('bodyClienti');
+    const ordini = d.ordini_clienti || [];
+    if(ordini.length === 0){
+      bodyClienti.innerHTML = `<tr><td colspan="7" style="color:var(--text-dim);text-align:center;padding:12px;font-style:italic">Nessun ordine cliente aperto</td></tr>`;
+    } else {
+      bodyClienti.innerHTML = ordini.map(o=>`
+        <tr>
+          <td style="font-weight:600;text-align:left">${o.cliente||'—'}</td>
+          <td class="num">${o.qta_ord||0}</td>
+          <td class="num">${o.qta_evasa||0}</td>
+          <td class="num num-neg" style="font-weight:700">${o.qta_residua||0}</td>
+          <td style="font-size:10px;color:var(--text-dim)">${o.conferma||'—'}</td>
+          <td style="font-size:10px">${o.conferma||'—'}</td>
+          <td style="font-size:11px;color:var(--text-dim)">${o.data_consegna||'—'}</td>
+        </tr>`).join('');
+    }
+    document.getElementById('totRiservato').textContent = d.riservato_clienti||0;
+
+    // ── Saldi finali ──
+    const setSaldo = (id, val)=>{
+      const el = document.getElementById(id);
+      el.textContent = val;
+      el.className = 'saldo-val' + (val < 0 ? ' negativo' : '');
+    };
+    setSaldo('saldoContabile',   d.saldo_contabile);
+    setSaldo('saldoDisponibile', d.saldo_disponibile);
+    setSaldo('saldoDopoVern',    d.saldo_dopo_vern);
+    setSaldo('saldoGrezziVern',  d.saldo_grezzi_vern);
+  })
+  .catch(err=>{
+    document.getElementById('schedaLoading').style.display='none';
+    const el = document.getElementById('schedaErrore');
+    el.style.display='block';
+    el.textContent = '❌ Errore di rete: ' + err;
+  });
+}
+
+function salvaSkuERecalcola(){
+  if(!_schedaPid) return;
+  const vern   = document.getElementById('inputSkuVern').value.trim();
+  const grezzo = document.getElementById('inputSkuGrezzo').value.trim();
+  fetch(`/api/kanban/${_schedaPid}/sku`,{
+    method:'PUT',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({sku_verniciato:vern, sku_grezzo:grezzo})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      showToast('💾 SKU salvati');
+      document.getElementById('schedaLoading').style.display='block';
+      document.getElementById('schedaContent').style.display='none';
+      document.getElementById('schedaErrore').style.display='none';
+      // aggiorna icona pulsante nella riga
+      const btn = document.querySelector(`tr[data-pid="${_schedaPid}"] .btn-wms`);
+      if(btn && (vern||grezzo)) btn.textContent='📊';
+      caricaScheda(_schedaPid);
+    } else {
+      showToast('❌ ' + (d.error||'Errore'), true);
+    }
+  });
+}
+
+// Chiudi modal con Escape o click overlay
+document.getElementById('modalScheda').addEventListener('click', e=>{
+  if(e.target===document.getElementById('modalScheda')) closeScheda();
+});
+document.addEventListener('keydown', e=>{ if(e.key==='Escape') closeScheda(); });
+{% endblock %}
