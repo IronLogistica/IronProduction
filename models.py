@@ -146,6 +146,9 @@ class KanbanProdotto(db.Model):
     lavorazioni = db.Column(db.String(300), default="")
     sort_order = db.Column(db.Integer, default=0)
     aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow)
+    # SKU MasterLogistic: codice articolo verniciato e grezzo per interrogare il WMS
+    sku_verniciato = db.Column(db.String(100), default="")
+    sku_grezzo     = db.Column(db.String(100), default="")
 
     @property
     def saldo_contabile(self):
@@ -320,6 +323,8 @@ def init_db():
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS in_prod INTEGER DEFAULT 0",
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS val_medio FLOAT DEFAULT 0",
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0",
+        "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS sku_verniciato VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS sku_grezzo VARCHAR(100) DEFAULT ''",
         "ALTER TABLE monitor_righe ADD COLUMN IF NOT EXISTS ordine INTEGER DEFAULT 0",
         "ALTER TABLE commesse ADD COLUMN IF NOT EXISTS ref_masterlogistic VARCHAR(100) DEFAULT ''",
         "ALTER TABLE lavorazioni_terziste ADD COLUMN IF NOT EXISTS costo FLOAT DEFAULT 0",
