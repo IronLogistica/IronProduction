@@ -1,0 +1,449 @@
+{% extends "base.html" %}
+{% block content %}
+
+{# ══ TOOLBAR ══ #}
+<div class="page-toolbar">
+  <div class="page-title">{{ info.icona }} {{ info.label }}</div>
+  <input class="search-box" type="text" placeholder="🔍 Cerca prodotto..." oninput="filterTable(this.value)">
+  <button class="btn btn-success" onclick="openModalCreaKanban('{{ sheet_key }}')">➕ Nuovo Kanban</button>
+  <button class="btn btn-primary" onclick="showToast('💾 Modifiche salvate automaticamente nel DB')">💾 Salvato</button>
+</div>
+
+{# ══ STATS ══ #}
+<div class="kanban-stats">
+  <div class="kstat kstat-total"><span class="kstat-num">{{ stats.tot }}</span><span class="kstat-lbl">Prodotti</span></div>
+  <div class="kstat kstat-ok"><span class="kstat-num">{{ stats.ok }}</span><span class="kstat-lbl">✅ OK</span></div>
+  <div class="kstat kstat-warn"><span class="kstat-num">{{ stats.warn }}</span><span class="kstat-lbl">⚠️ Da Produrre</span></div>
+  <div class="kstat kstat-val"><span class="kstat-num">€ {{ "{:,.0f}".format(stats.valore).replace(",",".") }}</span><span class="kstat-lbl">Valore Totale</span></div>
+</div>
+
+{# ══ TABELLA WIP ══ #}
+{% if wip %}
+<div style="margin-bottom:18px">
+  <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--steel2);font-weight:700;margin-bottom:8px;padding:6px 10px;background:rgba(30,111,165,.1);border-radius:4px;border-left:3px solid var(--accent);display:flex;align-items:center;justify-content:space-between">
+    <span>⚙️ WIP Monitor — Rischio Accumulo a Terra</span>
+    <button class="btn btn-ghost" style="padding:3px 10px;font-size:10px" onclick="openModalWip()">⚙️ Configura limiti</button>
+  </div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    {% for fase, dati in wip.items() %}
+    <div class="wip-card wip-{{ dati.colore }}">
+      <div class="wip-label">{{ dati.label }}</div>
+      <div class="wip-num">{{ dati.attivi }}</div>
+      {% if dati.limit > 0 %}
+      <div class="wip-bar-wrap"><div class="wip-bar-fill" style="width:{{ [dati.pct, 100]|min }}%"></div></div>
+      <div class="wip-sub">{{ dati.pct }}% / {{ dati.limit }} max</div>
+      {% else %}
+      <div class="wip-sub">No limite</div>
+      {% endif %}
+      {% if dati.limite_giornaliero > 0 %}
+      <div class="wip-sub" style="color:var(--steel2)">Max {{ dati.limite_giornaliero }}/gg</div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+{# ══ TABELLA KANBAN ══ #}
+<div style="overflow-x:auto;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow)">
+<table class="kanban-table" id="kbtable">
+  <thead><tr>
+    <th style="text-align:left;padding-left:14px;min-width:190px">Prodotto</th>
+    <th>Riserva<br>KANBAN</th>
+    <th>Lotto<br>Prod.</th>
+    <th>Riservato<br>Clienti</th>
+    <th>Mag.<br>Grezzi</th>
+    <th>Mag.<br>Verniciati</th>
+    <th>In<br>Verniciatura</th>
+    <th>In<br>Produzione</th>
+    <th>Saldo<br>Contabile</th>
+    <th>STATO</th>
+    <th title="Buffer %: saldo vs riserva">Buffer</th>
+    <th title="Cicli accumulati per analisi Takt Time">⏱ Takt</th>
+    <th>Lavorazioni</th>
+    <th>Valore P.V.</th>
+  </tr></thead>
+  <tbody>
+  {% for p in prodotti %}
+  {% set saldo = p.saldo_contabile %}
+  {% set buf   = p.buffer_colore %}
+  {% set nc    = p.n_cicli_chiusi %}
+  <tr data-pid="{{ p.id }}" class="row-{{ buf }}">
+
+    <td class="prod-name" style="padding-left:14px">
+      {{ p.prodotto }}
+      {% if p.takt_time_min %}
+      <span style="font-size:9px;margin-left:5px;background:rgba(30,111,165,.25);border-radius:4px;padding:1px 5px;color:var(--steel2)">⏱ {{ "%.1f"|format(p.takt_time_min) }}'</span>
+      {% endif %}
+    </td>
+
+    <td class="num">{{ p.riserva }}</td>
+    <td class="num">{{ p.lotto }}</td>
+    <td class="num editable" data-field="riservato"  data-pid="{{ p.id }}">{{ p.riservato }}</td>
+    <td class="num editable" data-field="grezzi"     data-pid="{{ p.id }}">{{ p.grezzi }}</td>
+    <td class="num editable" data-field="verniciati" data-pid="{{ p.id }}">{{ p.verniciati }}</td>
+    <td class="num editable" data-field="in_vern"    data-pid="{{ p.id }}">{{ p.in_vern }}</td>
+    <td class="num editable" data-field="in_prod"    data-pid="{{ p.id }}">{{ p.in_prod }}</td>
+
+    <td class="num saldo-td {% if saldo < 0 %}num-neg{% else %}num-pos{% endif %}">{{ saldo }}</td>
+
+    <td class="stato-td" style="text-align:center">
+      {% if p.stato == 'OK' %}<span class="badge badge-ok">✅ OK</span>
+      {% elif 'PROGRAMMARE' in p.stato %}<span class="badge badge-warn">⚠️ PROD.</span>
+      {% else %}<span class="badge badge-prod">🚧</span>{% endif %}
+    </td>
+
+    <td style="text-align:center;font-family:monospace;font-weight:700;font-size:12px">
+      {% if buf == 'verde' %}<span style="color:#1a9e5c">{{ p.buffer_pct }}%</span>
+      {% elif buf == 'giallo' %}<span style="color:#e6b800">{{ p.buffer_pct }}%</span>
+      {% elif buf == 'rosso' %}<span style="color:#f07070">{{ p.buffer_pct }}%</span>
+      {% else %}<span style="color:var(--text-dim)">—</span>{% endif %}
+    </td>
+
+    {# Pulsante Takt con contatore cicli #}
+    <td style="text-align:center;white-space:nowrap">
+      <button class="btn-takt" onclick="apriAnalisiTakt({{ p.id }}, '{{ p.prodotto|replace("'","\\'")|e }}')"
+        title="Analisi Takt Time — {{ nc }} cicli accumulati">
+        {% if nc >= 30 %}✅{% elif nc >= 5 %}📊{% else %}⏳{% endif %}
+        <span class="takt-cnt">{{ nc }}</span>
+      </button>
+    </td>
+
+    <td class="lav-td lav-val">{{ p.lavorazioni or '' }}</td>
+    <td class="num">{% if p.val_pv %}{{ "{:,.2f}".format(p.val_pv).replace(",",".") }} €{% else %}—{% endif %}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="14" style="text-align:center;color:var(--text-dim);padding:36px;font-style:italic">
+    Nessun prodotto. Clicca <strong style="color:var(--steel2)">➕ Nuovo Kanban</strong> per aggiungere il primo.
+  </td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+</div>
+
+{# ══ MODAL: ANALISI TAKT TIME ══ #}
+<div class="modal-overlay" id="modalTakt">
+<div class="modal-box" style="width:580px;max-height:92vh;overflow-y:auto">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+    <div>
+      <div style="font-size:16px;font-weight:800;color:#e0eefc">⏱ Analisi Takt Time</div>
+      <div id="taktNomeProd" style="font-size:11px;color:var(--text-dim);margin-top:2px"></div>
+    </div>
+    <button class="btn btn-ghost" style="padding:3px 12px;font-size:16px" onclick="closeModal('modalTakt')">✕</button>
+  </div>
+
+  <div id="taktLoading" style="text-align:center;padding:40px;color:var(--text-dim)">
+    <div style="font-size:26px;margin-bottom:8px">⏳</div>Calcolo in corso...
+  </div>
+
+  <div id="taktContent" style="display:none">
+
+    {# Barra progresso cicli #}
+    <div style="padding:14px;background:rgba(30,111,165,.08);border-radius:8px;border:1px solid var(--border);margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;font-weight:700;color:#e0eefc">📊 Cicli Accumulati</span>
+        <span id="taktCicliLabel" style="font-size:12px;color:var(--steel2);font-family:monospace"></span>
+      </div>
+      <div style="height:10px;background:rgba(255,255,255,.06);border-radius:5px;overflow:hidden">
+        <div id="taktCicliBar" style="height:100%;background:linear-gradient(90deg,var(--accent),var(--steel2));border-radius:5px;transition:width .6s;width:0%"></div>
+      </div>
+      <div id="taktMessaggio" style="font-size:11px;color:var(--text-dim);margin-top:8px;line-height:1.5"></div>
+    </div>
+
+    {# Risultati numerici #}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+      <div class="takt-box">
+        <div class="takt-lbl">⏱ Takt Time Suggerito</div>
+        <div class="takt-val" id="tvTakt">—</div>
+        <div class="takt-sub">min / pezzo (su 480 min/gg)</div>
+      </div>
+      <div class="takt-box">
+        <div class="takt-lbl">🔄 Lead Time Medio</div>
+        <div class="takt-val" id="tvLT">—</div>
+        <div class="takt-sub">ore medie per ciclo</div>
+      </div>
+      <div class="takt-box">
+        <div class="takt-lbl">📦 Domanda Giornaliera</div>
+        <div class="takt-val" id="tvD">—</div>
+        <div class="takt-sub">pezzi / giorno (media 90gg)</div>
+      </div>
+      <div class="takt-box">
+        <div class="takt-lbl">🃏 N Kanban Suggerito</div>
+        <div class="takt-val" id="tvN">—</div>
+        <div class="takt-sub">N = D × RT × (1+SS) / C</div>
+      </div>
+    </div>
+
+    {# Sezione imposta ufficiale — visibile da 5 cicli #}
+    <div id="taktImpostaSection" style="display:none;padding:14px;background:rgba(26,158,92,.08);border:1px solid rgba(26,158,92,.25);border-radius:8px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:#5debb0;margin-bottom:10px">
+        ✅ Dati disponibili — Imposta Takt Time ufficiale
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div>
+          <label class="modal-label">Takt Time (min/pz)</label>
+          <input type="number" class="modal-input" id="inputTaktMin" step="0.1" min="0.1" style="width:110px">
+        </div>
+        <div>
+          <label class="modal-label">Lead Time (giorni)</label>
+          <input type="number" class="modal-input" id="inputTaktLT" step="0.5" min="0.5" style="width:100px">
+        </div>
+        <div class="pin-field" style="margin-top:0;padding:6px 10px;flex:none">
+          <label>🔐</label>
+          <input type="password" id="pinTakt" maxlength="6" placeholder="••••" style="width:70px">
+        </div>
+        <button class="btn btn-success" onclick="impostaTakt()">💾 Imposta</button>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:8px">
+        ⚠️ Affidabilità statistica solida dopo 30 cicli. Puoi impostarlo già ora e aggiornarlo in futuro.
+      </div>
+    </div>
+
+    {# Lista ultimi cicli #}
+    <div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);margin-bottom:6px">Ultimi cicli registrati</div>
+      <div id="taktCicliList" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:6px"></div>
+    </div>
+  </div>
+</div>
+</div>
+
+{# ══ MODAL: CONFIGURA WIP ══ #}
+<div class="modal-overlay" id="modalWip">
+<div class="modal-box" style="width:520px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <h3 style="margin:0">⚙️ Configura Limiti WIP</h3>
+    <button class="btn btn-ghost" style="padding:3px 10px;font-size:16px" onclick="closeModal('modalWip')">✕</button>
+  </div>
+  <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">0 = nessun limite. WIP Max = pezzi simultanei in fase. Max/gg = tetto giornaliero.</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr>
+      <th style="text-align:left;padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border)">Fase</th>
+      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">WIP Max</th>
+      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">Max/gg</th>
+      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">🟡 %</th>
+      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">🔴 %</th>
+    </tr></thead>
+    <tbody id="wipConfigBody"></tbody>
+  </table>
+  <div class="pin-field" style="margin-top:14px">
+    <label>🔐 PIN</label>
+    <input type="password" id="pinWip" maxlength="6" placeholder="••••">
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('modalWip')">Annulla</button>
+    <button class="btn btn-primary" onclick="salvaWip()">💾 Salva Limiti</button>
+  </div>
+</div>
+</div>
+
+
+{% endblock %}
+
+{% block scripts %}
+// ── Edit inline ──────────────────────────────────────────────────────────────
+document.querySelectorAll('td.editable').forEach(td => {
+  td.addEventListener('click', function() {
+    if (this.classList.contains('editing')) return;
+    const field = this.dataset.field, pid = this.dataset.pid, orig = this.textContent.trim();
+    const curVal = parseFloat(orig) || 0;
+    this.classList.add('editing');
+    this.innerHTML = `<input type="number" value="${curVal}" step="1">`;
+    const inp = this.querySelector('input');
+    inp.focus(); inp.select();
+    const commit = () => {
+      const nv = parseFloat(inp.value);
+      if (!isNaN(nv)) {
+        fetch(`/api/kanban/${pid}`, {
+          method: 'PUT',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({[field]: nv})
+        }).then(r => r.json()).then(d => {
+          if (d.ok) {
+            this.classList.remove('editing'); this.textContent = nv;
+            const row = this.closest('tr');
+            // Saldo
+            const s = row.querySelector('.saldo-td');
+            if (s) { s.textContent = d.saldo; s.className = 'num saldo-td ' + (d.saldo < 0 ? 'num-neg' : 'num-pos'); }
+            // Stato
+            const st = row.querySelector('.stato-td');
+            if (st) {
+              if (d.stato === 'OK') st.innerHTML = '<span class="badge badge-ok">✅ OK</span>';
+              else if (d.stato.includes('PROGRAMMARE')) st.innerHTML = '<span class="badge badge-warn">⚠️ PROD.</span>';
+              else st.innerHTML = '<span class="badge badge-prod">🚧</span>';
+            }
+            // Buffer colore
+            const buf = d.buffer_colore || 'grigio';
+            row.className = 'row-' + buf;
+            // Lavorazioni
+            const lv = row.querySelector('.lav-val'); if (lv) lv.textContent = d.lavorazioni || '';
+            showToast('💾 Salvato');
+          } else { this.classList.remove('editing'); this.textContent = orig; showToast('❌ Errore', true); }
+        }).catch(() => { this.classList.remove('editing'); this.textContent = orig; showToast('❌ Rete', true); });
+      } else { this.classList.remove('editing'); this.textContent = orig; }
+    };
+    inp.addEventListener('blur', commit);
+    inp.addEventListener('keydown', e => {
+      if (e.key === 'Enter') { e.preventDefault(); commit(); }
+      if (e.key === 'Escape') { this.classList.remove('editing'); this.textContent = orig; }
+    });
+  });
+});
+
+function filterTable(q) {
+  q = q.toLowerCase();
+  document.querySelectorAll('#kbtable tbody tr').forEach(tr => {
+    const n = tr.querySelector('.prod-name');
+    tr.style.display = (!q || (n && n.textContent.toLowerCase().includes(q))) ? '' : 'none';
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// ANALISI TAKT TIME
+// ══════════════════════════════════════════════════════════════════════════════
+let _taktPid = null;
+
+function apriAnalisiTakt(pid, nome) {
+  _taktPid = pid;
+  document.getElementById('taktNomeProd').textContent = nome;
+  document.getElementById('taktLoading').style.display = 'block';
+  document.getElementById('taktContent').style.display = 'none';
+  document.getElementById('taktCicliBar').style.width = '0%';
+  openModal('modalTakt');
+  _caricaTakt(pid);
+}
+
+function _caricaTakt(pid) {
+  fetch(`/api/kanban/${pid}/analisi-takt`)
+  .then(r => r.json())
+  .then(d => {
+    document.getElementById('taktLoading').style.display = 'none';
+    document.getElementById('taktContent').style.display = 'block';
+
+    const minAffid = d.min_affidabili || 30;
+    const minReq   = d.min_richiesti  || 5;
+    const chiusi   = d.n_cicli_chiusi || 0;
+    const pct      = Math.min(100, Math.round(chiusi / minAffid * 100));
+
+    // Animazione barra
+    setTimeout(() => { document.getElementById('taktCicliBar').style.width = pct + '%'; }, 100);
+    // Colore barra
+    const bar = document.getElementById('taktCicliBar');
+    bar.style.background = chiusi >= minAffid
+      ? 'linear-gradient(90deg,#1a9e5c,#5debb0)'
+      : chiusi >= minReq
+        ? 'linear-gradient(90deg,#9a7a00,#e6b800)'
+        : 'linear-gradient(90deg,var(--accent),var(--steel2))';
+
+    document.getElementById('taktCicliLabel').textContent = `${chiusi} / ${minAffid} cicli`;
+    document.getElementById('taktMessaggio').textContent  = d.messaggio || '';
+
+    const fmt = (v, dec=1) => (v != null && !isNaN(v)) ? parseFloat(v).toFixed(dec) : '—';
+    document.getElementById('tvTakt').textContent = d.takt_suggerito       ? fmt(d.takt_suggerito)       : '—';
+    document.getElementById('tvLT').textContent   = d.lead_time_medio_ore  ? fmt(d.lead_time_medio_ore)  : '—';
+    document.getElementById('tvD').textContent    = d.domanda_giornaliera  ? fmt(d.domanda_giornaliera)  : '—';
+    document.getElementById('tvN').textContent    = d.n_kanban_suggerito   ? fmt(d.n_kanban_suggerito,1) : '—';
+
+    // Sezione imposta: visibile già da 5 cicli
+    const sec = document.getElementById('taktImpostaSection');
+    if (chiusi >= minReq && d.takt_suggerito) {
+      sec.style.display = 'block';
+      document.getElementById('inputTaktMin').value = fmt(d.takt_suggerito);
+      document.getElementById('inputTaktLT').value  = d.lead_time_medio_ore
+        ? fmt(d.lead_time_medio_ore / 24, 2) : '7';
+      document.getElementById('pinTakt').value = '';
+    } else {
+      sec.style.display = 'none';
+    }
+
+    // Lista cicli
+    fetch(`/api/kanban/${pid}/cicli`)
+    .then(r => r.json())
+    .then(cicli => {
+      const box = document.getElementById('taktCicliList');
+      if (!cicli || !cicli.length) {
+        box.innerHTML = '<div style="color:var(--text-dim);font-size:11px;padding:12px 10px;text-align:center">Nessun ciclo ancora. I dati si accumulano automaticamente ogni volta che un prodotto passa da ⚠️ PRODURRE a ✅ OK.</div>';
+        return;
+      }
+      box.innerHTML = cicli.map(c => `
+        <div class="ciclo-row ${c.aperto ? 'aperto' : ''}">
+          <span style="flex:1.2;color:var(--text-dim);font-size:10px">${c.data_inizio}</span>
+          <span style="flex:1.2;font-size:10px">${c.aperto ? '⏳ IN CORSO...' : c.data_fine}</span>
+          <span style="width:65px;text-align:right;font-family:monospace">${c.lead_time_ore != null ? c.lead_time_ore + ' h' : '—'}</span>
+          <span style="width:45px;text-align:right;color:var(--steel2);font-family:monospace">${c.qta_prodotta || 0} pz</span>
+        </div>`).join('');
+    }).catch(() => {});
+  })
+  .catch(() => {
+    document.getElementById('taktLoading').style.display = 'none';
+    document.getElementById('taktContent').style.display = 'block';
+    document.getElementById('taktMessaggio').textContent = '❌ Errore di connessione';
+  });
+}
+
+function impostaTakt() {
+  if (!_taktPid) return;
+  const takt = parseFloat(document.getElementById('inputTaktMin').value);
+  const lt   = parseFloat(document.getElementById('inputTaktLT').value);
+  const pin  = document.getElementById('pinTakt').value;
+  if (!takt || takt <= 0) { showToast('⚠️ Inserisci Takt Time valido', true); return; }
+  fetch(`/api/kanban/${_taktPid}/imposta-takt`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({takt_time_min: takt, lead_time_giorni: lt, pin})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) { showToast('✅ Takt Time impostato a ' + takt + ' min/pz'); closeModal('modalTakt'); setTimeout(() => location.reload(), 800); }
+    else if (d.pin_error) showToast('🔐 PIN errato', true);
+    else showToast('❌ ' + (d.error || 'Errore'), true);
+  });
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// CONFIGURA WIP
+// ══════════════════════════════════════════════════════════════════════════════
+let _wipData = {};
+
+function openModalWip() {
+  fetch('/api/wip').then(r => r.json()).then(data => {
+    _wipData = data;
+    const tbody = document.getElementById('wipConfigBody');
+    tbody.innerHTML = Object.entries(data).map(([fase, dati]) => `
+      <tr>
+        <td style="padding:6px 8px;color:#e0eefc;font-weight:600">${dati.label}</td>
+        <td style="padding:4px 6px"><input type="number" class="modal-input" id="wipLimit_${fase}"  value="${dati.limit}"                 min="0" style="width:65px;padding:5px 8px;text-align:center"></td>
+        <td style="padding:4px 6px"><input type="number" class="modal-input" id="wipGiorn_${fase}"  value="${dati.limite_giornaliero||0}" min="0" style="width:65px;padding:5px 8px;text-align:center"></td>
+        <td style="padding:4px 6px"><input type="number" class="modal-input" id="wipGiallo_${fase}" value="${dati.soglia_giallo||70}"      min="1" max="100" style="width:55px;padding:5px 8px;text-align:center"></td>
+        <td style="padding:4px 6px"><input type="number" class="modal-input" id="wipRosso_${fase}"  value="${dati.soglia_rosso||90}"       min="1" max="100" style="width:55px;padding:5px 8px;text-align:center"></td>
+      </tr>`).join('');
+    document.getElementById('pinWip').value = '';
+    openModal('modalWip');
+  }).catch(() => showToast('❌ Errore caricamento WIP', true));
+}
+
+function salvaWip() {
+  const pin   = document.getElementById('pinWip').value;
+  const fasi  = Object.keys(_wipData);
+  const calls = fasi.map(fase =>
+    fetch('/api/wip', {
+      method: 'PUT',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        fase, pin,
+        wip_limit:          parseInt(document.getElementById('wipLimit_'  + fase).value) || 0,
+        limite_giornaliero: parseInt(document.getElementById('wipGiorn_'  + fase).value) || 0,
+        soglia_giallo:      parseInt(document.getElementById('wipGiallo_' + fase).value) || 70,
+        soglia_rosso:       parseInt(document.getElementById('wipRosso_'  + fase).value) || 90,
+      })
+    }).then(r => r.json())
+  );
+  Promise.all(calls).then(results => {
+    const pinErr = results.find(r => !r.ok && r.pin_error);
+    const err    = results.find(r => !r.ok);
+    if (pinErr) { showToast('🔐 PIN errato', true); return; }
+    if (err)    { showToast('❌ ' + (err.error || 'Errore'), true); return; }
+    showToast('✅ Limiti WIP salvati');
+    closeModal('modalWip');
+    setTimeout(() => location.reload(), 700);
+  }).catch(() => showToast('❌ Errore rete', true));
+}
+{% endblock %}
