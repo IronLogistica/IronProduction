@@ -71,11 +71,52 @@
   td.editing{padding:0!important}
   td.editing input{width:100%;padding:7px 8px;border:2px solid var(--accent2);border-radius:4px;font-size:12px;font-weight:600;text-align:right;font-family:monospace;outline:none;background:#0d2040;color:#fff}
   /* BUFFER COLORS */
-  .row-verde  td:first-child{border-left:4px solid #1a9e5c}
-  .row-giallo td:first-child{border-left:4px solid #e6b800}
-  .row-rosso  td:first-child{border-left:4px solid #c0392b;animation:pulseRed 1.8s infinite}
+  /* ── Buffer row colors ── */
+  .row-verde  td:first-child{border-left:4px solid #1a9e5c!important}
+  .row-giallo td:first-child{border-left:4px solid #e6b800!important}
+  .row-rosso  td:first-child{border-left:4px solid #c0392b!important;animation:pulseRed 2s infinite}
   .row-grigio td:first-child{border-left:4px solid transparent}
-  @keyframes pulseRed{0%,100%{border-left-color:#c0392b}50%{border-left-color:#ff6b5b}}
+  @keyframes pulseRed{0%,100%{border-left-color:#c0392b}50%{border-left-color:#ff7060}}
+
+  /* ── Pulsante Takt ── */
+  .btn-takt{background:rgba(30,111,165,.15);border:1px solid var(--accent);border-radius:5px;padding:4px 9px;cursor:pointer;font-size:12px;transition:all .15s;color:var(--steel2);display:inline-flex;align-items:center;gap:4px;font-family:inherit;white-space:nowrap}
+  .btn-takt:hover{background:rgba(30,111,165,.4);border-color:var(--accent2);color:#fff}
+  .takt-cnt{font-size:10px;font-family:monospace;font-weight:700;background:rgba(255,255,255,.12);border-radius:3px;padding:1px 5px;min-width:18px;text-align:center}
+
+  /* ── WIP Monitor cards ── */
+  .wip-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:95px;flex:1;text-align:center}
+  .wip-verde {border-top:3px solid #1a9e5c}
+  .wip-giallo{border-top:3px solid #e6b800}
+  .wip-rosso {border-top:3px solid #c0392b;animation:pulseRed 2s infinite}
+  .wip-grigio{border-top:3px solid var(--grey)}
+  .wip-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);margin-bottom:4px}
+  .wip-num  {font-size:22px;font-weight:900;color:#e0eefc;line-height:1.1}
+  .wip-bar-wrap{height:6px;background:rgba(255,255,255,.06);border-radius:3px;margin:5px 0 3px;overflow:hidden}
+  .wip-bar-fill{height:100%;border-radius:3px;transition:width .4s}
+  .wip-verde  .wip-bar-fill{background:linear-gradient(90deg,#1a9e5c,#5debb0)}
+  .wip-giallo .wip-bar-fill{background:linear-gradient(90deg,#9a7a00,#e6b800)}
+  .wip-rosso  .wip-bar-fill{background:linear-gradient(90deg,#8a2520,#f07070)}
+  .wip-grigio .wip-bar-fill{background:var(--grey)}
+  .wip-sub{font-size:9px;color:var(--text-dim)}
+
+  /* ── Takt modal boxes ── */
+  .takt-box{background:var(--dark3);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center}
+  .takt-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-dim);margin-bottom:4px}
+  .takt-val{font-size:24px;font-weight:900;color:#e0eefc}
+  .takt-sub{font-size:9px;color:var(--text-dim);margin-top:3px}
+
+  /* ── Ciclo rows ── */
+  .ciclo-row{display:flex;gap:8px;font-size:11px;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text)}
+  .ciclo-row:last-child{border-bottom:none}
+  .ciclo-row.aperto{color:#f0c040;font-style:italic}
+
+  /* ── btn-success ── */
+  .btn-success{background:var(--green);color:#fff}.btn-success:hover{background:var(--green2)}
+
+  /* ── WMS autocomplete dropdown ── */
+  .wms-item{padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;transition:background .12s}
+  .wms-item:last-child{border-bottom:none}
+  .wms-item:hover{background:rgba(30,111,165,.25)}
   /* BADGES */
   .badge{display:inline-block;padding:3px 8px;border-radius:12px;font-size:10px;font-weight:700;white-space:nowrap}
   .badge-warn{background:rgba(192,57,43,.2);color:#f07070;border:1px solid rgba(192,57,43,.4)}
@@ -239,7 +280,11 @@
     <h3>📦 Nuovo Prodotto Kanban</h3>
     <input type="hidden" id="creaKanbanSheetKey">
     <label class="modal-label">Nome prodotto / codice</label>
-    <input class="modal-input" id="creaKanbanNome" type="text" placeholder="es. TTD101INOX — Transenna 1mt" maxlength="200">
+    <div style="position:relative">
+      <input class="modal-input" id="creaKanbanNome" type="text" placeholder="es. TTD101INOX — inizia a digitare..." maxlength="200" autocomplete="off" oninput="cercaArticoloWms(this.value)">
+      <div id="wmsDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--dark3);border:1px solid var(--accent);border-radius:0 0 6px 6px;z-index:600;max-height:200px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.5)"></div>
+    </div>
+    <div style="font-size:10px;color:var(--text-dim);margin-top:4px" id="wmsHint">💡 Suggerisce automaticamente i codici da MasterLogistic</div>
     <div class="modal-row" style="margin-top:10px">
       <div style="flex:1">
         <label class="modal-label" style="margin-top:0">Lotto produzione</label>
@@ -332,6 +377,58 @@ function creaGruppo(){
   }).catch(()=>showToast('❌ Errore di rete',true));
 }
 document.getElementById('inputNomeGruppo')?.addEventListener('keydown',e=>{if(e.key==='Enter')creaGruppo();});
+
+// ── AUTOCOMPLETE WMS ─────────────────────────────────────────────────────────
+let _wmsArticoli = null;  // cache
+
+function _loadWmsArticoli(cb) {
+  if (_wmsArticoli !== null) { cb(_wmsArticoli); return; }
+  fetch('/api/wms-articoli')
+  .then(r => r.json())
+  .then(data => { _wmsArticoli = Array.isArray(data) ? data : []; cb(_wmsArticoli); })
+  .catch(() => { _wmsArticoli = []; cb([]); });
+}
+
+function cercaArticoloWms(q) {
+  const dd = document.getElementById('wmsDropdown');
+  const hint = document.getElementById('wmsHint');
+  if (!q || q.length < 2) { dd.style.display = 'none'; return; }
+  _loadWmsArticoli(articoli => {
+    if (!articoli.length) {
+      hint.textContent = '⚠️ MasterLogistic non connesso — inserisci manualmente';
+      hint.style.color = 'var(--text-dim)';
+      dd.style.display = 'none';
+      return;
+    }
+    const q2 = q.toLowerCase();
+    const matches = articoli.filter(a =>
+      a.sku.toLowerCase().includes(q2) || (a.desc||'').toLowerCase().includes(q2)
+    ).slice(0, 12);
+    if (!matches.length) { dd.style.display = 'none'; return; }
+    dd.innerHTML = matches.map(a => `
+      <div class="wms-item" onclick="selezionaArticolo('${a.sku.replace(/'/g,"\'")}','${(a.desc||'').replace(/'/g,"\'")}')">
+        <span style="font-family:monospace;font-weight:700;color:var(--steel2)">${a.sku}</span>
+        <span style="color:var(--text-dim);font-size:11px;margin-left:8px">${a.desc||''}</span>
+      </div>`).join('');
+    dd.style.display = 'block';
+  });
+}
+
+function selezionaArticolo(sku, desc) {
+  const nome = desc ? sku + ' — ' + desc : sku;
+  document.getElementById('creaKanbanNome').value = nome;
+  document.getElementById('wmsDropdown').style.display = 'none';
+  document.getElementById('wmsHint').textContent = '✅ ' + sku + ' selezionato da MasterLogistic';
+  document.getElementById('wmsHint').style.color = '#5debb0';
+}
+
+// Chiudi dropdown clic fuori
+document.addEventListener('click', e => {
+  if (!e.target.closest('#modalCreaKanban')) {
+    const dd = document.getElementById('wmsDropdown');
+    if (dd) dd.style.display = 'none';
+  }
+});
 
 // ── MODAL: Rinomina gruppo (PIN) ─────────────────────────────────────────────
 function openModalRinominaGruppo(){
