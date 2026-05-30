@@ -60,6 +60,7 @@
     <th>STATO</th>
     <th title="Buffer %: saldo vs riserva">Buffer</th>
     <th title="Cicli accumulati per analisi Takt Time">⏱ Takt</th>
+    <th title="Scheda WMS: stock, ordini clienti, evasi">📊 WMS</th>
     <th>Lavorazioni</th>
     <th>Valore P.V.</th>
   </tr></thead>
@@ -108,6 +109,9 @@
         <span class="takt-cnt">{{ nc }}</span>
       </button>
     </td>
+    <td style="text-align:center">
+      <button class="btn-wms" onclick="apriSchedaWms({{ p.id }}, '{{ p.prodotto|replace("'","\\'")|e }}')" title="Scheda WMS">📊</button>
+    </td>
 
     <td class="lav-td lav-val">{{ p.lavorazioni or '' }}</td>
     <td class="num">{% if p.val_pv %}{{ "{:,.2f}".format(p.val_pv).replace(",",".") }} €{% else %}—{% endif %}</td>
@@ -119,6 +123,110 @@
   {% endfor %}
   </tbody>
 </table>
+</div>
+
+
+{# ══ MODAL: SCHEDA KANBAN WMS ══ #}
+<div class="modal-overlay" id="modalScheda">
+<div class="scheda-box">
+
+  <div class="scheda-header">
+    <div>
+      <div class="scheda-title" id="schedaTitolo">—</div>
+      <div class="scheda-sub" id="schedaSku">SKU: —</div>
+    </div>
+    <button class="btn btn-ghost" style="font-size:18px;padding:4px 12px" onclick="closeModal('modalScheda')">✕</button>
+  </div>
+
+  {# SKU configurazione #}
+  <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:14px;padding:10px 12px;background:rgba(30,111,165,.07);border-radius:8px;border:1px solid var(--border);flex-wrap:wrap">
+    <div style="flex:1;min-width:160px">
+      <label class="modal-label">SKU Verniciato (WMS)</label>
+      <input type="text" id="inputSkuVern" placeholder="es. T200" class="modal-input">
+    </div>
+    <div style="flex:1;min-width:160px">
+      <label class="modal-label">SKU Grezzo (WMS)</label>
+      <input type="text" id="inputSkuGrezzo" placeholder="es. T200GRZ" class="modal-input">
+    </div>
+    <button class="btn btn-primary" style="white-space:nowrap;align-self:flex-end" onclick="salvaSkuERecalcola()">💾 Collega &amp; Aggiorna</button>
+  </div>
+
+  <div id="schedaLoading" style="text-align:center;padding:30px;color:var(--text-dim)">⏳ Interrogazione WMS...</div>
+  <div id="schedaErrore" style="display:none;padding:12px;background:rgba(192,57,43,.12);border-radius:8px;border:1px solid rgba(192,57,43,.3);color:#f07070;margin-bottom:12px"></div>
+
+  <div id="schedaContent" style="display:none">
+
+    {# PROGRAMMI IN CORSO #}
+    <div class="scheda-sec-title">📋 Programmi Produzioni in Corso</div>
+    <div style="overflow-x:auto">
+    <table class="scheda-table">
+      <thead><tr>
+        <th>Programma Nr</th><th>Nr in Produzione</th><th>Evasi</th><th>SALDO</th>
+        <th style="background:rgba(255,255,255,.04)">A Mag. Grezzi</th>
+        <th style="background:rgba(230,184,0,.12);color:#f0c040">A Mag. Verniciati</th>
+        <th style="background:rgba(30,111,165,.12)">In Vern. Lavorazione</th>
+      </tr></thead>
+      <tbody id="bodyProgrammi">
+        <tr><td colspan="7" class="scheda-empty">Nessun programma attivo su questo codice</td></tr>
+      </tbody>
+      <tfoot>
+        <tr class="scheda-foot">
+          <td>Rimanenza Produzione</td>
+          <td class="num" id="totInProd">0</td><td class="num" id="totEvasi">0</td><td class="num" id="totSaldo">0</td>
+          <td class="num" id="totGrezzi">—</td>
+          <td class="num" id="totVern" style="background:rgba(230,184,0,.08)">—</td>
+          <td class="num" id="totInVern" style="background:rgba(30,111,165,.08)">—</td>
+        </tr>
+      </tfoot>
+    </table>
+    </div>
+
+    {# RISERVATO A CLIENTI #}
+    <div class="scheda-sec-title" style="margin-top:16px">👥 Riservato a Clienti</div>
+    <div style="overflow-x:auto">
+    <table class="scheda-table">
+      <thead><tr>
+        <th style="text-align:left">Cliente</th><th>Qta Ord.</th><th>Evasi</th>
+        <th style="color:#f07070">Da Evadere</th>
+        <th>Ord.Cliente / Commessa</th><th>Rif. Ordine</th><th>Ultima Partenza</th>
+      </tr></thead>
+      <tbody id="bodyClienti">
+        <tr><td colspan="7" class="scheda-empty">Nessun ordine cliente aperto</td></tr>
+      </tbody>
+      <tfoot>
+        <tr class="scheda-foot">
+          <td colspan="3">Totale Riservato</td>
+          <td class="num num-neg" id="totRiservato">0</td>
+          <td colspan="3"></td>
+        </tr>
+      </tfoot>
+    </table>
+    </div>
+
+    {# ULTIMI 3 EVASI #}
+    <div class="scheda-sec-title" style="margin-top:16px">📦 Ultimi Evasi (storico spedizioni)</div>
+    <div style="overflow-x:auto">
+    <table class="scheda-table">
+      <thead><tr>
+        <th>Data Spedizione</th><th style="text-align:left">Cliente</th>
+        <th>Rif. Ordine</th><th>Qta Spedita</th>
+      </tr></thead>
+      <tbody id="bodyEvasi">
+        <tr><td colspan="4" class="scheda-empty">Nessuna spedizione registrata</td></tr>
+      </tbody>
+    </table>
+    </div>
+
+    {# SALDI FINALI #}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
+      <div class="saldo-box"><div class="saldo-label">SALDO CONTABILE</div><div class="saldo-val" id="saldoContabile">—</div></div>
+      <div class="saldo-box"><div class="saldo-label">SALDO CONTABILE DISPONIBILE</div><div class="saldo-val" id="saldoDisponibile">—</div></div>
+      <div class="saldo-box"><div class="saldo-label">SALDO DOPO 🖌️ VERNICIATURA</div><div class="saldo-val" id="saldoDopoVern">—</div></div>
+      <div class="saldo-box"><div class="saldo-label">SALDO 📦 GREZZI + 🖌️ VERNICIATURA</div><div class="saldo-val" id="saldoGrezziVern">—</div></div>
+    </div>
+
+  </div>
+</div>
 </div>
 
 {# ══ MODAL: ANALISI TAKT TIME ══ #}
@@ -237,6 +345,127 @@
 </div>
 </div>
 
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+// SCHEDA WMS
+// ══════════════════════════════════════════════════════════════════════════════
+let _wmsPid = null;
+
+function apriSchedaWms(pid, nome) {
+  _wmsPid = pid;
+  document.getElementById('wmsSchedaTitolo').textContent = nome;
+  document.getElementById('wmsSchedaSku').textContent = 'Caricamento...';
+  document.getElementById('wmsLoading').style.display = 'block';
+  document.getElementById('wmsContent').style.display = 'none';
+  document.getElementById('wmsErrore').style.display = 'none';
+  openModal('modalWmsScheda');
+  _caricaSchedaWms(pid);
+}
+
+function _caricaSchedaWms(pid) {
+  fetch(`/api/kanban-scheda/${pid}`)
+  .then(r => r.json())
+  .then(d => {
+    document.getElementById('wmsLoading').style.display = 'none';
+
+    // SKU
+    document.getElementById('wmsInputSkuVern').value   = d.sku_vern   || '';
+    document.getElementById('wmsInputSkuGrezzo').value = d.sku_grezzo || '';
+    document.getElementById('wmsSchedaSku').textContent =
+      `SKU Verniciato: ${d.sku_vern||'—'}  |  SKU Grezzo: ${d.sku_grezzo||'—'}`;
+
+    if (d.wms_errore && !d.wms_ok) {
+      const el = document.getElementById('wmsErrore');
+      el.style.display = 'block';
+      el.textContent = '⚠️ ' + d.wms_errore;
+      document.getElementById('wmsContent').style.display = 'block';
+      // Reset valori
+      ['wsSaldo1','wsSaldo2','wsSaldo3','wsSaldo4','wsStockVern','wsStockGrezzi','wsInVern'].forEach(id => {
+        document.getElementById(id).textContent = '—';
+      });
+      return;
+    }
+
+    document.getElementById('wmsContent').style.display = 'block';
+
+    // Stock magazzino
+    document.getElementById('wsStockVern').textContent   = d.stock_verniciati ?? '—';
+    document.getElementById('wsStockGrezzi').textContent = d.stock_grezzi ?? '—';
+    document.getElementById('wsInVern').textContent      = d.in_vern ?? '—';
+
+    // 4 saldi
+    const setSaldo = (id, val) => {
+      const el = document.getElementById(id);
+      el.textContent = val ?? '—';
+      if (val != null) el.className = 'wms-saldo-val' + (val < 0 ? ' neg' : '');
+    };
+    setSaldo('wsSaldo1', d.saldo_contabile);
+    setSaldo('wsSaldo2', d.saldo_disponibile);
+    setSaldo('wsSaldo3', d.saldo_dopo_vern);
+    setSaldo('wsSaldo4', d.saldo_grezzi_vern);
+
+    // Riservato clienti
+    const ordini = d.ordini_clienti || [];
+    const bodyC = document.getElementById('wsTblClientiBody');
+    if (!ordini.length) {
+      bodyC.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessun ordine aperto</td></tr>';
+    } else {
+      bodyC.innerHTML = ordini.map(o => `
+        <tr>
+          <td style="font-weight:600;text-align:left">${o.cliente||'—'}</td>
+          <td class="num">${o.qta_ord||0}</td>
+          <td class="num">${o.qta_evasa||0}</td>
+          <td class="num num-neg" style="font-weight:700">${o.qta_residua||0}</td>
+          <td style="font-size:10px">${o.conferma||'—'}</td>
+          <td style="font-size:11px;color:var(--text-dim)">${o.data_consegna||'—'}</td>
+        </tr>`).join('');
+    }
+    document.getElementById('wsTotRiservato').textContent = d.riservato_clienti || 0;
+
+    // Ultimi 3 evasi
+    const evasi = d.ultimi_evasi || [];
+    const bodyE = document.getElementById('wsTblEvasiBody');
+    if (!evasi.length) {
+      bodyE.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessuna evasione registrata</td></tr>';
+    } else {
+      bodyE.innerHTML = evasi.map(e => `
+        <tr style="background:rgba(26,158,92,.04)">
+          <td style="color:#5debb0;font-weight:600">${e.data||'—'}</td>
+          <td style="font-weight:600">${e.cliente||'—'}</td>
+          <td style="font-size:10px;color:var(--text-dim)">${e.conferma||'—'}</td>
+          <td class="num" style="color:#5debb0;font-weight:700">${e.qta||0}</td>
+        </tr>`).join('');
+    }
+  })
+  .catch(err => {
+    document.getElementById('wmsLoading').style.display = 'none';
+    const el = document.getElementById('wmsErrore');
+    el.style.display = 'block';
+    el.textContent = '❌ Errore: ' + err;
+    document.getElementById('wmsContent').style.display = 'block';
+  });
+}
+
+function collegaEAggiorna() {
+  if (!_wmsPid) return;
+  const vern   = document.getElementById('wmsInputSkuVern').value.trim();
+  const grezzo = document.getElementById('wmsInputSkuGrezzo').value.trim();
+  fetch(`/api/kanban/${_wmsPid}/sku`, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({sku_verniciato: vern, sku_grezzo: grezzo})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      showToast('💾 SKU collegati');
+      document.getElementById('wmsLoading').style.display = 'block';
+      document.getElementById('wmsContent').style.display = 'none';
+      document.getElementById('wmsErrore').style.display = 'none';
+      _caricaSchedaWms(_wmsPid);
+    } else if (d.pin_error) showToast('🔐 PIN errato', true);
+    else showToast('❌ ' + (d.error || 'Errore'), true);
+  });
+}
 
 {% endblock %}
 
@@ -446,4 +675,125 @@ function salvaWip() {
     setTimeout(() => location.reload(), 700);
   }).catch(() => showToast('❌ Errore rete', true));
 }
+
+{# ══ MODAL: SCHEDA WMS COMPLETA ══ #}
+<div class="modal-overlay" id="modalWmsScheda">
+<div class="modal-box" style="width:820px;max-height:92vh;overflow-y:auto">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+    <div>
+      <div style="font-size:16px;font-weight:800;color:#e0eefc" id="wmsSchedaTitolo">—</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:2px" id="wmsSchedaSku"></div>
+    </div>
+    <button class="btn btn-ghost" style="padding:3px 12px;font-size:16px" onclick="closeModal('modalWmsScheda')">✕</button>
+  </div>
+
+  <div id="wmsLoading" style="text-align:center;padding:40px;color:var(--text-dim)">
+    <div style="font-size:26px;margin-bottom:8px">⏳</div>Interrogazione MasterLogistic...
+  </div>
+
+  <div id="wmsErrore" style="display:none;padding:14px;background:rgba(192,57,43,.12);border-radius:8px;color:#f07070;margin-bottom:12px"></div>
+
+  <div id="wmsContent" style="display:none">
+
+    {# SKU config #}
+    <div style="display:flex;gap:10px;margin-bottom:14px;padding:10px 12px;background:rgba(30,111,165,.07);border-radius:8px;border:1px solid var(--border);flex-wrap:wrap;align-items:flex-end">
+      <div style="flex:1;min-width:160px">
+        <label class="modal-label">SKU Verniciato (WMS)</label>
+        <input type="text" class="modal-input" id="wmsInputSkuVern" placeholder="es. T200">
+      </div>
+      <div style="flex:1;min-width:160px">
+        <label class="modal-label">SKU Grezzo (WMS)</label>
+        <input type="text" class="modal-input" id="wmsInputSkuGrezzo" placeholder="es. T200GRZ">
+      </div>
+      <button class="btn btn-primary" style="white-space:nowrap" onclick="collegaEAggiorna()">🔗 Collega &amp; Aggiorna</button>
+    </div>
+
+    {# 4 saldi top #}
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
+      <div class="wms-saldo-box" style="border-top-color:var(--accent)">
+        <div class="wms-saldo-lbl">SALDO CONTABILE</div>
+        <div class="wms-saldo-val" id="wsSaldo1">—</div>
+      </div>
+      <div class="wms-saldo-box" style="border-top-color:var(--steel2)">
+        <div class="wms-saldo-lbl">SALDO DISPONIBILE</div>
+        <div class="wms-saldo-val" id="wsSaldo2">—</div>
+      </div>
+      <div class="wms-saldo-box" style="border-top-color:#e6b800">
+        <div class="wms-saldo-lbl">DOPO 🖌️ VERNICIATURA</div>
+        <div class="wms-saldo-val" id="wsSaldo3">—</div>
+      </div>
+      <div class="wms-saldo-box" style="border-top-color:var(--green)">
+        <div class="wms-saldo-lbl">📦 GREZZI + 🖌️ VERN.</div>
+        <div class="wms-saldo-val" id="wsSaldo4">—</div>
+      </div>
+    </div>
+
+    {# Magazzino #}
+    <div style="display:flex;gap:8px;margin-bottom:16px">
+      <div style="flex:1;background:rgba(230,184,0,.08);border:1px solid rgba(230,184,0,.2);border-radius:8px;padding:10px 14px;text-align:center">
+        <div style="font-size:10px;text-transform:uppercase;color:#f0c040;margin-bottom:4px">A Magazzino VERNICIATI</div>
+        <div style="font-size:28px;font-weight:900;color:#f0c040" id="wsStockVern">—</div>
+      </div>
+      <div style="flex:1;background:rgba(30,111,165,.08);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center">
+        <div style="font-size:10px;text-transform:uppercase;color:var(--steel2);margin-bottom:4px">A Magazzino GREZZI</div>
+        <div style="font-size:28px;font-weight:900;color:var(--steel2)" id="wsStockGrezzi">—</div>
+      </div>
+      <div style="flex:1;background:rgba(30,111,165,.05);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center">
+        <div style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">In Verniciatura</div>
+        <div style="font-size:28px;font-weight:900;color:#e0eefc" id="wsInVern">—</div>
+      </div>
+    </div>
+
+    {# Riservato a clienti #}
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--steel2);font-weight:700;margin-bottom:8px;padding:5px 10px;background:rgba(30,111,165,.1);border-radius:4px;border-left:3px solid var(--accent)">
+      👥 Riservato a Clienti
+    </div>
+    <div style="overflow-x:auto;margin-bottom:16px">
+    <table class="scheda-tbl" id="wsTblClienti">
+      <thead><tr>
+        <th>Cliente</th><th>Qta Ord.</th><th>Evasi</th><th>Da Evadere</th>
+        <th>Rif. Ordine</th><th>Ultima Partenza</th>
+      </tr></thead>
+      <tbody id="wsTblClientiBody">
+        <tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessun ordine aperto</td></tr>
+      </tbody>
+      <tfoot>
+        <tr><td colspan="3" style="font-weight:700;padding:7px 10px">Totale Riservato</td>
+        <td class="num num-neg" id="wsTotRiservato" style="font-weight:900;font-size:14px">0</td>
+        <td colspan="2"></td></tr>
+      </tfoot>
+    </table>
+    </div>
+
+    {# Ultimi 3 evasi #}
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#5debb0;font-weight:700;margin-bottom:8px;padding:5px 10px;background:rgba(26,158,92,.08);border-radius:4px;border-left:3px solid var(--green)">
+      ✅ Ultimi 3 Evasi
+    </div>
+    <table class="scheda-tbl" id="wsTblEvasi">
+      <thead><tr>
+        <th>Data Evasione</th><th>Cliente</th><th>Rif. Ordine</th><th>Qta Evasa</th>
+      </tr></thead>
+      <tbody id="wsTblEvasiBody">
+        <tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessuna evasione registrata</td></tr>
+      </tbody>
+    </table>
+
+  </div>{# /wmsContent #}
+</div>
+</div>
+
+<style>
+.btn-wms{background:rgba(26,158,92,.15);border:1px solid rgba(26,158,92,.3);border-radius:5px;padding:4px 10px;cursor:pointer;font-size:14px;transition:all .15s;color:#5debb0}
+.btn-wms:hover{background:rgba(26,158,92,.35);border-color:var(--green);color:#fff}
+.wms-saldo-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;border-top:3px solid var(--grey)}
+.wms-saldo-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-dim);margin-bottom:4px}
+.wms-saldo-val{font-size:22px;font-weight:900;color:#5debb0}
+.wms-saldo-val.neg{color:#f07070}
+.scheda-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.scheda-tbl th{background:var(--dark2);color:var(--steel2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:8px 10px;border-bottom:2px solid var(--border);text-align:center}
+.scheda-tbl td{padding:7px 10px;border-bottom:1px solid var(--border);color:var(--text);text-align:center;vertical-align:middle}
+.scheda-tbl tr:hover td{background:rgba(30,111,165,.06)}
+.scheda-tbl tfoot td{background:rgba(255,255,255,.03);font-weight:700;color:#e0eefc;border-top:2px solid var(--border)}
+</style>
+
 {% endblock %}
