@@ -288,3 +288,18 @@ def api_gruppi_elimina(url_key):
     except Exception as e:
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+# ── API WMS ARTICOLI (autocomplete da MasterLogistic) ────────────────────────
+@kanban_bp.route('/api/wms-articoli')
+def api_wms_articoli():
+    import os, requests as http_req
+    base = os.environ.get('MASTERLOGISTIC_URL', '').rstrip('/')
+    if not base:
+        return jsonify([])
+    try:
+        resp = http_req.get(f"{base}/api/articoli-lista", timeout=8)
+        if resp.status_code == 200:
+            return jsonify(resp.json())
+        return jsonify([])
+    except Exception:
+        return jsonify([])
