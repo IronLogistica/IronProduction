@@ -1,14 +1,11 @@
-from flask import Blueprint, render_template, jsonify, request, current_app
-from models import db, KanbanProdotto, KanbanGruppo, kanban_to_dict, log, get_kanban_gruppi
+from flask import Blueprint, render_template, jsonify, request
+from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
+                    kanban_to_dict, log, get_kanban_gruppi,
+                    registra_ciclo_se_necessario, calcola_analisi_takt, PIN_ADMIN)
 from datetime import datetime
-import re, os, requests as http_requests
+import re
 
 kanban_bp = Blueprint('kanban', __name__)
-
-# ── URL MasterLogistic (variabile d'ambiente Railway) ────────────────────────
-# Su Railway: Settings → Variables → MASTERLOGISTIC_URL = https://tuo-app.railway.app
-def _ml_url():
-    return os.environ.get('MASTERLOGISTIC_URL', '').rstrip('/')
 
 def _url_key_from_label(label):
     key = re.sub(r'[^\w\s⌀]', '', label).strip()
@@ -21,20 +18,43 @@ def _gruppo_by_url_key(url_key):
         return g, url_key.replace('_', ' ')
     return None, url_key
 
+def _wip_snapshot():
+    """Ritorna {fase: {'attivi':N, 'limit':M, 'pct':P, 'colore':C}} per la tabella WIP."""
+    fasi = FaseWip.query.order_by(FaseWip.id).all()
+    result = {}
+    for fw in fasi:
+        attivi = db.session.query(db.func.count(KanbanProdotto.id)).filter(
+            db.or_(
+                KanbanProdotto.in_vern > 0 if fw.fase == 'verniciatura' else db.false(),
+                KanbanProdotto.in_prod > 0 if fw.fase in ('saldatura','taglio','piega','sgola','finitura','collaudo') else db.false(),
+            )
+        ).scalar() or 0
+        lim = fw.wip_limit or 0
+        pct = round(attivi / lim * 100) if lim > 0 else 0
+        if lim == 0:       colore = 'grigio'
+        elif pct >= fw.soglia_rosso:  colore = 'rosso'
+        elif pct >= fw.soglia_giallo: colore = 'giallo'
+        else:              colore = 'verde'
+        result[fw.fase] = {
+            'label': fw.label, 'attivi': attivi, 'limit': lim,
+            'limite_giornaliero': fw.limite_giornaliero,
+            'pct': pct, 'colore': colore
+        }
+    return result
 
 # ── PAGINA KANBAN ────────────────────────────────────────────────────────────
 @kanban_bp.route('/kanban/<path:url_key>')
 def index(url_key):
     g, sheet_key = _gruppo_by_url_key(url_key)
     if g:
-        info = {'label': g.label, 'icona': g.icona, 'url_key': g.url_key}
+        info = {'label': g.label, 'icona': g.icona, 'url_key': g.url_key, 'id': g.id}
     else:
-        info = {'label': url_key.replace('_',' '), 'icona': '📋', 'url_key': url_key}
+        info = {'label': url_key.replace('_',' '), 'icona': '📋', 'url_key': url_key, 'id': None}
 
     prodotti = KanbanProdotto.query.filter(
-        db.or_(KanbanProdotto.sheet_key == sheet_key, KanbanProdotto.sheet_key == url_key)
+        db.or_(KanbanProdotto.sheet_key == sheet_key,
+               KanbanProdotto.sheet_key == url_key)
     ).order_by(KanbanProdotto.sort_order, KanbanProdotto.prodotto).all()
-
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
 
     tot    = len(prodotti)
@@ -42,7 +62,7 @@ def index(url_key):
     warn   = tot - ok
     valore = sum(p.val_pv for p in prodotti)
 
-    ml_connesso = bool(_ml_url())
+    wip = _wip_snapshot()
 
     return render_template('kanban/index.html',
         active=f'kb-{url_key}',
@@ -51,131 +71,10 @@ def index(url_key):
         info=info, url_key=url_key, sheet_key=sheet_key,
         prodotti=prodotti,
         stats={'tot': tot, 'ok': ok, 'warn': warn, 'valore': valore},
-        ml_connesso=ml_connesso)
+        wip=wip)
 
 
-# ── API: SCHEDA KANBAN COMPLETA (dati WMS in tempo reale) ───────────────────
-@kanban_bp.route('/api/kanban-scheda/<int:kid>')
-def api_scheda(kid):
-    """
-    Ritorna la scheda completa di un prodotto Kanban:
-    - dati locali IronProduction (programmi in corso, in verniciatura, ecc.)
-    - dati live da MasterLogistic WMS (stock, riservato clienti, ordini, date)
-    """
-    p = KanbanProdotto.query.get_or_404(kid)
-
-    # ── Dati locali ──
-    scheda = {
-        'id':           p.id,
-        'prodotto':     p.prodotto,
-        'sku_vern':     p.sku_verniciato or '',
-        'sku_grezzo':   p.sku_grezzo or '',
-        'lotto':        p.lotto,
-        'riserva':      p.riserva,
-        'in_prod':      p.in_prod,
-        'in_vern':      p.in_vern,
-        'lavorazioni':  p.lavorazioni or '',
-        'val_medio':    p.val_medio,
-        # WMS placeholders (riempiti sotto)
-        'wms_ok':           False,
-        'wms_errore':       '',
-        'stock_grezzi':     0,
-        'stock_verniciati': 0,
-        'riservato_clienti':0,
-        'ordinati':         0,
-        'saldo_contabile':  0,
-        'saldo_disponibile':0,
-        'saldo_dopo_vern':  0,
-        'saldo_grezzi_vern':0,
-        'ordini_clienti':   [],   # [{conferma, cliente, qta_ord, qta_evasa, qta_residua, data_consegna}]
-        'programmi':        [],   # [{nr, in_produzione, evasi, saldo}]  ← da IronProduction commesse future
-    }
-
-    # ── Dati da MasterLogistic ──
-    base = _ml_url()
-    if base:
-        try:
-            # Chiama la route dedicata che aggiungiamo a MasterLogistic
-            sku_v = p.sku_verniciato.strip() if p.sku_verniciato else ''
-            sku_g = p.sku_grezzo.strip()     if p.sku_grezzo     else ''
-
-            if sku_v or sku_g:
-                params = {}
-                if sku_v: params['sku_vern']  = sku_v
-                if sku_g: params['sku_grezzo'] = sku_g
-
-                resp = http_requests.get(
-                    f"{base}/api/kanban-stock",
-                    params=params,
-                    timeout=8
-                )
-                if resp.status_code == 200:
-                    wms = resp.json()
-                    scheda['wms_ok']             = True
-                    scheda['stock_verniciati']   = wms.get('stock_verniciati', 0)
-                    scheda['stock_grezzi']       = wms.get('stock_grezzi', 0)
-                    scheda['riservato_clienti']  = wms.get('riservato_clienti', 0)
-                    scheda['ordinati']           = wms.get('ordinati', 0)
-                    scheda['ordini_clienti']     = wms.get('ordini_clienti', [])
-
-                    # Calcoli saldi (come nello screenshot)
-                    vern  = scheda['stock_verniciati']
-                    grezz = scheda['stock_grezzi']
-                    ris   = scheda['riservato_clienti']
-                    iv    = p.in_vern
-
-                    scheda['saldo_contabile']   = vern - ris
-                    scheda['saldo_disponibile'] = vern - ris           # identico senza impegni interni
-                    scheda['saldo_dopo_vern']   = vern + iv - ris
-                    scheda['saldo_grezzi_vern'] = vern + grezz + iv - ris
-                else:
-                    scheda['wms_errore'] = f'HTTP {resp.status_code}'
-            else:
-                scheda['wms_errore'] = 'SKU non configurati — modifica il prodotto per collegarlo al WMS'
-        except http_requests.exceptions.ConnectionError:
-            scheda['wms_errore'] = 'MasterLogistic non raggiungibile'
-        except http_requests.exceptions.Timeout:
-            scheda['wms_errore'] = 'Timeout connessione MasterLogistic'
-        except Exception as e:
-            scheda['wms_errore'] = str(e)
-    else:
-        scheda['wms_errore'] = 'MASTERLOGISTIC_URL non configurata'
-
-    return jsonify(scheda)
-
-
-# ── API: aggiorna SKU sul prodotto ───────────────────────────────────────────
-@kanban_bp.route('/api/kanban/<int:kid>/sku', methods=['PUT'])
-def api_aggiorna_sku(kid):
-    try:
-        p = KanbanProdotto.query.get_or_404(kid)
-        d = request.get_json(force=True)
-        if 'sku_verniciato' in d: p.sku_verniciato = d['sku_verniciato'].strip()
-        if 'sku_grezzo'     in d: p.sku_grezzo     = d['sku_grezzo'].strip()
-        db.session.commit()
-        log(f'Kanban SKU: {p.prodotto} → vern={p.sku_verniciato} gr={p.sku_grezzo}')
-        return jsonify({'ok': True})
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'ok': False, 'error': str(e)}), 500
-
-
-# ── API: lista articoli WMS (per autocomplete SKU) ───────────────────────────
-@kanban_bp.route('/api/wms-articoli')
-def api_wms_articoli():
-    base = _ml_url()
-    if not base:
-        return jsonify([])
-    try:
-        resp = http_requests.get(f"{base}/api/articoli-lista", timeout=8)
-        if resp.status_code == 200:
-            return jsonify(resp.json())
-        return jsonify([])
-    except Exception:
-        return jsonify([])
-
-
-# ── API KANBAN PRODOTTI (CRUD standard) ──────────────────────────────────────
+# ── API KANBAN PRODOTTI ──────────────────────────────────────────────────────
 @kanban_bp.route('/api/kanban')
 def api_lista():
     categoria = request.args.get('categoria', '')
@@ -190,12 +89,16 @@ def api_lista():
 def api_aggiorna(kid):
     try:
         p = KanbanProdotto.query.get_or_404(kid)
+        stato_prima = p.stato
         d = request.get_json(force=True)
         for campo in ['lotto','riserva','riservato','grezzi','verniciati','in_vern','in_prod']:
             if campo in d: setattr(p, campo, int(d[campo]))
         if 'val_medio'   in d: p.val_medio   = float(d['val_medio'])
         if 'lavorazioni' in d: p.lavorazioni = d['lavorazioni']
         p.aggiornato_il = datetime.utcnow()
+        stato_dopo = p.stato
+        # ── Accumulazione dati cicli per Takt Time ──
+        registra_ciclo_se_necessario(p, stato_prima, stato_dopo)
         log(f'Kanban: aggiornato {p.prodotto}')
         db.session.commit()
         return jsonify({'ok': True, **kanban_to_dict(p)})
@@ -205,26 +108,31 @@ def api_aggiorna(kid):
 
 @kanban_bp.route('/api/kanban', methods=['POST'])
 def api_crea():
+    """Crea nuovo prodotto Kanban — richiede PIN autorizzativo."""
     try:
         d = request.get_json(force=True)
+        # Verifica PIN
+        if d.get('pin','') != PIN_ADMIN:
+            return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
         prodotto = d.get('prodotto','').strip()
         if not prodotto:
-            return jsonify({'ok': False, 'error': 'Prodotto obbligatorio'}), 400
+            return jsonify({'ok': False, 'error': 'Nome prodotto obbligatorio'}), 400
         p = KanbanProdotto(
-            prodotto=prodotto,      categoria=d.get('categoria',''),
-            sheet_key=d.get('sheet_key',''), icona=d.get('icona','📦'),
-            lotto=int(d.get('lotto',0)),         riserva=int(d.get('riserva',0)),
-            riservato=int(d.get('riservato',0)), grezzi=int(d.get('grezzi',0)),
-            verniciati=int(d.get('verniciati',0)),in_vern=int(d.get('in_vern',0)),
-            in_prod=int(d.get('in_prod',0)),     val_medio=float(d.get('val_medio',0)),
+            prodotto=prodotto,
+            categoria=d.get('categoria', d.get('sheet_key','').replace('_',' ')),
+            sheet_key=d.get('sheet_key',''),
+            icona=d.get('icona','📦'),
+            lotto=int(d.get('lotto',0)),
+            riserva=int(d.get('riserva',0)),
+            val_medio=float(d.get('val_medio',0)),
             lavorazioni=d.get('lavorazioni',''),
-            sku_verniciato=d.get('sku_verniciato',''),
-            sku_grezzo=d.get('sku_grezzo',''),
+            scorta_sicurezza=float(d.get('scorta_sicurezza',0.15)),
+            lead_time_giorni=float(d.get('lead_time_giorni',7.0)),
         )
         db.session.add(p)
-        log(f'Kanban: aggiunto prodotto {prodotto}')
+        log(f'Kanban: creato prodotto {prodotto} (PIN autorizzato)')
         db.session.commit()
-        return jsonify({'ok': True, 'id': p.id})
+        return jsonify({'ok': True, 'id': p.id, **kanban_to_dict(p)})
     except Exception as e:
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
@@ -237,6 +145,73 @@ def api_elimina(kid):
         db.session.delete(p)
         log(f'Kanban: eliminato {nome}')
         db.session.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ── API TAKT TIME / ANALISI CICLI ────────────────────────────────────────────
+@kanban_bp.route('/api/kanban/<int:kid>/analisi-takt')
+def api_analisi_takt(kid):
+    """Calcola e suggerisce Takt Time basandosi sui cicli accumulati."""
+    return jsonify(calcola_analisi_takt(kid))
+
+@kanban_bp.route('/api/kanban/<int:kid>/imposta-takt', methods=['POST'])
+def api_imposta_takt(kid):
+    """Imposta ufficialmente il Takt Time (richiede PIN)."""
+    try:
+        d = request.get_json(force=True)
+        if d.get('pin','') != PIN_ADMIN:
+            return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
+        p = KanbanProdotto.query.get_or_404(kid)
+        p.takt_time_min = float(d.get('takt_time_min', 0)) or None
+        if 'lead_time_giorni'  in d: p.lead_time_giorni  = float(d['lead_time_giorni'])
+        if 'scorta_sicurezza'  in d: p.scorta_sicurezza  = float(d['scorta_sicurezza'])
+        db.session.commit()
+        log(f'Kanban: Takt Time {p.prodotto} impostato a {p.takt_time_min} min/pz (PIN)')
+        return jsonify({'ok': True, 'takt_time_min': p.takt_time_min})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+@kanban_bp.route('/api/kanban/<int:kid>/cicli')
+def api_cicli(kid):
+    """Lista ultimi 50 cicli registrati per questo prodotto."""
+    cicli = KanbanCiclo.query.filter_by(kanban_id=kid)\
+        .order_by(KanbanCiclo.data_inizio.desc()).limit(50).all()
+    return jsonify([{
+        'id': c.id,
+        'data_inizio': c.data_inizio.strftime('%d/%m/%Y %H:%M') if c.data_inizio else '—',
+        'data_fine':   c.data_fine.strftime('%d/%m/%Y %H:%M')   if c.data_fine   else '—',
+        'lead_time_ore': c.lead_time_ore,
+        'qta_prodotta':  c.qta_prodotta,
+        'aperto': c.aperto,
+    } for c in cicli])
+
+
+# ── API WIP SNAPSHOT ─────────────────────────────────────────────────────────
+@kanban_bp.route('/api/wip')
+def api_wip():
+    return jsonify(_wip_snapshot())
+
+@kanban_bp.route('/api/wip', methods=['PUT'])
+def api_wip_aggiorna():
+    """Aggiorna limiti WIP per una fase (richiede PIN)."""
+    try:
+        d = request.get_json(force=True)
+        if d.get('pin','') != PIN_ADMIN:
+            return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
+        fase = d.get('fase','').strip()
+        fw = FaseWip.query.filter_by(fase=fase).first()
+        if not fw:
+            return jsonify({'ok': False, 'error': f'Fase "{fase}" non trovata'}), 404
+        if 'wip_limit'          in d: fw.wip_limit          = int(d['wip_limit'])
+        if 'limite_giornaliero' in d: fw.limite_giornaliero = int(d['limite_giornaliero'])
+        if 'soglia_giallo'      in d: fw.soglia_giallo      = int(d['soglia_giallo'])
+        if 'soglia_rosso'       in d: fw.soglia_rosso       = int(d['soglia_rosso'])
+        db.session.commit()
+        log(f'FaseWip: aggiornata {fase} limit={fw.wip_limit} giorn={fw.limite_giornaliero}')
         return jsonify({'ok': True})
     except Exception as e:
         db.session.rollback()
@@ -270,6 +245,27 @@ def api_gruppi_crea():
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
 
+@kanban_bp.route('/api/kanban-gruppi/<path:url_key>', methods=['PUT'])
+def api_gruppi_rinomina(url_key):
+    """Rinomina label e/o icona di un gruppo (richiede PIN)."""
+    try:
+        d = request.get_json(force=True)
+        if d.get('pin','') != PIN_ADMIN:
+            return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
+        g = KanbanGruppo.query.filter_by(url_key=url_key).first()
+        if not g:
+            return jsonify({'ok': False, 'error': 'Gruppo non trovato'}), 404
+        if 'label' in d and d['label'].strip():
+            g.label = d['label'].strip()
+        if 'icona' in d and d['icona'].strip():
+            g.icona = d['icona'].strip()
+        db.session.commit()
+        log(f'KanbanGruppo: rinominato "{url_key}" → "{g.label}"')
+        return jsonify({'ok': True, 'label': g.label, 'icona': g.icona})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
 @kanban_bp.route('/api/kanban-gruppi/<path:url_key>', methods=['DELETE'])
 def api_gruppi_elimina(url_key):
     try:
@@ -278,7 +274,8 @@ def api_gruppi_elimina(url_key):
             return jsonify({'ok': False, 'error': 'Gruppo non trovato'}), 404
         sheet_k    = url_key.replace('_', ' ')
         n_prodotti = KanbanProdotto.query.filter(
-            db.or_(KanbanProdotto.sheet_key == sheet_k, KanbanProdotto.sheet_key == url_key)
+            db.or_(KanbanProdotto.sheet_key == sheet_k,
+                   KanbanProdotto.sheet_key == url_key)
         ).count()
         if n_prodotti > 0:
             return jsonify({'ok': False,
