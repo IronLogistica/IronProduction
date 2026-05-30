@@ -5,83 +5,153 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>MES Carpenteria — MasterProduction v2</title>
 <style>
-  :root{--dark:#1b3d2f;--dark2:#16342a;--green:#27ae60;--green2:#219a52;--teal:#0e7d68;--orange:#e8760a;--yellow:#e6b800;--red:#c0392b;--blue:#2980b9;--grey:#7f8c8d;--bg:#f0f3f0;--white:#fff;--shadow:0 2px 8px rgba(0,0,0,.12);--radius:8px}
+  :root{
+    --dark:#0d1b2e;
+    --dark2:#0a1623;
+    --dark3:#112240;
+    --accent:#1e6fa5;
+    --accent2:#2589c7;
+    --accent-glow:rgba(30,111,165,.25);
+    --steel:#3a7ebf;
+    --steel2:#4d9fd6;
+    --orange:#e8760a;
+    --yellow:#e6b800;
+    --red:#c0392b;
+    --green:#1a9e5c;
+    --green2:#16875c;
+    --grey:#7f8c8d;
+    --bg:#0f1e35;
+    --bg2:#0c1828;
+    --surface:#132035;
+    --white:#ffffff;
+    --text:#c8ddf0;
+    --text-dim:#6b8aaa;
+    --border:rgba(30,111,165,.25);
+    --shadow:0 2px 12px rgba(0,0,0,.4);
+    --radius:8px;
+  }
   *{box-sizing:border-box;margin:0;padding:0}
-  body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:#1a1a1a}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--text)}
   .app{display:flex;height:100vh;overflow:hidden}
-  .sidebar{width:220px;min-width:200px;background:var(--dark);color:#fff;display:flex;flex-direction:column;overflow-y:auto;box-shadow:3px 0 10px rgba(0,0,0,.3)}
-  .sidebar-logo{padding:16px 14px;background:var(--dark2);border-bottom:2px solid var(--green);font-size:13px;font-weight:700;letter-spacing:.5px}
-  .sidebar-logo .logo-icon{font-size:22px}.sidebar-logo .logo-title{color:#7dcea0;font-size:11px}
+
+  /* ── SIDEBAR ── */
+  .sidebar{width:224px;min-width:200px;background:var(--dark);color:#fff;display:flex;flex-direction:column;overflow-y:auto;box-shadow:3px 0 16px rgba(0,0,0,.5);border-right:1px solid var(--border)}
+  .sidebar-logo{padding:16px 14px 12px;background:var(--dark2);border-bottom:2px solid var(--accent);font-size:13px;font-weight:700;letter-spacing:.5px}
+  .sidebar-logo .logo-icon{font-size:22px}
+  .sidebar-logo .logo-title{color:var(--steel2);font-size:11px;margin-top:2px}
   .nav-group{padding:10px 0 4px}
-  .nav-group-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:#5d8a73;padding:0 14px 4px}
-  .nav-item{display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:12px;transition:all .15s;color:#b2d8c5;border-left:3px solid transparent;text-decoration:none}
-  .nav-item:hover{background:rgba(255,255,255,.07);color:#fff}
-  .nav-item.active{background:var(--green2);color:#fff;border-left-color:#7dcea0;font-weight:600}
+  .nav-group-header{display:flex;align-items:center;justify-content:space-between;padding:0 10px 4px 14px}
+  .nav-group-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);font-weight:700}
+  .nav-group-actions{display:flex;gap:4px;opacity:0;transition:opacity .2s}
+  .nav-group:hover .nav-group-actions{opacity:1}
+  .nav-group-btn{width:20px;height:20px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;font-size:13px;display:flex;align-items:center;justify-content:center;transition:all .15s;padding:0;line-height:1}
+  .nav-group-btn:hover{background:var(--accent-glow);color:var(--steel2);border-color:var(--accent)}
+  .nav-group-btn.btn-del-group{color:#c0392b88;border-color:#c0392b33}
+  .nav-group-btn.btn-del-group:hover{background:rgba(192,57,43,.15);color:var(--red);border-color:var(--red)}
+  .nav-group-btn.btn-del-group.disabled{opacity:.2;pointer-events:none;cursor:not-allowed}
+  .nav-item{display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:12px;transition:all .15s;color:#8ab4d0;border-left:3px solid transparent;text-decoration:none}
+  .nav-item:hover{background:rgba(30,111,165,.12);color:#cce0f5}
+  .nav-item.active{background:rgba(30,111,165,.22);color:#fff;border-left-color:var(--steel2);font-weight:600}
   .nav-item .nav-icon{font-size:15px}
+
+  /* ── MAIN ── */
   .main{flex:1;overflow-y:auto;display:flex;flex-direction:column}
-  .topbar{background:var(--dark);color:#fff;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 8px rgba(0,0,0,.2);flex-shrink:0;position:sticky;top:0;z-index:100}
-  .topbar-title{font-size:16px;font-weight:700}.topbar-date{font-size:11px;color:#7dcea0}
-  .topbar-badge{background:var(--green);color:#fff;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600}
+  .topbar{background:var(--dark2);color:#fff;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 12px rgba(0,0,0,.4);flex-shrink:0;position:sticky;top:0;z-index:100;border-bottom:1px solid var(--border)}
+  .topbar-title{font-size:16px;font-weight:700;color:#e0eefc}.topbar-date{font-size:11px;color:var(--text-dim)}
+  .topbar-badge{background:var(--accent);color:#fff;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600}
   .content{padding:20px 24px;flex:1}
+
+  /* ── TABLES ── */
+  .mon-section{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px;border:1px solid var(--border)}
+  .section-hdr{padding:10px 16px;font-size:13px;font-weight:700;letter-spacing:.3px;color:#fff;display:flex;align-items:center;gap:6px}
+  .lavorazione-hdr{background:linear-gradient(135deg,#b35c08,#e8760a)}
+  .da_iniziare-hdr{background:linear-gradient(135deg,#9a7a00,#c9a800);color:#fff!important}
+  .in_attesa-hdr{background:linear-gradient(135deg,#8a2520,#c0392b)}
+  .in_saldatura-hdr{background:linear-gradient(135deg,#0a4e5c,#0e6d7d)}
+  .postazione-hdr{background:linear-gradient(135deg,#1a5085,#1e6fa5)}
+  .terminati-hdr{background:linear-gradient(135deg,#3a4a55,#5a7080)}
+  .mon-table{width:100%;border-collapse:collapse;font-size:12px}
+  .mon-table th{background:var(--dark3);color:var(--steel2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:8px 6px;border-bottom:2px solid var(--border);text-align:center}
+  .mon-table td{padding:7px 6px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
+  .mon-table tr:hover td{background:rgba(30,111,165,.07)}.mon-table tr:last-child td{border-bottom:none}
+
+  /* ── KANBAN TABLE ── */
+  .kanban-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  .kstat{background:var(--surface);border-radius:var(--radius);padding:12px 18px;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;min-width:120px;flex:1;border-top:3px solid var(--grey);border:1px solid var(--border)}
+  .kstat-total{border-top:3px solid var(--accent)}.kstat-ok{border-top:3px solid var(--green)}.kstat-warn{border-top:3px solid var(--red)}.kstat-val{border-top:3px solid var(--steel)}
+  .kstat-num{font-size:22px;font-weight:800;color:#e0eefc}.kstat-lbl{font-size:11px;color:var(--text-dim);margin-top:2px}
+  .kanban-table{width:100%;border-collapse:collapse;font-size:12px;min-width:900px}
+  .kanban-table th{background:var(--dark2);color:var(--steel2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:9px 8px;text-align:center;position:sticky;top:0;z-index:10;border-bottom:2px solid var(--border)}
+  .kanban-table td{padding:8px 8px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
+  .kanban-table tr:hover td{background:rgba(30,111,165,.08)}.kanban-table tr:last-child td{border-bottom:none}
+  td.editable{cursor:pointer;border-radius:4px;transition:background .15s}
+  td.editable:hover{background:rgba(30,111,165,.18)!important}
+  td.editing{padding:0!important}
+  td.editing input{width:100%;padding:7px 8px;border:2px solid var(--accent2);border-radius:4px;font-size:12px;font-weight:600;text-align:right;font-family:monospace;outline:none;background:#0d2040;color:#fff}
+
+  /* ── BADGES ── */
+  .badge{display:inline-block;padding:3px 8px;border-radius:12px;font-size:10px;font-weight:700;white-space:nowrap}
+  .badge-warn{background:rgba(192,57,43,.2);color:#f0786a;border:1px solid rgba(192,57,43,.4)}
+  .badge-ok{background:rgba(26,158,92,.15);color:#5debb0;border:1px solid rgba(26,158,92,.35)}
+  .badge-prod{background:rgba(30,111,165,.2);color:var(--steel2);border:1px solid rgba(30,111,165,.4)}
+
+  /* ── NUMBERS ── */
+  .phase{display:inline-flex;align-items:center;justify-content:center;width:28px;height:22px;border-radius:4px;font-size:14px;cursor:pointer;transition:transform .1s}
+  .phase:hover{transform:scale(1.15)}.phase.done{background:rgba(26,158,92,.2)}.phase.wip{background:rgba(232,118,10,.2)}
+  .phase.todo{background:rgba(30,111,165,.2)}.phase.na{background:rgba(255,255,255,.05);color:#555;font-size:12px}.phase.nd{background:rgba(255,255,255,.03);color:#333}
+  .prio{display:inline-flex;align-items:center;justify-content:center;width:28px;height:22px;border-radius:4px;font-weight:700;font-size:12px}
+  .prio-warn{background:rgba(230,184,0,.2);color:#f0c040}.prio-num{background:rgba(30,111,165,.2);color:var(--steel2)}
+  .pct-bar{position:relative;width:70px;height:14px;background:rgba(255,255,255,.06);border-radius:7px;overflow:hidden;display:inline-flex;align-items:center}
+  .pct-fill{position:absolute;left:0;top:0;height:100%;background:linear-gradient(90deg,var(--accent),var(--steel2));border-radius:7px}
+  .pct-bar span{position:relative;z-index:1;font-size:9px;font-weight:700;width:100%;text-align:center;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+  .num{text-align:right;font-family:monospace;font-weight:600;font-size:12px}
+  .num-neg{color:#f07070}.num-pos{color:var(--steel2)}
+  .comm-id{font-size:10px;color:var(--text-dim);white-space:nowrap}.codice{font-weight:700;font-size:12px;white-space:nowrap}
+  .descr-td{font-size:11px;color:var(--text-dim);max-width:180px}
+  .lav-td{font-size:10px;color:var(--text-dim)}.prod-name{font-weight:700;color:#cce0f5;font-size:12px}
+  .modello{font-weight:700}.fatturato{color:var(--steel2);font-weight:800}
+
+  /* ── TOOLBAR / BUTTONS ── */
+  .page-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .page-title{font-size:18px;font-weight:800;color:#e0eefc;flex:1}
+  .btn{padding:7px 16px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:700;transition:all .15s;display:inline-flex;align-items:center;gap:5px;text-decoration:none}
+  .btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent2)}
+  .btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#a93226}
+  .btn-ghost{background:rgba(255,255,255,.05);color:#b0ccdd;border:1px solid var(--border)}.btn-ghost:hover{background:rgba(30,111,165,.15);color:#fff}
+  .search-box{padding:7px 12px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;outline:none;width:200px;transition:border .15s;background:var(--dark3);color:var(--text)}
+  .search-box:focus{border-color:var(--accent2)}
+  .search-box::placeholder{color:var(--text-dim)}
+
+  /* ── KPI ── */
+  .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+  .kpi-card{background:var(--surface);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);border:1px solid var(--border);border-left:4px solid var(--accent);display:flex;flex-direction:column;gap:4px}
+  .kpi-card.warn{border-left-color:var(--red)}.kpi-card.info{border-left-color:var(--steel)}.kpi-card.accent{border-left-color:var(--orange)}
+  .kpi-value{font-size:28px;font-weight:900;color:#e0eefc}.kpi-label{font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px}
+
+  /* ── MODAL GRUPPI ── */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:500;display:none;align-items:center;justify-content:center}
+  .modal-overlay.open{display:flex}
+  .modal-box{background:var(--dark);border:1px solid var(--border);border-radius:12px;padding:24px;width:380px;max-width:95vw;box-shadow:0 20px 60px rgba(0,0,0,.6)}
+  .modal-box h3{font-size:15px;font-weight:700;color:#e0eefc;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+  .modal-input{width:100%;padding:9px 12px;background:var(--dark3);border:1.5px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;outline:none;transition:border .15s}
+  .modal-input:focus{border-color:var(--accent2)}
+  .modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  .modal-label{font-size:11px;color:var(--text-dim);margin-bottom:6px;display:block;text-transform:uppercase;letter-spacing:.5px}
+  .modal-hint{font-size:11px;color:var(--text-dim);margin-top:10px;padding:8px 10px;background:rgba(30,111,165,.1);border-radius:4px;border-left:3px solid var(--accent)}
+
+  /* ── TOAST ── */
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--dark3);color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);border:1px solid var(--border);z-index:9999;transform:translateY(60px);opacity:0;transition:all .3s}
+  .toast.show{transform:translateY(0);opacity:1}
+
+  /* ── SCROLLBAR ── */
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-track{background:var(--bg2)}
+  ::-webkit-scrollbar-thumb{background:var(--accent);border-radius:3px}
+  ::-webkit-scrollbar-thumb:hover{background:var(--accent2)}
+
   .monitor-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media(max-width:1100px){.monitor-grid{grid-template-columns:1fr}}
-  .mon-section{background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px}
-  .section-hdr{padding:10px 16px;font-size:13px;font-weight:700;letter-spacing:.3px;color:#fff;display:flex;align-items:center;gap:6px}
-  .lavorazione-hdr{background:linear-gradient(135deg,#e8760a,#d4650a)}
-  .da_iniziare-hdr{background:linear-gradient(135deg,#c9a800,#e6b800);color:#333!important}
-  .in_attesa-hdr{background:linear-gradient(135deg,#a93226,#c0392b)}
-  .in_saldatura-hdr{background:linear-gradient(135deg,#0a6e5c,#0e7d68)}
-  .postazione-hdr{background:linear-gradient(135deg,#2471a3,#2980b9)}
-  .terminati-hdr{background:linear-gradient(135deg,#616a6b,#7f8c8d)}
-  .mon-table{width:100%;border-collapse:collapse;font-size:12px}
-  .mon-table th{background:#f8faf8;color:var(--dark);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:8px 6px;border-bottom:2px solid #c8e6c9;text-align:center}
-  .mon-table td{padding:7px 6px;border-bottom:1px solid #e8f0e8;vertical-align:middle}
-  .mon-table tr:hover td{background:#f0faf0}.mon-table tr:last-child td{border-bottom:none}
-  .phase{display:inline-flex;align-items:center;justify-content:center;width:28px;height:22px;border-radius:4px;font-size:14px;cursor:pointer;transition:transform .1s}
-  .phase:hover{transform:scale(1.15)}.phase.done{background:#e8f8ef}.phase.wip{background:#fff3e0}
-  .phase.todo{background:#e8f0ff}.phase.na{background:#f5f5f5;color:#aaa;font-size:12px}.phase.nd{background:#f5f5f5;color:#ccc}
-  .prio{display:inline-flex;align-items:center;justify-content:center;width:28px;height:22px;border-radius:4px;font-weight:700;font-size:12px}
-  .prio-warn{background:#fff176;color:#e65100}.prio-num{background:#c8e6c9;color:var(--dark)}
-  .pct-bar{position:relative;width:70px;height:14px;background:#e0e0e0;border-radius:7px;overflow:hidden;display:inline-flex;align-items:center}
-  .pct-fill{position:absolute;left:0;top:0;height:100%;background:var(--green);border-radius:7px}
-  .pct-bar span{position:relative;z-index:1;font-size:9px;font-weight:700;width:100%;text-align:center;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.4)}
-  .num{text-align:right;font-family:monospace;font-weight:600;font-size:12px}
-  .num-neg{color:var(--red)}.num-pos{color:var(--teal)}
-  .comm-id{font-size:10px;color:#666;white-space:nowrap}.codice{font-weight:700;font-size:12px;white-space:nowrap}
-  .descr-td{font-size:11px;color:#444;max-width:180px}
-  .kanban-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
-  .kstat{background:var(--white);border-radius:var(--radius);padding:12px 18px;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;min-width:120px;flex:1;border-top:3px solid var(--grey)}
-  .kstat-total{border-top-color:var(--dark)}.kstat-ok{border-top-color:var(--green)}.kstat-warn{border-top-color:var(--red)}.kstat-val{border-top-color:var(--teal)}
-  .kstat-num{font-size:22px;font-weight:800;color:var(--dark)}.kstat-lbl{font-size:11px;color:#666;margin-top:2px}
-  .kanban-table{width:100%;border-collapse:collapse;font-size:12px;min-width:900px}
-  .kanban-table th{background:var(--dark);color:#7dcea0;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:9px 8px;text-align:center;position:sticky;top:0;z-index:10}
-  .kanban-table td{padding:8px 8px;border-bottom:1px solid #e0ece4;vertical-align:middle}
-  .kanban-table tr:hover td{background:#f0faf4}.kanban-table tr:last-child td{border-bottom:none}
-  td.editable{cursor:pointer;border-radius:4px;transition:background .15s}
-  td.editable:hover{background:#fff9c4!important}
-  td.editing{padding:0!important}
-  td.editing input{width:100%;padding:7px 8px;border:2px solid var(--green);border-radius:4px;font-size:12px;font-weight:600;text-align:right;font-family:monospace;outline:none;background:#fffde7}
-  .badge{display:inline-block;padding:3px 8px;border-radius:12px;font-size:10px;font-weight:700;white-space:nowrap}
-  .badge-warn{background:#fde8e8;color:#c0392b;border:1px solid #f5b7b1}
-  .badge-ok{background:#e8f8ef;color:#1a7a44;border:1px solid #a9dfbf}
-  .badge-prod{background:#e8f0ff;color:#2471a3;border:1px solid #aed6f1}
-  .lav-td{font-size:10px;color:#666}.prod-name{font-weight:700;color:var(--dark);font-size:12px}
-  .modello{font-weight:700}.fatturato{color:var(--teal);font-weight:800}
-  .page-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
-  .page-title{font-size:18px;font-weight:800;color:var(--dark);flex:1}
-  .btn{padding:7px 16px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:700;transition:all .15s;display:inline-flex;align-items:center;gap:5px;text-decoration:none}
-  .btn-primary{background:var(--green);color:#fff}.btn-primary:hover{background:var(--green2)}
-  .btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#a93226}
-  .btn-ghost{background:#fff;color:var(--dark);border:1px solid #c8e6c9}.btn-ghost:hover{background:#e8f8ef}
-  .search-box{padding:7px 12px;border:1.5px solid #c8e6c9;border-radius:6px;font-size:12px;outline:none;width:200px;transition:border .15s}
-  .search-box:focus{border-color:var(--green)}
-  .toast{position:fixed;bottom:24px;right:24px;background:var(--dark);color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 16px rgba(0,0,0,.3);z-index:9999;transform:translateY(60px);opacity:0;transition:all .3s}
-  .toast.show{transform:translateY(0);opacity:1}
-  .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
-  .kpi-card{background:var(--white);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);border-left:4px solid var(--green);display:flex;flex-direction:column;gap:4px}
-  .kpi-card.warn{border-left-color:var(--red)}.kpi-card.info{border-left-color:var(--blue)}.kpi-card.accent{border-left-color:var(--orange)}
-  .kpi-value{font-size:28px;font-weight:900;color:var(--dark)}.kpi-label{font-size:11px;color:#666;text-transform:uppercase;letter-spacing:.5px}
-  ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:#f0f3f0}::-webkit-scrollbar-thumb{background:#a8d5b5;border-radius:3px}
+
   @media print{.sidebar,.topbar{display:none!important}.main{overflow:visible}.content{padding:0}}
 </style>
 </head>
@@ -90,37 +160,74 @@
 <nav class="sidebar">
   <div class="sidebar-logo">
     <div class="logo-icon">🏗️</div>
-    <div style="font-size:13px;margin:4px 0 2px">MES CARPENTERIA</div>
+    <div style="font-size:13px;margin:4px 0 2px;color:#e0eefc">MES CARPENTERIA</div>
     <div class="logo-title">MasterProduction v2.0</div>
   </div>
+
   <div class="nav-group">
-    <div class="nav-group-label">Produzione</div>
+    <div class="nav-group-header">
+      <div class="nav-group-label">Produzione</div>
+    </div>
     <a class="nav-item {% if active=='monitor' %}active{% endif %}" href="/monitor"><span class="nav-icon">📊</span> Monitor Segatrice</a>
     <a class="nav-item {% if active=='kpi' %}active{% endif %}" href="/kpi"><span class="nav-icon">📈</span> Cruscotto KPI</a>
   </div>
-  <div class="nav-group">
-    <div class="nav-group-label">Kanban Prodotti</div>
-    <a class="nav-item {% if active=='kb-1_Cavalletti' %}active{% endif %}" href="/kanban/1_Cavalletti"><span class="nav-icon">🏗️</span> Cavalletti</a>
-    <a class="nav-item {% if active=='kb-2_Transenne' %}active{% endif %}" href="/kanban/2_Transenne"><span class="nav-icon">🚧</span> Transenne</a>
-    <a class="nav-item {% if active=='kb-3_Archetti' %}active{% endif %}" href="/kanban/3_Archetti"><span class="nav-icon">🔲</span> Archetti</a>
-    <a class="nav-item {% if active=='kb-4_Paletti_48' %}active{% endif %}" href="/kanban/4_Paletti_48"><span class="nav-icon">📍</span> Paletti ⌀48</a>
-    <a class="nav-item {% if active=='kb-5_Paletti_60' %}active{% endif %}" href="/kanban/5_Paletti_60"><span class="nav-icon">📌</span> Paletti ⌀60</a>
-    <a class="nav-item {% if active=='kb-6_Paletti_Vari' %}active{% endif %}" href="/kanban/6_Paletti_Vari"><span class="nav-icon">🗂️</span> Paletti Vari</a>
-    <a class="nav-item {% if active=='kb-7_Parapetti' %}active{% endif %}" href="/kanban/7_Parapetti"><span class="nav-icon">🛡️</span> Parapetti</a>
-    <a class="nav-item {% if active=='kb-8_Rastrelliere' %}active{% endif %}" href="/kanban/8_Rastrelliere"><span class="nav-icon">🚲</span> Rastrelliere</a>
-    <a class="nav-item {% if active=='kb-9_Tubi_Scanalati' %}active{% endif %}" href="/kanban/9_Tubi_Scanalati"><span class="nav-icon">🔩</span> Tubi Scanalati</a>
-    <a class="nav-item {% if active=='kb-10_Staffe_e_NJ' %}active{% endif %}" href="/kanban/10_Staffe_e_NJ"><span class="nav-icon">🔧</span> Staffe e NJ</a>
-    <a class="nav-item {% if active=='kb-11_Barriere' %}active{% endif %}" href="/kanban/11_Barriere"><span class="nav-icon">🚦</span> Barriere</a>
-    <a class="nav-item {% if active=='kb-12_Varie_Altre_Produzioni' %}active{% endif %}" href="/kanban/12_Varie_Altre_Produzioni"><span class="nav-icon">📦</span> Varie Altre</a>
-    <a class="nav-item {% if active=='kb-Pannelli_Transenne' %}active{% endif %}" href="/kanban/Pannelli_Transenne"><span class="nav-icon">🪟</span> Pannelli</a>
+
+  <!-- KANBAN GRUPPI con pulsanti + e - -->
+  <div class="nav-group" id="nav-kanban-gruppi">
+    <div class="nav-group-header">
+      <div class="nav-group-label">Kanban Gruppi</div>
+      <div class="nav-group-actions">
+        <button class="nav-group-btn" title="Aggiungi gruppo" onclick="openModalAggiungiGruppo()">＋</button>
+        <button class="nav-group-btn btn-del-group" id="btn-del-active-group" title="Elimina gruppo attivo" onclick="eliminaGruppoAttivo()">✕</button>
+      </div>
+    </div>
+    {% for g in kanban_gruppi %}
+    <a class="nav-item {% if active=='kb-'+g.url_key %}active{% endif %}" href="/kanban/{{ g.url_key }}" data-url-key="{{ g.url_key }}" data-has-prodotti="{{ g.n_prodotti }}">
+      <span class="nav-icon">{{ g.icona }}</span> {{ g.label }}
+      {% if g.n_prodotti > 0 %}<span style="margin-left:auto;font-size:9px;background:rgba(30,111,165,.3);border-radius:8px;padding:1px 5px;color:var(--steel2)">{{ g.n_prodotti }}</span>{% endif %}
+    </a>
+    {% endfor %}
   </div>
+
   <div class="nav-group">
-    <div class="nav-group-label">Commesse</div>
+    <div class="nav-group-header">
+      <div class="nav-group-label">Commesse</div>
+    </div>
     <a class="nav-item {% if active=='commesse' %}active{% endif %}" href="/commesse"><span class="nav-icon">📋</span> Gestione Commesse</a>
     <a class="nav-item {% if active=='terzisti' %}active{% endif %}" href="/terzisti"><span class="nav-icon">🔨</span> Terzisti</a>
     <a class="nav-item {% if active=='magazzino' %}active{% endif %}" href="/magazzino"><span class="nav-icon">📦</span> Magazzino</a>
   </div>
 </nav>
+
+<!-- MODAL AGGIUNGI GRUPPO -->
+<div class="modal-overlay" id="modalAggiungi">
+  <div class="modal-box">
+    <h3>➕ Nuovo Gruppo Kanban</h3>
+    <label class="modal-label">Nome gruppo</label>
+    <input class="modal-input" id="inputNomeGruppo" type="text" placeholder="es. Cancelli, Scale, Ringhiere..." maxlength="80">
+    <label class="modal-label" style="margin-top:12px">Icona (emoji)</label>
+    <input class="modal-input" id="inputIconaGruppo" type="text" placeholder="🔲" maxlength="4" value="📦" style="width:80px">
+    <div class="modal-hint">💡 Il gruppo sarà vuoto. Potrai eliminarlo finché non contiene prodotti Kanban.</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModalAggiungi()">Annulla</button>
+      <button class="btn btn-primary" onclick="creaGruppo()">✅ Crea gruppo</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL CONFERMA ELIMINA -->
+<div class="modal-overlay" id="modalElimina">
+  <div class="modal-box">
+    <h3>🗑️ Elimina gruppo</h3>
+    <p style="font-size:13px;color:var(--text);margin-bottom:12px">Vuoi eliminare il gruppo <strong id="nomeGruppoDaEliminare" style="color:#e0eefc"></strong>?</p>
+    <div class="modal-hint" style="border-left-color:var(--red);background:rgba(192,57,43,.1)">⚠️ Questa azione è irreversibile. Possibile solo se il gruppo è vuoto.</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModalElimina()">Annulla</button>
+      <button class="btn btn-danger" onclick="confermEliminaGruppo()">🗑️ Elimina</button>
+    </div>
+  </div>
+</div>
+
 <div class="main">
   <div class="topbar">
     <div>
@@ -137,10 +244,82 @@
   </div>
 </div>
 </div>
+
 <div class="toast" id="toast"></div>
+
 <script>
 let _tt;
-function showToast(msg){const t=document.getElementById('toast');t.textContent=msg;t.classList.add('show');clearTimeout(_tt);_tt=setTimeout(()=>t.classList.remove('show'),2500)}
+function showToast(msg,err){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.style.borderColor=err?'var(--red)':'var(--border)';
+  t.classList.add('show');
+  clearTimeout(_tt);_tt=setTimeout(()=>t.classList.remove('show'),2800);
+}
+
+// ── Stato gruppo attivo ──────────────────────────────────────────────────
+const activeItem = document.querySelector('.nav-item.active[data-url-key]');
+const activeUrlKey = activeItem ? activeItem.dataset.urlKey : null;
+const activeHasProdotti = activeItem ? parseInt(activeItem.dataset.hasProdotti||'0') : 0;
+const btnDel = document.getElementById('btn-del-active-group');
+if(btnDel){
+  if(!activeUrlKey || activeHasProdotti > 0){
+    btnDel.classList.add('disabled');
+    btnDel.title = activeHasProdotti > 0 ? 'Non eliminabile: contiene prodotti Kanban' : 'Nessun gruppo selezionato';
+  }
+}
+
+// ── MODAL AGGIUNGI ───────────────────────────────────────────────────────
+function openModalAggiungiGruppo(){
+  document.getElementById('inputNomeGruppo').value='';
+  document.getElementById('inputIconaGruppo').value='📦';
+  document.getElementById('modalAggiungi').classList.add('open');
+  setTimeout(()=>document.getElementById('inputNomeGruppo').focus(),100);
+}
+function closeModalAggiungi(){document.getElementById('modalAggiungi').classList.remove('open');}
+
+function creaGruppo(){
+  const nome = document.getElementById('inputNomeGruppo').value.trim();
+  const icona = document.getElementById('inputIconaGruppo').value.trim() || '📦';
+  if(!nome){showToast('⚠️ Inserisci un nome per il gruppo',true);return;}
+  fetch('/api/kanban-gruppi',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({label:nome,icona:icona})
+  }).then(r=>r.json()).then(d=>{
+    if(d.ok){
+      showToast('✅ Gruppo "'+nome+'" creato');
+      setTimeout(()=>location.reload(),700);
+    }else{showToast('❌ '+(d.error||'Errore'),true);}
+  }).catch(()=>showToast('❌ Errore di rete',true));
+}
+
+// ── MODAL ELIMINA ────────────────────────────────────────────────────────
+function eliminaGruppoAttivo(){
+  if(!activeUrlKey || activeHasProdotti > 0) return;
+  document.getElementById('nomeGruppoDaEliminare').textContent = activeItem.textContent.trim();
+  document.getElementById('modalElimina').classList.add('open');
+}
+function closeModalElimina(){document.getElementById('modalElimina').classList.remove('open');}
+
+function confermEliminaGruppo(){
+  if(!activeUrlKey) return;
+  fetch('/api/kanban-gruppi/'+encodeURIComponent(activeUrlKey),{method:'DELETE'})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){
+      showToast('🗑️ Gruppo eliminato');
+      setTimeout(()=>window.location.href='/',900);
+    }else{showToast('❌ '+(d.error||'Errore'),true);}
+  }).catch(()=>showToast('❌ Errore di rete',true));
+}
+
+// Chiudi modal clic su overlay
+document.querySelectorAll('.modal-overlay').forEach(ov=>{
+  ov.addEventListener('click',e=>{if(e.target===ov){ov.classList.remove('open');}});
+});
+document.addEventListener('keydown',e=>{if(e.key==='Escape'){document.querySelectorAll('.modal-overlay.open').forEach(m=>m.classList.remove('open'));}});
+document.getElementById('inputNomeGruppo')?.addEventListener('keydown',e=>{if(e.key==='Enter')creaGruppo();});
+
 {% block scripts %}{% endblock %}
 </script>
 </body>
