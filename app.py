@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from flask import Flask, redirect, url_for
 from config import Config
-from models import db, init_db
+from models import db, init_db, get_kanban_gruppi
 
 def create_app():
     app = Flask(__name__)
@@ -25,7 +25,11 @@ def create_app():
 
     @app.context_processor
     def inject_globals():
-        return {'now': datetime.now().strftime('%d/%m/%y')}
+        try:
+            gruppi = get_kanban_gruppi()
+        except Exception:
+            gruppi = []
+        return {'now': datetime.now().strftime('%d/%m/%y'), 'kanban_gruppi': gruppi}
 
     @app.route('/')
     def index():
