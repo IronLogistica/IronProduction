@@ -162,6 +162,16 @@ class KanbanProdotto(db.Model):
     def val_pv(self):
         return round((self.saldo_contabile + self.in_prod) * self.val_medio, 2)
 
+class KanbanGruppo(db.Model):
+    """Gruppi Kanban — sostituisce il dizionario CATEGORIE hard-coded."""
+    __tablename__ = "kanban_gruppi"
+    id = db.Column(db.Integer, primary_key=True)
+    label = db.Column(db.String(100), nullable=False)
+    icona = db.Column(db.String(10), default="📦")
+    url_key = db.Column(db.String(120), nullable=False, unique=True)
+    sort_order = db.Column(db.Integer, default=0)
+    creato_il = db.Column(db.DateTime, default=datetime.utcnow)
+
 class RigaMonitor(db.Model):
     """Monitor segatrice — una riga per commessa/articolo in lavorazione."""
     __tablename__ = "monitor_righe"
@@ -267,6 +277,37 @@ def calcola_kpi():
         'in_saldatura_mon': RigaMonitor.query.filter_by(sezione='in_saldatura').count(),
     }
 
+GRUPPI_DEFAULT = [
+    {'label':'Cavalletti','icona':'🏗️','url_key':'1_Cavalletti','sort_order':1},
+    {'label':'Transenne','icona':'🚧','url_key':'2_Transenne','sort_order':2},
+    {'label':'Archetti','icona':'🔲','url_key':'3_Archetti','sort_order':3},
+    {'label':'Paletti ⌀48','icona':'📍','url_key':'4_Paletti_48','sort_order':4},
+    {'label':'Paletti ⌀60','icona':'📌','url_key':'5_Paletti_60','sort_order':5},
+    {'label':'Paletti Vari','icona':'🗂️','url_key':'6_Paletti_Vari','sort_order':6},
+    {'label':'Parapetti','icona':'🛡️','url_key':'7_Parapetti','sort_order':7},
+    {'label':'Rastrelliere','icona':'🚲','url_key':'8_Rastrelliere','sort_order':8},
+    {'label':'Tubi Scanalati','icona':'🔩','url_key':'9_Tubi_Scanalati','sort_order':9},
+    {'label':'Staffe e NJ','icona':'🔧','url_key':'10_Staffe_e_NJ','sort_order':10},
+    {'label':'Barriere','icona':'🚦','url_key':'11_Barriere','sort_order':11},
+    {'label':'Varie Altre','icona':'📦','url_key':'12_Varie_Altre_Produzioni','sort_order':12},
+    {'label':'Pannelli','icona':'🪟','url_key':'Pannelli_Transenne','sort_order':13},
+]
+
+def get_kanban_gruppi():
+    """Ritorna tutti i gruppi ordinati, con n_prodotti calcolato."""
+    gruppi = KanbanGruppo.query.order_by(KanbanGruppo.sort_order, KanbanGruppo.label).all()
+    result = []
+    for g in gruppi:
+        # cerca sheet_key sia come url_key che come label originale
+        url_k = g.url_key
+        sheet_k = url_k.replace('_', ' ')  # es. 1_Cavalletti → 1 Cavalletti
+        n = KanbanProdotto.query.filter(
+            db.or_(KanbanProdotto.sheet_key == sheet_k, KanbanProdotto.sheet_key == url_k)
+        ).count()
+        result.append({'id': g.id, 'label': g.label, 'icona': g.icona,
+                       'url_key': g.url_key, 'n_prodotti': n})
+    return result
+
 def init_db():
     """Crea tabelle e applica migration sicure."""
     migs_pg = [
@@ -290,3 +331,11 @@ def init_db():
             except: db.session.rollback()
         try: db.session.commit()
         except: db.session.rollback()
+    # Seed gruppi default se tabella vuota
+    try:
+        if KanbanGruppo.query.count() == 0:
+            for g in GRUPPI_DEFAULT:
+                db.session.add(KanbanGruppo(**g))
+            db.session.commit()
+    except Exception:
+        db.session.rollback()
