@@ -168,6 +168,23 @@ class KanbanProdotto(db.Model):
         return "OK"
 
     @property
+    def n_cicli_chiusi(self):
+        try:
+            return KanbanCiclo.query.filter(
+                KanbanCiclo.kanban_id == self.id,
+                KanbanCiclo.data_fine.isnot(None)
+            ).count()
+        except Exception:
+            return 0
+
+    @property
+    def n_cicli(self):
+        try:
+            return KanbanCiclo.query.filter_by(kanban_id=self.id).count()
+        except Exception:
+            return 0
+
+    @property
     def buffer_pct(self):
         """Percentuale buffer: saldo / riserva × 100. None se riserva=0."""
         if self.riserva <= 0: return None
