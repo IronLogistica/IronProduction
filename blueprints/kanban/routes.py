@@ -19,26 +19,56 @@ def _gruppo_by_url_key(url_key):
     return None, url_key
 
 def _wip_snapshot():
-    """Ritorna {fase: {'attivi':N, 'limit':M, 'pct':P, 'colore':C}} per la tabella WIP."""
+    """
+    Ritorna {fase: {attivi, n_ordini, ore_stimate, limit, pct, colore}} per WIP Monitor.
+    - attivi     = N° articoli Kanban con quantità in quella fase
+    - n_ordini   = somma delle quantità (quanti pezzi totali in quella fase)
+    - ore_stimate= stima ore basata su takt_time_min medio dei prodotti in fase
+    """
     fasi = FaseWip.query.order_by(FaseWip.id).all()
     result = {}
     for fw in fasi:
-        attivi = db.session.query(db.func.count(KanbanProdotto.id)).filter(
-            db.or_(
-                KanbanProdotto.in_vern > 0 if fw.fase == 'verniciatura' else db.false(),
-                KanbanProdotto.in_prod > 0 if fw.fase in ('saldatura','taglio','piega','sgola','finitura','collaudo') else db.false(),
-            )
-        ).scalar() or 0
+        if fw.fase == 'collaudo':
+            continue  # Collaudo rimosso dal monitor
+        if fw.fase == 'verniciatura':
+            # Prodotti in trattamento esterno
+            prodotti_in_fase = KanbanProdotto.query.filter(KanbanProdotto.in_vern > 0).all()
+            n_ordini = sum(p.in_vern for p in prodotti_in_fase)
+        else:
+            # Prodotti in produzione (taglio, sgola, piega, saldatura, finitura)
+            prodotti_in_fase = KanbanProdotto.query.filter(KanbanProdotto.in_prod > 0).all()
+            n_ordini = sum(p.in_prod for p in prodotti_in_fase)
+
+        attivi = len(prodotti_in_fase)
+
+        # Stima ore: somma (qta * takt_time_min) / 60 per i prodotti con takt impostato
+        ore_stimate = None
+        ore_tot = 0.0
+        ha_takt = False
+        for p in prodotti_in_fase:
+            if p.takt_time_min and p.takt_time_min > 0:
+                qta = p.in_vern if fw.fase == 'verniciatura' else p.in_prod
+                ore_tot += (qta * p.takt_time_min) / 60.0
+                ha_takt = True
+        if ha_takt:
+            ore_stimate = round(ore_tot, 1)
+
         lim = fw.wip_limit or 0
         pct = round(attivi / lim * 100) if lim > 0 else 0
-        if lim == 0:       colore = 'grigio'
-        elif pct >= fw.soglia_rosso:  colore = 'rosso'
-        elif pct >= fw.soglia_giallo: colore = 'giallo'
-        else:              colore = 'verde'
+        if lim == 0:                      colore = 'grigio'
+        elif pct >= fw.soglia_rosso:      colore = 'rosso'
+        elif pct >= fw.soglia_giallo:     colore = 'giallo'
+        else:                             colore = 'verde'
+
         result[fw.fase] = {
-            'label': fw.label, 'attivi': attivi, 'limit': lim,
+            'label': fw.label,
+            'attivi': attivi,
+            'n_ordini': n_ordini,
+            'ore_stimate': ore_stimate,
+            'limit': lim,
             'limite_giornaliero': fw.limite_giornaliero,
-            'pct': pct, 'colore': colore
+            'pct': pct,
+            'colore': colore,
         }
     return result
 
