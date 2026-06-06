@@ -63,6 +63,7 @@
     <th title="Scheda WMS: stock, ordini clienti, evasi">📊 WMS</th>
     <th>Lavorazioni</th>
     <th>Valore P.V.</th>
+    <th title="Elimina o sposta" style="width:36px">⚙️</th>
   </tr></thead>
   <tbody>
   {% for p in prodotti %}
@@ -115,6 +116,9 @@
 
     <td class="lav-td lav-val">{{ p.lavorazioni or '' }}</td>
     <td class="num">{% if p.val_pv %}{{ "{:,.2f}".format(p.val_pv).replace(",",".") }} €{% else %}—{% endif %}</td>
+    <td style="text-align:center;padding:4px 2px">
+      <button class="btn-azioni" onclick="apriMenuAzioni(event, {{ p.id }}, '{{ p.prodotto|replace("\'","\\\'") }}')" title="Elimina / Sposta">⚙️</button>
+    </td>
   </tr>
   {% else %}
   <tr><td colspan="14" style="text-align:center;color:var(--text-dim);padding:36px;font-style:italic">
@@ -467,6 +471,175 @@
 .scheda-tbl tr:hover td{background:rgba(30,111,165,.06)}
 .scheda-tbl tfoot td{background:rgba(255,255,255,.03);font-weight:700;color:#e0eefc;border-top:2px solid var(--border)}
 </style>
+
+{# ══ MODAL: ELIMINA ARTICOLO ══ #}
+<div class="modal-overlay" id="modalElimina">
+<div class="modal-box" style="width:420px">
+  <div class="modal-header" style="background:rgba(240,112,112,.12);border-bottom:1px solid rgba(240,112,112,.3)">
+    <span style="font-weight:700;color:#f07070">🗑️ Elimina Articolo</span>
+    <button class="btn btn-ghost" style="padding:3px 12px;font-size:16px" onclick="closeModal('modalElimina')">✕</button>
+  </div>
+  <div class="modal-body">
+    <p style="color:var(--text);margin-bottom:14px">Stai per eliminare definitivamente:</p>
+    <div style="background:rgba(240,112,112,.08);border:1px solid rgba(240,112,112,.25);border-radius:8px;padding:12px 16px;margin-bottom:18px">
+      <strong id="eliminaNome" style="font-size:15px;color:#f07070"></strong>
+    </div>
+    <p style="color:var(--text-dim);font-size:12px;margin-bottom:16px">⚠️ Questa operazione è irreversibile. Inserisci il PIN di autorizzazione per confermare.</p>
+    <div class="pin-field">
+      <label>🔐 PIN Autorizzazione</label>
+      <input type="password" id="pinElimina" maxlength="6" placeholder="••••" style="letter-spacing:6px;font-size:18px;text-align:center">
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('modalElimina')">Annulla</button>
+    <button class="btn" style="background:#c0392b;color:#fff" onclick="confermaElimina()">🗑️ Elimina</button>
+  </div>
+</div>
+</div>
+
+{# ══ MODAL: SPOSTA ARTICOLO ══ #}
+<div class="modal-overlay" id="modalSposta">
+<div class="modal-box" style="width:460px">
+  <div class="modal-header">
+    <span style="font-weight:700">↗️ Sposta Articolo</span>
+    <button class="btn btn-ghost" style="padding:3px 12px;font-size:16px" onclick="closeModal('modalSposta')">✕</button>
+  </div>
+  <div class="modal-body">
+    <p style="color:var(--text);margin-bottom:6px">Articolo selezionato:</p>
+    <div style="background:rgba(30,111,165,.1);border:1px solid rgba(30,111,165,.3);border-radius:8px;padding:10px 14px;margin-bottom:16px">
+      <strong id="apostaNome" style="color:var(--steel2)"></strong>
+    </div>
+    <label class="modal-label">Gruppo destinazione</label>
+    <select id="spostaDestinazioneSelect" class="modal-input" style="margin-bottom:16px">
+      <option value="">— Seleziona gruppo —</option>
+    </select>
+    <div class="pin-field">
+      <label>🔐 PIN Autorizzazione</label>
+      <input type="password" id="pinSposta" maxlength="6" placeholder="••••" style="letter-spacing:6px;font-size:18px;text-align:center">
+    </div>
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('modalSposta')">Annulla</button>
+    <button class="btn btn-success" onclick="confermaSposta()">↗️ Sposta</button>
+  </div>
+</div>
+</div>
+
+{# ══ DROPDOWN MENU AZIONI ══ #}
+<div id="menuAzioni" style="display:none;position:fixed;z-index:9999;background:var(--dark2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.5);min-width:160px;overflow:hidden">
+  <div id="menuAzioniTitolo" style="padding:8px 14px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border);font-style:italic;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+  <button onclick="apriSpostaModal()" style="display:block;width:100%;text-align:left;padding:10px 16px;background:none;border:none;color:var(--text);cursor:pointer;font-size:13px;border-bottom:1px solid rgba(255,255,255,.06)" onmouseover="this.style.background='rgba(30,111,165,.2)'" onmouseout="this.style.background='none'">↗️ Sposta in altro gruppo</button>
+  <button onclick="apriEliminaModal()" style="display:block;width:100%;text-align:left;padding:10px 16px;background:none;border:none;color:#f07070;cursor:pointer;font-size:13px" onmouseover="this.style.background='rgba(240,112,112,.15)'" onmouseout="this.style.background='none'">🗑️ Elimina articolo</button>
+</div>
+
+<style>
+.btn-azioni{background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:5px;padding:4px 8px;cursor:pointer;font-size:13px;transition:all .15s;color:var(--text-dim)}
+.btn-azioni:hover{background:rgba(30,111,165,.25);border-color:var(--accent);color:var(--text)}
+</style>
+
+
+// ══ AZIONI ARTICOLO: Elimina / Sposta ═══════════════════════════════════════
+let _azioniPid = null, _azioniNome = '';
+
+function apriMenuAzioni(evt, pid, nome) {
+  evt.stopPropagation();
+  _azioniPid = pid; _azioniNome = nome;
+  const menu = document.getElementById('menuAzioni');
+  document.getElementById('menuAzioniTitolo').textContent = nome;
+  // Posiziona il menu vicino al pulsante
+  const r = evt.target.getBoundingClientRect();
+  menu.style.display = 'block';
+  const mw = 170, mh = 110;
+  let left = r.right - mw;
+  let top  = r.bottom + 4;
+  if (left < 4) left = 4;
+  if (top + mh > window.innerHeight) top = r.top - mh - 4;
+  menu.style.left = left + 'px';
+  menu.style.top  = top  + 'px';
+}
+document.addEventListener('click', () => {
+  document.getElementById('menuAzioni').style.display = 'none';
+});
+
+// ── Elimina ──────────────────────────────────────────────────────────────────
+function apriEliminaModal() {
+  document.getElementById('menuAzioni').style.display = 'none';
+  document.getElementById('eliminaNome').textContent = _azioniNome;
+  document.getElementById('pinElimina').value = '';
+  openModal('modalElimina');
+  setTimeout(() => document.getElementById('pinElimina').focus(), 200);
+}
+function confermaElimina() {
+  const pin = document.getElementById('pinElimina').value;
+  fetch(`/api/kanban/${_azioniPid}`, {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pin})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      closeModal('modalElimina');
+      showToast('🗑️ Articolo eliminato');
+      // Rimuovi la riga dalla tabella
+      const row = document.querySelector(`tr[data-pid="${_azioniPid}"]`);
+      if (row) row.remove();
+    } else if (d.pin_error) showToast('🔐 PIN errato', true);
+    else showToast('❌ ' + (d.error || 'Errore'), true);
+  }).catch(() => showToast('❌ Errore di rete', true));
+}
+document.getElementById('pinElimina').addEventListener('keydown', e => {
+  if (e.key === 'Enter') confermaElimina();
+});
+
+// ── Sposta ───────────────────────────────────────────────────────────────────
+function apriSpostaModal() {
+  document.getElementById('menuAzioni').style.display = 'none';
+  document.getElementById('apostaNome').textContent = _azioniNome;
+  document.getElementById('pinSposta').value = '';
+  // Carica lista gruppi
+  const sel = document.getElementById('spostaDestinazioneSelect');
+  sel.innerHTML = '<option value="">⏳ Caricamento...</option>';
+  fetch('/api/kanban-gruppi')
+    .then(r => r.json())
+    .then(gruppi => {
+      sel.innerHTML = '<option value="">— Seleziona gruppo destinazione —</option>';
+      gruppi.forEach(g => {
+        const opt = document.createElement('option');
+        opt.value = g.url_key;
+        opt.textContent = g.icona + ' ' + g.label;
+        sel.appendChild(opt);
+      });
+    })
+    .catch(() => { sel.innerHTML = '<option value="">Errore caricamento</option>'; });
+  openModal('modalSposta');
+  setTimeout(() => document.getElementById('pinSposta').focus(), 200);
+}
+function confermaSposta() {
+  const pin       = document.getElementById('pinSposta').value;
+  const nuovoKey  = document.getElementById('spostaDestinazioneSelect').value;
+  if (!nuovoKey) { showToast('⚠️ Seleziona un gruppo destinazione', true); return; }
+  fetch(`/api/kanban/${_azioniPid}/sposta`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pin, nuovo_sheet_key: nuovoKey})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      closeModal('modalSposta');
+      showToast('↗️ Articolo spostato con successo');
+      // Rimuovi la riga dalla tabella (non appartiene più a questo gruppo)
+      const row = document.querySelector(`tr[data-pid="${_azioniPid}"]`);
+      if (row) {
+        row.style.transition = 'opacity .4s';
+        row.style.opacity = '0';
+        setTimeout(() => row.remove(), 400);
+      }
+    } else if (d.pin_error) showToast('🔐 PIN errato', true);
+    else showToast('❌ ' + (d.error || 'Errore'), true);
+  }).catch(() => showToast('❌ Errore di rete', true));
+}
+document.getElementById('pinSposta').addEventListener('keydown', e => {
+  if (e.key === 'Enter') confermaSposta();
+});
+
 {% endblock %}
 
 {% block scripts %}
@@ -796,4 +969,107 @@ function collegaEAggiorna() {
     else showToast('❌ ' + (d.error || 'Errore'), true);
   });
 }
+
+// ══ AZIONI ARTICOLO: Elimina / Sposta ═══════════════════════════════════════
+let _azioniPid = null, _azioniNome = '';
+
+function apriMenuAzioni(evt, pid, nome) {
+  evt.stopPropagation();
+  _azioniPid = pid; _azioniNome = nome;
+  const menu = document.getElementById('menuAzioni');
+  document.getElementById('menuAzioniTitolo').textContent = nome;
+  // Posiziona il menu vicino al pulsante
+  const r = evt.target.getBoundingClientRect();
+  menu.style.display = 'block';
+  const mw = 170, mh = 110;
+  let left = r.right - mw;
+  let top  = r.bottom + 4;
+  if (left < 4) left = 4;
+  if (top + mh > window.innerHeight) top = r.top - mh - 4;
+  menu.style.left = left + 'px';
+  menu.style.top  = top  + 'px';
+}
+document.addEventListener('click', () => {
+  document.getElementById('menuAzioni').style.display = 'none';
+});
+
+// ── Elimina ──────────────────────────────────────────────────────────────────
+function apriEliminaModal() {
+  document.getElementById('menuAzioni').style.display = 'none';
+  document.getElementById('eliminaNome').textContent = _azioniNome;
+  document.getElementById('pinElimina').value = '';
+  openModal('modalElimina');
+  setTimeout(() => document.getElementById('pinElimina').focus(), 200);
+}
+function confermaElimina() {
+  const pin = document.getElementById('pinElimina').value;
+  fetch(`/api/kanban/${_azioniPid}`, {
+    method: 'DELETE',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pin})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      closeModal('modalElimina');
+      showToast('🗑️ Articolo eliminato');
+      // Rimuovi la riga dalla tabella
+      const row = document.querySelector(`tr[data-pid="${_azioniPid}"]`);
+      if (row) row.remove();
+    } else if (d.pin_error) showToast('🔐 PIN errato', true);
+    else showToast('❌ ' + (d.error || 'Errore'), true);
+  }).catch(() => showToast('❌ Errore di rete', true));
+}
+document.getElementById('pinElimina').addEventListener('keydown', e => {
+  if (e.key === 'Enter') confermaElimina();
+});
+
+// ── Sposta ───────────────────────────────────────────────────────────────────
+function apriSpostaModal() {
+  document.getElementById('menuAzioni').style.display = 'none';
+  document.getElementById('apostaNome').textContent = _azioniNome;
+  document.getElementById('pinSposta').value = '';
+  // Carica lista gruppi
+  const sel = document.getElementById('spostaDestinazioneSelect');
+  sel.innerHTML = '<option value="">⏳ Caricamento...</option>';
+  fetch('/api/kanban-gruppi')
+    .then(r => r.json())
+    .then(gruppi => {
+      sel.innerHTML = '<option value="">— Seleziona gruppo destinazione —</option>';
+      gruppi.forEach(g => {
+        const opt = document.createElement('option');
+        opt.value = g.url_key;
+        opt.textContent = g.icona + ' ' + g.label;
+        sel.appendChild(opt);
+      });
+    })
+    .catch(() => { sel.innerHTML = '<option value="">Errore caricamento</option>'; });
+  openModal('modalSposta');
+  setTimeout(() => document.getElementById('pinSposta').focus(), 200);
+}
+function confermaSposta() {
+  const pin       = document.getElementById('pinSposta').value;
+  const nuovoKey  = document.getElementById('spostaDestinazioneSelect').value;
+  if (!nuovoKey) { showToast('⚠️ Seleziona un gruppo destinazione', true); return; }
+  fetch(`/api/kanban/${_azioniPid}/sposta`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pin, nuovo_sheet_key: nuovoKey})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) {
+      closeModal('modalSposta');
+      showToast('↗️ Articolo spostato con successo');
+      // Rimuovi la riga dalla tabella (non appartiene più a questo gruppo)
+      const row = document.querySelector(`tr[data-pid="${_azioniPid}"]`);
+      if (row) {
+        row.style.transition = 'opacity .4s';
+        row.style.opacity = '0';
+        setTimeout(() => row.remove(), 400);
+      }
+    } else if (d.pin_error) showToast('🔐 PIN errato', true);
+    else showToast('❌ ' + (d.error || 'Errore'), true);
+  }).catch(() => showToast('❌ Errore di rete', true));
+}
+document.getElementById('pinSposta').addEventListener('keydown', e => {
+  if (e.key === 'Enter') confermaSposta();
+});
+
 {% endblock %}
