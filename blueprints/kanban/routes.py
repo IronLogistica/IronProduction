@@ -140,12 +140,38 @@ def api_crea():
 @kanban_bp.route('/api/kanban/<int:kid>', methods=['DELETE'])
 def api_elimina(kid):
     try:
+        d = request.get_json(force=True, silent=True) or {}
+        if d.get('pin', '') != PIN_ADMIN:
+            return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
         p = KanbanProdotto.query.get_or_404(kid)
         nome = p.prodotto
         db.session.delete(p)
-        log(f'Kanban: eliminato {nome}')
+        log(f'Kanban: eliminato {nome} (PIN autorizzato)')
         db.session.commit()
         return jsonify({'ok': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+@kanban_bp.route('/api/kanban/<int:kid>/sposta', methods=['POST'])
+def api_sposta(kid):
+    """Sposta un prodotto in un altro gruppo Kanban (richiede PIN)."""
+    try:
+        d = request.get_json(force=True)
+        if d.get('pin', '') != PIN_ADMIN:
+            return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
+        nuovo_sheet_key = d.get('nuovo_sheet_key', '').strip()
+        if not nuovo_sheet_key:
+            return jsonify({'ok': False, 'error': 'Gruppo destinazione obbligatorio'}), 400
+        p = KanbanProdotto.query.get_or_404(kid)
+        vecchio = p.sheet_key
+        # Trova il gruppo destinazione per ricavare label e categoria
+        g = KanbanGruppo.query.filter_by(url_key=nuovo_sheet_key).first()
+        p.sheet_key = nuovo_sheet_key
+        p.categoria = g.label if g else nuovo_sheet_key.replace('_', ' ')
+        log(f'Kanban: spostato {p.prodotto} da "{vecchio}" a "{nuovo_sheet_key}" (PIN autorizzato)')
+        db.session.commit()
+        return jsonify({'ok': True, 'nuovo_sheet_key': nuovo_sheet_key})
     except Exception as e:
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
