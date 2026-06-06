@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, jsonify, request
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
+                    StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
                     registra_ciclo_se_necessario, calcola_analisi_takt, PIN_ADMIN)
 from datetime import datetime
@@ -121,8 +122,16 @@ def api_aggiorna(kid):
         p = KanbanProdotto.query.get_or_404(kid)
         stato_prima = p.stato
         d = request.get_json(force=True)
+        # ── Accumulo storico produzione: intercetta aumento di verniciati ──
+        verniciati_prima = p.verniciati
         for campo in ['lotto','riserva','riservato','grezzi','verniciati','in_vern','in_prod']:
             if campo in d: setattr(p, campo, int(d[campo]))
+        # Solo dal 01/07/2026 in poi (data go-live accumulo automatico)
+        ora_now = datetime.utcnow()
+        go_live = datetime(2026, 7, 1)
+        if ora_now >= go_live and p.verniciati > verniciati_prima:
+            delta = p.verniciati - verniciati_prima
+            storico_aggiungi_auto(p.id, delta)
         if 'val_medio'   in d: p.val_medio   = float(d['val_medio'])
         if 'lavorazioni' in d: p.lavorazioni = d['lavorazioni']
         p.aggiornato_il = datetime.utcnow()
@@ -342,6 +351,151 @@ def api_gruppi_elimina(url_key):
         log(f'KanbanGruppo: eliminato "{nome}"')
         db.session.commit()
         return jsonify({'ok': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ── API STORICO PRODUZIONE ───────────────────────────────────────────────────
+@kanban_bp.route('/api/kanban/<int:kid>/storico')
+def api_storico(kid):
+    """Ritorna storico produzione per la scheda articolo."""
+    return jsonify(storico_get(kid))
+
+@kanban_bp.route('/api/kanban/<int:kid>/storico/import-csv', methods=['POST'])
+def api_storico_import(kid):
+    """
+    Import CSV storico produzione per un articolo.
+    Body JSON: { pin, righe: [{anno, mese, qta}] }
+    Modalità: somma a qta_import esistente (non sovrascrive).
+    Per azzerare e reimportare usare reset=true.
+    """
+    try:
+        d = request.get_json(force=True)
+        if d.get('pin','') != PIN_ADMIN:
+            return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
+        p = KanbanProdotto.query.get_or_404(kid)
+        righe = d.get('righe', [])
+        reset = d.get('reset', False)
+        if reset:
+            StoricoProduzione.query.filter_by(kanban_id=kid).delete()
+        n_inserite = 0
+        for r in righe:
+            try:
+                anno = int(r['anno']); mese = int(r['mese']); qta = int(r['qta'])
+                if not (1 <= mese <= 12) or anno < 2000 or qta < 0:
+                    continue
+                riga = StoricoProduzione.query.filter_by(kanban_id=kid, anno=anno, mese=mese).first()
+                if riga:
+                    riga.qta_import = (riga.qta_import or 0) + qta
+                    riga.aggiornato_il = datetime.utcnow()
+                else:
+                    db.session.add(StoricoProduzione(
+                        kanban_id=kid, anno=anno, mese=mese, qta_import=qta, qta_auto=0
+                    ))
+                n_inserite += 1
+            except (KeyError, ValueError, TypeError):
+                continue
+        log(f'Storico: importate {n_inserite} righe per {p.prodotto}')
+        db.session.commit()
+        return jsonify({'ok': True, 'n_inserite': n_inserite, **storico_get(kid)})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+@kanban_bp.route('/api/kanban/<int:kid>/storico/reset', methods=['POST'])
+def api_storico_reset(kid):
+    """Azzera tutto lo storico di un articolo (richiede PIN)."""
+    try:
+        d = request.get_json(force=True)
+        if d.get('pin','') != PIN_ADMIN:
+            return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
+        p = KanbanProdotto.query.get_or_404(kid)
+        StoricoProduzione.query.filter_by(kanban_id=kid).delete()
+        db.session.commit()
+        log(f'Storico: azzerato per {p.prodotto}')
+        return jsonify({'ok': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+@kanban_bp.route('/api/storico/upload-csv', methods=['POST'])
+def api_storico_upload_csv():
+    """
+    Upload CSV globale — importa storico per più articoli in una volta.
+    Formato CSV: codice_articolo,anno,mese,qta
+    Header obbligatorio. Separatore virgola o punto e virgola.
+    Richiede PIN nel form field 'pin'.
+    """
+    import csv, io
+    try:
+        pin = request.form.get('pin','')
+        if pin != PIN_ADMIN:
+            return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
+
+        file = request.files.get('file')
+        if not file:
+            return jsonify({'ok': False, 'error': 'Nessun file caricato'}), 400
+
+        raw = file.read().decode('utf-8-sig')  # gestisce BOM Excel
+        # Rileva separatore
+        sep = ';' if raw.count(';') > raw.count(',') else ','
+        reader = csv.DictReader(io.StringIO(raw), delimiter=sep)
+
+        n_ok = n_err = 0
+        errori = []
+        # Cache prodotti per codice (case-insensitive, strip)
+        cache = {}
+        for riga_num, row in enumerate(reader, start=2):
+            try:
+                # Supporta header flessibili
+                codice = (row.get('codice_articolo') or row.get('codice') or row.get('prodotto','') ).strip()
+                anno   = int((row.get('anno') or '').strip())
+                mese   = int((row.get('mese') or '').strip())
+                qta    = int((row.get('qta') or row.get('quantita','0')).strip())
+
+                if not codice or not (1 <= mese <= 12) or anno < 2000 or qta < 0:
+                    errori.append(f'Riga {riga_num}: dati non validi ({codice},{anno},{mese},{qta})')
+                    n_err += 1
+                    continue
+
+                # Trova KanbanProdotto per codice (cerca nel campo prodotto)
+                key = codice.lower()
+                if key not in cache:
+                    # Cerca prima corrispondenza esatta, poi parziale
+                    p = KanbanProdotto.query.filter(
+                        db.func.lower(KanbanProdotto.prodotto).like(f'%{key}%')
+                    ).first()
+                    cache[key] = p
+                p = cache[key]
+
+                if not p:
+                    errori.append(f'Riga {riga_num}: articolo "{codice}" non trovato')
+                    n_err += 1
+                    continue
+
+                storico_r = StoricoProduzione.query.filter_by(
+                    kanban_id=p.id, anno=anno, mese=mese
+                ).first()
+                if storico_r:
+                    storico_r.qta_import = (storico_r.qta_import or 0) + qta
+                    storico_r.aggiornato_il = datetime.utcnow()
+                else:
+                    db.session.add(StoricoProduzione(
+                        kanban_id=p.id, anno=anno, mese=mese,
+                        qta_import=qta, qta_auto=0
+                    ))
+                n_ok += 1
+            except Exception as e:
+                errori.append(f'Riga {riga_num}: {e}')
+                n_err += 1
+
+        db.session.commit()
+        log(f'Storico CSV: {n_ok} righe importate, {n_err} errori')
+        return jsonify({
+            'ok': True, 'n_ok': n_ok, 'n_err': n_err,
+            'errori': errori[:20]  # max 20 errori mostrati
+        })
     except Exception as e:
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
