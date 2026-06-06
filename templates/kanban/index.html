@@ -17,92 +17,164 @@
   <div class="kstat kstat-val"><span class="kstat-num">€ {{ "{:,.0f}".format(stats.valore).replace(",",".") }}</span><span class="kstat-lbl">Valore Totale</span></div>
 </div>
 
-{# ══ TABELLA WIP ══ #}
+{# ══ WIP MONITOR — NUOVA VERSIONE CON ORDINI + ORE ══ #}
 {% if wip %}
 <div style="margin-bottom:18px">
   <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--steel2);font-weight:700;margin-bottom:8px;padding:6px 10px;background:rgba(30,111,165,.1);border-radius:4px;border-left:3px solid var(--accent);display:flex;align-items:center;justify-content:space-between">
-    <span>⚙️ WIP Monitor — Rischio Accumulo a Terra</span>
+    <span>⚙️ WIP Monitor — Ordini per Reparto</span>
     <button class="btn btn-ghost" style="padding:3px 10px;font-size:10px" onclick="openModalWip()">⚙️ Configura limiti</button>
   </div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     {% for fase, dati in wip.items() %}
-    <div class="wip-card wip-{{ dati.colore }}">
+    {% if fase != 'collaudo' %}
+    <div class="wip-card wip-{{ dati.colore }}" style="min-width:120px;flex:1">
       <div class="wip-label">{{ dati.label }}</div>
-      <div class="wip-num">{{ dati.attivi }}</div>
+      {# Numero articoli (grande) + pezzi totali #}
+      <div style="display:flex;align-items:baseline;justify-content:center;gap:6px;margin:4px 0">
+        <div class="wip-num" style="font-size:28px">{{ dati.attivi }}</div>
+        <div style="font-size:9px;color:var(--text-dim);line-height:1.2">art.<br>in area</div>
+      </div>
+      {% if dati.n_ordini is defined and dati.n_ordini > 0 %}
+      <div style="font-size:11px;font-weight:700;color:var(--steel2);margin-bottom:2px">
+        📦 {{ dati.n_ordini }} pz totali
+      </div>
+      {% endif %}
+      {# Ore stimate — visibili solo se takt impostato su almeno un prodotto #}
+      {% if dati.ore_stimate is defined and dati.ore_stimate %}
+      <div style="font-size:10px;font-weight:700;color:#e6b800;margin-bottom:2px">⏱ {{ dati.ore_stimate }}h stimate</div>
+      {% endif %}
+      {# Barra WIP limit #}
       {% if dati.limit > 0 %}
       <div class="wip-bar-wrap"><div class="wip-bar-fill" style="width:{{ [dati.pct, 100]|min }}%"></div></div>
       <div class="wip-sub">{{ dati.pct }}% / {{ dati.limit }} max</div>
       {% else %}
-      <div class="wip-sub">No limite</div>
+      <div class="wip-sub">No limite WIP</div>
       {% endif %}
       {% if dati.limite_giornaliero > 0 %}
       <div class="wip-sub" style="color:var(--steel2)">Max {{ dati.limite_giornaliero }}/gg</div>
       {% endif %}
     </div>
+    {% endif %}
     {% endfor %}
   </div>
 </div>
 {% endif %}
 
-{# ══ TABELLA KANBAN ══ #}
+{# ══ TABELLA KANBAN — NUOVA STRUTTURA ══ #}
 <div style="overflow-x:auto;background:var(--surface);border-radius:var(--radius);border:1px solid var(--border);box-shadow:var(--shadow)">
 <table class="kanban-table" id="kbtable">
-  <thead><tr>
-    <th style="text-align:left;padding-left:14px;min-width:190px">Prodotto</th>
-    <th>Riserva<br>KANBAN</th>
-    <th>Lotto<br>Prod.</th>
-    <th>Riservato<br>Clienti</th>
-    <th>Mag.<br>Grezzi</th>
-    <th>Mag.<br>Verniciati</th>
-    <th>In<br>Verniciatura</th>
-    <th>In<br>Produzione</th>
-    <th>Saldo<br>Contabile</th>
-    <th>STATO</th>
-    <th title="Buffer %: saldo vs riserva">Buffer</th>
-    <th title="Cicli accumulati per analisi Takt Time">⏱ Takt</th>
-    <th title="Scheda WMS: stock, ordini clienti, evasi">📊 WMS</th>
-    <th>Lavorazioni</th>
-    <th>Valore P.V.</th>
-    <th title="Elimina o sposta" style="width:36px">⚙️</th>
-  </tr></thead>
+  <thead>
+    {# Riga intestazioni gruppo #}
+    <tr class="thead-group">
+      <th colspan="2" style="text-align:left;padding-left:10px;background:rgba(30,111,165,.06);border-right:2px solid var(--border)">Articolo</th>
+      <th style="background:rgba(30,111,165,.06);border-right:1px solid var(--border)">WMS</th>
+      <th style="background:rgba(240,112,112,.06);color:#f07070;border-right:1px solid rgba(240,112,112,.2)">Residuo<br>da Prod.</th>
+      <th style="background:rgba(30,111,165,.08);color:var(--steel2)">Grezzi</th>
+      <th style="background:rgba(230,184,0,.08);color:#f0c040;border-right:1px solid rgba(230,184,0,.2)">Vern./<br>Zinc.</th>
+      <th style="background:rgba(26,158,92,.08);color:#5debb0">Finiti<br>IW</th>
+      <th style="background:rgba(26,158,92,.12);color:#5debb0;border-right:2px solid rgba(26,158,92,.25)">Finiti<br>IS</th>
+      <th colspan="4" style="background:rgba(255,255,255,.03);color:var(--text-dim);border-right:1px solid var(--border)">Saldi</th>
+      <th style="background:rgba(30,111,165,.06)">⏱</th>
+      <th style="width:32px;background:rgba(255,255,255,.02)">⚙️</th>
+    </tr>
+    {# Riga sottotitoli #}
+    <tr class="thead-sub">
+      <th style="text-align:left;padding-left:10px;min-width:80px;max-width:110px">Codice</th>
+      <th style="text-align:left;min-width:140px;border-right:2px solid var(--border)">Descrizione</th>
+      <th style="border-right:1px solid var(--border)" title="Scheda WMS completa">📊</th>
+      <th style="background:rgba(240,112,112,.05);color:#f07070" title="Residuo da produrre (da WMS)">⚠️ Da Fare</th>
+      <th style="background:rgba(30,111,165,.05);color:var(--steel2)" title="Prodotti grezzi: lavorati ma non ancora trattati">Grezzi</th>
+      <th style="background:rgba(230,184,0,.05);color:#f0c040;border-right:1px solid rgba(230,184,0,.15)" title="In verniciatura / zincatura esterna">In Tratt.</th>
+      <th style="background:rgba(26,158,92,.05);color:#5debb0" title="Prodotti finiti rientrati dal trattamento esterno (IronWarehouse)">IW Stock</th>
+      <th style="background:rgba(26,158,92,.08);color:#5debb0;border-right:2px solid rgba(26,158,92,.2)" title="Prodotti finiti da IronLogistic (spediti/pronti)">IS Stock</th>
+      <th style="font-size:9px;color:var(--text-dim)" title="Saldo Contabile = Grezzi + In Tratt. + IW + IS - Impegni">SC</th>
+      <th style="font-size:9px;color:var(--text-dim)" title="Saldo Disponibile = SC - Riservato Clienti">Disp.</th>
+      <th style="font-size:9px;color:#f0c040" title="Saldo Post-Verniciatura = IW + IS - Impegni">PV</th>
+      <th style="font-size:9px;color:var(--steel2);border-right:1px solid var(--border)" title="Saldo Grezzi+Post-Verniciatura = Grezzi + In Tratt. + IW + IS - Impegni">GPV</th>
+      <th title="Analisi Takt Time">Takt</th>
+      <th style="width:32px"></th>
+    </tr>
+  </thead>
   <tbody>
   {% for p in prodotti %}
-  {% set saldo = p.saldo_contabile %}
-  {% set buf   = p.buffer_colore %}
-  {% set nc    = p.n_cicli_chiusi %}
+  {% set saldo_sc  = p.grezzi + p.in_vern + p.verniciati + p.in_prod - p.riservato %}
+  {% set saldo_disp = saldo_sc - p.riserva %}
+  {% set saldo_pv  = p.verniciati + p.in_prod - p.riservato %}
+  {% set saldo_gpv = p.grezzi + p.in_vern + p.verniciati + p.in_prod - p.riservato %}
+  {% set buf = p.buffer_colore %}
+  {% set nc  = p.n_cicli_chiusi %}
+
+  {# Splitta nome prodotto: prima parte come codice, resto come descrizione #}
+  {% set parti = p.prodotto.split(' — ') %}
+  {% set codice_prod = parti[0] if parti|length > 1 else '' %}
+  {% set descr_prod  = parti[1] if parti|length > 1 else parti[0] %}
+
   <tr data-pid="{{ p.id }}" class="row-{{ buf }}">
 
-    <td class="prod-name" style="padding-left:14px">
-      {{ p.prodotto }}
+    {# Col 1: Codice #}
+    <td class="prod-code" style="padding-left:10px;font-family:monospace;font-size:11px;color:var(--steel2);white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis">
+      {{ codice_prod or p.prodotto }}
       {% if p.takt_time_min %}
-      <span style="font-size:9px;margin-left:5px;background:rgba(30,111,165,.25);border-radius:4px;padding:1px 5px;color:var(--steel2)">⏱ {{ "%.1f"|format(p.takt_time_min) }}'</span>
+      <div style="font-size:8px;color:var(--text-dim);margin-top:1px">⏱ {{ "%.1f"|format(p.takt_time_min) }}'</div>
       {% endif %}
     </td>
 
-    <td class="num">{{ p.riserva }}</td>
-    <td class="num">{{ p.lotto }}</td>
-    <td class="num editable" data-field="riservato"  data-pid="{{ p.id }}">{{ p.riservato }}</td>
-    <td class="num editable" data-field="grezzi"     data-pid="{{ p.id }}">{{ p.grezzi }}</td>
-    <td class="num editable" data-field="verniciati" data-pid="{{ p.id }}">{{ p.verniciati }}</td>
-    <td class="num editable" data-field="in_vern"    data-pid="{{ p.id }}">{{ p.in_vern }}</td>
-    <td class="num editable" data-field="in_prod"    data-pid="{{ p.id }}">{{ p.in_prod }}</td>
-
-    <td class="num saldo-td {% if saldo < 0 %}num-neg{% else %}num-pos{% endif %}">{{ saldo }}</td>
-
-    <td class="stato-td" style="text-align:center">
-      {% if p.stato == 'OK' %}<span class="badge badge-ok">✅ OK</span>
-      {% elif 'PROGRAMMARE' in p.stato %}<span class="badge badge-warn">⚠️ PROD.</span>
-      {% else %}<span class="badge badge-prod">🚧</span>{% endif %}
+    {# Col 2: Descrizione #}
+    <td class="prod-name" style="border-right:2px solid var(--border);max-width:200px">
+      <span style="font-size:12px;font-weight:600">{{ descr_prod }}</span>
     </td>
 
-    <td style="text-align:center;font-family:monospace;font-weight:700;font-size:12px">
-      {% if buf == 'verde' %}<span style="color:#1a9e5c">{{ p.buffer_pct }}%</span>
-      {% elif buf == 'giallo' %}<span style="color:#e6b800">{{ p.buffer_pct }}%</span>
-      {% elif buf == 'rosso' %}<span style="color:#f07070">{{ p.buffer_pct }}%</span>
-      {% else %}<span style="color:var(--text-dim)">—</span>{% endif %}
+    {# Col 3: WMS button #}
+    <td style="text-align:center;border-right:1px solid var(--border)">
+      <button class="btn-wms" onclick="apriSchedaWms({{ p.id }}, '{{ p.prodotto|replace("'","\\'")|e }}')" title="Scheda WMS completa">📊</button>
     </td>
 
-    {# Pulsante Takt con contatore cicli #}
+    {# Col 4: Residuo da produrre (in_prod = ordini in produzione aperti) #}
+    <td class="num editable" data-field="in_prod" data-pid="{{ p.id }}"
+        style="background:rgba(240,112,112,.04);color:{% if p.in_prod > 0 %}#f07070{% else %}var(--text-dim){% endif %};font-weight:{% if p.in_prod > 0 %}700{% else %}400{% endif %}">
+      {{ p.in_prod }}
+    </td>
+
+    {# Col 5: Grezzi #}
+    <td class="num editable" data-field="grezzi" data-pid="{{ p.id }}"
+        style="background:rgba(30,111,165,.04);color:var(--steel2)">
+      {{ p.grezzi }}
+    </td>
+
+    {# Col 6: In Verniciatura/Zincatura (in_vern) #}
+    <td class="num editable" data-field="in_vern" data-pid="{{ p.id }}"
+        style="background:rgba(230,184,0,.04);color:#f0c040;border-right:1px solid rgba(230,184,0,.15)">
+      {{ p.in_vern }}
+    </td>
+
+    {# Col 7: Finiti IW — verniciati a magazzino IronWarehouse (campo verniciati) #}
+    <td class="num editable" data-field="verniciati" data-pid="{{ p.id }}"
+        style="background:rgba(26,158,92,.04);color:#5debb0">
+      {{ p.verniciati }}
+    </td>
+
+    {# Col 8: Finiti IS — da IronLogistic (campo riservato usato come proxy, editabile) #}
+    <td class="num editable" data-field="riserva" data-pid="{{ p.id }}"
+        style="background:rgba(26,158,92,.07);color:#5debb0;font-weight:700;border-right:2px solid rgba(26,158,92,.2)">
+      {{ p.riserva }}
+    </td>
+
+    {# Col 9: Saldo Contabile SC #}
+    <td class="num saldo-td saldo-sc {% if saldo_sc < 0 %}num-neg{% elif saldo_sc > 0 %}num-pos{% endif %}"
+        style="font-weight:700">{{ saldo_sc }}</td>
+
+    {# Col 10: Saldo Disponibile #}
+    <td class="num {% if saldo_disp < 0 %}num-neg{% elif saldo_disp > 0 %}num-pos{% endif %}">{{ saldo_disp }}</td>
+
+    {# Col 11: Saldo Post-Verniciatura PV #}
+    <td class="num {% if saldo_pv < 0 %}num-neg{% else %}num-pos{% endif %}"
+        style="color:{% if saldo_pv < 0 %}#f07070{% else %}#f0c040{% endif %}">{{ saldo_pv }}</td>
+
+    {# Col 12: Saldo Grezzi+Post-Verniciatura GPV #}
+    <td class="num {% if saldo_gpv < 0 %}num-neg{% else %}num-pos{% endif %}"
+        style="border-right:1px solid var(--border)">{{ saldo_gpv }}</td>
+
+    {# Col 13: Takt #}
     <td style="text-align:center;white-space:nowrap">
       <button class="btn-takt" onclick="apriAnalisiTakt({{ p.id }}, '{{ p.prodotto|replace("'","\\'")|e }}')"
         title="Analisi Takt Time — {{ nc }} cicli accumulati">
@@ -110,15 +182,12 @@
         <span class="takt-cnt">{{ nc }}</span>
       </button>
     </td>
-    <td style="text-align:center">
-      <button class="btn-wms" onclick="apriSchedaWms({{ p.id }}, '{{ p.prodotto|replace("'","\\'")|e }}')" title="Scheda WMS">📊</button>
+
+    {# Col 14: Azioni ⚙️ #}
+    <td style="text-align:center;padding:4px 2px">
+      <button class="btn-azioni" onclick="apriMenuAzioni(event, {{ p.id }}, '{{ p.prodotto|replace("'","\\'")|e }}')" title="Elimina / Sposta">⚙️</button>
     </td>
 
-    <td class="lav-td lav-val">{{ p.lavorazioni or '' }}</td>
-    <td class="num">{% if p.val_pv %}{{ "{:,.2f}".format(p.val_pv).replace(",",".") }} €{% else %}—{% endif %}</td>
-    <td style="text-align:center;padding:4px 2px">
-      <button class="btn-azioni" onclick="apriMenuAzioni(event, {{ p.id }}, '{{ p.prodotto|replace("\'","\\\'") }}')" title="Elimina / Sposta">⚙️</button>
-    </td>
   </tr>
   {% else %}
   <tr><td colspan="14" style="text-align:center;color:var(--text-dim);padding:36px;font-style:italic">
@@ -126,230 +195,56 @@
   </td></tr>
   {% endfor %}
   </tbody>
+
+  {# ── TOTALI ── #}
+  {% if prodotti %}
+  <tfoot>
+    <tr class="tfoot-totali">
+      <td colspan="3" style="text-align:right;padding-right:12px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);border-right:1px solid var(--border)">Totali</td>
+      <td class="num" style="background:rgba(240,112,112,.07);color:#f07070;font-weight:900">
+        {{ prodotti|sum(attribute='in_prod') }}
+      </td>
+      <td class="num" style="background:rgba(30,111,165,.07);color:var(--steel2);font-weight:900">
+        {{ prodotti|sum(attribute='grezzi') }}
+      </td>
+      <td class="num" style="background:rgba(230,184,0,.07);color:#f0c040;font-weight:900;border-right:1px solid rgba(230,184,0,.15)">
+        {{ prodotti|sum(attribute='in_vern') }}
+      </td>
+      <td class="num" style="background:rgba(26,158,92,.07);color:#5debb0;font-weight:900">
+        {{ prodotti|sum(attribute='verniciati') }}
+      </td>
+      <td class="num" style="background:rgba(26,158,92,.1);color:#5debb0;font-weight:900;border-right:2px solid rgba(26,158,92,.2)">
+        {{ prodotti|sum(attribute='riserva') }}
+      </td>
+      {% set tot_sc  = prodotti|sum(attribute='grezzi') + prodotti|sum(attribute='in_vern') + prodotti|sum(attribute='verniciati') + prodotti|sum(attribute='in_prod') - prodotti|sum(attribute='riservato') %}
+      <td class="num {% if tot_sc < 0 %}num-neg{% else %}num-pos{% endif %}" style="font-weight:900">{{ tot_sc }}</td>
+      <td colspan="4" style="border-right:1px solid var(--border)"></td>
+      <td colspan="2"></td>
+    </tr>
+  </tfoot>
+  {% endif %}
 </table>
 </div>
 
-
-{# ══ MODAL: SCHEDA KANBAN WMS ══ #}
-<div class="modal-overlay" id="modalScheda">
-<div class="scheda-box">
-
-  <div class="scheda-header">
-    <div>
-      <div class="scheda-title" id="schedaTitolo">—</div>
-      <div class="scheda-sub" id="schedaSku">SKU: —</div>
-    </div>
-    <button class="btn btn-ghost" style="font-size:18px;padding:4px 12px" onclick="closeModal('modalScheda')">✕</button>
-  </div>
-
-  {# SKU configurazione #}
-  <div style="display:flex;gap:10px;align-items:flex-end;margin-bottom:14px;padding:10px 12px;background:rgba(30,111,165,.07);border-radius:8px;border:1px solid var(--border);flex-wrap:wrap">
-    <div style="flex:1;min-width:160px">
-      <label class="modal-label">SKU Verniciato (WMS)</label>
-      <input type="text" id="inputSkuVern" placeholder="es. T200" class="modal-input">
-    </div>
-    <div style="flex:1;min-width:160px">
-      <label class="modal-label">SKU Grezzo (WMS)</label>
-      <input type="text" id="inputSkuGrezzo" placeholder="es. T200GRZ" class="modal-input">
-    </div>
-    <button class="btn btn-primary" style="white-space:nowrap;align-self:flex-end" onclick="salvaSkuERecalcola()">💾 Collega &amp; Aggiorna</button>
-  </div>
-
-  <div id="schedaLoading" style="text-align:center;padding:30px;color:var(--text-dim)">⏳ Interrogazione WMS...</div>
-  <div id="schedaErrore" style="display:none;padding:12px;background:rgba(192,57,43,.12);border-radius:8px;border:1px solid rgba(192,57,43,.3);color:#f07070;margin-bottom:12px"></div>
-
-  <div id="schedaContent" style="display:none">
-
-    {# PROGRAMMI IN CORSO #}
-    <div class="scheda-sec-title">📋 Programmi Produzioni in Corso</div>
-    <div style="overflow-x:auto">
-    <table class="scheda-table">
-      <thead><tr>
-        <th>Programma Nr</th><th>Nr in Produzione</th><th>Evasi</th><th>SALDO</th>
-        <th style="background:rgba(255,255,255,.04)">A Mag. Grezzi</th>
-        <th style="background:rgba(230,184,0,.12);color:#f0c040">A Mag. Verniciati</th>
-        <th style="background:rgba(30,111,165,.12)">In Vern. Lavorazione</th>
-      </tr></thead>
-      <tbody id="bodyProgrammi">
-        <tr><td colspan="7" class="scheda-empty">Nessun programma attivo su questo codice</td></tr>
-      </tbody>
-      <tfoot>
-        <tr class="scheda-foot">
-          <td>Rimanenza Produzione</td>
-          <td class="num" id="totInProd">0</td><td class="num" id="totEvasi">0</td><td class="num" id="totSaldo">0</td>
-          <td class="num" id="totGrezzi">—</td>
-          <td class="num" id="totVern" style="background:rgba(230,184,0,.08)">—</td>
-          <td class="num" id="totInVern" style="background:rgba(30,111,165,.08)">—</td>
-        </tr>
-      </tfoot>
-    </table>
-    </div>
-
-    {# RISERVATO A CLIENTI #}
-    <div class="scheda-sec-title" style="margin-top:16px">👥 Riservato a Clienti</div>
-    <div style="overflow-x:auto">
-    <table class="scheda-table">
-      <thead><tr>
-        <th style="text-align:left">Cliente</th><th>Qta Ord.</th><th>Evasi</th>
-        <th style="color:#f07070">Da Evadere</th>
-        <th>Ord.Cliente / Commessa</th><th>Rif. Ordine</th><th>Ultima Partenza</th>
-      </tr></thead>
-      <tbody id="bodyClienti">
-        <tr><td colspan="7" class="scheda-empty">Nessun ordine cliente aperto</td></tr>
-      </tbody>
-      <tfoot>
-        <tr class="scheda-foot">
-          <td colspan="3">Totale Riservato</td>
-          <td class="num num-neg" id="totRiservato">0</td>
-          <td colspan="3"></td>
-        </tr>
-      </tfoot>
-    </table>
-    </div>
-
-    {# ULTIMI 3 EVASI #}
-    <div class="scheda-sec-title" style="margin-top:16px">📦 Ultimi Evasi (storico spedizioni)</div>
-    <div style="overflow-x:auto">
-    <table class="scheda-table">
-      <thead><tr>
-        <th>Data Spedizione</th><th style="text-align:left">Cliente</th>
-        <th>Rif. Ordine</th><th>Qta Spedita</th>
-      </tr></thead>
-      <tbody id="bodyEvasi">
-        <tr><td colspan="4" class="scheda-empty">Nessuna spedizione registrata</td></tr>
-      </tbody>
-    </table>
-    </div>
-
-    {# SALDI FINALI #}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:16px">
-      <div class="saldo-box"><div class="saldo-label">SALDO CONTABILE</div><div class="saldo-val" id="saldoContabile">—</div></div>
-      <div class="saldo-box"><div class="saldo-label">SALDO CONTABILE DISPONIBILE</div><div class="saldo-val" id="saldoDisponibile">—</div></div>
-      <div class="saldo-box"><div class="saldo-label">SALDO DOPO 🖌️ VERNICIATURA</div><div class="saldo-val" id="saldoDopoVern">—</div></div>
-      <div class="saldo-box"><div class="saldo-label">SALDO 📦 GREZZI + 🖌️ VERNICIATURA</div><div class="saldo-val" id="saldoGrezziVern">—</div></div>
-    </div>
-
-  </div>
-</div>
-</div>
-
-{# ══ MODAL: ANALISI TAKT TIME ══ #}
-<div class="modal-overlay" id="modalTakt">
-<div class="modal-box" style="width:580px;max-height:92vh;overflow-y:auto">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
-    <div>
-      <div style="font-size:16px;font-weight:800;color:#e0eefc">⏱ Analisi Takt Time</div>
-      <div id="taktNomeProd" style="font-size:11px;color:var(--text-dim);margin-top:2px"></div>
-    </div>
-    <button class="btn btn-ghost" style="padding:3px 12px;font-size:16px" onclick="closeModal('modalTakt')">✕</button>
-  </div>
-
-  <div id="taktLoading" style="text-align:center;padding:40px;color:var(--text-dim)">
-    <div style="font-size:26px;margin-bottom:8px">⏳</div>Calcolo in corso...
-  </div>
-
-  <div id="taktContent" style="display:none">
-
-    {# Barra progresso cicli #}
-    <div style="padding:14px;background:rgba(30,111,165,.08);border-radius:8px;border:1px solid var(--border);margin-bottom:14px">
-      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
-        <span style="font-size:12px;font-weight:700;color:#e0eefc">📊 Cicli Accumulati</span>
-        <span id="taktCicliLabel" style="font-size:12px;color:var(--steel2);font-family:monospace"></span>
-      </div>
-      <div style="height:10px;background:rgba(255,255,255,.06);border-radius:5px;overflow:hidden">
-        <div id="taktCicliBar" style="height:100%;background:linear-gradient(90deg,var(--accent),var(--steel2));border-radius:5px;transition:width .6s;width:0%"></div>
-      </div>
-      <div id="taktMessaggio" style="font-size:11px;color:var(--text-dim);margin-top:8px;line-height:1.5"></div>
-    </div>
-
-    {# Risultati numerici #}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
-      <div class="takt-box">
-        <div class="takt-lbl">⏱ Takt Time Suggerito</div>
-        <div class="takt-val" id="tvTakt">—</div>
-        <div class="takt-sub">min / pezzo (su 480 min/gg)</div>
-      </div>
-      <div class="takt-box">
-        <div class="takt-lbl">🔄 Lead Time Medio</div>
-        <div class="takt-val" id="tvLT">—</div>
-        <div class="takt-sub">ore medie per ciclo</div>
-      </div>
-      <div class="takt-box">
-        <div class="takt-lbl">📦 Domanda Giornaliera</div>
-        <div class="takt-val" id="tvD">—</div>
-        <div class="takt-sub">pezzi / giorno (media 90gg)</div>
-      </div>
-      <div class="takt-box">
-        <div class="takt-lbl">🃏 N Kanban Suggerito</div>
-        <div class="takt-val" id="tvN">—</div>
-        <div class="takt-sub">N = D × RT × (1+SS) / C</div>
-      </div>
-    </div>
-
-    {# Sezione imposta ufficiale — visibile da 5 cicli #}
-    <div id="taktImpostaSection" style="display:none;padding:14px;background:rgba(26,158,92,.08);border:1px solid rgba(26,158,92,.25);border-radius:8px;margin-bottom:14px">
-      <div style="font-size:12px;font-weight:700;color:#5debb0;margin-bottom:10px">
-        ✅ Dati disponibili — Imposta Takt Time ufficiale
-      </div>
-      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
-        <div>
-          <label class="modal-label">Takt Time (min/pz)</label>
-          <input type="number" class="modal-input" id="inputTaktMin" step="0.1" min="0.1" style="width:110px">
-        </div>
-        <div>
-          <label class="modal-label">Lead Time (giorni)</label>
-          <input type="number" class="modal-input" id="inputTaktLT" step="0.5" min="0.5" style="width:100px">
-        </div>
-        <div class="pin-field" style="margin-top:0;padding:6px 10px;flex:none">
-          <label>🔐</label>
-          <input type="password" id="pinTakt" maxlength="6" placeholder="••••" style="width:70px">
-        </div>
-        <button class="btn btn-success" onclick="impostaTakt()">💾 Imposta</button>
-      </div>
-      <div style="font-size:10px;color:var(--text-dim);margin-top:8px">
-        ⚠️ Affidabilità statistica solida dopo 30 cicli. Puoi impostarlo già ora e aggiornarlo in futuro.
-      </div>
-    </div>
-
-    {# Lista ultimi cicli #}
-    <div>
-      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);margin-bottom:6px">Ultimi cicli registrati</div>
-      <div id="taktCicliList" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:6px"></div>
-    </div>
-  </div>
-</div>
-</div>
-
-{# ══ MODAL: CONFIGURA WIP ══ #}
-<div class="modal-overlay" id="modalWip">
-<div class="modal-box" style="width:520px">
-  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-    <h3 style="margin:0">⚙️ Configura Limiti WIP</h3>
-    <button class="btn btn-ghost" style="padding:3px 10px;font-size:16px" onclick="closeModal('modalWip')">✕</button>
-  </div>
-  <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">0 = nessun limite. WIP Max = pezzi simultanei in fase. Max/gg = tetto giornaliero.</div>
-  <table style="width:100%;border-collapse:collapse;font-size:12px">
-    <thead><tr>
-      <th style="text-align:left;padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border)">Fase</th>
-      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">WIP Max</th>
-      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">Max/gg</th>
-      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">🟡 %</th>
-      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">🔴 %</th>
-    </tr></thead>
-    <tbody id="wipConfigBody"></tbody>
-  </table>
-  <div class="pin-field" style="margin-top:14px">
-    <label>🔐 PIN</label>
-    <input type="password" id="pinWip" maxlength="6" placeholder="••••">
-  </div>
-  <div class="modal-footer">
-    <button class="btn btn-ghost" onclick="closeModal('modalWip')">Annulla</button>
-    <button class="btn btn-primary" onclick="salvaWip()">💾 Salva Limiti</button>
-  </div>
-</div>
-</div>
-
-
+<style>
+/* ── Intestazioni tabella ── */
+.thead-group th {
+  font-size:10px;text-transform:uppercase;letter-spacing:.5px;
+  padding:6px 8px;border-bottom:1px solid var(--border);
+  text-align:center;font-weight:800;color:var(--steel2)
+}
+.thead-sub th {
+  font-size:9px;text-transform:uppercase;letter-spacing:.3px;
+  padding:5px 6px;background:var(--dark2);border-bottom:2px solid var(--border);
+  text-align:center;font-weight:600;color:var(--text-dim)
+}
+.tfoot-totali td {
+  padding:8px 6px;border-top:2px solid var(--border);
+  background:rgba(255,255,255,.02);font-size:12px
+}
+/* ── Saldi colorati ── */
+.saldo-sc { border-left:2px solid rgba(255,255,255,.08) }
+</style>
 
 
 {# ══ MODAL: SCHEDA WMS COMPLETA ══ #}
@@ -395,28 +290,32 @@
         <div class="wms-saldo-val" id="wsSaldo2">—</div>
       </div>
       <div class="wms-saldo-box" style="border-top-color:#e6b800">
-        <div class="wms-saldo-lbl">DOPO 🖌️ VERNICIATURA</div>
+        <div class="wms-saldo-lbl">DOPO 🖌️ VERNICIATURA (PV)</div>
         <div class="wms-saldo-val" id="wsSaldo3">—</div>
       </div>
       <div class="wms-saldo-box" style="border-top-color:var(--green)">
-        <div class="wms-saldo-lbl">📦 GREZZI + 🖌️ VERN.</div>
+        <div class="wms-saldo-lbl">📦 GREZZI + VERN. (GPV)</div>
         <div class="wms-saldo-val" id="wsSaldo4">—</div>
       </div>
     </div>
 
-    {# Magazzino #}
+    {# Stock magazzino #}
     <div style="display:flex;gap:8px;margin-bottom:16px">
       <div style="flex:1;background:rgba(230,184,0,.08);border:1px solid rgba(230,184,0,.2);border-radius:8px;padding:10px 14px;text-align:center">
-        <div style="font-size:10px;text-transform:uppercase;color:#f0c040;margin-bottom:4px">A Magazzino VERNICIATI</div>
+        <div style="font-size:10px;text-transform:uppercase;color:#f0c040;margin-bottom:4px">Finiti IW — Magazzino VERNICIATI</div>
         <div style="font-size:28px;font-weight:900;color:#f0c040" id="wsStockVern">—</div>
       </div>
       <div style="flex:1;background:rgba(30,111,165,.08);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center">
-        <div style="font-size:10px;text-transform:uppercase;color:var(--steel2);margin-bottom:4px">A Magazzino GREZZI</div>
+        <div style="font-size:10px;text-transform:uppercase;color:var(--steel2);margin-bottom:4px">Magazzino GREZZI</div>
         <div style="font-size:28px;font-weight:900;color:var(--steel2)" id="wsStockGrezzi">—</div>
       </div>
       <div style="flex:1;background:rgba(30,111,165,.05);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center">
-        <div style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">In Verniciatura</div>
+        <div style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">In Verniciatura / Trattamento</div>
         <div style="font-size:28px;font-weight:900;color:#e0eefc" id="wsInVern">—</div>
+      </div>
+      <div style="flex:1;background:rgba(26,158,92,.08);border:1px solid rgba(26,158,92,.2);border-radius:8px;padding:10px 14px;text-align:center">
+        <div style="font-size:10px;text-transform:uppercase;color:#5debb0;margin-bottom:4px">Finiti IS — IronLogistic</div>
+        <div style="font-size:28px;font-weight:900;color:#5debb0" id="wsStockIS">—</div>
       </div>
     </div>
 
@@ -441,9 +340,9 @@
     </table>
     </div>
 
-    {# Ultimi 3 evasi #}
+    {# Ultimi evasi #}
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#5debb0;font-weight:700;margin-bottom:8px;padding:5px 10px;background:rgba(26,158,92,.08);border-radius:4px;border-left:3px solid var(--green)">
-      ✅ Ultimi 3 Evasi
+      ✅ Ultimi Evasi
     </div>
     <table class="scheda-tbl" id="wsTblEvasi">
       <thead><tr>
@@ -458,19 +357,89 @@
 </div>
 </div>
 
-<style>
-.btn-wms{background:rgba(26,158,92,.15);border:1px solid rgba(26,158,92,.3);border-radius:5px;padding:4px 10px;cursor:pointer;font-size:14px;transition:all .15s;color:#5debb0}
-.btn-wms:hover{background:rgba(26,158,92,.35);border-color:var(--green);color:#fff}
-.wms-saldo-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;border-top:3px solid var(--grey)}
-.wms-saldo-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-dim);margin-bottom:4px}
-.wms-saldo-val{font-size:22px;font-weight:900;color:#5debb0}
-.wms-saldo-val.neg{color:#f07070}
-.scheda-tbl{width:100%;border-collapse:collapse;font-size:12px}
-.scheda-tbl th{background:var(--dark2);color:var(--steel2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:8px 10px;border-bottom:2px solid var(--border);text-align:center}
-.scheda-tbl td{padding:7px 10px;border-bottom:1px solid var(--border);color:var(--text);text-align:center;vertical-align:middle}
-.scheda-tbl tr:hover td{background:rgba(30,111,165,.06)}
-.scheda-tbl tfoot td{background:rgba(255,255,255,.03);font-weight:700;color:#e0eefc;border-top:2px solid var(--border)}
-</style>
+{# ══ MODAL: ANALISI TAKT TIME ══ #}
+<div class="modal-overlay" id="modalTakt">
+<div class="modal-box" style="width:580px;max-height:92vh;overflow-y:auto">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+    <div>
+      <div style="font-size:16px;font-weight:800;color:#e0eefc">⏱ Analisi Takt Time</div>
+      <div id="taktNomeProd" style="font-size:11px;color:var(--text-dim);margin-top:2px"></div>
+    </div>
+    <button class="btn btn-ghost" style="padding:3px 12px;font-size:16px" onclick="closeModal('modalTakt')">✕</button>
+  </div>
+
+  <div id="taktLoading" style="text-align:center;padding:40px;color:var(--text-dim)">
+    <div style="font-size:26px;margin-bottom:8px">⏳</div>Calcolo in corso...
+  </div>
+
+  <div id="taktContent" style="display:none">
+    <div style="padding:14px;background:rgba(30,111,165,.08);border-radius:8px;border:1px solid var(--border);margin-bottom:14px">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px">
+        <span style="font-size:12px;font-weight:700;color:#e0eefc">📊 Cicli Accumulati</span>
+        <span id="taktCicliLabel" style="font-size:12px;color:var(--steel2);font-family:monospace"></span>
+      </div>
+      <div style="height:10px;background:rgba(255,255,255,.06);border-radius:5px;overflow:hidden">
+        <div id="taktCicliBar" style="height:100%;background:linear-gradient(90deg,var(--accent),var(--steel2));border-radius:5px;transition:width .6s;width:0%"></div>
+      </div>
+      <div id="taktMessaggio" style="font-size:11px;color:var(--text-dim);margin-top:8px;line-height:1.5"></div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px">
+      <div class="takt-box"><div class="takt-lbl">⏱ Takt Time Suggerito</div><div class="takt-val" id="tvTakt">—</div><div class="takt-sub">min / pezzo (su 480 min/gg)</div></div>
+      <div class="takt-box"><div class="takt-lbl">🔄 Lead Time Medio</div><div class="takt-val" id="tvLT">—</div><div class="takt-sub">ore medie per ciclo</div></div>
+      <div class="takt-box"><div class="takt-lbl">📦 Domanda Giornaliera</div><div class="takt-val" id="tvD">—</div><div class="takt-sub">pezzi / giorno (media 90gg)</div></div>
+      <div class="takt-box"><div class="takt-lbl">🃏 N Kanban Suggerito</div><div class="takt-val" id="tvN">—</div><div class="takt-sub">N = D × RT × (1+SS) / C</div></div>
+    </div>
+
+    <div id="taktImpostaSection" style="display:none;padding:14px;background:rgba(26,158,92,.08);border:1px solid rgba(26,158,92,.25);border-radius:8px;margin-bottom:14px">
+      <div style="font-size:12px;font-weight:700;color:#5debb0;margin-bottom:10px">✅ Dati disponibili — Imposta Takt Time ufficiale</div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div><label class="modal-label">Takt Time (min/pz)</label><input type="number" class="modal-input" id="inputTaktMin" step="0.1" min="0.1" style="width:110px"></div>
+        <div><label class="modal-label">Lead Time (giorni)</label><input type="number" class="modal-input" id="inputTaktLT" step="0.5" min="0.5" style="width:100px"></div>
+        <div class="pin-field" style="margin-top:0;padding:6px 10px;flex:none">
+          <label>🔐</label><input type="password" id="pinTakt" maxlength="6" placeholder="••••" style="width:70px">
+        </div>
+        <button class="btn btn-success" onclick="impostaTakt()">💾 Imposta</button>
+      </div>
+      <div style="font-size:10px;color:var(--text-dim);margin-top:8px">⚠️ Affidabilità statistica solida dopo 30 cicli. Puoi impostarlo già ora e aggiornarlo in futuro.</div>
+    </div>
+
+    <div>
+      <div style="font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);margin-bottom:6px">Ultimi cicli registrati</div>
+      <div id="taktCicliList" style="max-height:160px;overflow-y:auto;border:1px solid var(--border);border-radius:6px"></div>
+    </div>
+  </div>
+</div>
+</div>
+
+{# ══ MODAL: CONFIGURA WIP ══ #}
+<div class="modal-overlay" id="modalWip">
+<div class="modal-box" style="width:520px">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+    <h3 style="margin:0">⚙️ Configura Limiti WIP</h3>
+    <button class="btn btn-ghost" style="padding:3px 10px;font-size:16px" onclick="closeModal('modalWip')">✕</button>
+  </div>
+  <div style="font-size:11px;color:var(--text-dim);margin-bottom:12px">0 = nessun limite. WIP Max = ordini simultanei in fase. Max/gg = tetto giornaliero.</div>
+  <table style="width:100%;border-collapse:collapse;font-size:12px">
+    <thead><tr>
+      <th style="text-align:left;padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border)">Fase</th>
+      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">WIP Max</th>
+      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">Max/gg</th>
+      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">🟡 %</th>
+      <th style="padding:6px;color:var(--steel2);font-size:10px;text-transform:uppercase;border-bottom:1px solid var(--border);text-align:center">🔴 %</th>
+    </tr></thead>
+    <tbody id="wipConfigBody"></tbody>
+  </table>
+  <div class="pin-field" style="margin-top:14px">
+    <label>🔐 PIN</label>
+    <input type="password" id="pinWip" maxlength="6" placeholder="••••">
+  </div>
+  <div class="modal-footer">
+    <button class="btn btn-ghost" onclick="closeModal('modalWip')">Annulla</button>
+    <button class="btn btn-primary" onclick="salvaWip()">💾 Salva Limiti</button>
+  </div>
+</div>
+</div>
 
 {# ══ MODAL: ELIMINA ARTICOLO ══ #}
 <div class="modal-overlay" id="modalEliminaArticolo">
@@ -484,7 +453,7 @@
     <div style="background:rgba(240,112,112,.08);border:1px solid rgba(240,112,112,.25);border-radius:8px;padding:12px 16px;margin-bottom:18px">
       <strong id="eliminaNome" style="font-size:15px;color:#f07070"></strong>
     </div>
-    <p style="color:var(--text-dim);font-size:12px;margin-bottom:16px">⚠️ Questa operazione è irreversibile. Inserisci il PIN di autorizzazione per confermare.</p>
+    <p style="color:var(--text-dim);font-size:12px;margin-bottom:16px">⚠️ Operazione irreversibile. Inserisci il PIN per confermare.</p>
     <div class="pin-field">
       <label>🔐 PIN Autorizzazione</label>
       <input type="password" id="pinElimina" maxlength="6" placeholder="••••" style="letter-spacing:6px;font-size:18px;text-align:center">
@@ -527,16 +496,26 @@
 
 {# ══ DROPDOWN MENU AZIONI ══ #}
 <div id="menuAzioni" style="display:none;position:fixed;z-index:9999;background:var(--dark2);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 32px rgba(0,0,0,.5);min-width:160px;overflow:hidden">
-  <div id="menuAzioniTitolo" style="padding:8px 14px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border);font-style:italic;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
+  <div id="menuAzioniTitolo" style="padding:8px 14px;font-size:11px;color:var(--text-dim);border-bottom:1px solid var(--border);font-style:italic;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"></div>
   <button onclick="apriSpostaModal()" style="display:block;width:100%;text-align:left;padding:10px 16px;background:none;border:none;color:var(--text);cursor:pointer;font-size:13px;border-bottom:1px solid rgba(255,255,255,.06)" onmouseover="this.style.background='rgba(30,111,165,.2)'" onmouseout="this.style.background='none'">↗️ Sposta in altro gruppo</button>
   <button onclick="apriEliminaModal()" style="display:block;width:100%;text-align:left;padding:10px 16px;background:none;border:none;color:#f07070;cursor:pointer;font-size:13px" onmouseover="this.style.background='rgba(240,112,112,.15)'" onmouseout="this.style.background='none'">🗑️ Elimina articolo</button>
 </div>
 
 <style>
-.btn-azioni{background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:5px;padding:4px 8px;cursor:pointer;font-size:13px;transition:all .15s;color:var(--text-dim)}
+.btn-wms{background:rgba(26,158,92,.15);border:1px solid rgba(26,158,92,.3);border-radius:5px;padding:3px 8px;cursor:pointer;font-size:13px;transition:all .15s;color:#5debb0}
+.btn-wms:hover{background:rgba(26,158,92,.35);border-color:var(--green);color:#fff}
+.btn-azioni{background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:5px;padding:3px 7px;cursor:pointer;font-size:12px;transition:all .15s;color:var(--text-dim)}
 .btn-azioni:hover{background:rgba(30,111,165,.25);border-color:var(--accent);color:var(--text)}
+.wms-saldo-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;border-top:3px solid var(--grey)}
+.wms-saldo-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-dim);margin-bottom:4px}
+.wms-saldo-val{font-size:22px;font-weight:900;color:#5debb0}
+.wms-saldo-val.neg{color:#f07070}
+.scheda-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.scheda-tbl th{background:var(--dark2);color:var(--steel2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:8px 10px;border-bottom:2px solid var(--border);text-align:center}
+.scheda-tbl td{padding:7px 10px;border-bottom:1px solid var(--border);color:var(--text);text-align:center;vertical-align:middle}
+.scheda-tbl tr:hover td{background:rgba(30,111,165,.06)}
+.scheda-tbl tfoot td{background:rgba(255,255,255,.03);font-weight:700;color:#e0eefc;border-top:2px solid var(--border)}
 </style>
-
 
 {% endblock %}
 
@@ -548,7 +527,7 @@ document.querySelectorAll('td.editable').forEach(td => {
     const field = this.dataset.field, pid = this.dataset.pid, orig = this.textContent.trim();
     const curVal = parseFloat(orig) || 0;
     this.classList.add('editing');
-    this.innerHTML = `<input type="number" value="${curVal}" step="1">`;
+    this.innerHTML = `<input type="number" value="${curVal}" step="1" style="width:60px;text-align:center">`;
     const inp = this.querySelector('input');
     inp.focus(); inp.select();
     const commit = () => {
@@ -561,22 +540,7 @@ document.querySelectorAll('td.editable').forEach(td => {
         }).then(r => r.json()).then(d => {
           if (d.ok) {
             this.classList.remove('editing'); this.textContent = nv;
-            const row = this.closest('tr');
-            // Saldo
-            const s = row.querySelector('.saldo-td');
-            if (s) { s.textContent = d.saldo; s.className = 'num saldo-td ' + (d.saldo < 0 ? 'num-neg' : 'num-pos'); }
-            // Stato
-            const st = row.querySelector('.stato-td');
-            if (st) {
-              if (d.stato === 'OK') st.innerHTML = '<span class="badge badge-ok">✅ OK</span>';
-              else if (d.stato.includes('PROGRAMMARE')) st.innerHTML = '<span class="badge badge-warn">⚠️ PROD.</span>';
-              else st.innerHTML = '<span class="badge badge-prod">🚧</span>';
-            }
-            // Buffer colore
-            const buf = d.buffer_colore || 'grigio';
-            row.className = 'row-' + buf;
-            // Lavorazioni
-            const lv = row.querySelector('.lav-val'); if (lv) lv.textContent = d.lavorazioni || '';
+            _aggiornaSaldi(this.closest('tr'), d);
             showToast('💾 Salvato');
           } else { this.classList.remove('editing'); this.textContent = orig; showToast('❌ Errore', true); }
         }).catch(() => { this.classList.remove('editing'); this.textContent = orig; showToast('❌ Rete', true); });
@@ -590,16 +554,46 @@ document.querySelectorAll('td.editable').forEach(td => {
   });
 });
 
+function _aggiornaSaldi(row, d) {
+  // Ricalcola saldi dalla risposta API
+  const grezzi    = d.grezzi    || 0;
+  const in_vern   = d.in_vern   || 0;
+  const verniciati= d.verniciati|| 0;
+  const in_prod   = d.in_prod   || 0;
+  const riservato = d.riservato || 0;
+  const riserva   = d.riserva   || 0;
+
+  const sc  = grezzi + in_vern + verniciati + in_prod - riservato;
+  const disp= sc - riserva;
+  const pv  = verniciati + in_prod - riservato;
+  const gpv = grezzi + in_vern + verniciati + in_prod - riservato;
+
+  const setCell = (cls, val) => {
+    const el = row.querySelector(cls);
+    if (!el) return;
+    el.textContent = val;
+    el.className = el.className.replace(/num-neg|num-pos/g, '').trim()
+                  + (val < 0 ? ' num-neg' : val > 0 ? ' num-pos' : '');
+  };
+  // SC
+  const scEl = row.querySelector('.saldo-sc');
+  if (scEl) { scEl.textContent = sc; scEl.className = 'num saldo-td saldo-sc ' + (sc < 0 ? 'num-neg' : 'num-pos'); }
+
+  // Stato badge — colore riga
+  const buf = d.buffer_colore || 'grigio';
+  row.className = 'row-' + buf;
+}
+
 function filterTable(q) {
   q = q.toLowerCase();
   document.querySelectorAll('#kbtable tbody tr').forEach(tr => {
-    const n = tr.querySelector('.prod-name');
+    const n = tr.querySelector('.prod-name') || tr.querySelector('.prod-code');
     tr.style.display = (!q || (n && n.textContent.toLowerCase().includes(q))) ? '' : 'none';
   });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// ANALISI TAKT TIME
+// ANALISI TAKT TIME — invariato
 // ══════════════════════════════════════════════════════════════════════════════
 let _taktPid = null;
 
@@ -625,9 +619,7 @@ function _caricaTakt(pid) {
     const chiusi   = d.n_cicli_chiusi || 0;
     const pct      = Math.min(100, Math.round(chiusi / minAffid * 100));
 
-    // Animazione barra
     setTimeout(() => { document.getElementById('taktCicliBar').style.width = pct + '%'; }, 100);
-    // Colore barra
     const bar = document.getElementById('taktCicliBar');
     bar.style.background = chiusi >= minAffid
       ? 'linear-gradient(90deg,#1a9e5c,#5debb0)'
@@ -639,24 +631,19 @@ function _caricaTakt(pid) {
     document.getElementById('taktMessaggio').textContent  = d.messaggio || '';
 
     const fmt = (v, dec=1) => (v != null && !isNaN(v)) ? parseFloat(v).toFixed(dec) : '—';
-    document.getElementById('tvTakt').textContent = d.takt_suggerito       ? fmt(d.takt_suggerito)       : '—';
-    document.getElementById('tvLT').textContent   = d.lead_time_medio_ore  ? fmt(d.lead_time_medio_ore)  : '—';
-    document.getElementById('tvD').textContent    = d.domanda_giornaliera  ? fmt(d.domanda_giornaliera)  : '—';
-    document.getElementById('tvN').textContent    = d.n_kanban_suggerito   ? fmt(d.n_kanban_suggerito,1) : '—';
+    document.getElementById('tvTakt').textContent = d.takt_suggerito      ? fmt(d.takt_suggerito)      : '—';
+    document.getElementById('tvLT').textContent   = d.lead_time_medio_ore ? fmt(d.lead_time_medio_ore) : '—';
+    document.getElementById('tvD').textContent    = d.domanda_giornaliera ? fmt(d.domanda_giornaliera) : '—';
+    document.getElementById('tvN').textContent    = d.n_kanban_suggerito  ? fmt(d.n_kanban_suggerito,1): '—';
 
-    // Sezione imposta: visibile già da 5 cicli
     const sec = document.getElementById('taktImpostaSection');
     if (chiusi >= minReq && d.takt_suggerito) {
       sec.style.display = 'block';
       document.getElementById('inputTaktMin').value = fmt(d.takt_suggerito);
-      document.getElementById('inputTaktLT').value  = d.lead_time_medio_ore
-        ? fmt(d.lead_time_medio_ore / 24, 2) : '7';
+      document.getElementById('inputTaktLT').value  = d.lead_time_medio_ore ? fmt(d.lead_time_medio_ore / 24, 2) : '7';
       document.getElementById('pinTakt').value = '';
-    } else {
-      sec.style.display = 'none';
-    }
+    } else { sec.style.display = 'none'; }
 
-    // Lista cicli
     fetch(`/api/kanban/${pid}/cicli`)
     .then(r => r.json())
     .then(cicli => {
@@ -707,7 +694,9 @@ function openModalWip() {
   fetch('/api/wip').then(r => r.json()).then(data => {
     _wipData = data;
     const tbody = document.getElementById('wipConfigBody');
-    tbody.innerHTML = Object.entries(data).map(([fase, dati]) => `
+    tbody.innerHTML = Object.entries(data)
+      .filter(([fase]) => fase !== 'collaudo')
+      .map(([fase, dati]) => `
       <tr>
         <td style="padding:6px 8px;color:#e0eefc;font-weight:600">${dati.label}</td>
         <td style="padding:4px 6px"><input type="number" class="modal-input" id="wipLimit_${fase}"  value="${dati.limit}"                 min="0" style="width:65px;padding:5px 8px;text-align:center"></td>
@@ -721,8 +710,8 @@ function openModalWip() {
 }
 
 function salvaWip() {
-  const pin   = document.getElementById('pinWip').value;
-  const fasi  = Object.keys(_wipData);
+  const pin  = document.getElementById('pinWip').value;
+  const fasi = Object.keys(_wipData).filter(f => f !== 'collaudo');
   const calls = fasi.map(fase =>
     fetch('/api/wip', {
       method: 'PUT',
@@ -747,7 +736,6 @@ function salvaWip() {
   }).catch(() => showToast('❌ Errore rete', true));
 }
 
-
 // ══════════════════════════════════════════════════════════════════════════════
 // SCHEDA WMS
 // ══════════════════════════════════════════════════════════════════════════════
@@ -769,8 +757,6 @@ function _caricaSchedaWms(pid) {
   .then(r => r.json())
   .then(d => {
     document.getElementById('wmsLoading').style.display = 'none';
-
-    // SKU
     document.getElementById('wmsInputSkuVern').value   = d.sku_vern   || '';
     document.getElementById('wmsInputSkuGrezzo').value = d.sku_grezzo || '';
     document.getElementById('wmsSchedaSku').textContent =
@@ -781,23 +767,22 @@ function _caricaSchedaWms(pid) {
       el.style.display = 'block';
       el.textContent = '⚠️ ' + d.wms_errore;
       document.getElementById('wmsContent').style.display = 'block';
-      // Reset valori
-      ['wsSaldo1','wsSaldo2','wsSaldo3','wsSaldo4','wsStockVern','wsStockGrezzi','wsInVern'].forEach(id => {
-        document.getElementById(id).textContent = '—';
+      ['wsSaldo1','wsSaldo2','wsSaldo3','wsSaldo4','wsStockVern','wsStockGrezzi','wsInVern','wsStockIS'].forEach(id => {
+        const el2 = document.getElementById(id); if (el2) el2.textContent = '—';
       });
       return;
     }
 
     document.getElementById('wmsContent').style.display = 'block';
-
-    // Stock magazzino
     document.getElementById('wsStockVern').textContent   = d.stock_verniciati ?? '—';
-    document.getElementById('wsStockGrezzi').textContent = d.stock_grezzi ?? '—';
-    document.getElementById('wsInVern').textContent      = d.in_vern ?? '—';
+    document.getElementById('wsStockGrezzi').textContent = d.stock_grezzi     ?? '—';
+    document.getElementById('wsInVern').textContent      = d.in_vern          ?? '—';
+    const wsIS = document.getElementById('wsStockIS');
+    if (wsIS) wsIS.textContent = d.stock_is ?? d.finiti_is ?? '—';
 
-    // 4 saldi
     const setSaldo = (id, val) => {
       const el = document.getElementById(id);
+      if (!el) return;
       el.textContent = val ?? '—';
       if (val != null) el.className = 'wms-saldo-val' + (val < 0 ? ' neg' : '');
     };
@@ -806,14 +791,11 @@ function _caricaSchedaWms(pid) {
     setSaldo('wsSaldo3', d.saldo_dopo_vern);
     setSaldo('wsSaldo4', d.saldo_grezzi_vern);
 
-    // Riservato clienti
     const ordini = d.ordini_clienti || [];
     const bodyC = document.getElementById('wsTblClientiBody');
-    if (!ordini.length) {
-      bodyC.innerHTML = '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessun ordine aperto</td></tr>';
-    } else {
-      bodyC.innerHTML = ordini.map(o => `
-        <tr>
+    bodyC.innerHTML = !ordini.length
+      ? '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessun ordine aperto</td></tr>'
+      : ordini.map(o => `<tr>
           <td style="font-weight:600;text-align:left">${o.cliente||'—'}</td>
           <td class="num">${o.qta_ord||0}</td>
           <td class="num">${o.qta_evasa||0}</td>
@@ -821,23 +803,18 @@ function _caricaSchedaWms(pid) {
           <td style="font-size:10px">${o.conferma||'—'}</td>
           <td style="font-size:11px;color:var(--text-dim)">${o.data_consegna||'—'}</td>
         </tr>`).join('');
-    }
     document.getElementById('wsTotRiservato').textContent = d.riservato_clienti || 0;
 
-    // Ultimi 3 evasi
     const evasi = d.ultimi_evasi || [];
     const bodyE = document.getElementById('wsTblEvasiBody');
-    if (!evasi.length) {
-      bodyE.innerHTML = '<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessuna evasione registrata</td></tr>';
-    } else {
-      bodyE.innerHTML = evasi.map(e => `
-        <tr style="background:rgba(26,158,92,.04)">
+    bodyE.innerHTML = !evasi.length
+      ? '<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessuna evasione registrata</td></tr>'
+      : evasi.map(e => `<tr style="background:rgba(26,158,92,.04)">
           <td style="color:#5debb0;font-weight:600">${e.data||'—'}</td>
           <td style="font-weight:600">${e.cliente||'—'}</td>
           <td style="font-size:10px;color:var(--text-dim)">${e.conferma||'—'}</td>
           <td class="num" style="color:#5debb0;font-weight:700">${e.qta||0}</td>
         </tr>`).join('');
-    }
   })
   .catch(err => {
     document.getElementById('wmsLoading').style.display = 'none';
@@ -863,8 +840,7 @@ function collegaEAggiorna() {
       document.getElementById('wmsContent').style.display = 'none';
       document.getElementById('wmsErrore').style.display = 'none';
       _caricaSchedaWms(_wmsPid);
-    } else if (d.pin_error) showToast('🔐 PIN errato', true);
-    else showToast('❌ ' + (d.error || 'Errore'), true);
+    } else showToast('❌ ' + (d.error || 'Errore'), true);
   });
 }
 
@@ -876,12 +852,10 @@ function apriMenuAzioni(evt, pid, nome) {
   _azioniPid = pid; _azioniNome = nome;
   const menu = document.getElementById('menuAzioni');
   document.getElementById('menuAzioniTitolo').textContent = nome;
-  // Posiziona il menu vicino al pulsante
   const r = evt.target.getBoundingClientRect();
   menu.style.display = 'block';
   const mw = 170, mh = 110;
-  let left = r.right - mw;
-  let top  = r.bottom + 4;
+  let left = r.right - mw, top = r.bottom + 4;
   if (left < 4) left = 4;
   if (top + mh > window.innerHeight) top = r.top - mh - 4;
   menu.style.left = left + 'px';
@@ -891,7 +865,6 @@ document.addEventListener('click', () => {
   document.getElementById('menuAzioni').style.display = 'none';
 });
 
-// ── Elimina ──────────────────────────────────────────────────────────────────
 function apriEliminaModal() {
   document.getElementById('menuAzioni').style.display = 'none';
   document.getElementById('eliminaNome').textContent = _azioniNome;
@@ -901,29 +874,23 @@ function apriEliminaModal() {
 }
 function confermaElimina() {
   const pin = document.getElementById('pinElimina').value;
-  fetch(`/api/kanban/${_azioniPid}?pin=${encodeURIComponent(pin)}`, {
-    method: 'DELETE'
-  }).then(r => r.json()).then(d => {
+  fetch(`/api/kanban/${_azioniPid}?pin=${encodeURIComponent(pin)}`, { method: 'DELETE' })
+  .then(r => r.json()).then(d => {
     if (d.ok) {
       closeModal('modalEliminaArticolo');
       showToast('🗑️ Articolo eliminato');
-      // Rimuovi la riga dalla tabella
       const row = document.querySelector(`tr[data-pid="${_azioniPid}"]`);
       if (row) row.remove();
     } else if (d.pin_error) showToast('🔐 PIN errato', true);
     else showToast('❌ ' + (d.error || 'Errore'), true);
   }).catch(() => showToast('❌ Errore di rete', true));
 }
-document.getElementById('pinElimina').addEventListener('keydown', e => {
-  if (e.key === 'Enter') confermaElimina();
-});
+document.getElementById('pinElimina').addEventListener('keydown', e => { if (e.key === 'Enter') confermaElimina(); });
 
-// ── Sposta ───────────────────────────────────────────────────────────────────
 function apriSpostaModal() {
   document.getElementById('menuAzioni').style.display = 'none';
   document.getElementById('apostaNome').textContent = _azioniNome;
   document.getElementById('pinSposta').value = '';
-  // Carica lista gruppi
   const sel = document.getElementById('spostaDestinazioneSelect');
   sel.innerHTML = '<option value="">⏳ Caricamento...</option>';
   fetch('/api/kanban-gruppi')
@@ -942,8 +909,8 @@ function apriSpostaModal() {
   setTimeout(() => document.getElementById('pinSposta').focus(), 200);
 }
 function confermaSposta() {
-  const pin       = document.getElementById('pinSposta').value;
-  const nuovoKey  = document.getElementById('spostaDestinazioneSelect').value;
+  const pin      = document.getElementById('pinSposta').value;
+  const nuovoKey = document.getElementById('spostaDestinazioneSelect').value;
   if (!nuovoKey) { showToast('⚠️ Seleziona un gruppo destinazione', true); return; }
   fetch(`/api/kanban/${_azioniPid}/sposta`, {
     method: 'POST',
@@ -953,19 +920,12 @@ function confermaSposta() {
     if (d.ok) {
       closeModal('modalSposta');
       showToast('↗️ Articolo spostato con successo');
-      // Rimuovi la riga dalla tabella (non appartiene più a questo gruppo)
       const row = document.querySelector(`tr[data-pid="${_azioniPid}"]`);
-      if (row) {
-        row.style.transition = 'opacity .4s';
-        row.style.opacity = '0';
-        setTimeout(() => row.remove(), 400);
-      }
+      if (row) { row.style.transition = 'opacity .4s'; row.style.opacity = '0'; setTimeout(() => row.remove(), 400); }
     } else if (d.pin_error) showToast('🔐 PIN errato', true);
     else showToast('❌ ' + (d.error || 'Errore'), true);
   }).catch(() => showToast('❌ Errore di rete', true));
 }
-document.getElementById('pinSposta').addEventListener('keydown', e => {
-  if (e.key === 'Enter') confermaSposta();
-});
+document.getElementById('pinSposta').addEventListener('keydown', e => { if (e.key === 'Enter') confermaSposta(); });
 
 {% endblock %}
