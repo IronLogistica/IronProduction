@@ -140,8 +140,9 @@ def api_crea():
 @kanban_bp.route('/api/kanban/<int:kid>', methods=['DELETE'])
 def api_elimina(kid):
     try:
-        d = request.get_json(force=True, silent=True) or {}
-        if d.get('pin', '') != PIN_ADMIN:
+        # PIN può arrivare come query param (DELETE non supporta body in Flask di default)
+        pin = request.args.get('pin', '') or (request.get_json(force=True, silent=True) or {}).get('pin', '')
+        if pin != PIN_ADMIN:
             return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
         p = KanbanProdotto.query.get_or_404(kid)
         nome = p.prodotto
