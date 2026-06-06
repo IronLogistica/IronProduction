@@ -259,67 +259,148 @@
   </div>
 
   <div id="wmsLoading" style="text-align:center;padding:40px;color:var(--text-dim)">
-    <div style="font-size:26px;margin-bottom:8px">⏳</div>Interrogazione MasterLogistic...
+    <div style="font-size:26px;margin-bottom:8px">⏳</div>Caricamento scheda...
   </div>
 
   <div id="wmsErrore" style="display:none;padding:14px;background:rgba(192,57,43,.12);border-radius:8px;color:#f07070;margin-bottom:12px"></div>
 
   <div id="wmsContent" style="display:none">
 
-    {# SKU config #}
-    <div style="display:flex;gap:10px;margin-bottom:14px;padding:10px 12px;background:rgba(30,111,165,.07);border-radius:8px;border:1px solid var(--border);flex-wrap:wrap;align-items:flex-end">
-      <div style="flex:1;min-width:160px">
-        <label class="modal-label">SKU Verniciato (WMS)</label>
-        <input type="text" class="modal-input" id="wmsInputSkuVern" placeholder="es. T200">
-      </div>
-      <div style="flex:1;min-width:160px">
-        <label class="modal-label">SKU Grezzo (WMS)</label>
-        <input type="text" class="modal-input" id="wmsInputSkuGrezzo" placeholder="es. T200GRZ">
-      </div>
-      <button class="btn btn-primary" style="white-space:nowrap" onclick="collegaEAggiorna()">🔗 Collega &amp; Aggiorna</button>
-    </div>
+    {# ── RIGA 1: 4 saldi + stock fianco a fianco ── #}
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px">
 
-    {# 4 saldi top #}
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px">
+      {# Saldo Contabile #}
       <div class="wms-saldo-box" style="border-top-color:var(--accent)">
         <div class="wms-saldo-lbl">SALDO CONTABILE</div>
         <div class="wms-saldo-val" id="wsSaldo1">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Grezzi+Tratt.+IW+IS−Imp.</div>
       </div>
+
+      {# Saldo Disponibile #}
       <div class="wms-saldo-box" style="border-top-color:var(--steel2)">
         <div class="wms-saldo-lbl">SALDO DISPONIBILE</div>
         <div class="wms-saldo-val" id="wsSaldo2">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">SC − Riservato clienti</div>
       </div>
+
+      {# Finiti IW — vicino a IS #}
       <div class="wms-saldo-box" style="border-top-color:#e6b800">
-        <div class="wms-saldo-lbl">DOPO 🖌️ VERNICIATURA (PV)</div>
-        <div class="wms-saldo-val" id="wsSaldo3">—</div>
+        <div class="wms-saldo-lbl">🎨 FINITI IW (Post-Vern.)</div>
+        <div class="wms-saldo-val" style="color:#f0c040" id="wsStockVern">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">A magazzino verniciati</div>
       </div>
+
+      {# Finiti IS — vicino a IW #}
       <div class="wms-saldo-box" style="border-top-color:var(--green)">
-        <div class="wms-saldo-lbl">📦 GREZZI + VERN. (GPV)</div>
-        <div class="wms-saldo-val" id="wsSaldo4">—</div>
+        <div class="wms-saldo-lbl">📦 FINITI IS (IronLogistic)</div>
+        <div class="wms-saldo-val" style="color:#5debb0" id="wsStockIS">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Da IronLogistic</div>
       </div>
     </div>
 
-    {# Stock magazzino #}
-    <div style="display:flex;gap:8px;margin-bottom:16px">
-      <div style="flex:1;background:rgba(230,184,0,.08);border:1px solid rgba(230,184,0,.2);border-radius:8px;padding:10px 14px;text-align:center">
-        <div style="font-size:10px;text-transform:uppercase;color:#f0c040;margin-bottom:4px">Finiti IW — Magazzino VERNICIATI</div>
-        <div style="font-size:28px;font-weight:900;color:#f0c040" id="wsStockVern">—</div>
+    {# ── RIGA 2: Grezzi + In Trattamento (più piccoli) ── #}
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
+      <div style="background:rgba(30,111,165,.06);border:1px solid var(--border);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:14px">
+        <div style="text-align:center;min-width:60px">
+          <div style="font-size:9px;text-transform:uppercase;color:var(--steel2);margin-bottom:2px">Grezzi</div>
+          <div style="font-size:24px;font-weight:900;color:var(--steel2)" id="wsStockGrezzi">—</div>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);line-height:1.4">Prodotti lavorati,<br>non ancora trattati</div>
       </div>
-      <div style="flex:1;background:rgba(30,111,165,.08);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center">
-        <div style="font-size:10px;text-transform:uppercase;color:var(--steel2);margin-bottom:4px">Magazzino GREZZI</div>
-        <div style="font-size:28px;font-weight:900;color:var(--steel2)" id="wsStockGrezzi">—</div>
-      </div>
-      <div style="flex:1;background:rgba(30,111,165,.05);border:1px solid var(--border);border-radius:8px;padding:10px 14px;text-align:center">
-        <div style="font-size:10px;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">In Verniciatura / Trattamento</div>
-        <div style="font-size:28px;font-weight:900;color:#e0eefc" id="wsInVern">—</div>
-      </div>
-      <div style="flex:1;background:rgba(26,158,92,.08);border:1px solid rgba(26,158,92,.2);border-radius:8px;padding:10px 14px;text-align:center">
-        <div style="font-size:10px;text-transform:uppercase;color:#5debb0;margin-bottom:4px">Finiti IS — IronLogistic</div>
-        <div style="font-size:28px;font-weight:900;color:#5debb0" id="wsStockIS">—</div>
+      <div style="background:rgba(230,184,0,.05);border:1px solid rgba(230,184,0,.2);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:14px">
+        <div style="text-align:center;min-width:60px">
+          <div style="font-size:9px;text-transform:uppercase;color:#f0c040;margin-bottom:2px">In Trattamento</div>
+          <div style="font-size:24px;font-weight:900;color:#f0c040" id="wsInVern">—</div>
+        </div>
+        <div style="font-size:10px;color:var(--text-dim);line-height:1.4">Presso verniciatore<br>/ zincatore esterno</div>
       </div>
     </div>
 
-    {# Riservato a clienti #}
+    {# ── COMMESSE DI PRODUZIONE APERTE ── #}
+    <div class="scheda-sec-title" style="color:var(--steel2);border-left-color:var(--accent)">
+      🏭 Commesse di Produzione Aperte
+    </div>
+    <div style="overflow-x:auto;margin-bottom:16px">
+    <table class="scheda-tbl" id="wsTblCommesse">
+      <thead><tr>
+        <th style="text-align:left">Nr. Commessa</th>
+        <th>Totale Ordinato</th>
+        <th>Evasi / Prodotti</th>
+        <th style="color:#f07070">Saldo Residuo</th>
+        <th>Stato</th>
+        <th>Consegna</th>
+      </tr></thead>
+      <tbody id="wsTblCommesseBody">
+        <tr><td colspan="6" class="scheda-empty">Nessuna commessa aperta</td></tr>
+      </tbody>
+      <tfoot>
+        <tr class="scheda-foot">
+          <td style="font-weight:700;padding:7px 10px">Totale residuo</td>
+          <td class="num" id="totCommOrd">—</td>
+          <td class="num" id="totCommEvasi">—</td>
+          <td class="num num-neg" id="totCommSaldo" style="font-weight:900;font-size:14px">—</td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
+    </table>
+    </div>
+
+    {# ── STORICO PRODUZIONE ── #}
+    <div class="scheda-sec-title" style="color:#e6b800;border-left-color:#e6b800">
+      📊 Storico Produzione
+      <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+        <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px" onclick="apriImportStorico()">📥 Import CSV</button>
+        <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px;color:#f07070" onclick="apriResetStorico()">🗑️ Reset</button>
+      </span>
+    </div>
+
+    {# Anno corrente — barre mensili #}
+    <div id="storicoContent">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:11px;font-weight:700;color:#e0eefc" id="storicoAnnoLabel">Anno —</div>
+        <div style="font-size:13px;font-weight:900;color:#e6b800" id="storicoTotAnno">— pz</div>
+      </div>
+      <div id="storicoBarre" style="display:flex;gap:3px;align-items:flex-end;height:80px;margin-bottom:4px"></div>
+      <div id="storicoMesiLabel" style="display:flex;gap:3px"></div>
+
+      {# Anno precedente — solo totale + mini barre #}
+      <div style="margin-top:12px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:6px;border:1px solid var(--border)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-size:10px;color:var(--text-dim)" id="storicoAnnoPrecLabel">Anno precedente —</div>
+          <div style="font-size:13px;font-weight:900;color:var(--text-dim)" id="storicoTotAnnoPrec">— pz</div>
+        </div>
+        <div id="storicopBarrePrec" style="display:flex;gap:3px;align-items:flex-end;height:40px;margin-bottom:3px"></div>
+        <div id="storicoMesiLabelPrec" style="display:flex;gap:3px"></div>
+      </div>
+    </div>
+
+    {# ── MODAL IMPORT CSV storico (inline nel modal) ── #}
+    <div id="storicoImportBox" style="display:none;margin-top:12px;padding:14px;background:rgba(230,184,0,.07);border:1px solid rgba(230,184,0,.25);border-radius:8px">
+      <div style="font-size:12px;font-weight:700;color:#e6b800;margin-bottom:10px">📥 Import CSV Storico Produzione</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;line-height:1.6">
+        Formato CSV: <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px">codice_articolo,anno,mese,qta</code><br>
+        Header obbligatorio. Separatore: virgola o punto e virgola.<br>
+        I valori si <strong>sommano</strong> a quelli esistenti. Per azzerare prima usa Reset.
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div>
+          <label class="modal-label">File CSV</label>
+          <input type="file" id="storicoFileInput" accept=".csv,.txt" style="color:var(--text);font-size:12px">
+        </div>
+        <div>
+          <label class="modal-label">🔐 PIN</label>
+          <input type="password" id="storicoPinImport" maxlength="6" placeholder="••••" class="modal-input" style="width:80px">
+        </div>
+        <button class="btn btn-primary" onclick="eseguiImportStorico()">📤 Importa</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('storicoImportBox').style.display='none'">Annulla</button>
+      </div>
+      <div id="storicoImportEsito" style="margin-top:10px;font-size:12px;display:none"></div>
+    </div>
+
+    {# Separatore #}
+    <div style="height:1px;background:var(--border);margin:16px 0"></div>
+
+    {# Riservato a clienti — LA PARTE SOTTO RIMANE INVARIATA #}
     <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--steel2);font-weight:700;margin-bottom:8px;padding:5px 10px;background:rgba(30,111,165,.1);border-radius:4px;border-left:3px solid var(--accent)">
       👥 Riservato a Clienti
     </div>
@@ -515,6 +596,9 @@
 .scheda-tbl td{padding:7px 10px;border-bottom:1px solid var(--border);color:var(--text);text-align:center;vertical-align:middle}
 .scheda-tbl tr:hover td{background:rgba(30,111,165,.06)}
 .scheda-tbl tfoot td{background:rgba(255,255,255,.03);font-weight:700;color:#e0eefc;border-top:2px solid var(--border)}
+.scheda-sec-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;padding:5px 10px;border-radius:4px;border-left:3px solid;display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.03)}
+.scheda-empty{text-align:center;color:var(--text-dim);padding:12px;font-style:italic}
+.scheda-foot td{padding:7px 10px;font-weight:700;color:#e0eefc;border-top:2px solid var(--border)}
 </style>
 
 {% endblock %}
@@ -753,48 +837,69 @@ function apriSchedaWms(pid, nome) {
 }
 
 function _caricaSchedaWms(pid) {
-  fetch(`/api/kanban-scheda/${pid}`)
-  .then(r => r.json())
-  .then(d => {
-    document.getElementById('wmsLoading').style.display = 'none';
-    document.getElementById('wmsInputSkuVern').value   = d.sku_vern   || '';
-    document.getElementById('wmsInputSkuGrezzo').value = d.sku_grezzo || '';
-    document.getElementById('wmsSchedaSku').textContent =
-      `SKU Verniciato: ${d.sku_vern||'—'}  |  SKU Grezzo: ${d.sku_grezzo||'—'}`;
+  // Carica dati WMS (se disponibile) + sempre storico e commesse
+  const p1 = fetch(`/api/kanban-scheda/${pid}`).then(r => r.json()).catch(() => null);
+  const p2 = fetch(`/api/kanban/${pid}/storico`).then(r => r.json()).catch(() => null);
 
-    if (d.wms_errore && !d.wms_ok) {
-      const el = document.getElementById('wmsErrore');
-      el.style.display = 'block';
-      el.textContent = '⚠️ ' + d.wms_errore;
-      document.getElementById('wmsContent').style.display = 'block';
-      ['wsSaldo1','wsSaldo2','wsSaldo3','wsSaldo4','wsStockVern','wsStockGrezzi','wsInVern','wsStockIS'].forEach(id => {
-        const el2 = document.getElementById(id); if (el2) el2.textContent = '—';
+  Promise.all([p1, p2]).then(([d, storico]) => {
+    document.getElementById('wmsLoading').style.display = 'none';
+    document.getElementById('wmsContent').style.display = 'block';
+
+    // ── WMS dati (opzionali — se non connesso mostra comunque il resto) ──
+    if (d && !d.wms_errore) {
+      document.getElementById('wsStockVern').textContent   = d.stock_verniciati ?? '—';
+      document.getElementById('wsStockGrezzi').textContent = d.stock_grezzi     ?? '—';
+      document.getElementById('wsInVern').textContent      = d.in_vern          ?? '—';
+      const wsIS = document.getElementById('wsStockIS');
+      if (wsIS) wsIS.textContent = d.stock_is ?? d.finiti_is ?? '—';
+      const setSaldo = (id, val) => {
+        const el = document.getElementById(id); if (!el) return;
+        el.textContent = val ?? '—';
+        if (val != null) el.className = 'wms-saldo-val' + (val < 0 ? ' neg' : '');
+      };
+      setSaldo('wsSaldo1', d.saldo_contabile);
+      setSaldo('wsSaldo2', d.saldo_disponibile);
+    } else {
+      // Calcola saldi dai campi Kanban locali (visibili nel tabellone)
+      ['wsStockVern','wsStockGrezzi','wsInVern','wsStockIS'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.textContent = '—';
       });
-      return;
     }
 
-    document.getElementById('wmsContent').style.display = 'block';
-    document.getElementById('wsStockVern').textContent   = d.stock_verniciati ?? '—';
-    document.getElementById('wsStockGrezzi').textContent = d.stock_grezzi     ?? '—';
-    document.getElementById('wsInVern').textContent      = d.in_vern          ?? '—';
-    const wsIS = document.getElementById('wsStockIS');
-    if (wsIS) wsIS.textContent = d.stock_is ?? d.finiti_is ?? '—';
+    // ── Commesse di produzione aperte (da d se presente) ──
+    const commesse = (d && d.commesse_produzione) || [];
+    const bodyComm = document.getElementById('wsTblCommesseBody');
+    if (!commesse.length) {
+      bodyComm.innerHTML = '<tr><td colspan="6" class="scheda-empty">Nessuna commessa aperta su questo codice</td></tr>';
+      ['totCommOrd','totCommEvasi','totCommSaldo'].forEach(id => {
+        const el = document.getElementById(id); if(el) el.textContent = '—';
+      });
+    } else {
+      let totOrd=0, totEv=0, totSaldo=0;
+      bodyComm.innerHTML = commesse.map(c => {
+        totOrd   += c.qta_tot   || 0;
+        totEv    += c.qta_prod  || 0;
+        totSaldo += c.saldo     || 0;
+        const statoColor = c.stato === 'COMPLETATA' ? '#5debb0' : c.stato === 'IN_PRODUZIONE' ? '#e6b800' : 'var(--text-dim)';
+        return `<tr>
+          <td style="font-weight:700;text-align:left;font-family:monospace;font-size:12px">${c.numero||'—'}</td>
+          <td class="num">${c.qta_tot||0}</td>
+          <td class="num" style="color:#5debb0">${c.qta_prod||0}</td>
+          <td class="num num-neg" style="font-weight:800;font-size:13px">${c.saldo||0}</td>
+          <td><span style="font-size:10px;color:${statoColor}">${c.stato||'—'}</span></td>
+          <td style="font-size:10px;color:var(--text-dim)">${c.data_consegna||'—'}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('totCommOrd').textContent   = totOrd;
+      document.getElementById('totCommEvasi').textContent = totEv;
+      document.getElementById('totCommSaldo').textContent = totSaldo;
+    }
 
-    const setSaldo = (id, val) => {
-      const el = document.getElementById(id);
-      if (!el) return;
-      el.textContent = val ?? '—';
-      if (val != null) el.className = 'wms-saldo-val' + (val < 0 ? ' neg' : '');
-    };
-    setSaldo('wsSaldo1', d.saldo_contabile);
-    setSaldo('wsSaldo2', d.saldo_disponibile);
-    setSaldo('wsSaldo3', d.saldo_dopo_vern);
-    setSaldo('wsSaldo4', d.saldo_grezzi_vern);
-
-    const ordini = d.ordini_clienti || [];
+    // ── Clienti riservati ──
+    const ordini = (d && d.ordini_clienti) || [];
     const bodyC = document.getElementById('wsTblClientiBody');
     bodyC.innerHTML = !ordini.length
-      ? '<tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessun ordine aperto</td></tr>'
+      ? '<tr><td colspan="6" class="scheda-empty">Nessun ordine cliente aperto</td></tr>'
       : ordini.map(o => `<tr>
           <td style="font-weight:600;text-align:left">${o.cliente||'—'}</td>
           <td class="num">${o.qta_ord||0}</td>
@@ -803,44 +908,132 @@ function _caricaSchedaWms(pid) {
           <td style="font-size:10px">${o.conferma||'—'}</td>
           <td style="font-size:11px;color:var(--text-dim)">${o.data_consegna||'—'}</td>
         </tr>`).join('');
-    document.getElementById('wsTotRiservato').textContent = d.riservato_clienti || 0;
+    const totRis = document.getElementById('wsTotRiservato');
+    if (totRis) totRis.textContent = (d && d.riservato_clienti) || 0;
 
-    const evasi = d.ultimi_evasi || [];
+    // ── Ultimi evasi ──
+    const evasi = (d && d.ultimi_evasi) || [];
     const bodyE = document.getElementById('wsTblEvasiBody');
     bodyE.innerHTML = !evasi.length
-      ? '<tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessuna evasione registrata</td></tr>'
+      ? '<tr><td colspan="4" class="scheda-empty">Nessuna evasione registrata</td></tr>'
       : evasi.map(e => `<tr style="background:rgba(26,158,92,.04)">
           <td style="color:#5debb0;font-weight:600">${e.data||'—'}</td>
           <td style="font-weight:600">${e.cliente||'—'}</td>
           <td style="font-size:10px;color:var(--text-dim)">${e.conferma||'—'}</td>
           <td class="num" style="color:#5debb0;font-weight:700">${e.qta||0}</td>
         </tr>`).join('');
+
+    // ── Storico produzione ──
+    if (storico) _renderStorico(storico);
   })
   .catch(err => {
     document.getElementById('wmsLoading').style.display = 'none';
     const el = document.getElementById('wmsErrore');
     el.style.display = 'block';
-    el.textContent = '❌ Errore: ' + err;
+    el.textContent = '❌ Errore caricamento: ' + err;
     document.getElementById('wmsContent').style.display = 'block';
   });
 }
 
-function collegaEAggiorna() {
-  if (!_wmsPid) return;
-  const vern   = document.getElementById('wmsInputSkuVern').value.trim();
-  const grezzo = document.getElementById('wmsInputSkuGrezzo').value.trim();
-  fetch(`/api/kanban/${_wmsPid}/sku`, {
-    method: 'PUT',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({sku_verniciato: vern, sku_grezzo: grezzo})
-  }).then(r => r.json()).then(d => {
+function _renderStorico(s) {
+  // Anno corrente
+  document.getElementById('storicoAnnoLabel').textContent = `Anno ${s.anno_corrente}`;
+  document.getElementById('storicoTotAnno').textContent   = `${s.tot_corrente} pz`;
+
+  const maxC = Math.max(...s.mesi_corrente.map(m => m.qta), 1);
+  const barre = document.getElementById('storicoBarre');
+  const labMesi = document.getElementById('storicoMesiLabel');
+  const oggi = new Date();
+  const meseCorrente = oggi.getMonth() + 1;
+
+  barre.innerHTML = s.mesi_corrente.map(m => {
+    const h = Math.max(4, Math.round((m.qta / maxC) * 72));
+    const isCurr = m.mese === meseCorrente;
+    const isFut  = m.mese > meseCorrente;
+    const col    = isFut ? 'rgba(255,255,255,.08)' : isCurr ? '#e6b800' : 'var(--accent)';
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px" title="${m.label}: ${m.qta} pz">
+      <div style="font-size:8px;color:var(--text-dim)">${m.qta||''}</div>
+      <div style="width:100%;height:${h}px;background:${col};border-radius:3px 3px 0 0;transition:height .4s"></div>
+    </div>`;
+  }).join('');
+
+  labMesi.innerHTML = s.mesi_corrente.map(m =>
+    `<div style="flex:1;text-align:center;font-size:8px;color:var(--text-dim);margin-top:2px">${m.label}</div>`
+  ).join('');
+
+  // Anno precedente
+  document.getElementById('storicoAnnoPrecLabel').textContent = `Anno ${s.anno_precedente}`;
+  document.getElementById('storicoTotAnnoPrec').textContent   = `${s.tot_precedente} pz`;
+
+  const maxP = Math.max(...s.mesi_precedente.map(m => m.qta), 1);
+  document.getElementById('storicopBarrePrec').innerHTML = s.mesi_precedente.map(m => {
+    const h = Math.max(2, Math.round((m.qta / maxP) * 34));
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end" title="${m.label}: ${m.qta} pz">
+      <div style="width:100%;height:${h}px;background:rgba(255,255,255,.2);border-radius:2px 2px 0 0"></div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('storicoMesiLabelPrec').innerHTML = s.mesi_precedente.map(m =>
+    `<div style="flex:1;text-align:center;font-size:7px;color:var(--text-dim)">${m.label}</div>`
+  ).join('');
+}
+
+// ── Import CSV storico ──────────────────────────────────────────────────────
+function apriImportStorico() {
+  document.getElementById('storicoImportBox').style.display = 'block';
+  document.getElementById('storicoImportEsito').style.display = 'none';
+}
+
+function eseguiImportStorico() {
+  const fileInput = document.getElementById('storicoFileInput');
+  const pin       = document.getElementById('storicoPinImport').value;
+  const esito     = document.getElementById('storicoImportEsito');
+
+  if (!fileInput.files.length) { showToast('⚠️ Seleziona un file CSV', true); return; }
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  formData.append('pin', pin);
+
+  esito.style.display = 'block';
+  esito.style.color = 'var(--text-dim)';
+  esito.textContent = '⏳ Importazione in corso...';
+
+  fetch('/api/storico/upload-csv', { method: 'POST', body: formData })
+  .then(r => r.json())
+  .then(d => {
     if (d.ok) {
-      showToast('💾 SKU collegati');
-      document.getElementById('wmsLoading').style.display = 'block';
-      document.getElementById('wmsContent').style.display = 'none';
-      document.getElementById('wmsErrore').style.display = 'none';
-      _caricaSchedaWms(_wmsPid);
-    } else showToast('❌ ' + (d.error || 'Errore'), true);
+      esito.style.color = '#5debb0';
+      esito.textContent = `✅ ${d.n_ok} righe importate${d.n_err > 0 ? `, ${d.n_err} errori` : ''}`;
+      if (d.errori && d.errori.length) {
+        esito.innerHTML += '<br><small style="color:#f07070">' + d.errori.join('<br>') + '</small>';
+      }
+      // Ricarica storico
+      fetch(`/api/kanban/${_wmsPid}/storico`).then(r=>r.json()).then(_renderStorico);
+      showToast(`✅ Importate ${d.n_ok} righe`);
+    } else if (d.pin_error) {
+      showToast('🔐 PIN errato', true);
+      esito.style.display = 'none';
+    } else {
+      esito.style.color = '#f07070';
+      esito.textContent = '❌ ' + (d.error || 'Errore');
+    }
+  }).catch(() => { esito.style.color = '#f07070'; esito.textContent = '❌ Errore di rete'; });
+}
+
+function apriResetStorico() {
+  const pin = prompt('PIN per azzerare lo storico:');
+  if (!pin) return;
+  fetch(`/api/kanban/${_wmsPid}/storico/reset`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pin})
+  }).then(r=>r.json()).then(d => {
+    if (d.ok) {
+      showToast('🗑️ Storico azzerato');
+      fetch(`/api/kanban/${_wmsPid}/storico`).then(r=>r.json()).then(_renderStorico);
+    } else if (d.pin_error) showToast('🔐 PIN errato', true);
+    else showToast('❌ ' + (d.error||'Errore'), true);
   });
 }
 
