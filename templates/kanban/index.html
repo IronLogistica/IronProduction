@@ -473,11 +473,11 @@
 </style>
 
 {# ══ MODAL: ELIMINA ARTICOLO ══ #}
-<div class="modal-overlay" id="modalElimina">
+<div class="modal-overlay" id="modalEliminaArticolo">
 <div class="modal-box" style="width:420px">
   <div class="modal-header" style="background:rgba(240,112,112,.12);border-bottom:1px solid rgba(240,112,112,.3)">
     <span style="font-weight:700;color:#f07070">🗑️ Elimina Articolo</span>
-    <button class="btn btn-ghost" style="padding:3px 12px;font-size:16px" onclick="closeModal('modalElimina')">✕</button>
+    <button class="btn btn-ghost" style="padding:3px 12px;font-size:16px" onclick="closeModal('modalEliminaArticolo')">✕</button>
   </div>
   <div class="modal-body">
     <p style="color:var(--text);margin-bottom:14px">Stai per eliminare definitivamente:</p>
@@ -491,7 +491,7 @@
     </div>
   </div>
   <div class="modal-footer">
-    <button class="btn btn-ghost" onclick="closeModal('modalElimina')">Annulla</button>
+    <button class="btn btn-ghost" onclick="closeModal('modalEliminaArticolo')">Annulla</button>
     <button class="btn" style="background:#c0392b;color:#fff" onclick="confermaElimina()">🗑️ Elimina</button>
   </div>
 </div>
@@ -896,7 +896,7 @@ function apriEliminaModal() {
   document.getElementById('menuAzioni').style.display = 'none';
   document.getElementById('eliminaNome').textContent = _azioniNome;
   document.getElementById('pinElimina').value = '';
-  openModal('modalElimina');
+  openModal('modalEliminaArticolo');
   setTimeout(() => document.getElementById('pinElimina').focus(), 200);
 }
 function confermaElimina() {
@@ -905,7 +905,7 @@ function confermaElimina() {
     method: 'DELETE'
   }).then(r => r.json()).then(d => {
     if (d.ok) {
-      closeModal('modalElimina');
+      closeModal('modalEliminaArticolo');
       showToast('🗑️ Articolo eliminato');
       // Rimuovi la riga dalla tabella
       const row = document.querySelector(`tr[data-pid="${_azioniPid}"]`);
