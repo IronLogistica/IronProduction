@@ -538,108 +538,6 @@
 </style>
 
 
-// ══ AZIONI ARTICOLO: Elimina / Sposta ═══════════════════════════════════════
-let _azioniPid = null, _azioniNome = '';
-
-function apriMenuAzioni(evt, pid, nome) {
-  evt.stopPropagation();
-  _azioniPid = pid; _azioniNome = nome;
-  const menu = document.getElementById('menuAzioni');
-  document.getElementById('menuAzioniTitolo').textContent = nome;
-  // Posiziona il menu vicino al pulsante
-  const r = evt.target.getBoundingClientRect();
-  menu.style.display = 'block';
-  const mw = 170, mh = 110;
-  let left = r.right - mw;
-  let top  = r.bottom + 4;
-  if (left < 4) left = 4;
-  if (top + mh > window.innerHeight) top = r.top - mh - 4;
-  menu.style.left = left + 'px';
-  menu.style.top  = top  + 'px';
-}
-document.addEventListener('click', () => {
-  document.getElementById('menuAzioni').style.display = 'none';
-});
-
-// ── Elimina ──────────────────────────────────────────────────────────────────
-function apriEliminaModal() {
-  document.getElementById('menuAzioni').style.display = 'none';
-  document.getElementById('eliminaNome').textContent = _azioniNome;
-  document.getElementById('pinElimina').value = '';
-  openModal('modalElimina');
-  setTimeout(() => document.getElementById('pinElimina').focus(), 200);
-}
-function confermaElimina() {
-  const pin = document.getElementById('pinElimina').value;
-  fetch(`/api/kanban/${_azioniPid}`, {
-    method: 'DELETE',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({pin})
-  }).then(r => r.json()).then(d => {
-    if (d.ok) {
-      closeModal('modalElimina');
-      showToast('🗑️ Articolo eliminato');
-      // Rimuovi la riga dalla tabella
-      const row = document.querySelector(`tr[data-pid="${_azioniPid}"]`);
-      if (row) row.remove();
-    } else if (d.pin_error) showToast('🔐 PIN errato', true);
-    else showToast('❌ ' + (d.error || 'Errore'), true);
-  }).catch(() => showToast('❌ Errore di rete', true));
-}
-document.getElementById('pinElimina').addEventListener('keydown', e => {
-  if (e.key === 'Enter') confermaElimina();
-});
-
-// ── Sposta ───────────────────────────────────────────────────────────────────
-function apriSpostaModal() {
-  document.getElementById('menuAzioni').style.display = 'none';
-  document.getElementById('apostaNome').textContent = _azioniNome;
-  document.getElementById('pinSposta').value = '';
-  // Carica lista gruppi
-  const sel = document.getElementById('spostaDestinazioneSelect');
-  sel.innerHTML = '<option value="">⏳ Caricamento...</option>';
-  fetch('/api/kanban-gruppi')
-    .then(r => r.json())
-    .then(gruppi => {
-      sel.innerHTML = '<option value="">— Seleziona gruppo destinazione —</option>';
-      gruppi.forEach(g => {
-        const opt = document.createElement('option');
-        opt.value = g.url_key;
-        opt.textContent = g.icona + ' ' + g.label;
-        sel.appendChild(opt);
-      });
-    })
-    .catch(() => { sel.innerHTML = '<option value="">Errore caricamento</option>'; });
-  openModal('modalSposta');
-  setTimeout(() => document.getElementById('pinSposta').focus(), 200);
-}
-function confermaSposta() {
-  const pin       = document.getElementById('pinSposta').value;
-  const nuovoKey  = document.getElementById('spostaDestinazioneSelect').value;
-  if (!nuovoKey) { showToast('⚠️ Seleziona un gruppo destinazione', true); return; }
-  fetch(`/api/kanban/${_azioniPid}/sposta`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({pin, nuovo_sheet_key: nuovoKey})
-  }).then(r => r.json()).then(d => {
-    if (d.ok) {
-      closeModal('modalSposta');
-      showToast('↗️ Articolo spostato con successo');
-      // Rimuovi la riga dalla tabella (non appartiene più a questo gruppo)
-      const row = document.querySelector(`tr[data-pid="${_azioniPid}"]`);
-      if (row) {
-        row.style.transition = 'opacity .4s';
-        row.style.opacity = '0';
-        setTimeout(() => row.remove(), 400);
-      }
-    } else if (d.pin_error) showToast('🔐 PIN errato', true);
-    else showToast('❌ ' + (d.error || 'Errore'), true);
-  }).catch(() => showToast('❌ Errore di rete', true));
-}
-document.getElementById('pinSposta').addEventListener('keydown', e => {
-  if (e.key === 'Enter') confermaSposta();
-});
-
 {% endblock %}
 
 {% block scripts %}
@@ -1003,10 +901,8 @@ function apriEliminaModal() {
 }
 function confermaElimina() {
   const pin = document.getElementById('pinElimina').value;
-  fetch(`/api/kanban/${_azioniPid}`, {
-    method: 'DELETE',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({pin})
+  fetch(`/api/kanban/${_azioniPid}?pin=${encodeURIComponent(pin)}`, {
+    method: 'DELETE'
   }).then(r => r.json()).then(d => {
     if (d.ok) {
       closeModal('modalElimina');
