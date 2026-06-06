@@ -233,6 +233,91 @@ class KanbanCiclo(db.Model):
     def aperto(self):
         return self.data_fine is None
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# STORICO PRODUZIONE — per articolo Kanban, per mese/anno
+# Alimentato da: import CSV manuale + accumulo automatico dal 01/07/2026
+# ═══════════════════════════════════════════════════════════════════════════════
+class StoricoProduzione(db.Model):
+    __tablename__ = "storico_produzione"
+    id           = db.Column(db.Integer, primary_key=True)
+    kanban_id    = db.Column(db.Integer, db.ForeignKey("kanban_prodotti.id", ondelete="CASCADE"), nullable=False)
+    anno         = db.Column(db.Integer, nullable=False)   # es. 2025, 2026
+    mese         = db.Column(db.Integer, nullable=False)   # 1-12
+    qta_import   = db.Column(db.Integer, default=0)        # inserita manualmente via CSV
+    qta_auto     = db.Column(db.Integer, default=0)        # accumulata automaticamente dal sistema
+    aggiornato_il= db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (db.UniqueConstraint('kanban_id', 'anno', 'mese', name='uq_storico_produzione'),)
+
+    @property
+    def qta_totale(self):
+        return (self.qta_import or 0) + (self.qta_auto or 0)
+
+def storico_aggiungi_auto(kanban_id, delta_pezzi, anno=None, mese=None):
+    """
+    Chiamare ogni volta che verniciati aumenta su un KanbanProdotto.
+    delta_pezzi = differenza positiva (nuovi pezzi prodotti finiti).
+    Accumula in qta_auto per il mese/anno corrente.
+    """
+    if delta_pezzi <= 0:
+        return
+    ora = datetime.utcnow()
+    anno = anno or ora.year
+    mese = mese or ora.month
+    try:
+        riga = StoricoProduzione.query.filter_by(
+            kanban_id=kanban_id, anno=anno, mese=mese
+        ).first()
+        if riga:
+            riga.qta_auto = (riga.qta_auto or 0) + delta_pezzi
+            riga.aggiornato_il = ora
+        else:
+            db.session.add(StoricoProduzione(
+                kanban_id=kanban_id, anno=anno, mese=mese,
+                qta_import=0, qta_auto=delta_pezzi
+            ))
+    except Exception:
+        pass
+
+def storico_get(kanban_id):
+    """
+    Ritorna dict strutturato per la scheda:
+    {
+      'anno_corrente': int,
+      'anno_precedente': int,
+      'mesi_corrente': [{'mese':1,'qta':N}, ...],   # tutti 12 mesi anche se 0
+      'tot_corrente': N,
+      'tot_precedente': N,
+    }
+    """
+    ora = datetime.utcnow()
+    anno_c = ora.year
+    anno_p = ora.year - 1
+    mesi_labels = ['Gen','Feb','Mar','Apr','Mag','Giu','Lug','Ago','Set','Ott','Nov','Dic']
+
+    righe_c = {r.mese: r.qta_totale for r in
+               StoricoProduzione.query.filter_by(kanban_id=kanban_id, anno=anno_c).all()}
+    righe_p = {r.mese: r.qta_totale for r in
+               StoricoProduzione.query.filter_by(kanban_id=kanban_id, anno=anno_p).all()}
+
+    mesi_corrente = [
+        {'mese': m, 'label': mesi_labels[m-1], 'qta': righe_c.get(m, 0)}
+        for m in range(1, 13)
+    ]
+    mesi_precedente = [
+        {'mese': m, 'label': mesi_labels[m-1], 'qta': righe_p.get(m, 0)}
+        for m in range(1, 13)
+    ]
+    return {
+        'anno_corrente':   anno_c,
+        'anno_precedente': anno_p,
+        'mesi_corrente':   mesi_corrente,
+        'mesi_precedente': mesi_precedente,
+        'tot_corrente':    sum(v['qta'] for v in mesi_corrente),
+        'tot_precedente':  sum(v['qta'] for v in mesi_precedente),
+    }
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # FASI WIP — limiti e parametri per reparto
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -583,6 +668,7 @@ def init_db():
         "ALTER TABLE monitor_righe ADD COLUMN IF NOT EXISTS ordine INTEGER DEFAULT 0",
         "ALTER TABLE commesse ADD COLUMN IF NOT EXISTS ref_masterlogistic VARCHAR(100) DEFAULT ''",
         "ALTER TABLE lavorazioni_terziste ADD COLUMN IF NOT EXISTS costo FLOAT DEFAULT 0",
+        "CREATE TABLE IF NOT EXISTS storico_produzione (id SERIAL PRIMARY KEY, kanban_id INTEGER REFERENCES kanban_prodotti(id) ON DELETE CASCADE, anno INTEGER NOT NULL, mese INTEGER NOT NULL, qta_import INTEGER DEFAULT 0, qta_auto INTEGER DEFAULT 0, aggiornato_il TIMESTAMP, UNIQUE(kanban_id, anno, mese))",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
