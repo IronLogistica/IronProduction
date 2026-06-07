@@ -1,15 +1,608 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-toolbar"><div class="page-title">🔨 Terzisti e Lavorazioni Esterne</div></div>
-<div id="terzisti-app" style="font-size:13px;color:#666;padding:20px;background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow)">Caricamento...</div>
-{% endblock %}
-{% block scripts %}
-fetch('/api/terzisti').then(r=>r.json()).then(data=>{
-  const app=document.getElementById('terzisti-app');
-  if(!data.length){app.innerHTML='<p style="color:#aaa;font-style:italic">Nessun terzista registrato.</p>';return;}
-  let html=`<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Nome</th><th>Tipo</th><th>Email</th><th>Telefono</th></tr></thead><tbody>`;
-  data.forEach(t=>{html+=`<tr><td class="prod-name">${t.nome}</td><td class="lav-td">${t.tipo||'—'}</td><td class="lav-td">${t.email||'—'}</td><td class="lav-td">${t.telefono||'—'}</td></tr>`;});
-  html+='</tbody></table></div>';
-  app.innerHTML=html;
+<style>
+/* ══════════════════════════════════════════════════════════
+   TERZISTI — DASHBOARD LAVORAZIONI ESTERNE
+   Dark industrial · accento arancio-rame Ironwood
+   ══════════════════════════════════════════════════════════ */
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --arancio:#e07820;--arancio-dim:#7a3800;--arancio-glow:#e0782033;
+  --cyan:#00d2ff;--cyan-dim:#004a5a;--cyan-glow:#00d2ff22;
+  --verde:#28a745;--rosso:#dc3545;--giallo:#ffc107;
+  --bg:#0a0a0a;--bg2:#111;--bg3:#161616;--bg4:#1e1e1e;
+  --border:#222;--border2:#2a2a2a;--txt:#e0e0e0;--txt2:#888;--txt3:#444;
+}
+body{font-family:'Segoe UI',sans-serif;background:var(--bg);color:var(--txt)}
+
+/* ── Layout ───────────────────────────────────────────────────────────────── */
+.tz-layout{display:flex;height:calc(100vh - 60px);overflow:hidden}
+.tz-sidebar{width:310px;flex-shrink:0;background:var(--bg2);
+            border-right:2px solid var(--border);overflow-y:auto;
+            padding:16px;display:flex;flex-direction:column;gap:12px}
+.tz-main{flex:1;overflow-y:auto;padding:20px;background:var(--bg)}
+
+/* ── Sidebar helpers ──────────────────────────────────────────────────────── */
+.side-label{font-size:0.58rem;font-weight:900;letter-spacing:2px;text-transform:uppercase;
+            color:var(--arancio-dim);padding-bottom:6px;margin-bottom:2px;
+            border-bottom:1px solid var(--border)}
+.sep{border:none;border-top:1px solid var(--border);margin:4px 0}
+
+/* ── Upload zone ──────────────────────────────────────────────────────────── */
+.upload-box{background:var(--bg3);border:1.5px dashed var(--border2);border-radius:10px;
+            padding:14px;cursor:pointer;transition:.2s;text-align:center}
+.upload-box:hover,.upload-box.dragover{border-color:var(--arancio);background:#1a1208}
+.upload-box.rientro:hover,.upload-box.rientro.dragover{border-color:var(--cyan);background:#03121a}
+.ub-icon{font-size:1.5rem;margin-bottom:4px}
+.ub-label{font-size:0.7rem;color:var(--txt2);font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.ub-sub{font-size:0.6rem;color:var(--txt3);margin-top:2px}
+input[type=file]{display:none}
+
+/* ── Buttons ──────────────────────────────────────────────────────────────── */
+.btn{border:none;padding:8px 14px;border-radius:7px;font-weight:900;font-size:0.73rem;
+     cursor:pointer;letter-spacing:.4px;text-transform:uppercase;transition:.15s;width:100%}
+.btn-u{background:linear-gradient(135deg,#5a2800,#c05000);color:#ffe0b0}
+.btn-u:hover{background:linear-gradient(135deg,#c05000,#e07020);box-shadow:0 0 10px #c0500044}
+.btn-r{background:linear-gradient(135deg,#003a48,#006a80);color:#b0f0ff}
+.btn-r:hover{background:linear-gradient(135deg,#006a80,#00a0c0);box-shadow:0 0 10px #006a8044}
+.btn-ok{background:#1a3a1a;border:1px solid #28a74555;color:#28a745;padding:7px 14px;
+        border-radius:7px;font-weight:900;font-size:.72rem;cursor:pointer;transition:.15s}
+.btn-ok:hover{background:#28a74522;box-shadow:0 0 8px #28a74533}
+.btn-sec{background:var(--bg4);border:1px solid var(--border2);color:var(--txt2);
+         padding:6px 12px;border-radius:6px;font-size:.7rem;cursor:pointer}
+.btn-sec:hover{background:var(--border2);color:var(--txt)}
+.btn-sm{width:auto;padding:5px 10px;font-size:.67rem}
+
+/* ── Input ────────────────────────────────────────────────────────────────── */
+.inp{background:var(--bg3);border:1px solid var(--border2);color:var(--txt);
+     border-radius:6px;padding:7px 10px;font-size:.78rem;font-family:inherit;width:100%}
+.inp:focus{outline:none;border-color:var(--arancio)}
+select.inp option{background:var(--bg2)}
+
+/* ── KPI bar ──────────────────────────────────────────────────────────────── */
+.kpi-bar{display:flex;gap:10px;margin-bottom:18px;flex-wrap:wrap}
+.kpi{flex:1;min-width:90px;background:var(--bg2);border-radius:10px;padding:12px 14px;
+     border:1px solid var(--border);text-align:center}
+.kpi .k-val{font-size:1.6rem;font-weight:900;line-height:1}
+.kpi .k-lbl{font-size:.55rem;text-transform:uppercase;letter-spacing:1.2px;
+             color:var(--txt2);margin-top:3px}
+.kpi.attesa{border-color:#e0782033;color:var(--arancio)}
+.kpi.ritardo{border-color:#dc354533;color:var(--rosso)}
+.kpi.parziale{border-color:#ffc10733;color:var(--giallo)}
+.kpi.chiuse{border-color:#28a74533;color:var(--verde)}
+
+/* ── Filtri ───────────────────────────────────────────────────────────────── */
+.filtri{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;align-items:center}
+.fb{background:var(--bg3);border:1px solid var(--border2);color:var(--txt3);
+    padding:4px 12px;border-radius:12px;font-size:.67rem;font-weight:900;
+    cursor:pointer;text-transform:uppercase;letter-spacing:.3px;transition:.15s}
+.fb.active{background:#e0782022;border-color:var(--arancio);color:var(--arancio)}
+.fb.fr.active{background:#00d2ff11;border-color:var(--cyan);color:var(--cyan)}
+.fb.fp.active{background:#ffc10711;border-color:var(--giallo);color:var(--giallo)}
+.fb.fc.active{background:#28a74511;border-color:var(--verde);color:var(--verde)}
+.fb.fd.active{background:#dc354511;border-color:var(--rosso);color:var(--rosso)}
+.switch-wrap{display:flex;align-items:center;gap:8px;margin-left:auto;
+             font-size:.67rem;color:var(--txt2);font-weight:700;text-transform:uppercase}
+.switch{width:36px;height:20px;background:var(--border2);border-radius:10px;
+        cursor:pointer;position:relative;transition:.2s;flex-shrink:0}
+.switch.on{background:#e0782066}
+.switch::after{content:'';position:absolute;top:3px;left:3px;width:14px;height:14px;
+               background:#555;border-radius:50%;transition:.2s}
+.switch.on::after{left:19px;background:var(--arancio)}
+
+/* ── Tabella principale ───────────────────────────────────────────────────── */
+.tz-table-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--border)}
+table.tz-t{width:100%;border-collapse:collapse;font-size:.73rem}
+table.tz-t thead tr{background:var(--bg2)}
+table.tz-t th{padding:9px 10px;text-align:left;font-size:.58rem;font-weight:900;
+              text-transform:uppercase;letter-spacing:.8px;color:var(--txt3);
+              border-bottom:1px solid var(--border);white-space:nowrap}
+table.tz-t td{padding:9px 10px;border-bottom:1px solid var(--bg3);vertical-align:middle}
+table.tz-t tr:last-child td{border-bottom:none}
+table.tz-t tr:hover td{background:#141414}
+table.tz-t tr.ritardo td{background:#1a0505}
+table.tz-t tr.parziale td{background:#1a1505}
+
+/* Colonna codice */
+.cod{font-family:'Courier New',monospace;font-weight:900;color:var(--txt);font-size:.8rem}
+.desc-cell{max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt2)}
+
+/* Barra progresso rientro */
+.prog-wrap{width:80px;height:6px;background:var(--border);border-radius:3px;
+           display:inline-block;vertical-align:middle;margin-right:5px;overflow:hidden}
+.prog-fill{height:100%;border-radius:3px;transition:width .4s}
+.prog-fill.c100{background:var(--verde)}
+.prog-fill.c50{background:var(--giallo)}
+.prog-fill.c0{background:var(--arancio)}
+
+/* Badge stato */
+.badge{font-size:.58rem;padding:2px 8px;border-radius:8px;font-weight:900;
+       border:1px solid;white-space:nowrap;text-transform:uppercase;letter-spacing:.3px}
+.b-attesa{color:var(--arancio);border-color:#e0782033;background:#e0782010;
+          animation:puls-o 1.4s ease-in-out infinite}
+.b-parziale{color:var(--giallo);border-color:#ffc10733;background:#ffc10710;
+            animation:puls-y 1.4s ease-in-out infinite}
+.b-ritardo{color:var(--rosso);border-color:#dc354555;background:#dc354510;
+           animation:puls-r 1.1s ease-in-out infinite}
+.b-chiusa{color:var(--verde);border-color:#28a74533;background:#28a74510}
+@keyframes puls-o{0%,100%{box-shadow:0 0 0 #e0782000}50%{box-shadow:0 0 5px #e0782077}}
+@keyframes puls-y{0%,100%{box-shadow:0 0 0 #ffc10700}50%{box-shadow:0 0 5px #ffc10777}}
+@keyframes puls-r{0%,100%{box-shadow:0 0 0 #dc354500}50%{box-shadow:0 0 7px #dc354588}}
+
+/* DDT links */
+.ddt-tag{font-size:.63rem;font-weight:700;color:var(--arancio);
+         background:#e0782010;border:1px solid #e0782033;
+         padding:1px 6px;border-radius:5px;margin-right:3px;white-space:nowrap}
+.ddt-tag.r{color:var(--cyan);background:#00d2ff08;border-color:#00d2ff33}
+
+/* Qta display */
+.qta{font-weight:900;font-size:.85rem}
+.qta.q-out{color:var(--arancio)}
+.qta.q-in{color:var(--cyan)}
+.qta.q-res{color:var(--giallo)}
+.qta.q-zero{color:var(--verde)}
+
+/* ── Overlay modale ───────────────────────────────────────────────────────── */
+.ovl{display:none;position:fixed;inset:0;background:rgba(0,0,0,.87);
+     z-index:2000;align-items:center;justify-content:center;padding:20px}
+.ovl.show{display:flex}
+.modal{background:var(--bg2);border:1.5px solid #e0782055;border-radius:14px;
+       padding:24px;max-width:680px;width:100%;max-height:88vh;overflow-y:auto;
+       box-shadow:0 0 50px #e0782022}
+.modal.r{border-color:#00d2ff44;box-shadow:0 0 50px #00d2ff11}
+.modal-title{font-size:.95rem;font-weight:900;color:var(--arancio);
+             border-bottom:1px solid var(--border);padding-bottom:10px;margin-bottom:14px}
+.modal.r .modal-title{color:var(--cyan)}
+.modal-info{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
+            background:var(--bg3);border-radius:8px;padding:10px;margin-bottom:14px}
+.mi-cell .ml{font-size:.55rem;color:var(--txt3);text-transform:uppercase;letter-spacing:.8px}
+.mi-cell .mv{font-size:.82rem;font-weight:700;color:var(--txt);margin-top:2px}
+.mi-cell .mv.o{color:var(--arancio)}
+.mi-cell .mv.c{color:var(--cyan)}
+
+/* Tabella anteprima articoli */
+.art-t{width:100%;border-collapse:collapse;font-size:.73rem;margin-bottom:14px}
+.art-t th{background:var(--bg3);color:var(--txt3);padding:6px 8px;text-align:left;
+          font-size:.58rem;text-transform:uppercase;letter-spacing:.6px;
+          border-bottom:1px solid var(--border)}
+.art-t td{padding:7px 8px;border-bottom:1px solid var(--bg3)}
+.art-t tr:last-child td{border-bottom:none}
+
+/* Match lavorazioni nel rientro */
+.match-row{display:flex;align-items:center;gap:10px;background:var(--bg3);
+           border-radius:8px;padding:10px 12px;margin-bottom:6px;
+           border-left:3px solid #00d2ff44}
+.match-row .mr-info{flex:1}
+.match-row .mr-cod{font-family:monospace;font-weight:900;color:var(--txt);font-size:.82rem}
+.match-row .mr-sub{font-size:.62rem;color:var(--txt2);margin-top:2px}
+.match-row .mr-qta-inp{width:70px}
+.prog-mini{display:flex;align-items:center;gap:6px;margin-top:4px}
+.prog-mini .bar{flex:1;height:4px;background:var(--border);border-radius:2px;overflow:hidden}
+.prog-mini .fill{height:100%;background:var(--cyan);border-radius:2px}
+
+/* Campo trattamento / rientro prev */
+.form-2col{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:14px}
+.form-field label{font-size:.6rem;color:var(--txt2);text-transform:uppercase;
+                  letter-spacing:.5px;display:block;margin-bottom:4px}
+.modal-actions{display:flex;gap:8px;justify-content:flex-end;margin-top:16px}
+
+/* Empty / loading */
+.empty{text-align:center;padding:50px;color:var(--txt3)}
+.empty .ei{font-size:2.5rem;margin-bottom:10px}
+.empty p{font-size:.8rem}
+
+/* Toast */
+#tz-toast{position:fixed;bottom:22px;right:22px;z-index:9999;
+           display:flex;flex-direction:column;gap:8px;pointer-events:none}
+.toast{background:var(--bg2);border-left:4px solid var(--arancio);border-radius:8px;
+       padding:11px 16px;font-size:.77rem;min-width:250px;pointer-events:all;
+       animation:tin .3s ease;box-shadow:0 4px 20px #00000099}
+.toast.ok{border-left-color:var(--verde)}
+.toast.err{border-left-color:var(--rosso)}
+@keyframes tin{from{opacity:0;transform:translateX(25px)}to{opacity:1;transform:translateX(0)}}
+</style>
+
+<div class="tz-layout">
+
+  <!-- ══ SIDEBAR ════════════════════════════════════════════════════════════ -->
+  <aside class="tz-sidebar">
+
+    <div class="side-label">📤 Spedizione al terzista</div>
+    <div class="upload-box" id="drop-u"
+         onclick="document.getElementById('fu').click()"
+         ondragover="event.preventDefault();this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="drop(event,'uscita')">
+      <div class="ub-icon">📦</div>
+      <div class="ub-label">DDT Uscita — Lavorazione Esterna</div>
+      <div class="ub-sub">Trascina PDF o clicca per selezionare</div>
+    </div>
+    <input type="file" id="fu" accept=".pdf" onchange="upload(this.files[0],'uscita')">
+
+    <hr class="sep">
+
+    <div class="side-label">📥 Rientro dal terzista</div>
+    <div class="upload-box rientro" id="drop-r"
+         onclick="document.getElementById('fr').click()"
+         ondragover="event.preventDefault();this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="drop(event,'rientro')">
+      <div class="ub-icon">🏭</div>
+      <div class="ub-label">DDT Entrata Merci</div>
+      <div class="ub-sub">Merce lavorata · supporta rientri parziali</div>
+    </div>
+    <input type="file" id="fr" accept=".pdf" onchange="upload(this.files[0],'rientro')">
+
+    <hr class="sep">
+
+    <div class="side-label">➕ Nuovo terzista</div>
+    <input class="inp" id="tz-nome" placeholder="Ragione sociale" style="margin-bottom:5px">
+    <select class="inp" id="tz-tipo" style="margin-bottom:5px">
+      <option value="">Specializzazione</option>
+      <option>Verniciatura</option><option>Zincatura</option>
+      <option>Sabbiatura</option><option>Cromatura</option>
+      <option>Trattamento termico</option><option>Altro</option>
+    </select>
+    <input class="inp" id="tz-tel" placeholder="Telefono" style="margin-bottom:5px">
+    <input class="inp" id="tz-email" placeholder="Email" style="margin-bottom:8px">
+    <button class="btn btn-u" onclick="creaTerzista()">➕ AGGIUNGI</button>
+
+  </aside>
+
+  <!-- ══ MAIN ══════════════════════════════════════════════════════════════ -->
+  <main class="tz-main">
+
+    <!-- KPI -->
+    <div class="kpi-bar">
+      <div class="kpi attesa"> <div class="k-val" id="k-att">—</div><div class="k-lbl">In attesa</div></div>
+      <div class="kpi parziale"><div class="k-val" id="k-par">—</div><div class="k-lbl">Rientro parziale</div></div>
+      <div class="kpi ritardo"> <div class="k-val" id="k-rit">—</div><div class="k-lbl">In ritardo</div></div>
+      <div class="kpi chiuse">  <div class="k-val" id="k-chi">—</div><div class="k-lbl">Completate</div></div>
+    </div>
+
+    <!-- Filtri -->
+    <div class="filtri">
+      <button class="fb active" onclick="filt('all',this)">TUTTI</button>
+      <button class="fb"        onclick="filt('ATTESA_RIENTRO',this)">⏳ Attesa</button>
+      <button class="fb fp"     onclick="filt('PARZIALE',this)">🔄 Parziale</button>
+      <button class="fb fd"     onclick="filt('IN_RITARDO',this)">🚨 Ritardo</button>
+      <button class="fb fc"     onclick="filt('RIENTRATA',this)">✅ Completate</button>
+      <div class="switch-wrap">
+        <span>Solo aperte</span>
+        <div class="switch" id="sw-aperte" onclick="toggleSwitch()"></div>
+      </div>
+    </div>
+
+    <!-- Tabella -->
+    <div class="tz-table-wrap">
+      <table class="tz-t" id="tz-table">
+        <thead>
+          <tr>
+            <th>Terzista</th>
+            <th>Trattamento</th>
+            <th>Codice</th>
+            <th>Descrizione</th>
+            <th>DDT Uscita</th>
+            <th>Data uscita</th>
+            <th>Qta spedita</th>
+            <th>Rientrata</th>
+            <th>Residua</th>
+            <th>Avanz.</th>
+            <th>DDT Rientro</th>
+            <th>Stato</th>
+          </tr>
+        </thead>
+        <tbody id="tz-tbody">
+          <tr><td colspan="12" class="empty"><div class="ei">⏳</div><p>Caricamento…</p></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+</div>
+
+<!-- ══ MODALE DDT USCITA ══════════════════════════════════════════════════ -->
+<div class="ovl" id="m-uscita">
+  <div class="modal">
+    <div class="modal-title">📤 Anteprima DDT Uscita — Lavorazione Esterna</div>
+    <div class="modal-info" id="mi-u"></div>
+    <table class="art-t"><thead><tr><th>Codice</th><th>Descrizione</th><th>Qta</th></tr></thead>
+      <tbody id="at-u"></tbody></table>
+    <div class="form-2col">
+      <div class="form-field">
+        <label>Tipo trattamento</label>
+        <select class="inp" id="sel-tratt">
+          <option value="">— dal PDF —</option>
+          <option>VERNICIATURA</option><option>ZINCATURA</option>
+          <option>SABBIATURA</option><option>CROMATURA</option>
+          <option>FOSFATAZIONE</option><option>ALTRO</option>
+        </select>
+      </div>
+      <div class="form-field">
+        <label>Rientro previsto (gg/mm/aaaa)</label>
+        <input class="inp" id="inp-prev" placeholder="es. 30/06/2026">
+      </div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-sec" onclick="chiudi('m-uscita')">✕ Annulla</button>
+      <button class="btn btn-u btn-sm" onclick="confermaUscita()">✅ CONFERMA SPEDIZIONE</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODALE DDT RIENTRO ═════════════════════════════════════════════════ -->
+<div class="ovl" id="m-rientro">
+  <div class="modal r">
+    <div class="modal-title">📥 Anteprima DDT Rientro — Collegamento lavorazioni</div>
+    <div class="modal-info" id="mi-r"></div>
+    <table class="art-t"><thead><tr><th>Codice</th><th>Descrizione</th><th>Qta DDT</th></tr></thead>
+      <tbody id="at-r"></tbody></table>
+    <!-- Lavorazioni matchate con input qta confermata -->
+    <div id="match-section" style="display:none;margin-bottom:14px">
+      <div class="side-label" style="color:#00d2ff99;margin-bottom:8px">
+        🔗 LAVORAZIONI COLLEGATE — conferma quantità rientrata
+      </div>
+      <div id="match-list"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn-sec" onclick="chiudi('m-rientro')">✕ Annulla</button>
+      <button class="btn btn-r btn-sm" onclick="confermaRientro()">✅ CONFERMA RIENTRO</button>
+    </div>
+  </div>
+</div>
+
+<div id="tz-toast"></div>
+
+<script>
+// ── Stato ──────────────────────────────────────────────────────────────────
+let _dati = [], _filtro = 'all', _soloAperte = false;
+let _pU = null, _pR = null;  // pending upload
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function toast(msg, tipo='ok'){
+  const d=document.createElement('div');
+  d.className=`toast ${tipo}`;d.textContent=msg;
+  document.getElementById('tz-toast').appendChild(d);
+  setTimeout(()=>d.remove(),4000);
+}
+
+// ── Carica dati ────────────────────────────────────────────────────────────
+async function carica(){
+  try{
+    const r=await fetch('/api/spedizioni_terzisti');
+    _dati=await r.json();
+    aggiornaKPI();
+    renderTable();
+  }catch(e){
+    document.getElementById('tz-tbody').innerHTML=
+      '<tr><td colspan="12"><div class="empty"><div class="ei">❌</div><p>Errore caricamento</p></div></td></tr>';
+  }
+}
+
+function aggiornaKPI(){
+  document.getElementById('k-att').textContent=_dati.filter(d=>d.stato==='ATTESA_RIENTRO').length;
+  document.getElementById('k-par').textContent=_dati.filter(d=>d.stato==='PARZIALE').length;
+  document.getElementById('k-rit').textContent=_dati.filter(d=>d.stato==='IN_RITARDO').length;
+  document.getElementById('k-chi').textContent=_dati.filter(d=>d.stato==='RIENTRATA').length;
+}
+
+// ── Filtri ─────────────────────────────────────────────────────────────────
+function filt(f,el){
+  _filtro=f;
+  document.querySelectorAll('.fb').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  renderTable();
+}
+function toggleSwitch(){
+  _soloAperte=!_soloAperte;
+  const sw=document.getElementById('sw-aperte');
+  sw.classList.toggle('on',_soloAperte);
+  renderTable();
+}
+
+// ── Render tabella ─────────────────────────────────────────────────────────
+function renderTable(){
+  let righe=_filtro==='all'?[..._dati]:_dati.filter(d=>d.stato===_filtro);
+  if(_soloAperte) righe=righe.filter(d=>d.stato!=='RIENTRATA');
+
+  if(!righe.length){
+    document.getElementById('tz-tbody').innerHTML=
+      `<tr><td colspan="12"><div class="empty"><div class="ei">📭</div>
+       <p>Nessuna lavorazione${_soloAperte?' aperta':''} trovata.</p></div></td></tr>`;
+    return;
+  }
+
+  const statoInfo={
+    'ATTESA_RIENTRO':['⏳','b-attesa'],
+    'PARZIALE':      ['🔄','b-parziale'],
+    'IN_RITARDO':    ['🚨','b-ritardo'],
+    'RIENTRATA':     ['✅','b-chiusa'],
+  };
+
+  let html='';
+  righe.forEach(d=>{
+    const [sIcon,sClass]=statoInfo[d.stato]||['?',''];
+    const cls=d.stato==='IN_RITARDO'?'ritardo':d.stato==='PARZIALE'?'parziale':'';
+
+    // Barra avanzamento
+    const pct=d.qta_spedita>0?Math.round(d.qta_rientrata/d.qta_spedita*100):0;
+    const barCls=pct>=100?'c100':pct>0?'c50':'c0';
+    const progHtml=`<span class="prog-wrap"><span class="prog-fill ${barCls}" style="width:${pct}%"></span></span>${pct}%`;
+
+    // DDT rientro tags
+    const ddrHtml=(d.ddt_rientri||[]).map(n=>`<span class="ddt-tag r">${n}</span>`).join('')||'—';
+
+    // Qta residua colore
+    const resClass=d.qta_residua===0?'q-zero':'q-res';
+
+    html+=`<tr class="${cls}">
+      <td style="font-weight:700;white-space:nowrap">${d.terzista}</td>
+      <td><small style="color:#8080ff">${d.trattamento||'—'}</small></td>
+      <td class="cod">${d.codice||'—'}</td>
+      <td class="desc-cell" title="${d.desc||''}">${d.desc||'—'}</td>
+      <td><span class="ddt-tag">${d.ddt_uscita||'—'}</span></td>
+      <td style="color:var(--txt2);white-space:nowrap">${d.data_uscita||'—'}</td>
+      <td><span class="qta q-out">${d.qta_spedita}</span></td>
+      <td><span class="qta q-in">${d.qta_rientrata}</span></td>
+      <td><span class="qta ${resClass}">${d.qta_residua}</span></td>
+      <td>${progHtml}</td>
+      <td>${ddrHtml}</td>
+      <td><span class="badge ${sClass}">${sIcon} ${d.stato.replace('_',' ')}</span></td>
+    </tr>`;
+  });
+  document.getElementById('tz-tbody').innerHTML=html;
+}
+
+// ── Upload e drag-drop ─────────────────────────────────────────────────────
+function drop(ev,tipo){
+  ev.preventDefault();
+  document.getElementById(`drop-${tipo[0]}`).classList.remove('dragover');
+  const f=ev.dataTransfer.files[0];
+  if(f) upload(f,tipo);
+}
+async function upload(file,tipo){
+  if(!file||!file.name.toLowerCase().endsWith('.pdf')){
+    toast('Seleziona un file PDF','err');return;
+  }
+  const fd=new FormData();fd.append('file',file);
+  try{
+    const ep=tipo==='uscita'?'/api/upload_ddt_uscita':'/api/upload_ddt_rientro';
+    const r=await fetch(ep,{method:'POST',body:fd});
+    const js=await r.json();
+    if(!js.ok){toast(js.error||'Errore upload','err');return;}
+    tipo==='uscita'?apriUscita(js):apriRientro(js);
+  }catch(e){toast('Errore di rete','err');}
+}
+
+// ── Modale Uscita ──────────────────────────────────────────────────────────
+function apriUscita(js){
+  _pU=js;const d=js.anteprima;
+  document.getElementById('mi-u').innerHTML=`
+    <div class="mi-cell"><div class="ml">Terzista</div><div class="mv">${d.terzista||'—'}</div></div>
+    <div class="mi-cell"><div class="ml">N° DDT</div><div class="mv o">${d.numero_ddt||'—'}</div></div>
+    <div class="mi-cell"><div class="ml">Data</div><div class="mv">${d.data_ddt||'—'}</div></div>`;
+  document.getElementById('at-u').innerHTML=(d.articoli||[]).map(a=>`
+    <tr><td class="cod">${a.codice}</td>
+        <td style="color:var(--txt2)">${a.desc}</td>
+        <td><span class="qta q-out">${a.qta}</span></td></tr>`).join('')||
+    '<tr><td colspan="3" style="color:var(--txt3);text-align:center">Nessun articolo rilevato</td></tr>';
+  // Pre-compila trattamento se estratto dal PDF
+  if(d.trattamento) document.getElementById('sel-tratt').value=d.trattamento;
+  document.getElementById('m-uscita').classList.add('show');
+}
+async function confermaUscita(){
+  if(!_pU)return;const d=_pU.anteprima;
+  const tratt=document.getElementById('sel-tratt').value||d.trattamento;
+  const prev=document.getElementById('inp-prev').value;
+  try{
+    const r=await fetch('/api/conferma_ddt_uscita',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filename:_pU.filename,terzista:d.terzista,
+        numero_ddt:d.numero_ddt,data_ddt:d.data_ddt,trattamento:tratt,
+        data_rientro_prev:prev,articoli:d.articoli,riga_id:0})});
+    const js=await r.json();
+    if(js.ok){toast('✅ Spedizione registrata');chiudi('m-uscita');carica();}
+    else toast(js.error||'Errore','err');
+  }catch(e){toast('Errore di rete','err');}
+}
+
+// ── Modale Rientro ─────────────────────────────────────────────────────────
+function apriRientro(js){
+  _pR=js;const d=js.anteprima;
+  document.getElementById('mi-r').innerHTML=`
+    <div class="mi-cell"><div class="ml">Terzista</div><div class="mv">${d.terzista||'—'}</div></div>
+    <div class="mi-cell"><div class="ml">N° DDT</div><div class="mv c">${d.numero_ddt||'—'}</div></div>
+    <div class="mi-cell"><div class="ml">Data</div><div class="mv">${d.data_ddt||'—'}</div></div>`;
+  document.getElementById('at-r').innerHTML=(d.articoli||[]).map(a=>`
+    <tr><td class="cod">${a.codice}</td>
+        <td style="color:var(--txt2)">${a.desc}</td>
+        <td><span class="qta q-in">${a.qta}</span></td></tr>`).join('')||
+    '<tr><td colspan="3" style="color:var(--txt3);text-align:center">Nessun articolo rilevato</td></tr>';
+
+  const ml=js.match_lavorazioni||[];
+  if(ml.length){
+    document.getElementById('match-section').style.display='block';
+    document.getElementById('match-list').innerHTML=ml.map(m=>{
+      const pct=m.qta_spedita>0?Math.round(m.qta_rientrata/m.qta_spedita*100):0;
+      return`<div class="match-row">
+        <input type="checkbox" id="chk-${m.lav_id}" value="${m.lav_id}" checked
+               style="accent-color:var(--cyan);width:16px;height:16px;flex-shrink:0">
+        <div class="mr-info">
+          <div class="mr-cod">${m.codice} — <small style="color:var(--txt2)">${m.desc}</small></div>
+          <div class="mr-sub">DDT uscita: <b style="color:var(--arancio)">${m.ddt_uscita||'—'}</b>
+            · Terzista: ${m.terzista} · Spedita: <b>${m.qta_spedita}</b>
+            · Già rientrata: <b style="color:var(--cyan)">${m.qta_rientrata}</b>
+            · Residua: <b style="color:var(--giallo)">${m.qta_residua}</b>
+          </div>
+          <div class="prog-mini">
+            <div class="bar"><div class="fill" style="width:${pct}%"></div></div>
+            <span style="font-size:.6rem;color:var(--txt3)">${pct}%</span>
+          </div>
+        </div>
+        <div>
+          <label style="font-size:.58rem;color:var(--txt3);display:block;margin-bottom:3px">Qta confermata</label>
+          <input class="inp mr-qta-inp" type="number" id="qta-${m.lav_id}"
+                 value="${m.qta_ddt}" min="1" max="${m.qta_residua}" style="width:80px">
+        </div>
+      </div>`;}).join('');
+  }else{
+    document.getElementById('match-section').style.display='none';
+  }
+  document.getElementById('m-rientro').classList.add('show');
+}
+
+async function confermaRientro(){
+  if(!_pR)return;const d=_pR.anteprima;
+  const ml=_pR.match_lavorazioni||[];
+  const conferme=ml
+    .filter(m=>document.getElementById(`chk-${m.lav_id}`)?.checked)
+    .map(m=>({lav_id:m.lav_id,
+              qta_confermata:parseInt(document.getElementById(`qta-${m.lav_id}`)?.value||0)}))
+    .filter(c=>c.qta_confermata>0);
+  if(!conferme.length&&ml.length){toast('Seleziona almeno una lavorazione','err');return;}
+  try{
+    const r=await fetch('/api/conferma_ddt_rientro',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filename:_pR.filename,numero_ddt:d.numero_ddt,
+        data_ddt:d.data_ddt,conferme})});
+    const js=await r.json();
+    if(js.ok){
+      toast(`✅ Rientro confermato — chiuse:${js.chiuse} parziali:${js.parziali}`);
+      chiudi('m-rientro');carica();
+    }else toast(js.error||'Errore','err');
+  }catch(e){toast('Errore di rete','err');}
+}
+
+// ── Modale helpers ─────────────────────────────────────────────────────────
+function chiudi(id){
+  document.getElementById(id).classList.remove('show');
+  _pU=null;_pR=null;
+}
+document.querySelectorAll('.ovl').forEach(o=>{
+  o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('show')});
 });
+
+// ── Crea terzista ──────────────────────────────────────────────────────────
+async function creaTerzista(){
+  const nome=document.getElementById('tz-nome').value.trim();
+  if(!nome){toast('Inserisci il nome del terzista','err');return;}
+  try{
+    const r=await fetch('/api/terzisti',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({nome,tipo:document.getElementById('tz-tipo').value,
+        telefono:document.getElementById('tz-tel').value,
+        email:document.getElementById('tz-email').value})});
+    const js=await r.json();
+    if(js.ok){
+      toast(`✅ Terzista "${nome}" aggiunto`);
+      ['tz-nome','tz-tel','tz-email'].forEach(id=>document.getElementById(id).value='');
+      document.getElementById('tz-tipo').value='';
+    }else toast(js.error||'Errore','err');
+  }catch(e){toast('Errore di rete','err');}
+}
+
+// ── Boot ───────────────────────────────────────────────────────────────────
+carica();
+setInterval(carica,30000);
+</script>
 {% endblock %}
