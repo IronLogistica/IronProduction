@@ -1,29 +1,241 @@
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, current_app
 from models import db, Terzista, LavorazioneTerzista, RigaCommessa, FaseRiga, log
 from datetime import datetime, date
+import os, re, json, shutil
+import PyPDF2
 
 terzisti_bp = Blueprint('terzisti', __name__)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CARTELLE — aggiungere in app.config:
+#    TERZISTI_USCITA_FOLDER  = 'terzisti_uscita'
+#    TERZISTI_RIENTRO_FOLDER = 'terzisti_rientro'
+#    TERZISTI_DONE_FOLDER    = 'terzisti_done'
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _folder(key, fallback):
+    try:    return current_app.config.get(key, fallback)
+    except: return fallback
+
+USCITA_FOLDER  = lambda: _folder('TERZISTI_USCITA_FOLDER',  'terzisti_uscita')
+RIENTRO_FOLDER = lambda: _folder('TERZISTI_RIENTRO_FOLDER', 'terzisti_rientro')
+DONE_FOLDER    = lambda: _folder('TERZISTI_DONE_FOLDER',    'terzisti_done')
+
+# Codici da ignorare nel parsing (intestazioni, magazzini, causali)
+SKIP_TZ = {
+    'AU','TRA','IT','DDT','Mag','TGT','Pag','n','nr','N','Nr',
+    'Vs','doc','DDTCL','ZINCATA','ZINCATURA','VERNICIATURA',
+    'SABBIATURA','CROMATURA','FOSFATAZIONE','NICHELATURA',
+}
+
+TRATTAMENTI = [
+    'ZINCATURA','VERNICIATURA','SABBIATURA','CROMATURA',
+    'FOSFATAZIONE','NICHELATURA','TRATTAMENTO TERMICO',
+]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PARSER PDF — calibrato sui DDT reali Ironwood / T.G.T. Srl
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _leggi_pdf(path):
+    try:
+        with open(path, 'rb') as f:
+            reader = PyPDF2.PdfReader(f)
+            return ''.join(p.extract_text() or '' for p in reader.pages)
+    except Exception as e:
+        print(f'[TERZISTI] Errore lettura PDF {path}: {e}')
+        return ''
+
+
+def _rileva_tipo(testo):
+    """
+    DDT USCITA  → 'DOCUMENTO DI TRASPORTO' + 'Lavorazione Esterna'
+                  oppure 'Mag. di destinazione: TGT'
+    DDT RIENTRO → 'DDT - Entrata Merci'
+                  oppure 'Vs. doc.(DDTCL)'
+    """
+    e_rientro = (
+        'Entrata Merci'   in testo or
+        'Vs. doc.(DDTCL)' in testo or
+        bool(re.search(r'Vs\.\s*doc\.\(DDTCL\)', testo))
+    )
+    e_uscita = (
+        'Lavorazione Esterna'       in testo or
+        'DOCUMENTO DI TRASPORTO'    in testo and
+        bool(re.search(r'Mag\.\s*di destinazione:\s*TGT', testo))
+    )
+    if e_rientro and not e_uscita:  return 'rientro'
+    if e_uscita  and not e_rientro: return 'uscita'
+    if e_rientro: return 'rientro'   # priorità rientro in caso di ambiguità
+    return 'sconosciuto'
+
+
+def _estrai_numero_ddt(testo):
+    m = re.search(r'Numero documento\s+(\d+)', testo)
+    return m.group(1) if m else ''
+
+
+def _estrai_data(testo):
+    m = re.search(r'Data documento\s+(\d{2}/\d{2}/\d{4})', testo)
+    return m.group(1) if m else ''
+
+
+def _estrai_terzista(testo):
+    """Estrae nome terzista dal blocco Destinatario."""
+    m = re.search(r'Destinatario:\s*\n\d+\n(.+?)\n', testo)
+    if m: return m.group(1).strip()
+    # Fallback: dopo codice fornitore 6 cifre
+    m = re.search(r'\d{6}\n(.+?)\n', testo)
+    return m.group(1).strip() if m else ''
+
+
+def _estrai_trattamento(testo):
+    testo_up = testo.upper()
+    for t in TRATTAMENTI:
+        if t in testo_up:
+            return t
+    return ''
+
+
+def _preprocess_righe(testo):
+    """
+    Pre-processa il testo per correggere le righe spezzate dal PDF.
+    Caso tipico: 'T200DT TRANSENNA L.2.000 D.32 DOPPIO\\nTRAVERSOn. 11,000'
+    → 'T200DT TRANSENNA L.2.000 D.32 DOPPIO TRAVERSO n. 11,000'
+    """
+    # Aggiunge spazio prima di 'n.' incollato a una parola maiuscola
+    testo = re.sub(r'([A-Za-z])n\.', r'\1 n.', testo)
+    # Elimina suffissi 'Mag. di ...' sulla stessa riga degli articoli
+    testo = re.sub(r'\s*Mag\. di (origine|destinazione):[^\n]+', '', testo)
+    # Elimina importi incollati al testo (es. '495,60Mag.')
+    testo = re.sub(r'[\d]+,\d{2}(?=Mag\.)', '', testo)
+
+    righe = testo.split('\n')
+    risultato = []
+    i = 0
+    while i < len(righe):
+        r = righe[i].rstrip()
+        # Se la riga corrente è inizio articolo (CODICE TESTO...)
+        # e la riga successiva inizia con parola maiuscola + 'n. NUMERO',
+        # le unisce (desc spezzata su due righe)
+        if i + 1 < len(righe):
+            prossima = righe[i + 1].strip()
+            if (re.match(r'^[A-Z][A-Za-z0-9._-]+\s+.+', r.strip()) and
+                    re.match(r'^[A-Z]+\s+n\.\s+[\d\.,]+', prossima)):
+                r = r.strip() + ' ' + prossima
+                i += 2
+                risultato.append(r)
+                continue
+        risultato.append(r)
+        i += 1
+    return '\n'.join(risultato)
+
+
+def _estrai_articoli(testo):
+    """
+    Estrae lista articoli dal testo DDT.
+    Pattern: CODICE  Descrizione…  n.  QTA[,000]  [Importo]
+    """
+    testo = _preprocess_righe(testo)
+    articoli = []
+    visti = set()
+
+    for riga in testo.split('\n'):
+        riga = riga.strip()
+        if not riga:
+            continue
+
+        # Rimuove importo finale (es. '495,60' o '527,84') dalla riga
+        riga = re.sub(r'\s+\d{1,6},\d{2}\s*$', '', riga)
+
+        m = re.match(
+            r'^([A-Za-z][A-Za-z0-9._-]{1,})\s+(.+?)\s+n\.\s+([\d\.,]+)(?:\s+[\d\.,]+)?$',
+            riga
+        )
+        if not m:
+            continue
+
+        codice = m.group(1)
+        if codice in SKIP_TZ or codice.startswith('0') or len(codice) < 2:
+            continue
+
+        qta_str = m.group(3).replace('.', '').replace(',', '.')
+        try:
+            qta = int(float(qta_str))
+        except ValueError:
+            qta = 0
+
+        key = f'{codice}_{qta}'
+        if key in visti:
+            continue
+        visti.add(key)
+
+        articoli.append({
+            'codice': codice,
+            'desc':   m.group(2).strip(),
+            'qta':    qta,
+        })
+
+    return articoli
+
+
+def parse_ddt_terzista(path):
+    """
+    Parser principale. Restituisce:
+    {
+        tipo_ddt:    'uscita' | 'rientro' | 'sconosciuto',
+        numero_ddt:  str,
+        data_ddt:    str  (dd/mm/yyyy),
+        terzista:    str,
+        trattamento: str,
+        articoli:    [ { codice, desc, qta } ]
+    }
+    """
+    testo = _leggi_pdf(path)
+    return {
+        'tipo_ddt':    _rileva_tipo(testo),
+        'numero_ddt':  _estrai_numero_ddt(testo),
+        'data_ddt':    _estrai_data(testo),
+        'terzista':    _estrai_terzista(testo),
+        'trattamento': _estrai_trattamento(testo),
+        'articoli':    _estrai_articoli(testo),
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ROUTE PAGINA
+# ══════════════════════════════════════════════════════════════════════════════
 
 @terzisti_bp.route('/terzisti')
 def index():
     return render_template('terzisti/index.html', active='terzisti')
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  API ANAGRAFICA TERZISTI
+# ══════════════════════════════════════════════════════════════════════════════
+
 @terzisti_bp.route('/api/terzisti')
 def api_lista():
-    return jsonify([{'id': t.id, 'nome': t.nome, 'email': t.email,
-                     'telefono': t.telefono, 'tipo': t.tipo} for t in Terzista.query.order_by(Terzista.nome)])
+    return jsonify([{
+        'id': t.id, 'nome': t.nome, 'email': t.email,
+        'telefono': t.telefono, 'tipo': t.tipo,
+    } for t in Terzista.query.order_by(Terzista.nome)])
+
 
 @terzisti_bp.route('/api/terzisti', methods=['POST'])
 def api_crea():
     try:
         d = request.get_json(force=True)
-        t = Terzista(**{k: d.get(k,'') for k in ['nome','email','telefono','tipo','note']})
+        t = Terzista(**{k: d.get(k, '') for k in ['nome', 'email', 'telefono', 'tipo', 'note']})
         db.session.add(t)
         db.session.commit()
         return jsonify({'ok': True, 'id': t.id})
     except Exception as e:
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
+
 
 @terzisti_bp.route('/api/terzisti/<int:tid>', methods=['DELETE'])
 def api_elimina(tid):
@@ -36,6 +248,11 @@ def api_elimina(tid):
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  API LAVORAZIONI MANUALI (originali, invariate)
+# ══════════════════════════════════════════════════════════════════════════════
+
 @terzisti_bp.route('/api/lavorazioni')
 def api_lavorazioni():
     oggi = date.today()
@@ -45,19 +262,30 @@ def api_lavorazioni():
         stato = l.stato
         if stato == 'ATTESA_RIENTRO' and l.data_rientro_prev:
             try:
-                if datetime.strptime(l.data_rientro_prev,'%d/%m/%Y').date() < oggi: stato = 'IN_RITARDO'
-            except: pass
-        riga = RigaCommessa.query.get(l.riga_id)
+                if datetime.strptime(l.data_rientro_prev, '%d/%m/%Y').date() < oggi:
+                    stato = 'IN_RITARDO'
+            except Exception:
+                pass
+        riga     = RigaCommessa.query.get(l.riga_id)
         terzista = Terzista.query.get(l.terzista_id)
-        risultati.append({'id': l.id,
-            'commessa': riga.commessa.numero if riga else '?',
-            'codice': riga.codice if riga else '?',
-            'terzista': terzista.nome if terzista else '?',
-            'fase': l.fase, 'qta': l.qta,
-            'data_uscita': l.data_uscita, 'data_rientro_prev': l.data_rientro_prev,
-            'data_rientro': l.data_rientro, 'stato': stato,
-            'costo': l.costo, 'ddt_uscita': l.ddt_uscita, 'ddt_rientro': l.ddt_rientro, 'note': l.note})
+        risultati.append({
+            'id': l.id,
+            'commessa':          riga.commessa.numero if riga else '?',
+            'codice':            riga.codice if riga else '?',
+            'terzista':          terzista.nome if terzista else '?',
+            'fase':              l.fase,
+            'qta':               l.qta,
+            'data_uscita':       l.data_uscita,
+            'data_rientro_prev': l.data_rientro_prev,
+            'data_rientro':      l.data_rientro,
+            'stato':             stato,
+            'costo':             l.costo,
+            'ddt_uscita':        l.ddt_uscita,
+            'ddt_rientro':       l.ddt_rientro,
+            'note':              l.note,
+        })
     return jsonify(risultati)
+
 
 @terzisti_bp.route('/api/lavorazioni', methods=['POST'])
 def api_crea_lavorazione():
@@ -65,13 +293,16 @@ def api_crea_lavorazione():
         d = request.get_json(force=True)
         l = LavorazioneTerzista(
             riga_id=int(d['riga_id']), terzista_id=int(d['terzista_id']),
-            fase=d.get('fase',''), qta=int(d.get('qta',0)),
-            data_uscita=d.get('data_uscita',''), data_rientro_prev=d.get('data_rientro_prev',''),
-            stato='ATTESA_RIENTRO', costo=float(d.get('costo',0)),
-            ddt_uscita=d.get('ddt_uscita',''), note=d.get('note',''))
+            fase=d.get('fase', ''), qta=int(d.get('qta', 0)),
+            data_uscita=d.get('data_uscita', ''),
+            data_rientro_prev=d.get('data_rientro_prev', ''),
+            stato='ATTESA_RIENTRO', costo=float(d.get('costo', 0)),
+            ddt_uscita=d.get('ddt_uscita', ''), note=d.get('note', ''),
+        )
         db.session.add(l)
         fa = FaseRiga.query.filter_by(riga_id=l.riga_id, fase=l.fase).first()
-        if fa: fa.stato = 'esternalizzata'
+        if fa:
+            fa.stato = 'esternalizzata'
         log(f'Lavorazione terzista: riga {l.riga_id} → terzista {l.terzista_id}')
         db.session.commit()
         return jsonify({'ok': True, 'id': l.id})
@@ -79,20 +310,326 @@ def api_crea_lavorazione():
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
 
+
 @terzisti_bp.route('/api/lavorazioni/<int:lid>/rientro', methods=['POST'])
 def api_rientro(lid):
     try:
-        l = LavorazioneTerzista.query.get_or_404(lid)
-        d = request.get_json(force=True)
+        l  = LavorazioneTerzista.query.get_or_404(lid)
+        d  = request.get_json(force=True)
         l.data_rientro = d.get('data_rientro', datetime.utcnow().strftime('%d/%m/%Y'))
-        l.ddt_rientro = d.get('ddt_rientro','')
-        l.stato = 'RIENTRATA'
-        l.costo = float(d.get('costo', l.costo))
+        l.ddt_rientro  = d.get('ddt_rientro', '')
+        l.stato        = 'RIENTRATA'
+        l.costo        = float(d.get('costo', l.costo))
         fa = FaseRiga.query.filter_by(riga_id=l.riga_id, fase=l.fase).first()
-        if fa: fa.stato = d.get('stato_fase','completata')
+        if fa:
+            fa.stato = d.get('stato_fase', 'completata')
         log(f'Rientro lavorazione terzista {lid}')
         db.session.commit()
         return jsonify({'ok': True})
     except Exception as e:
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  UPLOAD DDT USCITA (spedizione al terzista)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@terzisti_bp.route('/api/upload_ddt_uscita', methods=['POST'])
+def upload_ddt_uscita():
+    f = request.files.get('file')
+    if not f or not f.filename.lower().endswith('.pdf'):
+        return jsonify({'ok': False, 'error': 'File PDF richiesto'}), 400
+
+    folder = USCITA_FOLDER()
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f.filename)
+    f.save(path)
+
+    dati = parse_ddt_terzista(path)
+
+    # Guardia: blocca DDT rientro caricato per errore qui
+    if dati['tipo_ddt'] == 'rientro':
+        os.remove(path)
+        return jsonify({
+            'ok': False,
+            'error': 'Questo è un DDT di RIENTRO (Entrata Merci). '
+                     'Usare il pulsante "📥 Carica DDT Rientro".',
+        }), 400
+
+    return jsonify({'ok': True, 'anteprima': dati, 'filename': f.filename})
+
+
+@terzisti_bp.route('/api/conferma_ddt_uscita', methods=['POST'])
+def conferma_ddt_uscita():
+    """
+    Crea una LavorazioneTerzista per ogni articolo del DDT uscita.
+    Tutti partono con stato ATTESA_RIENTRO e qta_rientrata=0.
+    I rientri parziali incrementeranno qta_rientrata fino a qta (spedita).
+    """
+    try:
+        d           = request.get_json(force=True)
+        filename    = d.get('filename', '')
+        terzista_n  = d.get('terzista', '')
+        articoli    = d.get('articoli', [])
+        numero_ddt  = d.get('numero_ddt', '')
+        data_ddt    = d.get('data_ddt', '')
+        trattamento = d.get('trattamento', '')
+        rientro_prev= d.get('data_rientro_prev', '')
+
+        # Cerca o usa id=0 per terzista non in anagrafica
+        tz = Terzista.query.filter(Terzista.nome.ilike(f'%{terzista_n}%')).first()
+        tz_id = tz.id if tz else 0
+
+        for art in articoli:
+            # note_json porta tutti i dati strutturati dell'articolo
+            note_j = json.dumps({
+                'codice':      art.get('codice', ''),
+                'desc':        art.get('desc', ''),
+                'trattamento': trattamento,
+                'filename_pdf': filename,
+                'qta_rientrata': 0,           # saldo rientri parziali
+                'ddt_rientri':  [],           # lista DDT rientro collegati
+            })
+            lav = LavorazioneTerzista(
+                riga_id           = 0,
+                terzista_id       = tz_id,
+                fase              = trattamento or 'Trattamento Esterno',
+                qta               = int(art.get('qta', 0)),
+                data_uscita       = data_ddt,
+                data_rientro_prev = rientro_prev,
+                stato             = 'ATTESA_RIENTRO',
+                costo             = 0.0,
+                ddt_uscita        = numero_ddt,
+                note              = note_j,
+            )
+            db.session.add(lav)
+
+        # Archivia PDF
+        done = DONE_FOLDER()
+        os.makedirs(done, exist_ok=True)
+        try:
+            shutil.move(os.path.join(USCITA_FOLDER(), filename),
+                        os.path.join(done, filename))
+        except Exception:
+            pass
+
+        log(f'DDT USCITA terzista: {filename} — {len(articoli)} articoli — {terzista_n}')
+        db.session.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  UPLOAD DDT RIENTRO — gestisce rientri PARZIALI
+# ══════════════════════════════════════════════════════════════════════════════
+
+@terzisti_bp.route('/api/upload_ddt_rientro', methods=['POST'])
+def upload_ddt_rientro():
+    f = request.files.get('file')
+    if not f or not f.filename.lower().endswith('.pdf'):
+        return jsonify({'ok': False, 'error': 'File PDF richiesto'}), 400
+
+    folder = RIENTRO_FOLDER()
+    os.makedirs(folder, exist_ok=True)
+    path = os.path.join(folder, f.filename)
+    f.save(path)
+
+    dati = parse_ddt_terzista(path)
+
+    # Guardia: blocca DDT uscita caricato per errore qui
+    if dati['tipo_ddt'] == 'uscita':
+        os.remove(path)
+        return jsonify({
+            'ok': False,
+            'error': 'Questo è un DDT di USCITA (Documento di Trasporto / Lavorazione Esterna). '
+                     'Usare il pulsante "📤 Carica DDT Uscita".',
+        }), 400
+
+    # Cerca lavorazioni aperte che matchano i codici articolo del DDT rientro.
+    # Un DDT rientro può chiudere PARZIALMENTE più lavorazioni aperte.
+    codici_rientro = {a['codice'] for a in dati['articoli']}
+    terzista_nome  = dati.get('terzista', '')
+
+    lav_aperte = LavorazioneTerzista.query.filter(
+        LavorazioneTerzista.stato.in_(['ATTESA_RIENTRO', 'IN_RITARDO', 'PARZIALE'])
+    ).all()
+
+    match = []
+    for lav in lav_aperte:
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            note_j = {}
+        codice_lav = note_j.get('codice', '')
+        tz = Terzista.query.get(lav.terzista_id)
+        tz_nome = tz.nome if tz else ''
+
+        if codice_lav not in codici_rientro:
+            continue
+
+        # Calcola saldo residuo
+        qta_rientrata = int(note_j.get('qta_rientrata', 0))
+        qta_residua   = lav.qta - qta_rientrata
+
+        # Trova la qta di questo articolo nel DDT rientro
+        qta_ddt = next((a['qta'] for a in dati['articoli'] if a['codice'] == codice_lav), 0)
+
+        match.append({
+            'lav_id':       lav.id,
+            'codice':       codice_lav,
+            'desc':         note_j.get('desc', ''),
+            'terzista':     tz_nome,
+            'ddt_uscita':   lav.ddt_uscita,
+            'qta_spedita':  lav.qta,
+            'qta_rientrata':qta_rientrata,
+            'qta_residua':  qta_residua,
+            'qta_ddt':      qta_ddt,       # quantità proposta dal DDT rientro
+        })
+
+    return jsonify({
+        'ok': True,
+        'anteprima': dati,
+        'filename': f.filename,
+        'match_lavorazioni': match,
+    })
+
+
+@terzisti_bp.route('/api/conferma_ddt_rientro', methods=['POST'])
+def conferma_ddt_rientro():
+    """
+    Aggiorna il saldo rientri per ogni LavorazioneTerzista selezionata.
+
+    Logica saldo parziale:
+      note_json.qta_rientrata += qta_confermata_da_questo_ddt
+      se qta_rientrata >= qta_spedita → stato = 'RIENTRATA'
+      altrimenti                      → stato = 'PARZIALE'
+
+    Il campo note_json.ddt_rientri accumula tutti i DDT collegati.
+    """
+    try:
+        d          = request.get_json(force=True)
+        filename   = d.get('filename', '')
+        numero_ddt = d.get('numero_ddt', '')
+        data_ddt   = d.get('data_ddt', '')
+        conferme   = d.get('conferme', [])
+        # conferme = [ { lav_id, qta_confermata } ]
+
+        chiuse = 0
+        parziali = 0
+
+        for c in conferme:
+            lav_id       = int(c.get('lav_id', 0))
+            qta_conf     = int(c.get('qta_confermata', 0))
+            if qta_conf <= 0:
+                continue
+
+            lav = LavorazioneTerzista.query.get(lav_id)
+            if not lav:
+                continue
+
+            try:
+                note_j = json.loads(lav.note or '{}')
+            except Exception:
+                note_j = {}
+
+            # Aggiorna saldo
+            qta_rientrata_prec = int(note_j.get('qta_rientrata', 0))
+            nuova_rientrata    = qta_rientrata_prec + qta_conf
+            ddt_list           = note_j.get('ddt_rientri', [])
+            if numero_ddt and numero_ddt not in ddt_list:
+                ddt_list.append(numero_ddt)
+
+            note_j['qta_rientrata'] = nuova_rientrata
+            note_j['ddt_rientri']   = ddt_list
+            lav.note = json.dumps(note_j)
+
+            # Aggiorna stato
+            if nuova_rientrata >= lav.qta:
+                lav.stato        = 'RIENTRATA'
+                lav.data_rientro = data_ddt or datetime.utcnow().strftime('%d/%m/%Y')
+                lav.ddt_rientro  = ', '.join(ddt_list)
+                chiuse += 1
+                fa = FaseRiga.query.filter_by(riga_id=lav.riga_id, fase=lav.fase).first()
+                if fa:
+                    fa.stato = 'completata'
+            else:
+                lav.stato       = 'PARZIALE'
+                lav.ddt_rientro = ', '.join(ddt_list)
+                parziali += 1
+
+        # Archivia PDF rientro
+        done = DONE_FOLDER()
+        os.makedirs(done, exist_ok=True)
+        try:
+            shutil.move(os.path.join(RIENTRO_FOLDER(), filename),
+                        os.path.join(done, filename))
+        except Exception:
+            pass
+
+        log(f'DDT RIENTRO terzista: {filename} — chiuse:{chiuse} parziali:{parziali}')
+        db.session.commit()
+        return jsonify({'ok': True, 'chiuse': chiuse, 'parziali': parziali})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  API DASHBOARD — spedizioni con saldo parziale
+# ══════════════════════════════════════════════════════════════════════════════
+
+@terzisti_bp.route('/api/spedizioni_terzisti')
+def api_spedizioni_terzisti():
+    """
+    Restituisce tutte le lavorazioni con saldo aggiornato per la dashboard.
+    Calcola dinamicamente stato e qta residua da note_json.
+    """
+    oggi = date.today()
+    lavorazioni = LavorazioneTerzista.query.order_by(
+        LavorazioneTerzista.data_uscita.desc()
+    ).all()
+
+    risultati = []
+    for lav in lavorazioni:
+        stato = lav.stato
+
+        # Controlla ritardo su lavorazioni non ancora chiuse
+        if stato in ('ATTESA_RIENTRO', 'PARZIALE') and lav.data_rientro_prev:
+            try:
+                if datetime.strptime(lav.data_rientro_prev, '%d/%m/%Y').date() < oggi:
+                    stato = 'IN_RITARDO'
+            except Exception:
+                pass
+
+        tz = Terzista.query.get(lav.terzista_id)
+
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            note_j = {}
+
+        qta_rientrata = int(note_j.get('qta_rientrata', 0))
+        qta_residua   = max(0, lav.qta - qta_rientrata)
+        ddt_rientri   = note_j.get('ddt_rientri', [])
+
+        risultati.append({
+            'id':               lav.id,
+            'terzista':         tz.nome if tz else '?',
+            'terzista_tipo':    tz.tipo if tz else '',
+            'codice':           note_j.get('codice', ''),
+            'desc':             note_j.get('desc', ''),
+            'trattamento':      note_j.get('trattamento', lav.fase),
+            'qta_spedita':      lav.qta,
+            'qta_rientrata':    qta_rientrata,
+            'qta_residua':      qta_residua,
+            'data_uscita':      lav.data_uscita,
+            'data_rientro_prev':lav.data_rientro_prev,
+            'data_rientro':     lav.data_rientro,
+            'ddt_uscita':       lav.ddt_uscita,
+            'ddt_rientri':      ddt_rientri,
+            'stato':            stato,
+        })
+    return jsonify(risultati)
