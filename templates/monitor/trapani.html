@@ -1,0 +1,283 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+/* ══ MONITOR TRAPANI ═════════════════════════════════════════════════════════ */
+.trap-layout{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media(max-width:1100px){.trap-layout{grid-template-columns:1fr}}
+
+/* Header macchina (banner sopra le sezioni di ogni trapano) */
+.trap-machine-banner{
+  display:flex;align-items:center;gap:12px;
+  padding:12px 18px;border-radius:8px 8px 0 0;
+  font-size:15px;font-weight:900;color:#fff;letter-spacing:.5px;
+  border-bottom:2px solid rgba(255,255,255,.15);
+}
+.trap1-banner{background:linear-gradient(135deg,#1a4a7a,#1e6fa5)}
+.trap2-banner{background:linear-gradient(135deg,#2a5a1a,#38891e)}
+
+/* Header sezioni trapano */
+.trap1-lav-hdr{background:linear-gradient(135deg,#0d3a6a,#1a5590)}
+.trap1-att-hdr{background:linear-gradient(135deg,#6a2020,#993030)}
+.trap1-ter-hdr{background:linear-gradient(135deg,#2a3a40,#3a5060)}
+.trap2-lav-hdr{background:linear-gradient(135deg,#1a4a0a,#287a14)}
+.trap2-att-hdr{background:linear-gradient(135deg,#6a4a00,#9a6e00)}
+.trap2-ter-hdr{background:linear-gradient(135deg,#2a3030,#3a4540)}
+
+.section-hdr-wrap{display:flex;align-items:center;justify-content:space-between;padding:10px 16px}
+.section-hdr-wrap span{font-size:12px;font-weight:700;color:#fff}
+
+.btn-add-row{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.25);color:#fff;
+             padding:3px 9px;border-radius:5px;font-size:11px;cursor:pointer;
+             transition:all .15s;display:inline-flex;align-items:center;gap:4px;font-family:inherit}
+.btn-add-row:hover{background:rgba(255,255,255,.25)}
+.btn-del-row{background:rgba(192,57,43,.12);border:1px solid rgba(192,57,43,.3);
+             color:#f07070;padding:3px 7px;border-radius:4px;font-size:10px;cursor:pointer;
+             transition:all .15s;font-family:inherit}
+.btn-del-row:hover{background:rgba(192,57,43,.28);color:#fff}
+
+/* Blocco trapano: banner + 3 sezioni */
+.trap-col{background:var(--surface);border-radius:10px;border:1px solid var(--border);
+          overflow:hidden;box-shadow:var(--shadow)}
+
+/* Badge macchina attiva */
+.trap-badge{font-size:10px;background:rgba(255,255,255,.15);border-radius:8px;
+            padding:2px 8px;font-weight:700;letter-spacing:.5px;animation:pulseW 2s infinite}
+@keyframes pulseW{0%,100%{opacity:1}50%{opacity:.6}}
+
+/* Contatore righe nella sezione */
+.sez-count{font-size:9px;background:rgba(255,255,255,.1);border-radius:10px;
+           padding:1px 6px;min-width:18px;text-align:center;font-weight:700}
+
+/* Separatore tra sezioni dentro lo stesso trapano */
+.trap-col .mon-section{border-radius:0;border:none;border-bottom:1px solid var(--border);box-shadow:none;margin-bottom:0}
+.trap-col .mon-section:last-child{border-bottom:none}
+</style>
+
+<div class="page-toolbar">
+  <div class="page-title">🔩 Monitor Trapani</div>
+  <a href="/monitor" class="btn btn-ghost">📊 Monitor Segatrice</a>
+</div>
+
+<div class="trap-layout">
+
+  <!-- ══ TRAPANO 1 ══════════════════════════════════════════════════════════ -->
+  <div class="trap-col">
+    <div class="trap-machine-banner trap1-banner">
+      <span>🔩</span>
+      <span>TRAPANO 1</span>
+      <span class="trap-badge">● ATTIVO</span>
+    </div>
+
+    {% for sezione in ['trap1_lavorazione','trap1_in_attesa','trap1_terminati'] %}
+    {% set label, hdr_class = sezioni_map[sezione] %}
+    <div class="mon-section">
+      <div class="{{ hdr_class }}">
+        <div class="section-hdr-wrap">
+          <span>{{ label.replace('TRAPANO 1 — ','') }}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            {% set cnt = righe_per_sezione[sezione]|length %}
+            {% if cnt > 0 %}<span class="sez-count">{{ cnt }}</span>{% endif %}
+            <button class="btn-add-row" onclick="apriAggiungi('{{ sezione }}')">＋</button>
+          </div>
+        </div>
+      </div>
+      <table class="mon-table">
+        <thead><tr>
+          <th>Prio</th><th>Commessa</th><th>Codice</th><th>Saldo</th>
+          <th>✂️</th><th>↪️</th><th>🔩</th>
+          <th>Descrizione</th><th>%</th><th>Tot.</th><th></th>
+        </tr></thead>
+        <tbody id="tbody-{{ sezione }}">
+        {% set righe = righe_per_sezione[sezione] %}
+        {% if righe %}
+          {% for r in righe %}
+          <tr id="row-{{ r.id }}">
+            <td>{% if r.priority %}<span class="prio prio-num">{{ r.priority }}</span>{% else %}<span class="prio"></span>{% endif %}</td>
+            <td class="comm-id">{{ r.comm_id }}</td>
+            <td class="codice">{{ r.codice }}</td>
+            <td class="num {% if r.saldo > 0 %}num-pos{% elif r.saldo < 0 %}num-neg{% endif %}">{{ r.saldo }}</td>
+            {# Per i trapani: taglio=foratura, piega=filettatura, saldatura=sbavatura #}
+            <td><span class="phase {{ r.taglio }}"   data-id="{{ r.id }}" data-fase="taglio">{{ icone[r.taglio] }}</span></td>
+            <td><span class="phase {{ r.piega }}"    data-id="{{ r.id }}" data-fase="piega">{{ icone[r.piega] }}</span></td>
+            <td><span class="phase {{ r.saldatura }}" data-id="{{ r.id }}" data-fase="saldatura">{{ icone[r.saldatura] }}</span></td>
+            <td class="descr-td">{{ r.descrizione }}</td>
+            <td><div class="pct-bar"><div class="pct-fill" style="width:{{ [r.pct,100]|min }}%"></div><span>{{ r.pct }}%</span></div></td>
+            <td class="num">{{ r.totale }}</td>
+            <td><button class="btn-del-row" onclick="eliminaRiga({{ r.id }})">✕</button></td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="11" style="text-align:center;color:#5a7090;padding:10px;font-style:italic">Nessuna riga</td></tr>
+        {% endif %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+
+  <!-- ══ TRAPANO 2 ══════════════════════════════════════════════════════════ -->
+  <div class="trap-col">
+    <div class="trap-machine-banner trap2-banner">
+      <span>🔩</span>
+      <span>TRAPANO 2</span>
+      <span class="trap-badge">● ATTIVO</span>
+    </div>
+
+    {% for sezione in ['trap2_lavorazione','trap2_in_attesa','trap2_terminati'] %}
+    {% set label, hdr_class = sezioni_map[sezione] %}
+    <div class="mon-section">
+      <div class="{{ hdr_class }}">
+        <div class="section-hdr-wrap">
+          <span>{{ label.replace('TRAPANO 2 — ','') }}</span>
+          <div style="display:flex;align-items:center;gap:6px">
+            {% set cnt = righe_per_sezione[sezione]|length %}
+            {% if cnt > 0 %}<span class="sez-count">{{ cnt }}</span>{% endif %}
+            <button class="btn-add-row" onclick="apriAggiungi('{{ sezione }}')">＋</button>
+          </div>
+        </div>
+      </div>
+      <table class="mon-table">
+        <thead><tr>
+          <th>Prio</th><th>Commessa</th><th>Codice</th><th>Saldo</th>
+          <th>Foratura</th><th>Filett.</th><th>Sbav.</th>
+          <th>Descrizione</th><th>%</th><th>Tot.</th><th></th>
+        </tr></thead>
+        <tbody id="tbody-{{ sezione }}">
+        {% set righe = righe_per_sezione[sezione] %}
+        {% if righe %}
+          {% for r in righe %}
+          <tr id="row-{{ r.id }}">
+            <td>{% if r.priority %}<span class="prio prio-num">{{ r.priority }}</span>{% else %}<span class="prio"></span>{% endif %}</td>
+            <td class="comm-id">{{ r.comm_id }}</td>
+            <td class="codice">{{ r.codice }}</td>
+            <td class="num {% if r.saldo > 0 %}num-pos{% elif r.saldo < 0 %}num-neg{% endif %}">{{ r.saldo }}</td>
+            <td><span class="phase {{ r.taglio }}"   data-id="{{ r.id }}" data-fase="taglio">{{ icone[r.taglio] }}</span></td>
+            <td><span class="phase {{ r.piega }}"    data-id="{{ r.id }}" data-fase="piega">{{ icone[r.piega] }}</span></td>
+            <td><span class="phase {{ r.saldatura }}" data-id="{{ r.id }}" data-fase="saldatura">{{ icone[r.saldatura] }}</span></td>
+            <td class="descr-td">{{ r.descrizione }}</td>
+            <td><div class="pct-bar"><div class="pct-fill" style="width:{{ [r.pct,100]|min }}%"></div><span>{{ r.pct }}%</span></div></td>
+            <td class="num">{{ r.totale }}</td>
+            <td><button class="btn-del-row" onclick="eliminaRiga({{ r.id }})">✕</button></td>
+          </tr>
+          {% endfor %}
+        {% else %}
+          <tr><td colspan="11" style="text-align:center;color:#5a7090;padding:10px;font-style:italic">Nessuna riga</td></tr>
+        {% endif %}
+        </tbody>
+      </table>
+    </div>
+    {% endfor %}
+  </div>
+
+</div>
+
+<!-- ── MODAL AGGIUNGI RIGA ──────────────────────────────────────────────── -->
+<div class="modal-overlay" id="modalAggiungiRiga">
+  <div class="modal-box" style="width:480px">
+    <h3 id="modal-riga-title">➕ Aggiungi riga</h3>
+    <input type="hidden" id="modalSezione">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:10px">
+      <div>
+        <label class="modal-label">N° Commessa</label>
+        <input class="modal-input" id="inp-comm" placeholder="es. 2026-042">
+      </div>
+      <div>
+        <label class="modal-label">Codice articolo</label>
+        <input class="modal-input" id="inp-cod" placeholder="es. C12">
+      </div>
+    </div>
+    <div style="margin-bottom:10px">
+      <label class="modal-label">Descrizione</label>
+      <input class="modal-input" id="inp-desc" placeholder="es. Cavalletto C12 h.120">
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px">
+      <div>
+        <label class="modal-label">Totale pz</label>
+        <input class="modal-input" id="inp-tot" type="number" min="0" value="0">
+      </div>
+      <div>
+        <label class="modal-label">Saldo</label>
+        <input class="modal-input" id="inp-saldo" type="number" value="0">
+      </div>
+      <div>
+        <label class="modal-label">Priorità</label>
+        <input class="modal-input" id="inp-prio" type="number" min="1" max="9" placeholder="es. 1">
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalAggiungiRiga')">Annulla</button>
+      <button class="btn btn-primary" onclick="confermAggiungi()">✅ Aggiungi</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+const STATI = ['done','wip','todo','na','nd'];
+const ICONE = {done:'✅',wip:'🚧',todo:'🔜',na:'✗',nd:'·'};
+
+const NOMI_SEZ = {
+  trap1_lavorazione:'Trapano 1 — In Lavorazione',
+  trap1_in_attesa:  'Trapano 1 — In Attesa',
+  trap1_terminati:  'Trapano 1 — Terminati',
+  trap2_lavorazione:'Trapano 2 — In Lavorazione',
+  trap2_in_attesa:  'Trapano 2 — In Attesa',
+  trap2_terminati:  'Trapano 2 — Terminati',
+};
+
+// ── Toggle fasi ──────────────────────────────────────────────────────────────
+document.querySelectorAll('.phase').forEach(ph=>{
+  ph.addEventListener('click',function(){
+    const cur  = STATI.find(s=>this.classList.contains(s))||'nd';
+    const next = STATI[(STATI.indexOf(cur)+1)%STATI.length];
+    STATI.forEach(s=>this.classList.remove(s));
+    this.classList.add(next); this.textContent=ICONE[next];
+    fetch(`/api/monitor/${this.dataset.id}/fase`,{method:'PATCH',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({fase:this.dataset.fase,stato:next})})
+    .then(r=>r.json()).then(d=>showToast(d.ok?'✅ Aggiornato':'❌ Errore',!d.ok));
+  });
+});
+
+// ── Aggiungi riga ────────────────────────────────────────────────────────────
+function apriAggiungi(sezione){
+  document.getElementById('modalSezione').value = sezione;
+  document.getElementById('modal-riga-title').textContent =
+    '➕ Aggiungi a: ' + (NOMI_SEZ[sezione]||sezione);
+  ['comm','cod','desc','prio'].forEach(f=>document.getElementById('inp-'+f).value='');
+  document.getElementById('inp-tot').value='0';
+  document.getElementById('inp-saldo').value='0';
+  openModal('modalAggiungiRiga');
+  setTimeout(()=>document.getElementById('inp-comm').focus(),100);
+}
+
+function confermAggiungi(){
+  const sezione = document.getElementById('modalSezione').value;
+  const tot   = parseInt(document.getElementById('inp-tot').value)||0;
+  const saldo = parseInt(document.getElementById('inp-saldo').value)||0;
+  const pct   = tot>0 ? Math.round((tot-saldo)/tot*100) : 0;
+  const body  = {
+    sezione, pct,
+    comm_id:     document.getElementById('inp-comm').value.trim(),
+    codice:      document.getElementById('inp-cod').value.trim(),
+    descrizione: document.getElementById('inp-desc').value.trim(),
+    totale: tot, saldo: saldo,
+    priority: document.getElementById('inp-prio').value.trim(),
+  };
+  fetch('/api/monitor',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){showToast('✅ Riga aggiunta');closeModal('modalAggiungiRiga');setTimeout(()=>location.reload(),500);}
+    else showToast('❌ '+(d.error||'Errore'),true);
+  }).catch(()=>showToast('❌ Errore di rete',true));
+}
+
+// ── Elimina riga ─────────────────────────────────────────────────────────────
+function eliminaRiga(id){
+  if(!confirm('Eliminare questa riga?')) return;
+  fetch(`/api/monitor/${id}`,{method:'DELETE'})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){ document.getElementById('row-'+id)?.remove(); showToast('🗑️ Eliminata'); }
+    else showToast('❌ '+(d.error||'Errore'),true);
+  }).catch(()=>showToast('❌ Errore di rete',true));
+}
+{% endblock %}
