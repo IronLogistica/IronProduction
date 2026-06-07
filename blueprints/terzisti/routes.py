@@ -377,8 +377,18 @@ def conferma_ddt_uscita():
         trattamento = d.get('trattamento', '')
         rientro_prev= d.get('data_rientro_prev', '')
 
-        # Cerca o usa id=0 per terzista non in anagrafica
+        # Cerca il terzista in anagrafica; se non esiste lo CREA AUTOMATICAMENTE
+        # dalla regex (nome estratto dal PDF). Non serve inserirlo a priori.
         tz = Terzista.query.filter(Terzista.nome.ilike(f'%{terzista_n}%')).first()
+        if not tz and terzista_n:
+            tz = Terzista(
+                nome=terzista_n,
+                tipo=trattamento or '',
+                email='', telefono='', note='Creato automaticamente da DDT'
+            )
+            db.session.add(tz)
+            db.session.flush()   # ottiene l'id senza commit definitivo
+            log(f'Terzista "{terzista_n}" creato automaticamente da DDT {numero_ddt}')
         tz_id = tz.id if tz else 0
 
         for art in articoli:
