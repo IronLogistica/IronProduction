@@ -385,7 +385,8 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
 {% endblock %}
 
 {% block scripts %}
-let _dati=[], _filtro='all', _soloAp=false, _pU=null, _pR=null;
+// BUGFIX: variabili in var per garantire scope globale (let+block script causa problemi)
+var _dati=[], _filtro='all', _soloAp=false, _pU=null, _pR=null;
 
 // ── KPI e tabella ─────────────────────────────────────────────────────────────
 async function carica(){
@@ -406,12 +407,12 @@ function aggKPI(){
   document.getElementById('k-chi').textContent=_dati.filter(d=>d.stato==='RIENTRATA').length;
 }
 
-function filt(f,el){
+window.filt = function(f,el){
   _filtro=f;
   document.querySelectorAll('.fb').forEach(b=>b.classList.remove('active'));
   el.classList.add('active'); renderTable();
 }
-function toggleSw(){
+window.toggleSw = function(){
   _soloAp=!_soloAp;
   document.getElementById('sw-ap').classList.toggle('on',_soloAp);
   renderTable();
@@ -458,12 +459,13 @@ function renderTable(){
 }
 
 // ── Upload & drop ─────────────────────────────────────────────────────────────
-function drop(ev,tipo){
+// BUGFIX: window.* necessario perché onchange/ondrop inline cercano nel global scope
+window.drop = function(ev,tipo){
   ev.preventDefault();
   document.getElementById('drop-'+(tipo==='uscita'?'u':'r')).classList.remove('dragover');
   const f=ev.dataTransfer.files[0]; if(f) upload(f,tipo);
 }
-async function upload(file,tipo){
+window.upload = async function(file,tipo){
   if(!file||!file.name.toLowerCase().endsWith('.pdf')){showToast('⚠️ Seleziona un PDF',true);return;}
   const fd=new FormData(); fd.append('file',file);
   try{
@@ -476,7 +478,7 @@ async function upload(file,tipo){
 }
 
 // ── Modale Uscita ─────────────────────────────────────────────────────────────
-function apriUscita(js){
+window.apriUscita = function apriUscita(js){
   _pU=js; const d=js.anteprima;
   document.getElementById('mi-u').innerHTML=`
     <div class="mi-cell"><div class="ml">Terzista</div><div class="mv">${d.terzista||'—'}</div></div>
@@ -489,7 +491,7 @@ function apriUscita(js){
   if(d.trattamento) document.getElementById('sel-tratt').value=d.trattamento;
   openModal('m-uscita');
 }
-async function confermaUscita(){
+window.confermaUscita = async function confermaUscita(){
   if(!_pU) return; const d=_pU.anteprima;
   const body={filename:_pU.filename,terzista:d.terzista,numero_ddt:d.numero_ddt,
     data_ddt:d.data_ddt,trattamento:document.getElementById('sel-tratt').value||d.trattamento,
@@ -505,7 +507,7 @@ async function confermaUscita(){
 }
 
 // ── Modale Rientro ────────────────────────────────────────────────────────────
-function apriRientro(js){
+window.apriRientro = function apriRientro(js){
   _pR=js; const d=js.anteprima;
   document.getElementById('mi-r').innerHTML=`
     <div class="mi-cell"><div class="ml">Terzista</div><div class="mv">${d.terzista||'—'}</div></div>
@@ -542,7 +544,7 @@ function apriRientro(js){
   }
   openModal('m-rientro');
 }
-async function confermaRientro(){
+window.confermaRientro = async function confermaRientro(){
   if(!_pR) return; const d=_pR.anteprima;
   const ml=_pR.match_lavorazioni||[];
   const conferme=ml
@@ -563,7 +565,7 @@ async function confermaRientro(){
 }
 
 // ── Terzista manuale ──────────────────────────────────────────────────────────
-async function creaTerzista(){
+window.creaTerzista = async function creaTerzista(){
   const nome=document.getElementById('tz-nome').value.trim();
   if(!nome){showToast('⚠️ Inserisci il nome',true);return;}
   try{
@@ -582,7 +584,7 @@ async function creaTerzista(){
 
 
 // ── Pannello dettaglio fornitore ──────────────────────────────────────────────
-function apriPanel(nomeTerzista){
+window.apriPanel = function apriPanel(nomeTerzista){
   document.getElementById('fp-nome').textContent = nomeTerzista;
   document.getElementById('fp-tipo').textContent = '';
   document.getElementById('fp-body').innerHTML =
@@ -591,7 +593,7 @@ function apriPanel(nomeTerzista){
   document.getElementById('forn-overlay').classList.add('show');
   renderPanel(nomeTerzista);
 }
-function chiudiPanel(){
+window.chiudiPanel = function chiudiPanel(){
   document.getElementById('forn-panel').classList.remove('open');
   document.getElementById('forn-overlay').classList.remove('show');
 }
