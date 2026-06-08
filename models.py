@@ -88,8 +88,10 @@ class Terzista(db.Model):
 class LavorazioneTerzista(db.Model):
     __tablename__ = "lavorazioni_terziste"
     id               = db.Column(db.Integer, primary_key=True)
-    riga_id          = db.Column(db.Integer, db.ForeignKey("righe_commessa.id"), nullable=False)
-    terzista_id      = db.Column(db.Integer, db.ForeignKey("terzisti.id"),       nullable=False)
+    # nullable=True: le lavorazioni da DDT PDF non sono collegate a una riga commessa
+    riga_id          = db.Column(db.Integer, db.ForeignKey("righe_commessa.id"), nullable=True)
+    # nullable=True: il terzista viene creato automaticamente ma potrebbe mancare
+    terzista_id      = db.Column(db.Integer, db.ForeignKey("terzisti.id"),       nullable=True)
     fase             = db.Column(db.String(50),  default="")
     qta              = db.Column(db.Integer,     default=0)
     data_uscita      = db.Column(db.String(20),  default="")
@@ -668,6 +670,9 @@ def init_db():
         "ALTER TABLE monitor_righe ADD COLUMN IF NOT EXISTS ordine INTEGER DEFAULT 0",
         "ALTER TABLE commesse ADD COLUMN IF NOT EXISTS ref_masterlogistic VARCHAR(100) DEFAULT ''",
         "ALTER TABLE lavorazioni_terziste ADD COLUMN IF NOT EXISTS costo FLOAT DEFAULT 0",
+        # ── Rende riga_id e terzista_id nullable (DDT senza commessa collegata) ──
+        "ALTER TABLE lavorazioni_terziste ALTER COLUMN riga_id DROP NOT NULL",
+        "ALTER TABLE lavorazioni_terziste ALTER COLUMN terzista_id DROP NOT NULL",
         "CREATE TABLE IF NOT EXISTS storico_produzione (id SERIAL PRIMARY KEY, kanban_id INTEGER REFERENCES kanban_prodotti(id) ON DELETE CASCADE, anno INTEGER NOT NULL, mese INTEGER NOT NULL, qta_import INTEGER DEFAULT 0, qta_auto INTEGER DEFAULT 0, aggiornato_il TIMESTAMP, UNIQUE(kanban_id, anno, mese))",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
