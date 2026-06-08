@@ -50,20 +50,22 @@ def _leggi_pdf(path):
 
 def _rileva_tipo(testo):
     """
-    DDT USCITA  → 'DOCUMENTO DI TRASPORTO' + 'Lavorazione Esterna'
-                  oppure 'Mag. di destinazione: TGT'
-    DDT RIENTRO → 'DDT - Entrata Merci'
+    DDT USCITA  → 'Lavorazione Esterna'
+                  oppure 'DOCUMENTO DI TRASPORTO' + 'Mag. di destinazione: TGT'
+    DDT RIENTRO → 'Entrata Merci'
                   oppure 'Vs. doc.(DDTCL)'
     """
     e_rientro = (
-        'Entrata Merci'   in testo or
-        'Vs. doc.(DDTCL)' in testo or
-        bool(re.search(r'Vs\.\s*doc\.\(DDTCL\)', testo))
+        'Entrata Merci' in testo or
+        bool(re.search(r'Vs\.?\s*doc\.?\s*\(DDTCL\)', testo))
     )
+    # BUG FIX: parentesi esplicite — in Python 'and' ha precedenza su 'or'
     e_uscita = (
-        'Lavorazione Esterna'       in testo or
-        'DOCUMENTO DI TRASPORTO'    in testo and
-        bool(re.search(r'Mag\.\s*di destinazione:\s*TGT', testo))
+        'Lavorazione Esterna' in testo or
+        (
+            'DOCUMENTO DI TRASPORTO' in testo and
+            bool(re.search(r'Mag\.?\s*di\s+destinazione:\s*TGT', testo))
+        )
     )
     if e_rientro and not e_uscita:  return 'rientro'
     if e_uscita  and not e_rientro: return 'uscita'
@@ -98,31 +100,80 @@ def _estrai_trattamento(testo):
     return ''
 
 
+def _parse_qta(s):
+    """
+    Converte quantità in notazione italiana in int.
+
+    BUG FIX: il replace order sbagliato ('.','').(',','.') dava 80000 per '80,000'.
+    Soluzione: se c'è la virgola (separatore decimale), prende solo la parte intera.
+      '80,000'  → 80   (80 virgola 000 → int part = 80)
+      '682,000' → 682
+      '11,000'  → 11
+      '1.500'   → 1500 (punto = migliaia, nessuna virgola)
+      '130'     → 130  (intero semplice)
+    """
+    s = s.strip()
+    if ',' in s:
+        # La virgola è separatore decimale (notazione italiana)
+        # Le quantità sono sempre interi → prendiamo solo la parte intera
+        int_part = s.split(',')[0].replace('.', '')
+        return int(int_part) if int_part.isdigit() else 0
+    else:
+        # Nessuna virgola: il punto è separatore migliaia (o numero intero puro)
+        clean = s.replace('.', '')
+        return int(clean) if clean.isdigit() else 0
+
+
 def _preprocess_righe(testo):
     """
-    Pre-processa il testo per correggere le righe spezzate dal PDF.
-    Caso tipico: 'T200DT TRANSENNA L.2.000 D.32 DOPPIO\\nTRAVERSOn. 11,000'
-    → 'T200DT TRANSENNA L.2.000 D.32 DOPPIO TRAVERSO n. 11,000'
+    Pre-processa il testo per correggere le righe spezzate da PyPDF2.
+
+    Caso tipico (riga desc spezzata):
+      'T200DT TRANSENNA L.2.000 D.32 DOPPIO\nTRAVERSOn. 11,000'
+      → 'T200DT TRANSENNA L.2.000 D.32 DOPPIO TRAVERSO n. 11,000'
+
+    BUG FIX #1 — Importi senza spazio (es. 'Base Curvata527,84'):
+      PyPDF2 incolla l'importo (2 decimali = centesimi) alla riga descrizione.
+      Viene rimosso PRIMA del join → 'Base Curvata527,84' → 'Base Curvata'.
+      Le quantità (N,000 → 3 decimali) NON vengono toccate.
+
+    BUG FIX #2 — Condizione di join troppo larga:
+      Non unire una riga che ha GIÀ 'UM QTA' (è già completa) con la prossima.
     """
-    # Aggiunge spazio prima di 'n.' incollato a una parola maiuscola
-    testo = re.sub(r'([A-Za-z])n\.', r'\1 n.', testo)
-    # Elimina suffissi 'Mag. di ...' sulla stessa riga degli articoli
-    testo = re.sub(r'\s*Mag\. di (origine|destinazione):[^\n]+', '', testo)
-    # Elimina importi incollati al testo (es. '495,60Mag.')
-    testo = re.sub(r'[\d]+,\d{2}(?=Mag\.)', '', testo)
+    # ── 1. Spazio prima di UM incollata a parola: 'TRAVERSOn.' → 'TRAVERSO n.'
+    testo = re.sub(r'([A-Za-z])(?=(?:n|pz|Nr)\.)', r'\1 ', testo)
+
+    # ── 2. Rimuove 'Mag. di origine/destinazione: ...' incollati sulla riga
+    testo = re.sub(r'\s*Mag\.?\s*di\s+(?:origine|destinazione):[^\n]+', '', testo)
+
+    # ── 3. BUG FIX #1: rimuove importi finali (esattamente 2 cifre decimali
+    #       dopo virgola = centesimi euro).  Le quantità hanno 3 zeri → sicuro.
+    #       Gestisce sia ' 495,60' che 'Curvata527,84' (zero spazi prima).
+    testo = re.sub(r'(?<=\D)\d{1,7},\d{2}(?=\n|$)', '', testo, flags=re.MULTILINE)
+    # Riga che inizia direttamente con un importo (riga isolata di solo importo)
+    testo = re.sub(r'^\d{1,7},\d{2}\s*$', '', testo, flags=re.MULTILINE)
 
     righe = testo.split('\n')
     risultato = []
     i = 0
     while i < len(righe):
         r = righe[i].rstrip()
-        # Se la riga corrente è inizio articolo (CODICE TESTO...)
-        # e la riga successiva inizia con parola maiuscola + 'n. NUMERO',
-        # le unisce (desc spezzata su due righe)
         if i + 1 < len(righe):
             prossima = righe[i + 1].strip()
-            if (re.match(r'^[A-Z][A-Za-z0-9._-]+\s+.+', r.strip()) and
-                    re.match(r'^[A-Z]+\s+n\.\s+[\d\.,]+', prossima)):
+            # BUG FIX #2: unisce SOLO se la riga corrente NON ha già 'UM QTA'
+            # 'ZT ... n. 682,000' è già completa → non unire con 'Base Curvata'
+            riga_ha_qta = bool(re.search(
+                r'\s+(?:n|pz|Nr)\.\s*[\d\.,]+', r.strip()
+            ))
+            # La riga successiva è una continuazione: inizia con TOKEN TUTTO-CAPS + UM + QTA
+            prossima_e_continuazione = bool(re.match(
+                r'^[A-Z][A-Z0-9]*\s+(?:n|pz|Nr)\.\s*[\d\.,]+',
+                prossima
+            ))
+            riga_e_articolo = bool(re.match(
+                r'^[A-Z][A-Za-z0-9._-]+\s+.+', r.strip()
+            ))
+            if riga_e_articolo and not riga_ha_qta and prossima_e_continuazione:
                 r = r.strip() + ' ' + prossima
                 i += 2
                 risultato.append(r)
@@ -131,26 +182,32 @@ def _preprocess_righe(testo):
         i += 1
     return '\n'.join(risultato)
 
-
 def _estrai_articoli(testo):
     """
     Estrae lista articoli dal testo DDT.
-    Pattern: CODICE  Descrizione…  n.  QTA[,000]  [Importo]
+
+    Pattern: CODICE  Descrizione…  UM  QTA[,000]  [Importo]
+    Unità di misura supportate: n. / pz. / Nr. / PZ. (case-insensitive partial)
+
+    BUG FIX: quantità 80,000 → 80 (non 80000). Vedi _parse_qta().
     """
     testo = _preprocess_righe(testo)
     articoli = []
     visti = set()
+
+    # Pattern UM: n. / pz. / Nr. / PZ. / nr. — con o senza spazio prima del numero
+    UM_PAT = r'(?:n|pz|Nr|PZ|nr)\.'
 
     for riga in testo.split('\n'):
         riga = riga.strip()
         if not riga:
             continue
 
-        # Rimuove importo finale (es. '495,60' o '527,84') dalla riga
-        riga = re.sub(r'\s+\d{1,6},\d{2}\s*$', '', riga)
+        # Sicurezza: rimuove eventuali importi residui (2 decimali) a fine riga
+        riga = re.sub(r'\s*\d{1,7},\d{2}\s*$', '', riga)
 
         m = re.match(
-            r'^([A-Za-z][A-Za-z0-9._-]{1,})\s+(.+?)\s+n\.\s+([\d\.,]+)(?:\s+[\d\.,]+)?$',
+            r'^([A-Za-z][A-Za-z0-9._-]{1,})\s+(.+?)\s+' + UM_PAT + r'\s*([\d\.,]+)(?:\s+[\d\.,]+)?$',
             riga
         )
         if not m:
@@ -160,11 +217,7 @@ def _estrai_articoli(testo):
         if codice in SKIP_TZ or codice.startswith('0') or len(codice) < 2:
             continue
 
-        qta_str = m.group(3).replace('.', '').replace(',', '.')
-        try:
-            qta = int(float(qta_str))
-        except ValueError:
-            qta = 0
+        qta = _parse_qta(m.group(3))
 
         key = f'{codice}_{qta}'
         if key in visti:
@@ -178,7 +231,6 @@ def _estrai_articoli(testo):
         })
 
     return articoli
-
 
 def parse_ddt_terzista(path):
     """
@@ -389,7 +441,7 @@ def conferma_ddt_uscita():
             db.session.add(tz)
             db.session.flush()   # ottiene l'id senza commit definitivo
             log(f'Terzista "{terzista_n}" creato automaticamente da DDT {numero_ddt}')
-        tz_id = tz.id if tz else 0
+        tz_id = tz.id if tz else None   # BUG FIX: era 0 → FK crash su PostgreSQL
 
         for art in articoli:
             # note_json porta tutti i dati strutturati dell'articolo
@@ -402,8 +454,8 @@ def conferma_ddt_uscita():
                 'ddt_rientri':  [],           # lista DDT rientro collegati
             })
             lav = LavorazioneTerzista(
-                riga_id           = 0,
-                terzista_id       = tz_id,
+                riga_id           = None,   # BUG FIX: 0 violava FK su PostgreSQL
+                terzista_id       = tz_id,  # None se terzista non estratto (nullable)
                 fase              = trattamento or 'Trattamento Esterno',
                 qta               = int(art.get('qta', 0)),
                 data_uscita       = data_ddt,
