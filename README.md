@@ -50,3 +50,6 @@ export DATABASE_URL="sqlite:///mes_local.db"
 python3 seed_db.py
 python3 app.py
 ```
+
+## Integrazione PP P0
+Vedere `../README_PP_INTEGRAZIONE.md` nel pacchetto di rilascio per configurazione e contratto API.
