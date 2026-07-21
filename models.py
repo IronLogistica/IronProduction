@@ -696,3 +696,63 @@ def init_db():
             db.session.commit()
     except Exception:
         db.session.rollback()
+
+
+# ── P0 MasterWork / PP ───────────────────────────────────────────────────────
+STATI_ORDINE_PP = ["Creato", "Rilasciato", "In esecuzione", "Tecnicamente completato", "Chiuso CO"]
+
+class SequenzaOrdineProduzione(db.Model):
+    __tablename__ = "pp_sequenze"
+    anno = db.Column(db.Integer, primary_key=True)
+    ultimo_numero = db.Column(db.Integer, nullable=False, default=0)
+
+class OrdineProduzione(db.Model):
+    __tablename__ = "ordini_produzione_pp"
+    id = db.Column(db.Integer, primary_key=True)
+    codice = db.Column(db.String(20), nullable=False, unique=True, index=True)
+    codice_articolo = db.Column(db.String(100), nullable=False)
+    descrizione = db.Column(db.String(300), default="")
+    cliente_commessa_esterna = db.Column(db.String(200), default="")
+    qta_pianificata = db.Column(db.Integer, nullable=False, default=0)
+    qta_buona = db.Column(db.Integer, nullable=False, default=0)
+    qta_scarto = db.Column(db.Integer, nullable=False, default=0)
+    stato = db.Column(db.String(40), nullable=False, default="Creato")
+    asa = db.Column(db.String(100), default="")
+    data_prevista = db.Column(db.Date, nullable=True)
+    data_rilascio = db.Column(db.DateTime, nullable=True)
+    data_completamento = db.Column(db.DateTime, nullable=True)
+    creato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    aggiornato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+class EventoConsuntivoPP(db.Model):
+    __tablename__ = "pp_eventi_consuntivi"
+    id = db.Column(db.Integer, primary_key=True)
+    event_id = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    op_code = db.Column(db.String(20), nullable=False, index=True)
+    fase = db.Column(db.String(100), default="")
+    timestamp_evento = db.Column(db.DateTime, nullable=True)
+    pezzi_buoni = db.Column(db.Integer, nullable=False, default=0)
+    pezzi_scarto = db.Column(db.Integer, nullable=False, default=0)
+    ricevuto_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+class AuditPP(db.Model):
+    __tablename__ = "pp_audit"
+    id = db.Column(db.Integer, primary_key=True)
+    op_code = db.Column(db.String(20), default="")
+    event_id = db.Column(db.String(80), default="")
+    azione = db.Column(db.String(80), nullable=False)
+    dettaglio = db.Column(db.Text, default="")
+    creato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+
+def prossimo_codice_ordine_pp():
+    """Contatore annuale; row lock su PostgreSQL e vincolo univoco come rete di sicurezza."""
+    anno = datetime.utcnow().year
+    seq = SequenzaOrdineProduzione.query.filter_by(anno=anno).with_for_update().first()
+    if not seq:
+        seq = SequenzaOrdineProduzione(anno=anno, ultimo_numero=0)
+        db.session.add(seq)
+        db.session.flush()
+    seq.ultimo_numero += 1
+    return f"OP-{anno}-{seq.ultimo_numero:06d}"
+
+
