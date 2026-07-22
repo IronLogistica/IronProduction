@@ -698,8 +698,9 @@ def init_db():
         db.session.rollback()
 
 
-# ── P0 MasterWork / PP ───────────────────────────────────────────────────────
+# ── Ordini di produzione / integrazione MasterWork ───────────────────────────
 STATI_ORDINE_PP = ["Creato", "Rilasciato", "In esecuzione", "Tecnicamente completato", "Chiuso CO"]
+ASA_MASTERWORK = "Carpenteria Propria"
 
 class SequenzaOrdineProduzione(db.Model):
     __tablename__ = "pp_sequenze"
@@ -712,47 +713,79 @@ class OrdineProduzione(db.Model):
     codice = db.Column(db.String(20), nullable=False, unique=True, index=True)
     codice_articolo = db.Column(db.String(100), nullable=False)
     descrizione = db.Column(db.String(300), default="")
-    cliente_commessa_esterna = db.Column(db.String(200), default="")
+    cliente = db.Column(db.String(200), default="")
+    commessa = db.Column(db.String(100), default="")
+    # Retrocompatibilità con l'anteprima P0: valore leggibile da vecchi client.
+    cliente_commessa_esterna = db.Column(db.String(300), default="")
     qta_pianificata = db.Column(db.Integer, nullable=False, default=0)
     qta_buona = db.Column(db.Integer, nullable=False, default=0)
     qta_scarto = db.Column(db.Integer, nullable=False, default=0)
+    tempo_consuntivo_minuti = db.Column(db.Integer, nullable=False, default=0)
     stato = db.Column(db.String(40), nullable=False, default="Creato")
-    asa = db.Column(db.String(100), default="")
-    data_prevista = db.Column(db.Date, nullable=True)
+    asa = db.Column(db.String(100), nullable=False, default="")
+    priorita = db.Column(db.Integer, nullable=False, default=5)
+    data_inizio = db.Column(db.Date, nullable=True)
+    data_prevista = db.Column(db.Date, nullable=True)  # consegna/fine pianificata
     data_rilascio = db.Column(db.DateTime, nullable=True)
     data_completamento = db.Column(db.DateTime, nullable=True)
+    data_chiusura_co = db.Column(db.DateTime, nullable=True)
     creato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     aggiornato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class EventoConsuntivoPP(db.Model):
     __tablename__ = "pp_eventi_consuntivi"
     id = db.Column(db.Integer, primary_key=True)
-    event_id = db.Column(db.String(80), nullable=False, unique=True, index=True)
+    event_id = db.Column(db.String(100), nullable=False, unique=True, index=True)
     op_code = db.Column(db.String(20), nullable=False, index=True)
-    fase = db.Column(db.String(100), default="")
-    timestamp_evento = db.Column(db.DateTime, nullable=True)
+    fase = db.Column(db.String(100), nullable=False)
+    timestamp_evento = db.Column(db.DateTime, nullable=False)
     pezzi_buoni = db.Column(db.Integer, nullable=False, default=0)
     pezzi_scarto = db.Column(db.Integer, nullable=False, default=0)
+    tempo_minuti = db.Column(db.Integer, nullable=False, default=0)
     ricevuto_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 class AuditPP(db.Model):
     __tablename__ = "pp_audit"
     id = db.Column(db.Integer, primary_key=True)
     op_code = db.Column(db.String(20), default="")
-    event_id = db.Column(db.String(80), default="")
+    event_id = db.Column(db.String(100), default="")
     azione = db.Column(db.String(80), nullable=False)
     dettaglio = db.Column(db.Text, default="")
     creato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
 def prossimo_codice_ordine_pp():
-    """Contatore annuale; row lock su PostgreSQL e vincolo univoco come rete di sicurezza."""
+    """Restituisce OP-YYYY-000001. Su PostgreSQL serializza anche la prima riga annuale."""
     anno = datetime.utcnow().year
+    if db.engine.dialect.name == "postgresql":
+        # lock transazionale deterministico: evita la gara sull'INSERT della prima sequenza.
+        db.session.execute(db.text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": 505000000 + anno})
     seq = SequenzaOrdineProduzione.query.filter_by(anno=anno).with_for_update().first()
-    if not seq:
+    if seq is None:
         seq = SequenzaOrdineProduzione(anno=anno, ultimo_numero=0)
         db.session.add(seq)
         db.session.flush()
     seq.ultimo_numero += 1
+    db.session.flush()
     return f"OP-{anno}-{seq.ultimo_numero:06d}"
 
+def inizializza_schema_pp():
+    """Completa in avvio le colonne introdotte dopo P0; non richiede migration manuale."""
+    # create_all è già eseguito dall'app. Questi ALTER servono solo DB già avviati con P0.
+    additions = {
+        "cliente": "VARCHAR(200) DEFAULT ''", "commessa": "VARCHAR(100) DEFAULT ''",
+        "tempo_consuntivo_minuti": "INTEGER DEFAULT 0", "priorita": "INTEGER DEFAULT 5",
+        "data_inizio": "DATE", "data_chiusura_co": "TIMESTAMP",
+    }
+    event_additions = {"tempo_minuti": "INTEGER DEFAULT 0"}
+    dialect = db.engine.dialect.name
+    for table, cols in (("ordini_produzione_pp", additions), ("pp_eventi_consuntivi", event_additions)):
+        for col, definition in cols.items():
+            try:
+                if dialect == "postgresql":
+                    db.session.execute(db.text(f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {col} {definition}"))
+                else:  # SQLite: ADD COLUMN IF NOT EXISTS non è disponibile in tutte le versioni
+                    db.session.execute(db.text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()  # colonna già presente o DB non ancora inizializzato
 

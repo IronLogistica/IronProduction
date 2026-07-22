@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from flask import Flask, redirect, url_for
 from config import Config
-from models import db, init_db, get_kanban_gruppi
+from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi
 
 def create_app():
     app = Flask(__name__)
@@ -40,6 +40,7 @@ def create_app():
     with app.app_context():
         db.create_all()
         init_db()
+        inizializza_schema_pp()
 
     return app
 
