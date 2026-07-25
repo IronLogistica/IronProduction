@@ -578,7 +578,7 @@ function renderTable(){
     const ddr=(d.ddt_rientri||[]).map(n=>`<span class="ddt-tag r">${n}</span>`).join('')||'—';
     const rc2=d.qta_residua===0?'q-zero':'q-res';
     html+=`<tr class="${rc}">
-      <td><span class="tz-link" onclick="apriPanel('${d.terzista.replace(/'/g,\"\\'\")}')">🏭 ${d.terzista}</span></td>
+      <td><span class="tz-link" onclick="apriPanel('${d.terzista.replace(/'/g,"\\'")}')">🏭 ${d.terzista}</span></td>
       <td><small style="color:var(--steel)">${d.trattamento||'—'}</small></td>
       <td class="cod">${d.codice||'—'}</td>
       <td class="desc-c" title="${d.desc||''}">${d.desc||'—'}</td>
