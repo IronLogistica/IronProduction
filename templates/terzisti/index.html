@@ -219,6 +219,7 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
 
 <div class="page-toolbar">
   <div class="page-title">🔨 Lavorazioni Esterne — Terzisti</div>
+  <button class="btn btn-primary" onclick="apriModalScheda()">🏷️ Stampa Scheda Trattamento</button>
 </div>
 
 <div class="tz-layout">
@@ -311,6 +312,62 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
   </main>
 </div>
 
+<!-- ══ STORICO SCHEDE TRATTAMENTI ESTERNI ═══════════════════════════════════ -->
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🏷️ Schede Trattamenti Esterni — Storico</div>
+  <div class="tz-table-wrap">
+    <table class="tz-t">
+      <thead><tr>
+        <th>N° Scheda</th><th>Codice</th><th>Fornitore</th><th>Commessa</th>
+        <th>Trattamento</th><th>Colore</th><th>Creata il</th><th></th>
+      </tr></thead>
+      <tbody id="schede-tbody">
+        <tr><td colspan="8"><div class="empty-state"><div class="ei">⏳</div><p>Caricamento…</p></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══ MODALE NUOVA SCHEDA TRATTAMENTO ═══════════════════════════════════ -->
+<div class="modal-overlay" id="m-scheda">
+  <div class="modal-box" style="width:440px;max-width:96vw">
+    <h3>🏷️ Nuova Scheda Trattamento Esterno</h3>
+
+    <label class="modal-label">Codice articolo</label>
+    <input class="modal-input" id="sch-codice" type="text" placeholder="es. BC60" maxlength="100">
+
+    <label class="modal-label" style="margin-top:10px">Fornitore</label>
+    <select class="modal-input" id="sch-fornitore-sel" onchange="toggleFornitoreLibero()">
+      <option value="TGT">TGT</option>
+      <option value="NUOVA PLASTIC METAL">NUOVA PLASTIC METAL</option>
+      <option value="__ALTRO__">Altro (testo libero)…</option>
+    </select>
+    <input class="modal-input" id="sch-fornitore-libero" type="text"
+           placeholder="Ragione sociale fornitore" style="display:none;margin-top:6px" maxlength="200">
+
+    <label class="modal-label" style="margin-top:10px">Commessa</label>
+    <input class="modal-input" id="sch-commessa" type="text" placeholder="es. 630/26" maxlength="100">
+
+    <label class="modal-label" style="margin-top:10px">Trattamento</label>
+    <select class="modal-input" id="sch-tipo" onchange="toggleColoreScheda()">
+      <option value="ZINCATURA_CALDO">Zincatura a Caldo</option>
+      <option value="ZINCATURA_FREDDO">Zincatura a Freddo</option>
+      <option value="ZINCATURA_VERNICIATURA">Zincatura + Verniciatura</option>
+      <option value="VERNICIATURA">Verniciatura</option>
+    </select>
+
+    <div id="sch-colore-wrap" style="display:none">
+      <label class="modal-label" style="margin-top:10px">Colore verniciatura</label>
+      <input class="modal-input" id="sch-colore" type="text" placeholder="es. RAL 9010 bianco" maxlength="100">
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('m-scheda')">Annulla</button>
+      <button class="btn btn-primary" onclick="creaSchedaEStampa()">🖨️ Genera e Stampa</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MODALE DDT USCITA ══════════════════════════════════════════════════ -->
 <div class="modal-overlay" id="m-uscita">
   <div class="modal-box" style="width:600px;max-width:96vw">
@@ -387,6 +444,86 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
 {% block scripts %}
 // BUGFIX: variabili in var per garantire scope globale (let+block script causa problemi)
 var _dati=[], _filtro='all', _soloAp=false, _pU=null, _pR=null;
+
+// ── SCHEDE TRATTAMENTI ESTERNI ──────────────────────────────────────────────
+function apriModalScheda(){
+  document.getElementById('sch-codice').value='';
+  document.getElementById('sch-fornitore-sel').value='TGT';
+  document.getElementById('sch-fornitore-libero').style.display='none';
+  document.getElementById('sch-fornitore-libero').value='';
+  document.getElementById('sch-commessa').value='';
+  document.getElementById('sch-tipo').value='ZINCATURA_CALDO';
+  document.getElementById('sch-colore').value='';
+  toggleColoreScheda();
+  openModal('m-scheda');
+}
+function toggleFornitoreLibero(){
+  const sel=document.getElementById('sch-fornitore-sel').value;
+  document.getElementById('sch-fornitore-libero').style.display = (sel==='__ALTRO__') ? 'block' : 'none';
+}
+function toggleColoreScheda(){
+  const tipo=document.getElementById('sch-tipo').value;
+  const conColore = (tipo==='ZINCATURA_VERNICIATURA' || tipo==='VERNICIATURA');
+  document.getElementById('sch-colore-wrap').style.display = conColore ? 'block' : 'none';
+}
+window.creaSchedaEStampa = async function creaSchedaEStampa(){
+  const codice = document.getElementById('sch-codice').value.trim();
+  const selForn = document.getElementById('sch-fornitore-sel').value;
+  const fornitore = (selForn==='__ALTRO__')
+    ? document.getElementById('sch-fornitore-libero').value.trim()
+    : selForn;
+  const commessa = document.getElementById('sch-commessa').value.trim();
+  const tipo = document.getElementById('sch-tipo').value;
+  const colore = document.getElementById('sch-colore').value.trim();
+
+  if(!codice){ showToast('❌ Inserisci il codice articolo', true); return; }
+  if(!fornitore){ showToast('❌ Inserisci il fornitore', true); return; }
+
+  try{
+    const r = await fetch('/api/schede_trattamenti', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice_articolo:codice, fornitore, commessa, tipo_trattamento:tipo, colore})
+    });
+    const d = await r.json();
+    if(d.ok){
+      closeModal('m-scheda');
+      showToast('✅ Scheda creata');
+      window.open('/schede_trattamenti/'+d.id+'/stampa', '_blank');
+      caricaSchede();
+    }else{
+      showToast('❌ '+(d.error||'Errore'), true);
+    }
+  }catch(e){
+    showToast('❌ Errore di rete', true);
+  }
+};
+async function caricaSchede(){
+  try{
+    const r = await fetch('/api/schede_trattamenti');
+    const schede = await r.json();
+    const tb = document.getElementById('schede-tbody');
+    if(!schede.length){
+      tb.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="ei">🏷️</div><p>Nessuna scheda creata</p></div></td></tr>';
+      return;
+    }
+    tb.innerHTML = schede.map(s => `
+      <tr>
+        <td class="cod">${s.numero_scheda}</td>
+        <td class="cod">${s.codice_articolo}</td>
+        <td>${s.fornitore}</td>
+        <td>${s.commessa||'—'}</td>
+        <td>${s.tipo_trattamento_label}</td>
+        <td>${s.colore||'—'}</td>
+        <td>${s.creato_il}</td>
+        <td><button class="btn btn-ghost btn-sm" onclick="window.open('/schede_trattamenti/${s.id}/stampa','_blank')">🖨️ Ristampa</button></td>
+      </tr>
+    `).join('');
+  }catch(e){
+    document.getElementById('schede-tbody').innerHTML =
+      '<tr><td colspan="8"><div class="empty-state"><div class="ei">❌</div><p>Errore caricamento</p></div></td></tr>';
+  }
+}
+caricaSchede();
 
 // ── KPI e tabella ─────────────────────────────────────────────────────────────
 async function carica(){

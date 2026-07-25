@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scheda Trattamento — {{ s.codice_articolo }}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --iron-black:#111318; --iron-blue:#1e5fa8; --iron-blue2:#2b7bd1;
+    --border:#111318;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:#e7ebef;display:flex;justify-content:center;padding:24px 12px}
+
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px;z-index:10}
+  .toolbar button{border:none;padding:10px 18px;border-radius:7px;font-weight:700;font-size:13px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.25)}
+  .btn-print{background:var(--iron-blue);color:#fff}
+  .btn-back{background:#fff;color:#333;border:1px solid #ccc}
+
+  .card{width:480px;max-width:96vw;background:#fff;border:3px solid var(--iron-black);border-radius:6px;overflow:hidden}
+
+  .hdr{display:flex;align-items:stretch}
+  .hdr-logo{background:var(--iron-black);color:#fff;flex:1;display:flex;flex-direction:column;justify-content:center;padding:10px 16px}
+  .hdr-logo .brand{font-size:22px;font-weight:900;letter-spacing:2px}
+  .hdr-logo .title{font-size:15px;font-weight:800;letter-spacing:1px;margin-top:2px}
+  .hdr-tag{background:linear-gradient(135deg,var(--iron-blue),var(--iron-blue2));color:#fff;
+           width:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;
+           text-align:center;font-size:10.5px;font-weight:800;letter-spacing:.5px;padding:8px 10px}
+
+  .field{padding:10px 16px;border-bottom:2px dashed #c6ccd3}
+  .field .lbl{font-size:10px;font-weight:800;letter-spacing:1px;color:#5a6472;text-transform:uppercase;display:flex;align-items:center;gap:6px}
+  .field .val{font-size:22px;font-weight:900;color:var(--iron-black);margin-top:2px;word-break:break-word}
+
+  .trat-hdr{background:linear-gradient(135deg,var(--iron-blue),var(--iron-blue2));color:#fff;
+            display:flex;align-items:center;justify-content:space-between;padding:8px 16px;font-size:12px;font-weight:800;letter-spacing:.5px}
+  .trat-hdr .commessa-val{font-weight:900;font-size:14px}
+
+  .trat-riga{display:flex;align-items:center;gap:12px;padding:10px 16px;border-bottom:1.5px dotted #c6ccd3}
+  .trat-riga:last-of-type{border-bottom:2px dashed #c6ccd3}
+  .chk{width:22px;height:22px;border:2.5px solid var(--iron-black);border-radius:4px;flex-shrink:0;
+       display:flex;align-items:center;justify-content:center;font-weight:900;font-size:15px}
+  .chk.on{background:var(--iron-black);color:#fff}
+  .trat-label{font-size:15px;font-weight:800;color:var(--iron-black);flex-shrink:0}
+  .trat-extra{font-size:15px;font-weight:800;color:var(--iron-blue);text-transform:uppercase}
+
+  .bottom{display:flex}
+  .img-box{flex:1;border-right:2px dashed #c6ccd3;padding:10px;display:flex;flex-direction:column}
+  .qr-box{width:160px;padding:10px;display:flex;flex-direction:column;align-items:center}
+  .box-title{background:var(--iron-black);color:#fff;font-size:9px;font-weight:800;letter-spacing:.5px;
+             text-align:center;padding:3px 4px;border-radius:3px;margin-bottom:6px}
+  .img-placeholder{flex:1;border:1.5px dashed #b9c0c8;border-radius:5px;display:flex;align-items:center;
+                    justify-content:center;color:#9aa4af;font-size:10px;text-align:center;min-height:110px}
+  #qrcode{display:flex;align-items:center;justify-content:center}
+  #qrcode img, #qrcode canvas{border:1px solid #ddd}
+
+  .qta{display:flex;align-items:center;gap:10px;padding:10px 16px}
+  .qta .lbl{font-size:10px;font-weight:800;letter-spacing:1px;color:#5a6472;text-transform:uppercase;white-space:nowrap}
+  .qta-box{flex:1;border:2px solid var(--iron-black);border-radius:5px;height:34px}
+
+  .footer{display:flex;justify-content:space-between;padding:6px 16px 10px;font-size:9px;color:#8b95a1}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .toolbar{display:none}
+    .card{border:2.5px solid #000;width:100%}
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button class="btn-back" onclick="window.close()">✕ Chiudi</button>
+  <button class="btn-print" onclick="window.print()">🖨️ Stampa</button>
+</div>
+
+<div class="card">
+  <div class="hdr">
+    <div class="hdr-logo">
+      <div class="brand">IRON</div>
+      <div class="title">SCHEDA TRATTAMENTI</div>
+    </div>
+    <div class="hdr-tag">
+      LAVORAZIONE ESTERNA<br>{{ info.label|upper if info else s.tipo_trattamento }}
+    </div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">🏷️ Codice articolo</div>
+    <div class="val">{{ s.codice_articolo }}</div>
+  </div>
+
+  <div class="field">
+    <div class="lbl">📦 Fornitore</div>
+    <div class="val">{{ s.fornitore }}</div>
+  </div>
+
+  <div class="trat-hdr">
+    <span>🧪 TRATTAMENTI</span>
+    <span>COMMESSA <span class="commessa-val">{{ s.commessa or '—' }}</span></span>
+  </div>
+
+  <div class="trat-riga">
+    <div class="chk {{ 'on' if info.zincatura else '' }}">{{ '✔' if info.zincatura else '' }}</div>
+    <div class="trat-label">ZINCATURA</div>
+    {% if info.zinc_label %}<div class="trat-extra">{{ info.zinc_label }}</div>{% endif %}
+  </div>
+  <div class="trat-riga">
+    <div class="chk {{ 'on' if info.verniciatura else '' }}">{{ '✔' if info.verniciatura else '' }}</div>
+    <div class="trat-label">VERNICIATURA</div>
+    {% if info.verniciatura and s.colore %}<div class="trat-extra">{{ s.colore }}</div>{% endif %}
+  </div>
+
+  <div class="bottom">
+    <div class="img-box">
+      <div class="box-title">IMMAGINE PRODOTTO</div>
+      <div class="img-placeholder">(immagine di esempio)</div>
+    </div>
+    <div class="qr-box">
+      <div class="box-title">QR CODE</div>
+      <div id="qrcode"></div>
+    </div>
+  </div>
+
+  <div class="qta">
+    <div class="lbl">☑️ Quantità</div>
+    <div class="qta-box"></div>
+  </div>
+
+  <div class="footer">
+    <span>{{ s.numero_scheda }}</span>
+    <span>{{ s.creato_il.strftime('%d/%m/%Y %H:%M') if s.creato_il else '' }}</span>
+  </div>
+</div>
+
+<script>
+new QRCode(document.getElementById('qrcode'), {
+  text: {{ qr_text|tojson }},
+  width: 128,
+  height: 128,
+  correctLevel: QRCode.CorrectLevel.M
+});
+</script>
+
+</body>
+</html>
