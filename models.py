@@ -40,6 +40,23 @@ class ArticoloML(db.Model):
         if (self.stock or 0) <= (self.scorta_minima or 0): return "sottoscorta"
         return "ok"
 
+
+class DistintaBaseML(db.Model):
+    """
+    Specchio in sola lettura della Distinta Base (BOM) di MasterLogistic —
+    stesso bind 'masterlogistic', stessa logica di ArticoloML: nessuna
+    scrittura da qui, MasterLogistic resta l'unica fonte di verità.
+    """
+    __bind_key__  = 'masterlogistic'
+    __tablename__ = 'distinta_base'
+    id            = db.Column(db.Integer, primary_key=True)
+    codice_padre  = db.Column(db.String(50), nullable=False)
+    codice_figlio = db.Column(db.String(50), nullable=False)
+    quantita      = db.Column(db.Float, default=1.0)
+    livello       = db.Column(db.Integer, default=1)
+    note          = db.Column(db.String(200), default='')
+    creato_il     = db.Column(db.DateTime)
+
 class Cliente(db.Model):
     __tablename__ = "clienti"
     id       = db.Column(db.Integer, primary_key=True)
