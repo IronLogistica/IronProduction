@@ -103,6 +103,35 @@ class LavorazioneTerzista(db.Model):
     ddt_rientro      = db.Column(db.String(100), default="")
     note             = db.Column(db.Text,        default="")
 
+TIPI_TRATTAMENTO_SCHEDA = {
+    'ZINCATURA_CALDO':        {'label': 'Zincatura a Caldo',        'zincatura': True,  'zinc_label': 'CALDO',  'verniciatura': False},
+    'ZINCATURA_FREDDO':       {'label': 'Zincatura a Freddo',       'zincatura': True,  'zinc_label': 'FREDDO', 'verniciatura': False},
+    'ZINCATURA_VERNICIATURA': {'label': 'Zincatura + Verniciatura', 'zincatura': True,  'zinc_label': '',       'verniciatura': True},
+    'VERNICIATURA':           {'label': 'Verniciatura',             'zincatura': False, 'zinc_label': '',       'verniciatura': True},
+}
+
+FORNITORI_SCHEDA_DEFAULT = ['TGT', 'NUOVA PLASTIC METAL']
+
+
+class SchedaTrattamento(db.Model):
+    __tablename__ = "schede_trattamenti"
+    id               = db.Column(db.Integer, primary_key=True)
+    codice_articolo  = db.Column(db.String(100), nullable=False)
+    fornitore        = db.Column(db.String(200), nullable=False)
+    commessa         = db.Column(db.String(100), default="")
+    tipo_trattamento = db.Column(db.String(50),  nullable=False)  # vedi TIPI_TRATTAMENTO_SCHEDA
+    colore           = db.Column(db.String(100), default="")
+    creato_il        = db.Column(db.DateTime, default=datetime.utcnow)
+
+    @property
+    def numero_scheda(self):
+        return f"ST-{self.id:05d}"
+
+    @property
+    def info_trattamento(self):
+        return TIPI_TRATTAMENTO_SCHEDA.get(self.tipo_trattamento, {})
+
+
 class MaterialePrimo(db.Model):
     __tablename__ = "materiali_primi"
     id          = db.Column(db.Integer, primary_key=True)
