@@ -1,19 +1,83 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-toolbar"><div class="page-title">📦 Magazzino Materie Prime</div></div>
+<div class="page-toolbar">
+  <div class="page-title">📦 Magazzino Materie Prime</div>
+  <span style="font-size:11px;color:var(--text-dim);margin-left:auto">🔗 Dati in tempo reale da MasterLogistic</span>
+</div>
 <div id="mag-app" style="font-size:13px;color:#666;padding:20px;background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow)">Caricamento...</div>
+
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🧩 Distinta Base (BOM) — esplosione componenti</div>
+  <div style="padding:14px;display:flex;gap:8px;align-items:center">
+    <input id="bom-codice" type="text" placeholder="Codice articolo (es. BC60)"
+           style="flex:1;max-width:280px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+    <button class="btn btn-primary" onclick="esplodiBOM()">🔍 Esplodi BOM</button>
+  </div>
+  <div id="bom-result" style="padding:0 14px 14px;font-size:13px"></div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 fetch('/api/materiali').then(r=>r.json()).then(data=>{
   const app=document.getElementById('mag-app');
-  if(!data.length){app.innerHTML='<p style="color:#aaa;font-style:italic">Nessun materiale registrato.</p>';return;}
-  let html=`<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>UM</th><th>Stock</th><th>Scorta Min</th><th>Stato</th><th>Fornitore</th></tr></thead><tbody>`;
+  if(data && data.errore){
+    app.innerHTML='<p style="color:#c0392b">⚠️ '+data.messaggio+'<br><span style="font-size:11px;color:#999">Verifica la variabile MASTERLOGISTIC_DATABASE_URL su Railway.</span></p>';
+    return;
+  }
+  if(!data.length){app.innerHTML='<p style="color:#aaa;font-style:italic">Nessun articolo trovato in MasterLogistic.</p>';return;}
+  let html=`<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>
+    <th>Codice (SKU)</th><th>Cod. esterno</th><th>Descrizione</th>
+    <th>Stock</th><th>Ordinati</th><th>In arrivo</th><th>Scorta Min</th><th>Stato</th><th>Fornitore</th></tr></thead><tbody>`;
   data.forEach(m=>{
     const sc=m.stato==='ok'?'<span class="badge badge-ok">✅ OK</span>':m.stato==='sottoscorta'?'<span class="badge badge-warn">⚠️ Sottoscorta</span>':'<span class="badge badge-warn">❌ Esaurito</span>';
-    html+=`<tr><td class="codice">${m.codice}</td><td class="prod-name">${m.descrizione||'—'}</td><td class="lav-td">${m.unita_misura}</td>
-      <td class="num ${m.stock<=0?'num-neg':'num-pos'}">${m.stock}</td><td class="num">${m.scorta_min}</td><td>${sc}</td><td class="lav-td">${m.fornitore||'—'}</td></tr>`;
+    html+=`<tr style="cursor:pointer" onclick="document.getElementById('bom-codice').value='${m.codice}';esplodiBOM();">
+      <td class="codice">${m.codice}</td><td class="lav-td">${m.codice_esterno||'—'}</td><td class="prod-name">${m.descrizione||'—'}</td>
+      <td class="num ${m.stock<=0?'num-neg':'num-pos'}">${m.stock}</td>
+      <td class="num">${m.ordinati}</td><td class="num">${m.incoming}</td>
+      <td class="num">${m.scorta_min}</td><td>${sc}</td><td class="lav-td">${m.fornitore||'—'}</td></tr>`;
   });
   html+='</tbody></table></div>';
   app.innerHTML=html;
+}).catch(()=>{
+  document.getElementById('mag-app').innerHTML='<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
 });
+
+function renderBOMLista(componenti){
+  if(!componenti || !componenti.length) return '';
+  return '<ul style="margin:4px 0 4px 18px;padding:0;list-style:none">' + componenti.map(c => `
+    <li style="padding:4px 0;border-left:2px solid var(--border);padding-left:10px;margin-bottom:2px">
+      <span class="cod" style="font-weight:700">${c.codice}</span>
+      <span style="color:var(--text-dim)"> — ${c.descrizione||'(senza descrizione)'}</span>
+      <span style="margin-left:8px;font-weight:600">× ${c.quantita_totale}</span>
+      ${c.stock!==null && c.stock!==undefined ? `<span style="margin-left:8px;font-size:11px;color:${c.stock<=0?'#c0392b':'#2a9d5c'}">(stock ${c.stock})</span>` : ''}
+      ${c.note ? `<span style="margin-left:8px;font-size:11px;color:#999">${c.note}</span>` : ''}
+      ${renderBOMLista(c.figli)}
+    </li>`).join('') + '</ul>';
+}
+
+async function esplodiBOM(){
+  const codice = document.getElementById('bom-codice').value.trim();
+  const box = document.getElementById('bom-result');
+  if(!codice){ box.innerHTML=''; return; }
+  box.innerHTML = '<p style="color:#999">Caricamento…</p>';
+  try{
+    const r = await fetch('/api/distinta_base/' + encodeURIComponent(codice));
+    const d = await r.json();
+    if(d.errore){
+      box.innerHTML = '<p style="color:#c0392b">⚠️ '+d.messaggio+'</p>';
+      return;
+    }
+    if(!d.trovato){
+      box.innerHTML = `<p style="color:#999">Articolo <b>${codice}</b> non trovato in MasterLogistic.</p>`;
+    }
+    if(!d.ha_bom){
+      box.innerHTML += `<p style="color:#999">Nessuna distinta base definita per <b>${codice}</b> (${d.descrizione||'—'}).</p>`;
+      return;
+    }
+    box.innerHTML = `<p style="margin-bottom:6px"><b>${codice}</b> — ${d.descrizione||'—'}</p>` + renderBOMLista(d.componenti);
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento della BOM.</p>';
+  }
+}
 {% endblock %}
+
