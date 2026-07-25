@@ -11,6 +11,35 @@ SEZIONI_MONITOR  = ["lavorazione","da_iniziare","in_attesa","in_saldatura","post
 
 PIN_ADMIN = "1234"   # PIN autorizzativo per operazioni protette
 
+# ═══════════════════════════════════════════════════════════════════════════════
+#  ARTICOLI — SPECCHIO IN SOLA LETTURA DI MASTERLOGISTIC
+#  Stesso progetto Railway, database Postgres separato (bind 'masterlogistic',
+#  vedi config.py / SQLALCHEMY_BINDS). Mappa 1:1 la tabella 'articoli' che
+#  MasterLogistic già possiede e gestisce — NON è un doppione: IronProduction
+#  non scrive né altera mai questa tabella (nessuna INSERT/UPDATE/DELETE da
+#  qui, e db.create_all(bind_key=None) in app.py non tocca questo bind).
+# ═══════════════════════════════════════════════════════════════════════════════
+class ArticoloML(db.Model):
+    __bind_key__   = 'masterlogistic'
+    __tablename__  = 'articoli'
+    id             = db.Column(db.Integer, primary_key=True)
+    sku            = db.Column(db.String(50), unique=True, nullable=False)
+    codice_esterno = db.Column(db.String(50), default='')
+    descrizione    = db.Column(db.String(200), default='')
+    stock          = db.Column(db.Integer, default=0)
+    ordinati       = db.Column(db.Integer, default=0)
+    incoming       = db.Column(db.Integer, default=0)
+    fornitore      = db.Column(db.String(100), default='N/D')
+    ordine_n       = db.Column(db.String(50),  default='N/D')
+    data_evasione  = db.Column(db.String(20),  default='')
+    scorta_minima  = db.Column(db.Integer, default=5)
+
+    @property
+    def stato(self):
+        if (self.stock or 0) <= 0:                     return "esaurito"
+        if (self.stock or 0) <= (self.scorta_minima or 0): return "sottoscorta"
+        return "ok"
+
 class Cliente(db.Model):
     __tablename__ = "clienti"
     id       = db.Column(db.Integer, primary_key=True)
@@ -133,6 +162,13 @@ class SchedaTrattamento(db.Model):
 
 
 class MaterialePrimo(db.Model):
+    """
+    DEPRECATO: prima della connessione a MasterLogistic, era l'anagrafica
+    materiali locale di IronProduction. Ora l'anagrafica/giacenze vive in
+    MasterLogistic e si legge tramite ArticoloML — questa tabella resta
+    definita (per non rompere eventuali dati già presenti) ma non è più
+    alimentata dal blueprint magazzino.
+    """
     __tablename__ = "materiali_primi"
     id          = db.Column(db.Integer, primary_key=True)
     codice      = db.Column(db.String(100), nullable=False, unique=True)
@@ -680,7 +716,7 @@ def calcola_kpi():
     }
 
 def init_db():
-    db.create_all()
+    db.create_all(bind_key=None)   # solo il DB locale — mai il bind 'masterlogistic'
     migs_pg = [
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS lotto INTEGER DEFAULT 0",
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS riserva INTEGER DEFAULT 0",

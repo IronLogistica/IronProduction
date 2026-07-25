@@ -38,7 +38,7 @@ def create_app():
         return redirect(url_for('monitor.index'))
 
     with app.app_context():
-        db.create_all()
+        db.create_all(bind_key=None)   # solo il DB locale — mai il bind 'masterlogistic'
         init_db()
         inizializza_schema_pp()
 

@@ -147,7 +147,7 @@ MONITOR = [
 
 def seed():
     with app.app_context():
-        db.create_all()
+        db.create_all(bind_key=None)   # solo il DB locale — mai il bind 'masterlogistic'
         if KanbanProdotto.query.count() == 0:
             print(f"Inserisco {len(KANBAN)} prodotti Kanban...")
             for i, d in enumerate(KANBAN):
