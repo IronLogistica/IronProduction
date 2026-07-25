@@ -1,5 +1,8 @@
 from flask import Blueprint, render_template, jsonify, request, current_app
-from models import db, Terzista, LavorazioneTerzista, RigaCommessa, FaseRiga, log
+from models import (
+    db, Terzista, LavorazioneTerzista, RigaCommessa, FaseRiga, log,
+    SchedaTrattamento, TIPI_TRATTAMENTO_SCHEDA, FORNITORI_SCHEDA_DEFAULT,
+)
 from datetime import datetime, date
 import os, re, json, shutil
 import PyPDF2
@@ -262,6 +265,81 @@ def parse_ddt_terzista(path):
 @terzisti_bp.route('/terzisti')
 def index():
     return render_template('terzisti/index.html', active='terzisti')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SCHEDE TRATTAMENTI ESTERNI — cartellino da stampare con QR code
+#  (conto vendita: arredo urbano / segnaletica stradale)
+# ══════════════════════════════════════════════════════════════════════════════
+
+@terzisti_bp.route('/api/schede_trattamenti')
+def api_schede_lista():
+    schede = SchedaTrattamento.query.order_by(SchedaTrattamento.id.desc()).limit(80).all()
+    return jsonify([{
+        'id':                     s.id,
+        'numero_scheda':          s.numero_scheda,
+        'codice_articolo':        s.codice_articolo,
+        'fornitore':              s.fornitore,
+        'commessa':               s.commessa,
+        'tipo_trattamento':       s.tipo_trattamento,
+        'tipo_trattamento_label': s.info_trattamento.get('label', s.tipo_trattamento),
+        'colore':                 s.colore,
+        'creato_il':              s.creato_il.strftime('%d/%m/%Y %H:%M') if s.creato_il else '',
+    } for s in schede])
+
+
+@terzisti_bp.route('/api/schede_trattamenti', methods=['POST'])
+def api_schede_crea():
+    try:
+        d        = request.get_json(force=True)
+        codice   = (d.get('codice_articolo') or '').strip()
+        fornitore= (d.get('fornitore') or '').strip()
+        tipo     = (d.get('tipo_trattamento') or '').strip()
+
+        if not codice:
+            return jsonify({'ok': False, 'error': 'Codice articolo obbligatorio'}), 400
+        if not fornitore:
+            return jsonify({'ok': False, 'error': 'Fornitore obbligatorio'}), 400
+        if tipo not in TIPI_TRATTAMENTO_SCHEDA:
+            return jsonify({'ok': False, 'error': 'Trattamento non valido'}), 400
+
+        s = SchedaTrattamento(
+            codice_articolo = codice,
+            fornitore       = fornitore,
+            commessa        = (d.get('commessa') or '').strip(),
+            tipo_trattamento= tipo,
+            colore          = (d.get('colore') or '').strip(),
+        )
+        db.session.add(s)
+        db.session.commit()
+        log(f'Scheda trattamento creata: {codice} — {fornitore} — {tipo}')
+        return jsonify({'ok': True, 'id': s.id})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@terzisti_bp.route('/schede_trattamenti/<int:sid>/stampa')
+def scheda_stampa(sid):
+    s    = SchedaTrattamento.query.get_or_404(sid)
+    info = s.info_trattamento
+
+    qr_righe = [
+        f"SCHEDA: {s.numero_scheda}",
+        f"CODICE: {s.codice_articolo}",
+        f"FORNITORE: {s.fornitore}",
+        f"COMMESSA: {s.commessa or '-'}",
+        f"TRATTAMENTO: {info.get('label', s.tipo_trattamento)}"
+        + (f" {info.get('zinc_label')}" if info.get('zinc_label') else ""),
+    ]
+    if info.get('verniciatura') and s.colore:
+        qr_righe.append(f"COLORE: {s.colore}")
+    qr_text = "\n".join(qr_righe)
+
+    return render_template(
+        'terzisti/scheda_stampa.html',
+        s=s, info=info, qr_text=qr_text,
+    )
 
 
 # ══════════════════════════════════════════════════════════════════════════════
