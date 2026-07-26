@@ -165,8 +165,11 @@ class SchedaTrattamento(db.Model):
     codice_articolo  = db.Column(db.String(100), nullable=False)
     fornitore        = db.Column(db.String(200), nullable=False)
     commessa         = db.Column(db.String(100), default="")
-    tipo_trattamento = db.Column(db.String(50),  nullable=False)  # vedi TIPI_TRATTAMENTO_SCHEDA
+    tipo_trattamento = db.Column(db.String(50),  nullable=False)  # legacy, tenuto per compatibilità storico
     colore           = db.Column(db.String(100), default="")
+    zincatura        = db.Column(db.Boolean, default=False)
+    zincatura_tipo   = db.Column(db.String(10), default="")   # 'CALDO' / 'FREDDO'
+    verniciatura     = db.Column(db.Boolean, default=False)
     creato_il        = db.Column(db.DateTime, default=datetime.utcnow)
 
     @property
@@ -174,8 +177,39 @@ class SchedaTrattamento(db.Model):
         return f"ST-{self.id:05d}"
 
     @property
+    def ha_zincatura(self):
+        if self.zincatura:
+            return True
+        # fallback per schede create prima dell'introduzione dei flag
+        return TIPI_TRATTAMENTO_SCHEDA.get(self.tipo_trattamento, {}).get('zincatura', False)
+
+    @property
+    def zincatura_label(self):
+        if self.zincatura and self.zincatura_tipo:
+            return self.zincatura_tipo
+        return TIPI_TRATTAMENTO_SCHEDA.get(self.tipo_trattamento, {}).get('zinc_label', '')
+
+    @property
+    def ha_verniciatura(self):
+        if self.verniciatura:
+            return True
+        return TIPI_TRATTAMENTO_SCHEDA.get(self.tipo_trattamento, {}).get('verniciatura', False)
+
+    @property
     def info_trattamento(self):
-        return TIPI_TRATTAMENTO_SCHEDA.get(self.tipo_trattamento, {})
+        """Compatibilità con il vecchio codice che leggeva info.label/zincatura/verniciatura/zinc_label."""
+        zinc = self.ha_zincatura
+        vern = self.ha_verniciatura
+        if zinc and vern:   label = "Zincatura + Verniciatura"
+        elif zinc:          label = f"Zincatura {self.zincatura_label}".strip()
+        elif vern:          label = "Verniciatura"
+        else:               label = TIPI_TRATTAMENTO_SCHEDA.get(self.tipo_trattamento, {}).get('label', self.tipo_trattamento)
+        return {
+            'label':       label,
+            'zincatura':   zinc,
+            'zinc_label':  self.zincatura_label,
+            'verniciatura': vern,
+        }
 
 
 class MaterialePrimo(db.Model):
@@ -756,6 +790,14 @@ def init_db():
         "ALTER TABLE lavorazioni_terziste ALTER COLUMN riga_id DROP NOT NULL",
         "ALTER TABLE lavorazioni_terziste ALTER COLUMN terzista_id DROP NOT NULL",
         "CREATE TABLE IF NOT EXISTS storico_produzione (id SERIAL PRIMARY KEY, kanban_id INTEGER REFERENCES kanban_prodotti(id) ON DELETE CASCADE, anno INTEGER NOT NULL, mese INTEGER NOT NULL, qta_import INTEGER DEFAULT 0, qta_auto INTEGER DEFAULT 0, aggiornato_il TIMESTAMP, UNIQUE(kanban_id, anno, mese))",
+        # ── Scheda Trattamento: flag indipendenti zincatura/verniciatura (sostituiscono il vecchio menu a tendina unico) ──
+        "ALTER TABLE schede_trattamenti ADD COLUMN IF NOT EXISTS zincatura BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE schede_trattamenti ADD COLUMN IF NOT EXISTS zincatura_tipo VARCHAR(10) DEFAULT ''",
+        "ALTER TABLE schede_trattamenti ADD COLUMN IF NOT EXISTS verniciatura BOOLEAN DEFAULT FALSE",
+        "UPDATE schede_trattamenti SET zincatura=TRUE, zincatura_tipo='CALDO' WHERE tipo_trattamento='ZINCATURA_CALDO' AND zincatura IS NOT TRUE",
+        "UPDATE schede_trattamenti SET zincatura=TRUE, zincatura_tipo='FREDDO' WHERE tipo_trattamento='ZINCATURA_FREDDO' AND zincatura IS NOT TRUE",
+        "UPDATE schede_trattamenti SET zincatura=TRUE, verniciatura=TRUE WHERE tipo_trattamento='ZINCATURA_VERNICIATURA' AND (zincatura IS NOT TRUE OR verniciatura IS NOT TRUE)",
+        "UPDATE schede_trattamenti SET verniciatura=TRUE WHERE tipo_trattamento='VERNICIATURA' AND verniciatura IS NOT TRUE",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
