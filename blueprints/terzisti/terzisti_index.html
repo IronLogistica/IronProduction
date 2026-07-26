@@ -1,0 +1,860 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+/* ══ TERZISTI — usa variabili CSS del sistema (tema blu Ironwood) ══════════ */
+/* NON ridefinire :root — usa var(--dark), var(--surface), var(--accent) ecc. */
+
+.tz-layout{display:flex;min-height:calc(100vh - 130px);gap:0;
+           background:var(--bg);border-radius:var(--radius);overflow:visible}
+.tz-sidebar{width:300px;flex-shrink:0;background:var(--dark2);
+            border-right:1px solid var(--border);
+            border-radius:var(--radius) 0 0 var(--radius);
+            padding:14px;display:flex;flex-direction:column;gap:10px}
+.tz-main{flex:1;padding:20px;background:var(--bg2);
+         border-radius:0 var(--radius) var(--radius) 0;min-width:0}
+
+/* Sidebar labels */
+.side-lbl{font-size:9px;font-weight:700;letter-spacing:1.5px;text-transform:uppercase;
+          color:var(--text-dim);padding-bottom:6px;border-bottom:1px solid var(--border);margin-bottom:2px}
+
+/* Upload zone */
+.upload-box{background:var(--dark3);border:1.5px dashed rgba(30,111,165,.3);
+            border-radius:8px;padding:14px;cursor:pointer;
+            transition:.2s;text-align:center}
+.upload-box:hover,.upload-box.dragover{border-color:var(--orange);background:rgba(232,118,10,.06)}
+.upload-box.rientro:hover,.upload-box.rientro.dragover{border-color:var(--steel2);background:rgba(37,137,199,.06)}
+.ub-icon{font-size:1.5rem;margin-bottom:4px}
+.ub-label{font-size:.68rem;color:var(--text-dim);font-weight:700;text-transform:uppercase;letter-spacing:.5px}
+.ub-sub{font-size:.58rem;color:#3a5a7a;margin-top:2px}
+input[type=file]{display:none}
+
+/* Bottoni sidebar */
+.btn-tz{border:none;padding:8px;border-radius:6px;font-weight:700;font-size:.72rem;
+        cursor:pointer;text-transform:uppercase;letter-spacing:.4px;transition:.15s;width:100%}
+.btn-uscita{background:var(--orange);color:#fff}
+.btn-uscita:hover{background:#c96000;box-shadow:0 0 10px rgba(232,118,10,.3)}
+.btn-rientro{background:var(--accent);color:#fff}
+.btn-rientro:hover{background:var(--accent2);box-shadow:0 0 10px var(--accent-glow)}
+.btn-sm{width:auto;padding:5px 12px;font-size:.68rem}
+
+/* Input */
+.inp-tz{width:100%;padding:7px 10px;background:var(--dark3);
+        border:1.5px solid var(--border);color:var(--text);
+        border-radius:6px;font-size:.78rem;font-family:inherit;outline:none;transition:.15s}
+.inp-tz:focus{border-color:var(--accent2)}
+select.inp-tz option{background:var(--dark)}
+
+/* KPI bar */
+.kpi-bar{display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+.kpi-tz{flex:1;min-width:80px;background:var(--surface);border-radius:8px;
+        padding:10px 12px;border:1px solid var(--border);text-align:center}
+.kpi-tz .kv{font-size:1.5rem;font-weight:900;line-height:1}
+.kpi-tz .kl{font-size:.55rem;text-transform:uppercase;letter-spacing:1px;
+            color:var(--text-dim);margin-top:2px}
+.kpi-att{border-top:3px solid var(--orange);color:var(--orange)}
+.kpi-par{border-top:3px solid var(--yellow);color:var(--yellow)}
+.kpi-rit{border-top:3px solid var(--red);color:var(--red)}
+.kpi-chi{border-top:3px solid var(--green);color:var(--green)}
+
+/* Filtri */
+.filtri{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+.fb{background:var(--dark3);border:1px solid var(--border);color:var(--text-dim);
+    padding:4px 11px;border-radius:12px;font-size:.66rem;font-weight:700;
+    cursor:pointer;text-transform:uppercase;letter-spacing:.3px;transition:.15s}
+.fb.active{background:rgba(232,118,10,.15);border-color:var(--orange);color:var(--orange)}
+.fb.fp.active{background:rgba(230,184,0,.1);border-color:var(--yellow);color:var(--yellow)}
+.fb.fc.active{background:rgba(26,158,92,.1);border-color:var(--green);color:var(--green)}
+.fb.fd.active{background:rgba(192,57,43,.1);border-color:var(--red);color:var(--red)}
+.sw-wrap{display:flex;align-items:center;gap:7px;margin-left:auto;
+         font-size:.66rem;color:var(--text-dim);font-weight:700;text-transform:uppercase}
+.sw{width:34px;height:18px;background:var(--border);border-radius:9px;
+    cursor:pointer;position:relative;transition:.2s;flex-shrink:0;border:1px solid var(--border)}
+.sw.on{background:rgba(232,118,10,.5)}
+.sw::after{content:'';position:absolute;top:2px;left:2px;width:12px;height:12px;
+           background:#4a6a8a;border-radius:50%;transition:.2s}
+.sw.on::after{left:18px;background:var(--orange)}
+
+/* Tabella */
+.tz-table-wrap{overflow-x:auto;border-radius:8px;border:1px solid var(--border)}
+table.tz-t{width:100%;border-collapse:collapse;font-size:.73rem}
+table.tz-t thead tr{background:var(--dark2)}
+table.tz-t th{padding:8px 10px;text-align:left;font-size:.58rem;font-weight:700;
+              text-transform:uppercase;letter-spacing:.7px;color:var(--text-dim);
+              border-bottom:2px solid var(--border);white-space:nowrap}
+table.tz-t td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+table.tz-t tr:hover td{background:rgba(30,111,165,.07)}
+table.tz-t tr.rit td{background:rgba(192,57,43,.06)}
+table.tz-t tr.par td{background:rgba(230,184,0,.04)}
+
+.cod{font-family:'Courier New',monospace;font-weight:700;color:var(--text);font-size:.8rem}
+.desc-c{max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--text-dim)}
+
+/* Barra avanzamento */
+.prog-w{width:70px;height:5px;background:var(--border);border-radius:3px;
+        display:inline-block;vertical-align:middle;margin-right:4px;overflow:hidden}
+.prog-f{height:100%;border-radius:3px;transition:width .4s}
+.p100{background:var(--green)}.p50{background:var(--yellow)}.p0{background:var(--orange)}
+
+/* Badge stato */
+.badge-s{font-size:.57rem;padding:2px 7px;border-radius:7px;font-weight:700;
+         border:1px solid;white-space:nowrap;text-transform:uppercase;letter-spacing:.3px}
+.bs-att{color:var(--orange);border-color:rgba(232,118,10,.3);background:rgba(232,118,10,.08);
+        animation:pO 1.4s ease-in-out infinite}
+.bs-par{color:var(--yellow);border-color:rgba(230,184,0,.3);background:rgba(230,184,0,.07);
+        animation:pY 1.4s ease-in-out infinite}
+.bs-rit{color:var(--red);border-color:rgba(192,57,43,.4);background:rgba(192,57,43,.08);
+        animation:pR 1.1s ease-in-out infinite}
+.bs-chi{color:var(--green);border-color:rgba(26,158,92,.3);background:rgba(26,158,92,.07)}
+@keyframes pO{0%,100%{box-shadow:0 0 0 rgba(232,118,10,0)}50%{box-shadow:0 0 5px rgba(232,118,10,.5)}}
+@keyframes pY{0%,100%{box-shadow:0 0 0 rgba(230,184,0,0)}50%{box-shadow:0 0 5px rgba(230,184,0,.5)}}
+@keyframes pR{0%,100%{box-shadow:0 0 0 rgba(192,57,43,0)}50%{box-shadow:0 0 7px rgba(192,57,43,.6)}}
+
+.ddt-tag{font-size:.62rem;font-weight:700;color:var(--orange);
+         background:rgba(232,118,10,.1);border:1px solid rgba(232,118,10,.25);
+         padding:1px 6px;border-radius:4px;margin-right:3px;white-space:nowrap}
+.ddt-tag.r{color:var(--steel2);background:rgba(37,137,199,.1);border-color:rgba(37,137,199,.25)}
+.qta{font-weight:900;font-size:.85rem;font-family:monospace}
+.q-out{color:var(--orange)}.q-in{color:var(--steel2)}.q-res{color:var(--yellow)}.q-zero{color:var(--green)}
+
+/* Modali — usano già .modal-overlay e .modal-box del sistema */
+.art-t{width:100%;border-collapse:collapse;font-size:.73rem;margin-bottom:14px}
+.art-t th{background:var(--dark3);color:var(--text-dim);padding:6px 8px;text-align:left;
+          font-size:.58rem;text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid var(--border)}
+.art-t td{padding:7px 8px;border-bottom:1px solid var(--dark3)}
+.art-t tr:last-child td{border-bottom:none}
+.mi-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;
+         background:var(--dark3);border-radius:6px;padding:10px;margin-bottom:12px}
+.mi-cell .ml{font-size:.55rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.7px}
+.mi-cell .mv{font-size:.82rem;font-weight:700;color:var(--text);margin-top:2px}
+.mi-cell .mv.o{color:var(--orange)}.mi-cell .mv.c{color:var(--steel2)}
+.match-row{display:flex;align-items:center;gap:10px;background:var(--dark3);
+           border-radius:6px;padding:10px 12px;margin-bottom:5px;
+           border-left:3px solid rgba(37,137,199,.3)}
+.mr-cod{font-family:monospace;font-weight:700;color:var(--text);font-size:.82rem}
+.mr-sub{font-size:.62rem;color:var(--text-dim);margin-top:2px}
+.prog-mini{display:flex;align-items:center;gap:6px;margin-top:4px}
+.prog-mini .bar{flex:1;height:3px;background:var(--border);border-radius:2px;overflow:hidden}
+.prog-mini .fill{height:100%;background:var(--steel2);border-radius:2px}
+.form-2col{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px}
+.f-lbl{font-size:.6rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px;display:block;margin-bottom:4px}
+
+/* Empty state */
+.empty-state{text-align:center;padding:50px;color:var(--text-dim)}
+.empty-state .ei{font-size:2.5rem;margin-bottom:8px}
+.empty-state p{font-size:.78rem}
+
+/* Nota auto-terzista */
+.auto-note{font-size:.65rem;color:var(--text-dim);padding:7px 10px;
+           background:rgba(30,111,165,.08);border-radius:4px;
+           border-left:3px solid var(--accent);margin-top:6px}
+
+/* ══ PANNELLO DETTAGLIO FORNITORE ════════════════════════════════════════ */
+.forn-panel{
+  position:fixed;top:0;right:-520px;width:510px;height:100vh;
+  background:var(--dark);border-left:2px solid var(--border);
+  z-index:800;overflow-y:auto;transition:right .3s ease;
+  box-shadow:-8px 0 30px rgba(0,0,0,.5);display:flex;flex-direction:column
+}
+.forn-panel.open{right:0}
+.fp-head{padding:16px 18px;background:var(--dark2);border-bottom:1px solid var(--border);
+         display:flex;align-items:center;justify-content:space-between;flex-shrink:0;
+         position:sticky;top:0;z-index:10}
+.fp-title{font-size:.95rem;font-weight:900;color:var(--text)}
+.fp-close{background:none;border:1px solid var(--border);color:var(--text-dim);
+          width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:14px;
+          display:flex;align-items:center;justify-content:center;transition:.15s}
+.fp-close:hover{background:rgba(192,57,43,.2);border-color:var(--red);color:var(--red)}
+.fp-body{padding:16px 18px;flex:1}
+.fp-kpi{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:16px}
+.fp-k{background:var(--dark3);border-radius:7px;padding:10px;text-align:center;border:1px solid var(--border)}
+.fp-k .fkv{font-size:1.3rem;font-weight:900;line-height:1}
+.fp-k .fkl{font-size:.55rem;text-transform:uppercase;letter-spacing:.8px;color:var(--text-dim);margin-top:2px}
+.fp-k.fk-u{border-top:3px solid var(--orange);color:var(--orange)}
+.fp-k.fk-r{border-top:3px solid var(--steel);color:var(--steel2)}
+.fp-k.fk-p{border-top:3px solid var(--green);color:var(--green)}
+.fp-sec-title{font-size:.65rem;font-weight:900;letter-spacing:1.2px;text-transform:uppercase;
+              color:var(--text-dim);border-bottom:1px solid var(--border);
+              padding-bottom:5px;margin:14px 0 8px}
+/* Card DDT uscita */
+.fp-ddt-card{background:var(--dark3);border-radius:8px;border:1px solid var(--border);
+             border-left:4px solid var(--orange);margin-bottom:10px;overflow:hidden}
+.fp-ddt-head{display:flex;align-items:center;gap:10px;padding:9px 12px;
+             background:rgba(232,118,10,.06);border-bottom:1px solid var(--border)}
+.fp-ddt-num{font-size:.9rem;font-weight:900;color:var(--orange);font-family:monospace}
+.fp-ddt-data{font-size:.65rem;color:var(--text-dim);margin-left:4px}
+.fp-ddt-stato{margin-left:auto;font-size:.58rem;font-weight:700;padding:2px 7px;
+              border-radius:6px;border:1px solid;text-transform:uppercase}
+.fp-st-ok{color:var(--green);border-color:rgba(26,158,92,.3);background:rgba(26,158,92,.08)}
+.fp-st-par{color:var(--yellow);border-color:rgba(230,184,0,.3);background:rgba(230,184,0,.07)}
+.fp-st-att{color:var(--orange);border-color:rgba(232,118,10,.3);background:rgba(232,118,10,.08)}
+.fp-st-rit{color:var(--red);border-color:rgba(192,57,43,.3);background:rgba(192,57,43,.08)}
+/* Articoli dentro la card DDT */
+.fp-art-row{display:flex;align-items:center;padding:8px 12px;
+            border-bottom:1px solid rgba(255,255,255,.04);gap:8px}
+.fp-art-row:last-child{border-bottom:none}
+.fp-art-cod{font-family:monospace;font-weight:700;color:var(--text);font-size:.8rem;min-width:70px}
+.fp-art-desc{flex:1;font-size:.68rem;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fp-art-qta{display:flex;align-items:center;gap:8px;flex-shrink:0}
+.fp-qn{font-family:monospace;font-weight:700;font-size:.78rem}
+.fp-q-out{color:var(--orange)}.fp-q-in{color:var(--steel2)}.fp-q-res{color:var(--yellow)}.fp-q-ok{color:var(--green)}
+/* Barra progresso dentro card */
+.fp-bar-wrap{width:60px;height:4px;background:rgba(255,255,255,.07);border-radius:2px;overflow:hidden;display:inline-block;vertical-align:middle}
+.fp-bar-fill{height:100%;border-radius:2px}
+.fb-ok{background:var(--green)}.fb-par{background:var(--yellow)}.fb-no{background:var(--orange)}
+/* DDT rientro collegati */
+.fp-rientri{padding:6px 12px 8px;background:rgba(37,137,199,.04)}
+.fp-r-title{font-size:.58rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:.7px;margin-bottom:4px}
+.fp-r-tag{display:inline-block;font-size:.65rem;font-weight:700;color:var(--steel2);
+          background:rgba(37,137,199,.12);border:1px solid rgba(37,137,199,.25);
+          padding:2px 8px;border-radius:4px;margin-right:4px;margin-bottom:2px;font-family:monospace}
+/* Overlay scuro dietro il pannello */
+.forn-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:799}
+.forn-overlay.show{display:block}
+/* Nome terzista cliccabile in tabella */
+.tz-link{cursor:pointer;font-weight:700;color:var(--text);transition:.15s;white-space:nowrap;
+         text-decoration:none;border-bottom:1px dashed var(--border)}
+.tz-link:hover{color:var(--steel2);border-bottom-color:var(--steel2)}
+
+</style>
+
+<div class="page-toolbar">
+  <div class="page-title">🔨 Lavorazioni Esterne — Terzisti</div>
+  <button class="btn btn-primary" onclick="apriModalScheda()">🏷️ Stampa Scheda Trattamento</button>
+</div>
+
+<div class="tz-layout">
+
+  <!-- ══ SIDEBAR ═══════════════════════════════════════════════════════════ -->
+  <aside class="tz-sidebar">
+
+    <div class="side-lbl">📤 Spedizione al terzista</div>
+    <div class="upload-box" id="drop-u"
+         onclick="document.getElementById('fu').click()"
+         ondragover="event.preventDefault();this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="drop(event,'uscita')">
+      <div class="ub-icon">📦</div>
+      <div class="ub-label">DDT Uscita — Lavorazione Esterna</div>
+      <div class="ub-sub">Trascina PDF o clicca</div>
+    </div>
+    <input type="file" id="fu" accept=".pdf" onchange="upload(this.files[0],'uscita')">
+
+    <div class="side-lbl" style="margin-top:4px">📥 Rientro dal terzista</div>
+    <div class="upload-box rientro" id="drop-r"
+         onclick="document.getElementById('fr').click()"
+         ondragover="event.preventDefault();this.classList.add('dragover')"
+         ondragleave="this.classList.remove('dragover')"
+         ondrop="drop(event,'rientro')">
+      <div class="ub-icon">🏭</div>
+      <div class="ub-label">DDT Entrata Merci</div>
+      <div class="ub-sub">Merce lavorata · rientri parziali supportati</div>
+    </div>
+    <input type="file" id="fr" accept=".pdf" onchange="upload(this.files[0],'rientro')">
+
+    <!-- Aggiunta terzista manuale (opzionale — la regex lo crea automaticamente) -->
+    <div class="side-lbl" style="margin-top:4px">➕ Terzista manuale (opzionale)</div>
+    <input class="inp-tz" id="tz-nome" placeholder="Ragione sociale" style="margin-bottom:5px">
+    <select class="inp-tz" id="tz-tipo" style="margin-bottom:5px">
+      <option value="">Specializzazione</option>
+      <option>Verniciatura</option><option>Zincatura</option>
+      <option>Sabbiatura</option><option>Cromatura</option>
+      <option>Trattamento termico</option><option>Altro</option>
+    </select>
+    <input class="inp-tz" id="tz-tel" placeholder="Telefono" style="margin-bottom:5px">
+    <input class="inp-tz" id="tz-email" placeholder="Email" style="margin-bottom:6px">
+    <button class="btn-tz btn-uscita" onclick="creaTerzista()">➕ AGGIUNGI</button>
+    <div class="auto-note">
+      💡 I terzisti vengono creati <strong>automaticamente</strong> dalla regex al caricamento del primo DDT.
+      Usa questo form solo se vuoi aggiungerne uno prima di ricevere un DDT.
+    </div>
+
+  </aside>
+
+  <!-- ══ MAIN ══════════════════════════════════════════════════════════════ -->
+  <main class="tz-main">
+
+    <!-- KPI -->
+    <div class="kpi-bar">
+      <div class="kpi-tz kpi-att"><div class="kv" id="k-att">—</div><div class="kl">In attesa</div></div>
+      <div class="kpi-tz kpi-par"><div class="kv" id="k-par">—</div><div class="kl">Rientro parziale</div></div>
+      <div class="kpi-tz kpi-rit"><div class="kv" id="k-rit">—</div><div class="kl">In ritardo</div></div>
+      <div class="kpi-tz kpi-chi"><div class="kv" id="k-chi">—</div><div class="kl">Completate</div></div>
+    </div>
+
+    <!-- Filtri -->
+    <div class="filtri">
+      <button class="fb active"    onclick="filt('all',this)">TUTTI</button>
+      <button class="fb"           onclick="filt('ATTESA_RIENTRO',this)">⏳ Attesa</button>
+      <button class="fb fp"        onclick="filt('PARZIALE',this)">🔄 Parziale</button>
+      <button class="fb fd"        onclick="filt('IN_RITARDO',this)">🚨 Ritardo</button>
+      <button class="fb fc"        onclick="filt('RIENTRATA',this)">✅ Completate</button>
+      <div class="sw-wrap">
+        <span>Solo aperte</span>
+        <div class="sw" id="sw-ap" onclick="toggleSw()"></div>
+      </div>
+    </div>
+
+    <!-- Tabella -->
+    <div class="tz-table-wrap">
+      <table class="tz-t">
+        <thead><tr>
+          <th>Terzista</th><th>Trattamento</th><th>Codice</th><th>Descrizione</th>
+          <th>DDT Uscita</th><th>Data uscita</th>
+          <th>Spedita</th><th>Rientrata</th><th>Residua</th>
+          <th>Avanz.</th><th>DDT Rientro</th><th>Stato</th>
+        </tr></thead>
+        <tbody id="tz-tbody">
+          <tr><td colspan="12"><div class="empty-state"><div class="ei">⏳</div><p>Caricamento…</p></div></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </main>
+</div>
+
+<!-- ══ STORICO SCHEDE TRATTAMENTI ESTERNI ═══════════════════════════════════ -->
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🏷️ Schede Trattamenti Esterni — Storico</div>
+  <div class="tz-table-wrap">
+    <table class="tz-t">
+      <thead><tr>
+        <th>N° Scheda</th><th>Codice</th><th>Fornitore</th><th>Commessa</th>
+        <th>Trattamento</th><th>Colore</th><th>Creata il</th><th></th>
+      </tr></thead>
+      <tbody id="schede-tbody">
+        <tr><td colspan="8"><div class="empty-state"><div class="ei">⏳</div><p>Caricamento…</p></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══ MODALE NUOVA SCHEDA TRATTAMENTO ═══════════════════════════════════ -->
+<div class="modal-overlay" id="m-scheda">
+  <div class="modal-box" style="width:440px;max-width:96vw">
+    <h3>🏷️ Nuova Scheda Trattamento Esterno</h3>
+
+    <label class="modal-label">Codice articolo</label>
+    <input class="modal-input" id="sch-codice" type="text" placeholder="es. BC60" maxlength="100">
+
+    <label class="modal-label" style="margin-top:10px">Fornitore</label>
+    <select class="modal-input" id="sch-fornitore-sel" onchange="toggleFornitoreLibero()">
+      <option value="TGT">TGT</option>
+      <option value="NUOVA PLASTIC METAL">NUOVA PLASTIC METAL</option>
+      <option value="__ALTRO__">Altro (testo libero)…</option>
+    </select>
+    <input class="modal-input" id="sch-fornitore-libero" type="text"
+           placeholder="Ragione sociale fornitore" style="display:none;margin-top:6px" maxlength="200">
+
+    <label class="modal-label" style="margin-top:10px">Commessa</label>
+    <input class="modal-input" id="sch-commessa" type="text" placeholder="es. 630/26" maxlength="100">
+
+    <label class="modal-label" style="margin-top:12px">Trattamento (seleziona uno o entrambi)</label>
+
+    <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-weight:600;cursor:pointer">
+      <input type="checkbox" id="sch-flag-zincatura" onchange="toggleFlagZincatura()" style="width:18px;height:18px">
+      🧪 Zincatura
+    </label>
+    <div id="sch-zincatura-wrap" style="display:none;margin:6px 0 0 26px">
+      <select class="modal-input" id="sch-zincatura-tipo">
+        <option value="CALDO">A Caldo</option>
+        <option value="FREDDO">A Freddo</option>
+      </select>
+    </div>
+
+    <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:600;cursor:pointer">
+      <input type="checkbox" id="sch-flag-verniciatura" onchange="toggleFlagVerniciatura()" style="width:18px;height:18px">
+      🎨 Verniciatura
+    </label>
+    <div id="sch-colore-wrap" style="display:none;margin:6px 0 0 26px">
+      <input class="modal-input" id="sch-colore" type="text" placeholder="Colore, es. RAL 9010 bianco" maxlength="100">
+    </div>
+
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('m-scheda')">Annulla</button>
+      <button class="btn btn-primary" onclick="creaSchedaEStampa()">🖨️ Genera e Stampa</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODALE DDT USCITA ══════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="m-uscita">
+  <div class="modal-box" style="width:600px;max-width:96vw">
+    <h3>📤 Anteprima DDT Uscita — Lavorazione Esterna</h3>
+    <div class="mi-grid" id="mi-u"></div>
+    <table class="art-t">
+      <thead><tr><th>Codice</th><th>Descrizione</th><th>Qtà</th></tr></thead>
+      <tbody id="at-u"></tbody>
+    </table>
+    <div class="form-2col">
+      <div>
+        <label class="f-lbl">Tipo trattamento</label>
+        <select class="modal-input" id="sel-tratt">
+          <option value="">— dal PDF —</option>
+          <option>VERNICIATURA</option><option>ZINCATURA</option>
+          <option>SABBIATURA</option><option>CROMATURA</option>
+          <option>FOSFATAZIONE</option><option>ALTRO</option>
+        </select>
+      </div>
+      <div>
+        <label class="f-lbl">Rientro previsto (gg/mm/aaaa)</label>
+        <input class="modal-input" id="inp-prev" placeholder="es. 30/06/2026">
+      </div>
+    </div>
+    <div class="modal-hint">
+      💡 Il terzista verrà creato automaticamente in anagrafica se non è già presente.
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('m-uscita')">Annulla</button>
+      <button class="btn btn-primary" onclick="confermaUscita()">✅ CONFERMA SPEDIZIONE</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODALE DDT RIENTRO ═════════════════════════════════════════════════ -->
+<div class="modal-overlay" id="m-rientro">
+  <div class="modal-box" style="width:640px;max-width:96vw">
+    <h3>📥 Anteprima DDT Rientro — Collegamento lavorazioni</h3>
+    <div class="mi-grid" id="mi-r"></div>
+    <table class="art-t">
+      <thead><tr><th>Codice</th><th>Descrizione</th><th>Qtà DDT</th></tr></thead>
+      <tbody id="at-r"></tbody>
+    </table>
+    <div id="match-section" style="display:none;margin-bottom:12px">
+      <div class="side-lbl" style="color:var(--steel2);margin-bottom:8px">
+        🔗 LAVORAZIONI COLLEGATE — conferma quantità rientrata
+      </div>
+      <div id="match-list"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('m-rientro')">Annulla</button>
+      <button class="btn btn-primary" onclick="confermaRientro()">✅ CONFERMA RIENTRO</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ PANNELLO DETTAGLIO FORNITORE ════════════════════════════════════ -->
+<div class="forn-overlay" id="forn-overlay" onclick="chiudiPanel()"></div>
+<div class="forn-panel" id="forn-panel">
+  <div class="fp-head">
+    <div>
+      <div class="fp-title" id="fp-nome">—</div>
+      <div style="font-size:.63rem;color:var(--text-dim);margin-top:2px" id="fp-tipo"></div>
+    </div>
+    <button class="fp-close" onclick="chiudiPanel()">✕</button>
+  </div>
+  <div class="fp-body" id="fp-body">
+    <div style="text-align:center;padding:40px;color:var(--text-dim)">Caricamento…</div>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+// BUGFIX: variabili in var per garantire scope globale (let+block script causa problemi)
+var _dati=[], _filtro='all', _soloAp=false, _pU=null, _pR=null;
+
+// ── SCHEDE TRATTAMENTI ESTERNI ──────────────────────────────────────────────
+function apriModalScheda(){
+  document.getElementById('sch-codice').value='';
+  document.getElementById('sch-fornitore-sel').value='TGT';
+  document.getElementById('sch-fornitore-libero').style.display='none';
+  document.getElementById('sch-fornitore-libero').value='';
+  document.getElementById('sch-commessa').value='';
+  document.getElementById('sch-flag-zincatura').checked=false;
+  document.getElementById('sch-flag-verniciatura').checked=false;
+  document.getElementById('sch-zincatura-tipo').value='CALDO';
+  document.getElementById('sch-colore').value='';
+  toggleFlagZincatura();
+  toggleFlagVerniciatura();
+  openModal('m-scheda');
+}
+function toggleFornitoreLibero(){
+  const sel=document.getElementById('sch-fornitore-sel').value;
+  document.getElementById('sch-fornitore-libero').style.display = (sel==='__ALTRO__') ? 'block' : 'none';
+}
+function toggleFlagZincatura(){
+  const on = document.getElementById('sch-flag-zincatura').checked;
+  document.getElementById('sch-zincatura-wrap').style.display = on ? 'block' : 'none';
+}
+function toggleFlagVerniciatura(){
+  const on = document.getElementById('sch-flag-verniciatura').checked;
+  document.getElementById('sch-colore-wrap').style.display = on ? 'block' : 'none';
+}
+window.creaSchedaEStampa = async function creaSchedaEStampa(){
+  const codice = document.getElementById('sch-codice').value.trim();
+  const selForn = document.getElementById('sch-fornitore-sel').value;
+  const fornitore = (selForn==='__ALTRO__')
+    ? document.getElementById('sch-fornitore-libero').value.trim()
+    : selForn;
+  const commessa = document.getElementById('sch-commessa').value.trim();
+  const zincatura = document.getElementById('sch-flag-zincatura').checked;
+  const zincaturaTipo = document.getElementById('sch-zincatura-tipo').value;
+  const verniciatura = document.getElementById('sch-flag-verniciatura').checked;
+  const colore = document.getElementById('sch-colore').value.trim();
+
+  if(!codice){ showToast('❌ Inserisci il codice articolo', true); return; }
+  if(!fornitore){ showToast('❌ Inserisci il fornitore', true); return; }
+  if(!zincatura && !verniciatura){ showToast('❌ Seleziona almeno un trattamento', true); return; }
+
+  try{
+    const r = await fetch('/api/schede_trattamenti', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({
+        codice_articolo:codice, fornitore, commessa,
+        zincatura, zincatura_tipo:zincaturaTipo, verniciatura, colore
+      })
+    });
+    const d = await r.json();
+    if(d.ok){
+      closeModal('m-scheda');
+      showToast('✅ Scheda creata');
+      window.open('/schede_trattamenti/'+d.id+'/stampa', '_blank');
+      caricaSchede();
+    }else{
+      showToast('❌ '+(d.error||'Errore'), true);
+    }
+  }catch(e){
+    showToast('❌ Errore di rete', true);
+  }
+};
+async function caricaSchede(){
+  try{
+    const r = await fetch('/api/schede_trattamenti');
+    const schede = await r.json();
+    const tb = document.getElementById('schede-tbody');
+    if(!schede.length){
+      tb.innerHTML = '<tr><td colspan="8"><div class="empty-state"><div class="ei">🏷️</div><p>Nessuna scheda creata</p></div></td></tr>';
+      return;
+    }
+    tb.innerHTML = schede.map(s => `
+      <tr>
+        <td class="cod">${s.numero_scheda}</td>
+        <td class="cod">${s.codice_articolo}</td>
+        <td>${s.fornitore}</td>
+        <td>${s.commessa||'—'}</td>
+        <td>${s.tipo_trattamento_label}</td>
+        <td>${s.colore||'—'}</td>
+        <td>${s.creato_il}</td>
+        <td><button class="btn btn-ghost btn-sm" onclick="window.open('/schede_trattamenti/${s.id}/stampa','_blank')">🖨️ Ristampa</button></td>
+      </tr>
+    `).join('');
+  }catch(e){
+    document.getElementById('schede-tbody').innerHTML =
+      '<tr><td colspan="8"><div class="empty-state"><div class="ei">❌</div><p>Errore caricamento</p></div></td></tr>';
+  }
+}
+caricaSchede();
+
+// ── KPI e tabella ─────────────────────────────────────────────────────────────
+async function carica(){
+  try{
+    const r=await fetch('/api/spedizioni_terzisti');
+    _dati=await r.json();
+    aggKPI(); renderTable();
+  }catch(e){
+    document.getElementById('tz-tbody').innerHTML=
+      '<tr><td colspan="12"><div class="empty-state"><div class="ei">❌</div><p>Errore caricamento</p></div></td></tr>';
+  }
+}
+
+function aggKPI(){
+  document.getElementById('k-att').textContent=_dati.filter(d=>d.stato==='ATTESA_RIENTRO').length;
+  document.getElementById('k-par').textContent=_dati.filter(d=>d.stato==='PARZIALE').length;
+  document.getElementById('k-rit').textContent=_dati.filter(d=>d.stato==='IN_RITARDO').length;
+  document.getElementById('k-chi').textContent=_dati.filter(d=>d.stato==='RIENTRATA').length;
+}
+
+window.filt = function(f,el){
+  _filtro=f;
+  document.querySelectorAll('.fb').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active'); renderTable();
+}
+window.toggleSw = function(){
+  _soloAp=!_soloAp;
+  document.getElementById('sw-ap').classList.toggle('on',_soloAp);
+  renderTable();
+}
+
+function renderTable(){
+  let righe=_filtro==='all'?[..._dati]:_dati.filter(d=>d.stato===_filtro);
+  if(_soloAp) righe=righe.filter(d=>d.stato!=='RIENTRATA');
+  if(!righe.length){
+    document.getElementById('tz-tbody').innerHTML=
+      `<tr><td colspan="12"><div class="empty-state"><div class="ei">📭</div>
+       <p>Nessuna lavorazione trovata.</p></div></td></tr>`;
+    return;
+  }
+  const sInfo={
+    'ATTESA_RIENTRO':['⏳','bs-att',''],
+    'PARZIALE':      ['🔄','bs-par','par'],
+    'IN_RITARDO':    ['🚨','bs-rit','rit'],
+    'RIENTRATA':     ['✅','bs-chi',''],
+  };
+  let html='';
+  righe.forEach(d=>{
+    const [si,sc,rc]=sInfo[d.stato]||['?','',''];
+    const pct=d.qta_spedita>0?Math.round(d.qta_rientrata/d.qta_spedita*100):0;
+    const bc=pct>=100?'p100':pct>0?'p50':'p0';
+    const ddr=(d.ddt_rientri||[]).map(n=>`<span class="ddt-tag r">${n}</span>`).join('')||'—';
+    const rc2=d.qta_residua===0?'q-zero':'q-res';
+    html+=`<tr class="${rc}">
+      <td><span class="tz-link" onclick="apriPanel('${d.terzista.replace(/'/g,"\\'")}')">🏭 ${d.terzista}</span></td>
+      <td><small style="color:var(--steel)">${d.trattamento||'—'}</small></td>
+      <td class="cod">${d.codice||'—'}</td>
+      <td class="desc-c" title="${d.desc||''}">${d.desc||'—'}</td>
+      <td><span class="ddt-tag">${d.ddt_uscita||'—'}</span></td>
+      <td style="color:var(--text-dim);white-space:nowrap;font-size:.7rem">${d.data_uscita||'—'}</td>
+      <td><span class="qta q-out">${d.qta_spedita}</span></td>
+      <td><span class="qta q-in">${d.qta_rientrata}</span></td>
+      <td><span class="qta ${rc2}">${d.qta_residua}</span></td>
+      <td><span class="prog-w"><span class="prog-f ${bc}" style="width:${pct}%"></span></span>${pct}%</td>
+      <td>${ddr}</td>
+      <td><span class="badge-s ${sc}">${si} ${d.stato.replace('_',' ')}</span></td>
+    </tr>`;
+  });
+  document.getElementById('tz-tbody').innerHTML=html;
+}
+
+// ── Upload & drop ─────────────────────────────────────────────────────────────
+// BUGFIX: window.* necessario perché onchange/ondrop inline cercano nel global scope
+window.drop = function(ev,tipo){
+  ev.preventDefault();
+  document.getElementById('drop-'+(tipo==='uscita'?'u':'r')).classList.remove('dragover');
+  const f=ev.dataTransfer.files[0]; if(f) upload(f,tipo);
+}
+window.upload = async function(file,tipo){
+  if(!file||!file.name.toLowerCase().endsWith('.pdf')){showToast('⚠️ Seleziona un PDF',true);return;}
+  const fd=new FormData(); fd.append('file',file);
+  try{
+    const ep=tipo==='uscita'?'/api/upload_ddt_uscita':'/api/upload_ddt_rientro';
+    const r=await fetch(ep,{method:'POST',body:fd});
+    const js=await r.json();
+    if(!js.ok){showToast(js.error||'Errore upload',true);return;}
+    tipo==='uscita'?apriUscita(js):apriRientro(js);
+  }catch(e){showToast('Errore di rete',true);}
+}
+
+// ── Modale Uscita ─────────────────────────────────────────────────────────────
+window.apriUscita = function apriUscita(js){
+  _pU=js; const d=js.anteprima;
+  document.getElementById('mi-u').innerHTML=`
+    <div class="mi-cell"><div class="ml">Terzista</div><div class="mv">${d.terzista||'—'}</div></div>
+    <div class="mi-cell"><div class="ml">N° DDT</div><div class="mv o">${d.numero_ddt||'—'}</div></div>
+    <div class="mi-cell"><div class="ml">Data</div><div class="mv">${d.data_ddt||'—'}</div></div>`;
+  document.getElementById('at-u').innerHTML=(d.articoli||[]).map(a=>
+    `<tr><td class="cod">${a.codice}</td><td style="color:var(--text-dim)">${a.desc}</td>
+     <td><span class="qta q-out">${a.qta}</span></td></tr>`
+  ).join('')||'<tr><td colspan="3" style="color:var(--text-dim);text-align:center">Nessun articolo rilevato</td></tr>';
+  if(d.trattamento) document.getElementById('sel-tratt').value=d.trattamento;
+  openModal('m-uscita');
+}
+window.confermaUscita = async function confermaUscita(){
+  if(!_pU) return; const d=_pU.anteprima;
+  const body={filename:_pU.filename,terzista:d.terzista,numero_ddt:d.numero_ddt,
+    data_ddt:d.data_ddt,trattamento:document.getElementById('sel-tratt').value||d.trattamento,
+    data_rientro_prev:document.getElementById('inp-prev').value,
+    articoli:d.articoli,riga_id:0};
+  try{
+    const r=await fetch('/api/conferma_ddt_uscita',{method:'POST',
+      headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
+    const js=await r.json();
+    if(js.ok){showToast('✅ Spedizione registrata');closeModal('m-uscita');carica();}
+    else showToast(js.error||'Errore',true);
+  }catch(e){showToast('Errore di rete',true);}
+}
+
+// ── Modale Rientro ────────────────────────────────────────────────────────────
+window.apriRientro = function apriRientro(js){
+  _pR=js; const d=js.anteprima;
+  document.getElementById('mi-r').innerHTML=`
+    <div class="mi-cell"><div class="ml">Terzista</div><div class="mv">${d.terzista||'—'}</div></div>
+    <div class="mi-cell"><div class="ml">N° DDT</div><div class="mv c">${d.numero_ddt||'—'}</div></div>
+    <div class="mi-cell"><div class="ml">Data</div><div class="mv">${d.data_ddt||'—'}</div></div>`;
+  document.getElementById('at-r').innerHTML=(d.articoli||[]).map(a=>
+    `<tr><td class="cod">${a.codice}</td><td style="color:var(--text-dim)">${a.desc}</td>
+     <td><span class="qta q-in">${a.qta}</span></td></tr>`
+  ).join('')||'<tr><td colspan="3" style="color:var(--text-dim);text-align:center">Nessun articolo</td></tr>';
+  const ml=js.match_lavorazioni||[];
+  if(ml.length){
+    document.getElementById('match-section').style.display='block';
+    document.getElementById('match-list').innerHTML=ml.map(m=>{
+      const pct=m.qta_spedita>0?Math.round(m.qta_rientrata/m.qta_spedita*100):0;
+      return`<div class="match-row">
+        <input type="checkbox" id="chk-${m.lav_id}" value="${m.lav_id}" checked
+               style="accent-color:var(--steel2);width:16px;height:16px;flex-shrink:0">
+        <div style="flex:1">
+          <div class="mr-cod">${m.codice} — <small style="color:var(--text-dim)">${m.desc}</small></div>
+          <div class="mr-sub">DDT uscita: <b style="color:var(--orange)">${m.ddt_uscita||'—'}</b>
+            · Spedita:<b>${m.qta_spedita}</b> · Rientrata:<b style="color:var(--steel2)">${m.qta_rientrata}</b>
+            · Residua:<b style="color:var(--yellow)">${m.qta_residua}</b></div>
+          <div class="prog-mini"><div class="bar"><div class="fill" style="width:${pct}%"></div></div>
+            <span style="font-size:.6rem;color:var(--text-dim)">${pct}%</span></div>
+        </div>
+        <div>
+          <label class="f-lbl">Qta confermata</label>
+          <input class="modal-input" type="number" id="qta-${m.lav_id}"
+                 value="${m.qta_ddt}" min="1" max="${m.qta_residua}" style="width:75px;text-align:right">
+        </div>
+      </div>`;}).join('');
+  }else{
+    document.getElementById('match-section').style.display='none';
+  }
+  openModal('m-rientro');
+}
+window.confermaRientro = async function confermaRientro(){
+  if(!_pR) return; const d=_pR.anteprima;
+  const ml=_pR.match_lavorazioni||[];
+  const conferme=ml
+    .filter(m=>document.getElementById(`chk-${m.lav_id}`)?.checked)
+    .map(m=>({lav_id:m.lav_id,
+              qta_confermata:parseInt(document.getElementById(`qta-${m.lav_id}`)?.value||0)}))
+    .filter(c=>c.qta_confermata>0);
+  try{
+    const r=await fetch('/api/conferma_ddt_rientro',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({filename:_pR.filename,numero_ddt:d.numero_ddt,
+        data_ddt:d.data_ddt,conferme})});
+    const js=await r.json();
+    if(js.ok){showToast(`✅ Rientro OK — chiuse:${js.chiuse} parziali:${js.parziali}`);
+              closeModal('m-rientro'); carica();}
+    else showToast(js.error||'Errore',true);
+  }catch(e){showToast('Errore di rete',true);}
+}
+
+// ── Terzista manuale ──────────────────────────────────────────────────────────
+window.creaTerzista = async function creaTerzista(){
+  const nome=document.getElementById('tz-nome').value.trim();
+  if(!nome){showToast('⚠️ Inserisci il nome',true);return;}
+  try{
+    const r=await fetch('/api/terzisti',{method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({nome,tipo:document.getElementById('tz-tipo').value,
+        telefono:document.getElementById('tz-tel').value,
+        email:document.getElementById('tz-email').value})});
+    const js=await r.json();
+    if(js.ok){showToast(`✅ "${nome}" aggiunto`);
+      ['tz-nome','tz-tel','tz-email'].forEach(id=>document.getElementById(id).value='');
+      document.getElementById('tz-tipo').value='';}
+    else showToast(js.error||'Errore',true);
+  }catch(e){showToast('Errore di rete',true);}
+}
+
+
+// ── Pannello dettaglio fornitore ──────────────────────────────────────────────
+window.apriPanel = function apriPanel(nomeTerzista){
+  document.getElementById('fp-nome').textContent = nomeTerzista;
+  document.getElementById('fp-tipo').textContent = '';
+  document.getElementById('fp-body').innerHTML =
+    '<div style="text-align:center;padding:40px;color:var(--text-dim)">Caricamento…</div>';
+  document.getElementById('forn-panel').classList.add('open');
+  document.getElementById('forn-overlay').classList.add('show');
+  renderPanel(nomeTerzista);
+}
+window.chiudiPanel = function chiudiPanel(){
+  document.getElementById('forn-panel').classList.remove('open');
+  document.getElementById('forn-overlay').classList.remove('show');
+}
+
+function renderPanel(nomeTerzista){
+  // Filtra i dati già in memoria per questo terzista
+  const lav = _dati.filter(d => d.terzista === nomeTerzista);
+
+  // KPI fornitore
+  const totUscita   = lav.reduce((s,d)=>s+d.qta_spedita,0);
+  const totRientrata= lav.reduce((s,d)=>s+d.qta_rientrata,0);
+  const pctGen      = totUscita>0 ? Math.round(totRientrata/totUscita*100) : 0;
+
+  document.getElementById('fp-tipo').textContent =
+    lav.length ? (lav[0].terzista_tipo||'') : '';
+
+  // Raggruppa per DDT uscita
+  const perDDT = {};
+  lav.forEach(d => {
+    const key = d.ddt_uscita || '—';
+    if(!perDDT[key]) perDDT[key] = {num:key, data:d.data_uscita, articoli:[], stato_gen:'RIENTRATA'};
+    perDDT[key].articoli.push(d);
+    // Stato generale del DDT: il peggiore tra gli articoli
+    const prio = {IN_RITARDO:0,PARZIALE:1,ATTESA_RIENTRO:2,RIENTRATA:3};
+    if((prio[d.stato]??3) < (prio[perDDT[key].stato_gen]??3))
+      perDDT[key].stato_gen = d.stato;
+  });
+
+  const statoLabel = {
+    'RIENTRATA':     ['Completato','fp-st-ok'],
+    'PARZIALE':      ['Parziale',  'fp-st-par'],
+    'ATTESA_RIENTRO':['In attesa', 'fp-st-att'],
+    'IN_RITARDO':    ['In ritardo','fp-st-rit'],
+  };
+
+  let html = `
+  <div class="fp-kpi">
+    <div class="fp-k fk-u">
+      <div class="fkv">${totUscita}</div>
+      <div class="fkl">Pz spediti</div>
+    </div>
+    <div class="fp-k fk-r">
+      <div class="fkv">${totRientrata}</div>
+      <div class="fkl">Pz rientrati</div>
+    </div>
+    <div class="fp-k fk-p">
+      <div class="fkv">${pctGen}%</div>
+      <div class="fkl">Completamento</div>
+    </div>
+  </div>
+  <div class="fp-sec-title">📋 DDT spediti a ${nomeTerzista}</div>`;
+
+  // Ordina DDT: aperti prima, poi per numero DDT discendente
+  const prioOrd = {IN_RITARDO:0,PARZIALE:1,ATTESA_RIENTRO:2,RIENTRATA:3};
+  const ddtList = Object.values(perDDT).sort((a,b) =>
+    (prioOrd[a.stato_gen]??3) - (prioOrd[b.stato_gen]??3));
+
+  ddtList.forEach(ddt => {
+    const [slabel,sclass] = statoLabel[ddt.stato_gen] || ['—',''];
+    html += `<div class="fp-ddt-card">
+      <div class="fp-ddt-head">
+        <span>📤</span>
+        <span class="fp-ddt-num">DDT ${ddt.num}</span>
+        <span class="fp-ddt-data">${ddt.data||'—'}</span>
+        <span class="fp-ddt-stato ${sclass}">${slabel}</span>
+      </div>`;
+
+    // Articoli di questo DDT
+    ddt.articoli.forEach(a => {
+      const pct = a.qta_spedita>0 ? Math.round(a.qta_rientrata/a.qta_spedita*100) : 0;
+      const barC = pct>=100?'fb-ok':pct>0?'fb-par':'fb-no';
+      const resC = a.qta_residua===0?'fp-q-ok':'fp-q-res';
+      html += `<div class="fp-art-row">
+        <span class="fp-art-cod">${a.codice||'—'}</span>
+        <span class="fp-art-desc" title="${a.desc||''}">${a.desc||'—'}</span>
+        <div class="fp-art-qta">
+          <span class="fp-qn fp-q-out" title="Spedita">↑${a.qta_spedita}</span>
+          <span class="fp-qn fp-q-in"  title="Rientrata">↓${a.qta_rientrata}</span>
+          <span class="fp-qn ${resC}"  title="Residua">Δ${a.qta_residua}</span>
+          <span class="fp-bar-wrap"><span class="fp-bar-fill ${barC}" style="width:${pct}%"></span></span>
+          <span style="font-size:.6rem;color:var(--text-dim)">${pct}%</span>
+        </div>
+      </div>`;
+    });
+
+    // DDT rientro collegati (unione di tutti gli articoli del DDT)
+    const allRientri = [...new Set(ddt.articoli.flatMap(a => a.ddt_rientri||[]))];
+    if(allRientri.length){
+      html += `<div class="fp-rientri">
+        <div class="fp-r-title">📥 DDT rientro collegati</div>
+        ${allRientri.map(n=>`<span class="fp-r-tag">${n}</span>`).join('')}
+      </div>`;
+    }
+    html += '</div>'; // chiude fp-ddt-card
+  });
+
+  if(!ddtList.length){
+    html += '<div style="text-align:center;padding:30px;color:var(--text-dim);font-size:.8rem">Nessun DDT trovato.</div>';
+  }
+
+  document.getElementById('fp-body').innerHTML = html;
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────────
+carica();
+setInterval(carica,30000);
+{% endblock %}

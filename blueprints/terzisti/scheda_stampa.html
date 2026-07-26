@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Scheda Trattamento — {{ s.codice_articolo }}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{
+    --iron-black:#111318; --iron-blue:#1e5fa8; --iron-blue2:#2b7bd1;
+    --border:#111318;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:#e7ebef;display:flex;justify-content:center;padding:24px 12px}
+  svg{display:block}
+
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px;z-index:10}
+  .toolbar button{border:none;padding:10px 18px;border-radius:7px;font-weight:700;font-size:13px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.25);
+                   display:flex;align-items:center;gap:6px}
+  .btn-print{background:var(--iron-blue);color:#fff}
+  .btn-back{background:#fff;color:#333;border:1px solid #ccc}
+
+  .card{width:480px;max-width:96vw;background:#fff;border:3px solid var(--iron-black);border-radius:6px;overflow:hidden}
+
+  /* ── HEADER ─────────────────────────────────────────────────────────── */
+  .hdr{display:flex;align-items:stretch}
+  .hdr-logo{background:var(--iron-black);color:#fff;flex:1;display:flex;flex-direction:column;justify-content:center;padding:10px 16px}
+  .hdr-logo .brand{font-size:22px;font-weight:900;letter-spacing:2px}
+  .hdr-logo .title{font-size:15px;font-weight:800;letter-spacing:1px;margin-top:2px}
+  .hdr-tag{background:linear-gradient(135deg,var(--iron-blue),var(--iron-blue2));color:#fff;
+           width:150px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px;
+           text-align:center;font-size:10.5px;font-weight:800;letter-spacing:.5px;padding:8px 10px}
+  .hdr-tag svg{stroke:#fff}
+
+  /* ── CAMPI (codice / fornitore) ────────────────────────────────────── */
+  .field{padding:10px 16px;border-bottom:2px dashed #c6ccd3}
+  .field .lbl{font-size:10px;font-weight:800;letter-spacing:1px;color:#5a6472;text-transform:uppercase;display:flex;align-items:center;gap:6px}
+  .field .lbl svg{stroke:var(--iron-blue2);flex-shrink:0}
+  .field .val{font-size:22px;font-weight:900;color:var(--iron-black);margin-top:2px;word-break:break-word}
+
+  /* ── BANNER TRATTAMENTI ────────────────────────────────────────────── */
+  .trat-hdr{background:linear-gradient(135deg,var(--iron-blue),var(--iron-blue2));color:#fff;
+            display:flex;align-items:center;justify-content:space-between;padding:8px 16px;font-size:12px;font-weight:800;letter-spacing:.5px}
+  .trat-hdr .lbl-w{display:flex;align-items:center;gap:6px}
+  .trat-hdr svg{stroke:#fff}
+  .trat-hdr .commessa-val{font-weight:900;font-size:14px}
+
+  /* ── RIGHE TRATTAMENTO (zincatura / verniciatura) ────────────────────── */
+  .trat-riga{display:flex;align-items:center;gap:10px;padding:9px 16px;border-bottom:1.5px dotted #c6ccd3}
+  .trat-riga:last-of-type{border-bottom:2px dashed #c6ccd3}
+  .chk{width:22px;height:22px;border:2.5px solid var(--iron-black);border-radius:4px;flex-shrink:0;
+       display:flex;align-items:center;justify-content:center}
+  .chk.on{background:var(--iron-black)}
+  .chk svg{stroke:#fff;width:14px;height:14px}
+  .trat-ico{width:30px;height:30px;border-radius:50%;border:2px solid var(--iron-blue2);flex-shrink:0;
+            display:flex;align-items:center;justify-content:center}
+  .trat-ico svg{stroke:var(--iron-black);width:17px;height:17px}
+  .trat-label{font-size:15px;font-weight:800;color:var(--iron-black);flex-shrink:0}
+  .trat-extra{font-size:15px;font-weight:800;color:var(--iron-blue);text-transform:uppercase}
+
+  /* ── IMMAGINE / QR ────────────────────────────────────────────────── */
+  .bottom{display:flex}
+  .img-box{flex:1;border-right:2px dashed #c6ccd3;padding:10px;display:flex;flex-direction:column}
+  .qr-box{width:160px;padding:10px;display:flex;flex-direction:column;align-items:center}
+  .box-title{background:var(--iron-black);color:#fff;font-size:9px;font-weight:800;letter-spacing:.5px;
+             text-align:center;padding:3px 4px;border-radius:3px;margin-bottom:6px}
+  .img-placeholder{flex:1;border:1.5px dashed #b9c0c8;border-radius:5px;display:flex;flex-direction:column;
+                    align-items:center;justify-content:center;gap:6px;color:#9aa4af;font-size:10px;text-align:center;min-height:110px}
+  .img-placeholder svg{stroke:#b9c0c8}
+  #qrcode{display:flex;align-items:center;justify-content:center}
+  #qrcode img, #qrcode canvas{border:1px solid #ddd}
+
+  /* ── QUANTITÀ ─────────────────────────────────────────────────────── */
+  .qta{display:flex;align-items:center;gap:12px;padding:14px 16px;background:linear-gradient(135deg,#eef5fc,#e3edf9);border-top:3px solid var(--iron-blue)}
+  .qta .lbl{font-size:13px;font-weight:900;letter-spacing:1px;color:var(--iron-blue);text-transform:uppercase;white-space:nowrap;display:flex;align-items:center;gap:7px}
+  .qta .lbl svg{stroke:var(--iron-blue)}
+  .qta-box{flex:1;border:3px solid var(--iron-black);border-radius:7px;height:52px;background:#fff;box-shadow:inset 0 1px 3px rgba(0,0,0,.08)}
+
+  .footer{display:flex;justify-content:space-between;padding:6px 16px 10px;font-size:9px;color:#8b95a1}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .toolbar{display:none}
+    .card{border:2.5px solid #000;width:100%}
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <button class="btn-back" onclick="window.close()">
+    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>
+    Chiudi
+  </button>
+  <button class="btn-print" onclick="window.print()">
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M6 9V3h12v6"/><rect x="4" y="9" width="16" height="8" rx="1.5"/><path d="M6 17h12v5H6z"/>
+    </svg>
+    Stampa
+  </button>
+</div>
+
+<div class="card">
+
+  <!-- ═══ HEADER ═══ -->
+  <div class="hdr">
+    <div class="hdr-logo">
+      <div class="brand">IRON</div>
+      <div class="title">SCHEDA TRATTAMENTI</div>
+    </div>
+    <div class="hdr-tag">
+      <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M13 3h5l1 3h-3l-1 4h4l1 3-8 2-2-2H6a2 2 0 0 1-2-2v-2a2 2 0 0 1 2-2h3l1-4H8"/>
+        <path d="M17 15v6"/><path d="M14 21h6"/>
+      </svg>
+      <div>LAVORAZIONE ESTERNA<br>{{ info.label|upper if info else s.tipo_trattamento }}</div>
+    </div>
+  </div>
+
+  <!-- ═══ CODICE ARTICOLO ═══ -->
+  <div class="field">
+    <div class="lbl">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+        <path d="M2 2h9l11 11-9 9L2 13V2z"/><circle cx="7" cy="7" r="1.6" fill="currentColor" stroke="none"/>
+      </svg>
+      Codice articolo
+    </div>
+    <div class="val">{{ s.codice_articolo }}</div>
+  </div>
+
+  <!-- ═══ FORNITORE ═══ -->
+  <div class="field">
+    <div class="lbl">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+        <path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/>
+      </svg>
+      Fornitore
+    </div>
+    <div class="val">{{ s.fornitore }}</div>
+  </div>
+
+  <!-- ═══ BANNER TRATTAMENTI ═══ -->
+  <div class="trat-hdr">
+    <span class="lbl-w">
+      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
+        <path d="M9 2h6"/><path d="M10 2v6.5L4.5 18a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 8.5V2"/><path d="M7 15h10"/>
+      </svg>
+      TRATTAMENTI
+    </span>
+    <span>COMMESSA <span class="commessa-val">{{ s.commessa or '—' }}</span></span>
+  </div>
+
+  <!-- ═══ ZINCATURA — mostrata solo se selezionata ═══ -->
+  {% if info.zincatura %}
+  <div class="trat-riga">
+    <div class="chk on">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>
+    </div>
+    <div class="trat-ico">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3c-2.5 3-4 5.5-4 7.5A4 4 0 0 0 12 15a4 4 0 0 0 4-4.5C16 8.5 14.5 6 12 3z"/>
+      </svg>
+    </div>
+    <div class="trat-label">ZINCATURA</div>
+    {% if info.zinc_label %}<div class="trat-extra">{{ info.zinc_label }}</div>{% endif %}
+  </div>
+  {% endif %}
+
+  <!-- ═══ VERNICIATURA — mostrata solo se selezionata ═══ -->
+  {% if info.verniciatura %}
+  <div class="trat-riga">
+    <div class="chk on">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>
+    </div>
+    <div class="trat-ico">
+      <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="14" height="6" rx="1.2"/><path d="M8 10v4"/><rect x="6" y="14" width="4" height="6" rx="1"/>
+      </svg>
+    </div>
+    <div class="trat-label">VERNICIATURA</div>
+    {% if s.colore %}<div class="trat-extra">{{ s.colore }}</div>{% endif %}
+  </div>
+  {% endif %}
+
+  <!-- ═══ IMMAGINE / QR ═══ -->
+  <div class="bottom">
+    <div class="img-box">
+      <div class="box-title">IMMAGINE PRODOTTO</div>
+      <div class="img-placeholder">
+        <svg viewBox="0 0 24 24" width="42" height="42" fill="none" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3.5"/>
+          <path d="M12 2v3M12 19v3M2 12h3M19 12h3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M4.9 19.1L7 17M17 7l2.1-2.1"/>
+        </svg>
+        (immagine di esempio)
+      </div>
+    </div>
+    <div class="qr-box">
+      <div class="box-title">QR CODE</div>
+      <div id="qrcode"></div>
+    </div>
+  </div>
+
+  <!-- ═══ QUANTITÀ — riquadro grande e ben visibile ═══ -->
+  <div class="qta">
+    <div class="lbl">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="4" width="14" height="17" rx="2"/>
+        <path d="M9 3.5h6a.7.7 0 0 1 .7.7v1.3h-7.4V4.2a.7.7 0 0 1 .7-.7z" fill="currentColor" stroke="none"/>
+        <path d="M8.5 13.2l2 2 4-4.4"/>
+      </svg>
+      QUANTITÀ
+    </div>
+    <div class="qta-box"></div>
+  </div>
+
+  <div class="footer">
+    <span>{{ s.numero_scheda }}</span>
+    <span>{{ s.creato_il.strftime('%d/%m/%Y %H:%M') if s.creato_il else '' }}</span>
+  </div>
+</div>
+
+<script>
+new QRCode(document.getElementById('qrcode'), {
+  text: {{ qr_text|tojson }},
+  width: 128,
+  height: 128,
+  correctLevel: QRCode.CorrectLevel.M
+});
+</script>
+
+</body>
+</html>
