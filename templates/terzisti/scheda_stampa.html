@@ -71,10 +71,10 @@
   #qrcode img, #qrcode canvas{border:1px solid #ddd}
 
   /* ── QUANTITÀ ─────────────────────────────────────────────────────── */
-  .qta{display:flex;align-items:center;gap:10px;padding:10px 16px}
-  .qta .lbl{font-size:10px;font-weight:800;letter-spacing:1px;color:#5a6472;text-transform:uppercase;white-space:nowrap;display:flex;align-items:center;gap:6px}
-  .qta .lbl svg{stroke:var(--iron-blue2)}
-  .qta-box{flex:1;border:2px solid var(--iron-black);border-radius:5px;height:34px}
+  .qta{display:flex;align-items:center;gap:12px;padding:14px 16px;background:linear-gradient(135deg,#eef5fc,#e3edf9);border-top:3px solid var(--iron-blue)}
+  .qta .lbl{font-size:13px;font-weight:900;letter-spacing:1px;color:var(--iron-blue);text-transform:uppercase;white-space:nowrap;display:flex;align-items:center;gap:7px}
+  .qta .lbl svg{stroke:var(--iron-blue)}
+  .qta-box{flex:1;border:3px solid var(--iron-black);border-radius:7px;height:52px;background:#fff;box-shadow:inset 0 1px 3px rgba(0,0,0,.08)}
 
   .footer{display:flex;justify-content:space-between;padding:6px 16px 10px;font-size:9px;color:#8b95a1}
 
@@ -150,12 +150,11 @@
     <span>COMMESSA <span class="commessa-val">{{ s.commessa or '—' }}</span></span>
   </div>
 
-  <!-- ═══ ZINCATURA ═══ -->
+  <!-- ═══ ZINCATURA — mostrata solo se selezionata ═══ -->
+  {% if info.zincatura %}
   <div class="trat-riga">
-    <div class="chk {{ 'on' if info.zincatura else '' }}">
-      {% if info.zincatura %}
+    <div class="chk on">
       <svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>
-      {% endif %}
     </div>
     <div class="trat-ico">
       <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -165,13 +164,13 @@
     <div class="trat-label">ZINCATURA</div>
     {% if info.zinc_label %}<div class="trat-extra">{{ info.zinc_label }}</div>{% endif %}
   </div>
+  {% endif %}
 
-  <!-- ═══ VERNICIATURA ═══ -->
+  <!-- ═══ VERNICIATURA — mostrata solo se selezionata ═══ -->
+  {% if info.verniciatura %}
   <div class="trat-riga">
-    <div class="chk {{ 'on' if info.verniciatura else '' }}">
-      {% if info.verniciatura %}
+    <div class="chk on">
       <svg viewBox="0 0 24 24" fill="none" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12l5 5L20 6"/></svg>
-      {% endif %}
     </div>
     <div class="trat-ico">
       <svg viewBox="0 0 24 24" fill="none" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
@@ -179,8 +178,9 @@
       </svg>
     </div>
     <div class="trat-label">VERNICIATURA</div>
-    {% if info.verniciatura and s.colore %}<div class="trat-extra">{{ s.colore }}</div>{% endif %}
+    {% if s.colore %}<div class="trat-extra">{{ s.colore }}</div>{% endif %}
   </div>
+  {% endif %}
 
   <!-- ═══ IMMAGINE / QR ═══ -->
   <div class="bottom">
@@ -200,15 +200,15 @@
     </div>
   </div>
 
-  <!-- ═══ QUANTITÀ ═══ -->
+  <!-- ═══ QUANTITÀ — riquadro grande e ben visibile ═══ -->
   <div class="qta">
     <div class="lbl">
-      <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <rect x="5" y="4" width="14" height="17" rx="2"/>
         <path d="M9 3.5h6a.7.7 0 0 1 .7.7v1.3h-7.4V4.2a.7.7 0 0 1 .7-.7z" fill="currentColor" stroke="none"/>
         <path d="M8.5 13.2l2 2 4-4.4"/>
       </svg>
-      Quantità
+      QUANTITÀ
     </div>
     <div class="qta-box"></div>
   </div>

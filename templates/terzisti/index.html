@@ -348,17 +348,25 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
     <label class="modal-label" style="margin-top:10px">Commessa</label>
     <input class="modal-input" id="sch-commessa" type="text" placeholder="es. 630/26" maxlength="100">
 
-    <label class="modal-label" style="margin-top:10px">Trattamento</label>
-    <select class="modal-input" id="sch-tipo" onchange="toggleColoreScheda()">
-      <option value="ZINCATURA_CALDO">Zincatura a Caldo</option>
-      <option value="ZINCATURA_FREDDO">Zincatura a Freddo</option>
-      <option value="ZINCATURA_VERNICIATURA">Zincatura + Verniciatura</option>
-      <option value="VERNICIATURA">Verniciatura</option>
-    </select>
+    <label class="modal-label" style="margin-top:12px">Trattamento (seleziona uno o entrambi)</label>
 
-    <div id="sch-colore-wrap" style="display:none">
-      <label class="modal-label" style="margin-top:10px">Colore verniciatura</label>
-      <input class="modal-input" id="sch-colore" type="text" placeholder="es. RAL 9010 bianco" maxlength="100">
+    <label style="display:flex;align-items:center;gap:8px;margin-top:6px;font-weight:600;cursor:pointer">
+      <input type="checkbox" id="sch-flag-zincatura" onchange="toggleFlagZincatura()" style="width:18px;height:18px">
+      🧪 Zincatura
+    </label>
+    <div id="sch-zincatura-wrap" style="display:none;margin:6px 0 0 26px">
+      <select class="modal-input" id="sch-zincatura-tipo">
+        <option value="CALDO">A Caldo</option>
+        <option value="FREDDO">A Freddo</option>
+      </select>
+    </div>
+
+    <label style="display:flex;align-items:center;gap:8px;margin-top:14px;font-weight:600;cursor:pointer">
+      <input type="checkbox" id="sch-flag-verniciatura" onchange="toggleFlagVerniciatura()" style="width:18px;height:18px">
+      🎨 Verniciatura
+    </label>
+    <div id="sch-colore-wrap" style="display:none;margin:6px 0 0 26px">
+      <input class="modal-input" id="sch-colore" type="text" placeholder="Colore, es. RAL 9010 bianco" maxlength="100">
     </div>
 
     <div class="modal-footer">
@@ -452,19 +460,25 @@ function apriModalScheda(){
   document.getElementById('sch-fornitore-libero').style.display='none';
   document.getElementById('sch-fornitore-libero').value='';
   document.getElementById('sch-commessa').value='';
-  document.getElementById('sch-tipo').value='ZINCATURA_CALDO';
+  document.getElementById('sch-flag-zincatura').checked=false;
+  document.getElementById('sch-flag-verniciatura').checked=false;
+  document.getElementById('sch-zincatura-tipo').value='CALDO';
   document.getElementById('sch-colore').value='';
-  toggleColoreScheda();
+  toggleFlagZincatura();
+  toggleFlagVerniciatura();
   openModal('m-scheda');
 }
 function toggleFornitoreLibero(){
   const sel=document.getElementById('sch-fornitore-sel').value;
   document.getElementById('sch-fornitore-libero').style.display = (sel==='__ALTRO__') ? 'block' : 'none';
 }
-function toggleColoreScheda(){
-  const tipo=document.getElementById('sch-tipo').value;
-  const conColore = (tipo==='ZINCATURA_VERNICIATURA' || tipo==='VERNICIATURA');
-  document.getElementById('sch-colore-wrap').style.display = conColore ? 'block' : 'none';
+function toggleFlagZincatura(){
+  const on = document.getElementById('sch-flag-zincatura').checked;
+  document.getElementById('sch-zincatura-wrap').style.display = on ? 'block' : 'none';
+}
+function toggleFlagVerniciatura(){
+  const on = document.getElementById('sch-flag-verniciatura').checked;
+  document.getElementById('sch-colore-wrap').style.display = on ? 'block' : 'none';
 }
 window.creaSchedaEStampa = async function creaSchedaEStampa(){
   const codice = document.getElementById('sch-codice').value.trim();
@@ -473,16 +487,22 @@ window.creaSchedaEStampa = async function creaSchedaEStampa(){
     ? document.getElementById('sch-fornitore-libero').value.trim()
     : selForn;
   const commessa = document.getElementById('sch-commessa').value.trim();
-  const tipo = document.getElementById('sch-tipo').value;
+  const zincatura = document.getElementById('sch-flag-zincatura').checked;
+  const zincaturaTipo = document.getElementById('sch-zincatura-tipo').value;
+  const verniciatura = document.getElementById('sch-flag-verniciatura').checked;
   const colore = document.getElementById('sch-colore').value.trim();
 
   if(!codice){ showToast('❌ Inserisci il codice articolo', true); return; }
   if(!fornitore){ showToast('❌ Inserisci il fornitore', true); return; }
+  if(!zincatura && !verniciatura){ showToast('❌ Seleziona almeno un trattamento', true); return; }
 
   try{
     const r = await fetch('/api/schede_trattamenti', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({codice_articolo:codice, fornitore, commessa, tipo_trattamento:tipo, colore})
+      body: JSON.stringify({
+        codice_articolo:codice, fornitore, commessa,
+        zincatura, zincatura_tipo:zincaturaTipo, verniciatura, colore
+      })
     });
     const d = await r.json();
     if(d.ok){
