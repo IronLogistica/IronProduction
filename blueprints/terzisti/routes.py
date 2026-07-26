@@ -291,28 +291,44 @@ def api_schede_lista():
 @terzisti_bp.route('/api/schede_trattamenti', methods=['POST'])
 def api_schede_crea():
     try:
-        d        = request.get_json(force=True)
-        codice   = (d.get('codice_articolo') or '').strip()
-        fornitore= (d.get('fornitore') or '').strip()
-        tipo     = (d.get('tipo_trattamento') or '').strip()
+        d          = request.get_json(force=True)
+        codice     = (d.get('codice_articolo') or '').strip()
+        fornitore  = (d.get('fornitore') or '').strip()
+        zincatura  = bool(d.get('zincatura'))
+        zinc_tipo  = (d.get('zincatura_tipo') or '').strip().upper()
+        verniciatura = bool(d.get('verniciatura'))
+        colore     = (d.get('colore') or '').strip()
 
         if not codice:
             return jsonify({'ok': False, 'error': 'Codice articolo obbligatorio'}), 400
         if not fornitore:
             return jsonify({'ok': False, 'error': 'Fornitore obbligatorio'}), 400
-        if tipo not in TIPI_TRATTAMENTO_SCHEDA:
-            return jsonify({'ok': False, 'error': 'Trattamento non valido'}), 400
+        if not zincatura and not verniciatura:
+            return jsonify({'ok': False, 'error': 'Seleziona almeno un trattamento (Zincatura e/o Verniciatura)'}), 400
+        if zincatura and zinc_tipo not in ('CALDO', 'FREDDO'):
+            return jsonify({'ok': False, 'error': 'Specifica il tipo di zincatura (Caldo o Freddo)'}), 400
+
+        # tipo_trattamento (colonna legacy) ricostruito per compatibilità/storico
+        if zincatura and verniciatura:
+            tipo_legacy = 'ZINCATURA_VERNICIATURA'
+        elif zincatura:
+            tipo_legacy = 'ZINCATURA_CALDO' if zinc_tipo == 'CALDO' else 'ZINCATURA_FREDDO'
+        else:
+            tipo_legacy = 'VERNICIATURA'
 
         s = SchedaTrattamento(
             codice_articolo = codice,
             fornitore       = fornitore,
             commessa        = (d.get('commessa') or '').strip(),
-            tipo_trattamento= tipo,
-            colore          = (d.get('colore') or '').strip(),
+            tipo_trattamento= tipo_legacy,
+            colore          = colore,
+            zincatura       = zincatura,
+            zincatura_tipo  = zinc_tipo if zincatura else '',
+            verniciatura    = verniciatura,
         )
         db.session.add(s)
         db.session.commit()
-        log(f'Scheda trattamento creata: {codice} — {fornitore} — {tipo}')
+        log(f'Scheda trattamento creata: {codice} — {fornitore} — {tipo_legacy}')
         return jsonify({'ok': True, 'id': s.id})
     except Exception as e:
         db.session.rollback()
