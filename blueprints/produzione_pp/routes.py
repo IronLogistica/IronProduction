@@ -3,7 +3,10 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 from sqlalchemy.exc import IntegrityError
 from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     STATI_ORDINE_PP, ASA_MASTERWORK, prossimo_codice_ordine_pp,
-                    prossimo_numero_commessa)
+                    prossimo_numero_commessa, GiacenzaWood)
+from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
+                    _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
+                    _netta_e_esplodi_wood)
 
 pp_bp = Blueprint("produzione_pp", __name__)
 
@@ -68,7 +71,33 @@ def crea():
             cliente_commessa_esterna=legacy, qta_pianificata=qty, asa=str(d.get('asa','')).strip(),
             priorita=priority, data_inizio=_date(d.get('data_inizio')), data_prevista=_date(d.get('data_prevista')))
         db.session.add(o); _audit(o, 'CREATO', 'Creato da pagina Ordini Produzione'); db.session.commit()
-        return jsonify(ok=True, ordine=_ordine(o)), 201
+
+        # Controllo scorta: giacenza/impegnato/disponibile/mancante per questo OP
+        # appena creato, rispetto agli OP già aperti (l'OP appena creato è in
+        # stato "Creato", quindi NON impegna ancora nulla — è solo un'anteprima).
+        controllo_scorta = None
+        try:
+            giacenza_iniziale = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
+            giacenza_residua = _giacenza_residua_dopo_impegni()
+            disponibile_prima = dict(giacenza_residua)
+            righe_netting = {}
+            _netta_e_esplodi_wood(article, qty, giacenza_residua, righe_netting)
+            controllo_scorta = []
+            for cod, r in righe_netting.items():
+                giacenza_tot = giacenza_iniziale.get(cod, 0.0)
+                disponibile = disponibile_prima.get(cod, 0.0)
+                controllo_scorta.append({
+                    'codice': cod, 'giacenza': round(giacenza_tot, 3),
+                    'gia_impegnato': round(max(giacenza_tot - disponibile, 0), 3),
+                    'disponibile': round(max(disponibile, 0), 3),
+                    'fabbisogno_nuovo_op': round(r['fabbisogno'], 3),
+                    'mancante': round(r['mancante'], 3),
+                })
+            controllo_scorta.sort(key=lambda x: (-x['mancante'], x['codice']))
+        except Exception:
+            controllo_scorta = None  # non deve mai bloccare la creazione dell'OP
+
+        return jsonify(ok=True, ordine=_ordine(o), controllo_scorta=controllo_scorta), 201
     except (ValueError, IntegrityError) as exc:
         db.session.rollback(); return jsonify(ok=False, error=str(exc)), 400
 
@@ -142,6 +171,22 @@ def api_evento():
         if o.qta_pianificata and o.qta_buona >= o.qta_pianificata:
             o.stato, o.data_completamento = 'Tecnicamente completato', datetime.utcnow()
         _audit(o, 'EVENTO_CONSUNTIVO', f'fase={d["fase"]}; buoni={good}; scarto={scrap}; minuti={tempo}', str(d['event_id']).strip())
+
+        # Scarico automatico giacenza Iron Wood in proporzione ai pezzi buoni
+        # appena consuntivati: esplode l'intera distinta (nessun netting qui,
+        # solo la quantità reale consumata) e scarica ogni componente toccato.
+        if good > 0:
+            try:
+                componenti = _esplodi_bom_wood(o.codice_articolo, qta=good)
+                consumi = {}
+                _flatten_componenti(componenti, consumi)
+                for cod, qta_consumata in consumi.items():
+                    if qta_consumata:
+                        _registra_movimento_giacenza(cod, -qta_consumata, 'scarico_produzione',
+                                                      riferimento=o.codice, note=f'Consuntivo {good} pz buoni')
+            except Exception:
+                pass  # lo scarico giacenza non deve mai bloccare la registrazione del consuntivo
+
         db.session.commit(); return jsonify(ok=True, deduplicated=False, ordine=_ordine(o)), 201
     except ValueError as exc: return jsonify(ok=False, error=str(exc)), 400
     except IntegrityError:
