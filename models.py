@@ -921,6 +921,35 @@ def prossimo_codice_ordine_pp():
     db.session.flush()
     return f"OP-{anno}-{seq.ultimo_numero:06d}"
 
+
+class SequenzaCommessa(db.Model):
+    """Contatore separato da SequenzaOrdineProduzione: numera la COMMESSA
+    (non il codice OP interno), formato YYMMNNNN — vedi prossimo_numero_commessa()."""
+    __tablename__ = "pp_sequenze_commessa"
+    anno = db.Column(db.Integer, primary_key=True)
+    ultimo_numero = db.Column(db.Integer, nullable=False, default=0)
+
+
+def prossimo_numero_commessa():
+    """
+    Restituisce il numero commessa progressivo nel formato YYMMNNNN, es. 26070001:
+    - YY = ultime 2 cifre dell'anno di apertura
+    - MM = mese di apertura (informativo, non azzera il contatore)
+    - NNNN = progressivo a 4 cifre, che riparte da 0001 solo a inizio anno nuovo
+    """
+    ora = datetime.utcnow()
+    anno = ora.year
+    if db.engine.dialect.name == "postgresql":
+        db.session.execute(db.text("SELECT pg_advisory_xact_lock(:lock_id)"), {"lock_id": 506000000 + anno})
+    seq = SequenzaCommessa.query.filter_by(anno=anno).with_for_update().first()
+    if seq is None:
+        seq = SequenzaCommessa(anno=anno, ultimo_numero=0)
+        db.session.add(seq)
+        db.session.flush()
+    seq.ultimo_numero += 1
+    db.session.flush()
+    return f"{anno % 100:02d}{ora.month:02d}{seq.ultimo_numero:04d}"
+
 def inizializza_schema_pp():
     """Completa in avvio le colonne introdotte dopo P0; non richiede migration manuale."""
     # create_all è già eseguito dall'app. Questi ALTER servono solo DB già avviati con P0.
