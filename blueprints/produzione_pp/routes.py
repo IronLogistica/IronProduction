@@ -88,6 +88,16 @@ def modifica(oid):
         return jsonify(ok=True, ordine=_ordine(o))
     except ValueError as exc: db.session.rollback(); return jsonify(ok=False, error=str(exc)), 400
 
+@pp_bp.delete('/api/ordini-produzione/<int:oid>')
+def elimina(oid):
+    o = OrdineProduzione.query.get_or_404(oid)
+    if o.stato != 'Creato':
+        return jsonify(ok=False, error='Solo un OP ancora "Creato" (non rilasciato) può essere eliminato'), 409
+    codice = o.codice
+    _audit(o, 'ELIMINATO', 'Eliminazione manuale da pagina Ordini Produzione')
+    db.session.delete(o); db.session.commit()
+    return jsonify(ok=True, codice=codice)
+
 @pp_bp.post('/api/ordini-produzione/<int:oid>/rilascia')
 def rilascia(oid):
     o = OrdineProduzione.query.get_or_404(oid)
