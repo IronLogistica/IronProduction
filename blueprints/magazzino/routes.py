@@ -888,7 +888,8 @@ def api_codici_wood_tutti():
 def api_centri_costo_lista():
     righe = CentroCostoWood.query.order_by(CentroCostoWood.nome).all()
     return jsonify([{
-        'id': c.id, 'nome': c.nome, 'esterno': c.esterno, 'note': c.note,
+        'id': c.id, 'nome': c.nome, 'esterno': c.esterno,
+        'costo_orario': c.costo_orario or 0, 'note': c.note,
     } for c in righe])
 
 
@@ -901,10 +902,32 @@ def api_centri_costo_crea():
     esistente = CentroCostoWood.query.filter(db.func.lower(CentroCostoWood.nome) == nome.lower()).first()
     if esistente:
         return jsonify({'errore': True, 'messaggio': f'Esiste già un centro di costo chiamato "{nome}"'}), 409
-    c = CentroCostoWood(nome=nome, esterno=bool(d.get('esterno')), note=(d.get('note') or '').strip())
+    try:
+        costo_orario = float(d.get('costo_orario') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Costo orario non valido'}), 400
+    c = CentroCostoWood(nome=nome, esterno=bool(d.get('esterno')), costo_orario=costo_orario,
+                         note=(d.get('note') or '').strip())
     db.session.add(c)
     db.session.commit()
     return jsonify({'ok': True, 'id': c.id})
+
+
+@magazzino_bp.route('/api/centri_costo_wood/<int:cid>', methods=['PUT'])
+def api_centri_costo_modifica(cid):
+    c = CentroCostoWood.query.get_or_404(cid)
+    d = request.get_json(force=True)
+    if 'costo_orario' in d:
+        try:
+            c.costo_orario = float(d.get('costo_orario') or 0)
+        except (TypeError, ValueError):
+            return jsonify({'errore': True, 'messaggio': 'Costo orario non valido'}), 400
+    if 'esterno' in d:
+        c.esterno = bool(d.get('esterno'))
+    if 'note' in d:
+        c.note = (d.get('note') or '').strip()
+    db.session.commit()
+    return jsonify({'ok': True})
 
 
 @magazzino_bp.route('/api/centri_costo_wood/<int:cid>', methods=['DELETE'])
