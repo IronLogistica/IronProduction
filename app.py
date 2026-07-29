@@ -11,7 +11,6 @@ def create_app():
 
     from blueprints.monitor.routes import monitor_bp
     from blueprints.kanban.routes import kanban_bp
-    from blueprints.commesse.routes import commesse_bp
     from blueprints.kpi.routes import kpi_bp
     from blueprints.terzisti.routes import terzisti_bp
     from blueprints.magazzino.routes import magazzino_bp
@@ -19,7 +18,6 @@ def create_app():
 
     app.register_blueprint(monitor_bp)
     app.register_blueprint(kanban_bp)
-    app.register_blueprint(commesse_bp)
     app.register_blueprint(kpi_bp)
     app.register_blueprint(terzisti_bp)
     app.register_blueprint(magazzino_bp)
