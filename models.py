@@ -322,6 +322,15 @@ TIPI_APPROVVIGIONAMENTO = {
     'DA_CLASSIFICARE',
 }
 
+class ArticoloApprovvigionamento(db.Model):
+    """Classificazione acquisti per ogni SKU, indipendente dalle schede Kanban."""
+    __tablename__ = 'articoli_approvvigionamento'
+    id = db.Column(db.Integer, primary_key=True)
+    codice = db.Column(db.String(100), nullable=False, unique=True, index=True)
+    tipo_approvvigionamento = db.Column(db.String(40), default='DA_CLASSIFICARE', nullable=False)
+    lead_time_fornitura_giorni = db.Column(db.Float, default=None)
+    aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
 class KanbanProdotto(db.Model):
     __tablename__ = "kanban_prodotti"
     id           = db.Column(db.Integer, primary_key=True)
