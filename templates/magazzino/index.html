@@ -106,15 +106,26 @@ fetch('/api/materiali').then(r=>r.json()).then(data=>{
   document.getElementById('mag-app').innerHTML='<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
 });
 
+function renderCicloLavoroInline(cicli){
+  if(cicli === undefined) return ''; // risposta senza questo dato (es. BOM MasterLogistic) — non mostrare nulla
+  if(!cicli || !cicli.length){
+    return '<div style="margin:3px 0 3px 10px;font-size:11px;color:#b8860b">⚠️ Nessun ciclo di lavoro registrato per questo codice</div>';
+  }
+  const fasi = cicli.map(f => `${f.sequenza}) ${f.centro_costo_nome}${f.centro_costo_esterno?' 🚚':''} — ${f.produttivita_oraria} pz/h`).join('&nbsp;&nbsp;→&nbsp;&nbsp;');
+  return `<div style="margin:3px 0 3px 10px;font-size:11px;color:#2a9d5c">🔧 Ciclo di lavoro: ${fasi}</div>`;
+}
+
 function renderBOMLista(componenti){
   if(!componenti || !componenti.length) return '';
   return '<ul style="margin:4px 0 4px 18px;padding:0;list-style:none">' + componenti.map(c => `
     <li style="padding:4px 0;border-left:2px solid var(--border);padding-left:10px;margin-bottom:2px">
+      ${c.livello_effettivo!==undefined ? `<span style="font-size:10px;color:#1e5fa8;font-weight:700;margin-right:6px">SOTTOGRUPPO ${c.livello_effettivo}° LIVELLO</span>` : ''}
       <span class="cod" style="font-weight:700">${c.codice}</span>
       <span style="color:var(--text-dim)"> — ${c.descrizione||'(senza descrizione)'}</span>
       <span style="margin-left:8px;font-weight:600">× ${c.quantita_totale}</span>
       ${c.stock!==null && c.stock!==undefined ? `<span style="margin-left:8px;font-size:11px;color:${c.stock<=0?'#c0392b':'#2a9d5c'}">(stock ${c.stock})</span>` : ''}
       ${c.note ? `<span style="margin-left:8px;font-size:11px;color:#999">${c.note}</span>` : ''}
+      ${renderCicloLavoroInline(c.cicli_lavoro)}
       ${renderBOMLista(c.figli)}
     </li>`).join('') + '</ul>';
 }
@@ -138,7 +149,7 @@ async function esplodiBOM(){
       box.innerHTML += `<p style="color:#999">Nessuna distinta base definita per <b>${codice}</b> (${d.descrizione||'—'}).</p>`;
       return;
     }
-    box.innerHTML = `<p style="margin-bottom:6px"><b>${codice}</b> — ${d.descrizione||'—'}</p>` + renderBOMLista(d.componenti);
+    box.innerHTML = `<p style="margin-bottom:6px"><b>${codice}</b> — ${d.descrizione||'—'} <span style="font-size:10px;color:#1e5fa8;font-weight:700">CODICE PADRE</span></p>` + renderBOMLista(d.componenti);
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento della BOM.</p>';
   }
@@ -224,10 +235,11 @@ async function esplodiBOMWood(){
       box.innerHTML = `<p style="color:#999">Articolo <b>${codice}</b> non trovato nel magazzino condiviso.</p>`;
     }
     if(!d.ha_bom){
-      box.innerHTML += `<p style="color:#999">Nessuna distinta Iron Wood definita per <b>${codice}</b> (${d.descrizione||'—'}).</p>`;
+      box.innerHTML += `<p style="color:#999">Nessuna distinta Iron Wood definita per <b>${codice}</b> (${d.descrizione||'—'}).</p>` + renderCicloLavoroInline(d.cicli_lavoro);
       return;
     }
-    box.innerHTML = `<p style="margin-bottom:6px"><b>${codice}</b> — ${d.descrizione||'—'}</p>` + renderBOMLista(d.componenti);
+    box.innerHTML = `<p style="margin-bottom:6px"><b>${codice}</b> — ${d.descrizione||'—'} <span style="font-size:10px;color:#1e5fa8;font-weight:700">CODICE PADRE</span></p>` +
+      renderCicloLavoroInline(d.cicli_lavoro) + renderBOMLista(d.componenti);
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento della BOM.</p>';
   }
