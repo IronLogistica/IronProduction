@@ -16,6 +16,28 @@
   <div id="bom-result" style="padding:0 14px 14px;font-size:13px"></div>
 </div>
 
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🌲 Distinta Base Iron Wood — gestione locale</div>
+  <div style="padding:14px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <input id="wood-padre" type="text" placeholder="Codice padre" style="width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <input id="wood-figlio" type="text" placeholder="Codice figlio" style="width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <input id="wood-quantita" type="number" step="0.01" value="1" placeholder="Quantità" style="width:100px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <input id="wood-livello" type="number" step="1" value="1" placeholder="Livello" style="width:90px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <input id="wood-note" type="text" placeholder="Note (facoltative)" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <button class="btn btn-primary" onclick="aggiungiRigaWood()">➕ Aggiungi / aggiorna riga</button>
+    </div>
+    <div id="wood-lista" style="font-size:13px;color:#666">Caricamento...</div>
+
+    <div style="margin-top:18px;display:flex;gap:8px;align-items:center">
+      <input id="bom-wood-codice" type="text" placeholder="Codice articolo (es. TAV01)"
+             style="flex:1;max-width:280px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <button class="btn btn-primary" onclick="esplodiBOMWood()">🔍 Esplodi BOM Iron Wood</button>
+    </div>
+    <div id="bom-wood-result" style="padding:10px 0 0;font-size:13px"></div>
+  </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 fetch('/api/materiali').then(r=>r.json()).then(data=>{
@@ -79,5 +101,85 @@ async function esplodiBOM(){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento della BOM.</p>';
   }
 }
+
+// ── Distinta Base Iron Wood (gestione locale) ──────────────────────────
+async function caricaListaWood(){
+  const box = document.getElementById('wood-lista');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/distinta_base_wood');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna riga inserita ancora.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
+      '<th>Padre</th><th>Figlio</th><th>Quantità</th><th>Livello</th><th>Note</th><th></th></tr></thead><tbody>';
+    righe.forEach(r=>{
+      html += `<tr><td class="codice">${r.codice_padre}</td><td class="codice">${r.codice_figlio}</td>` +
+        `<td class="num">${r.quantita}</td><td class="num">${r.livello}</td><td class="lav-td">${r.note||'—'}</td>` +
+        `<td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="cancellaRigaWood(${r.id})">🗑️</button></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function aggiungiRigaWood(){
+  const payload = {
+    codice_padre:  document.getElementById('wood-padre').value.trim(),
+    codice_figlio: document.getElementById('wood-figlio').value.trim(),
+    quantita:      document.getElementById('wood-quantita').value,
+    livello:       document.getElementById('wood-livello').value,
+    note:          document.getElementById('wood-note').value.trim(),
+  };
+  try{
+    const r = await fetch('/api/distinta_base_wood', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    document.getElementById('wood-padre').value = '';
+    document.getElementById('wood-figlio').value = '';
+    document.getElementById('wood-quantita').value = '1';
+    document.getElementById('wood-livello').value = '1';
+    document.getElementById('wood-note').value = '';
+    caricaListaWood();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function cancellaRigaWood(id){
+  if(!confirm('Cancellare questa riga della distinta Iron Wood?')) return;
+  try{
+    await fetch('/api/distinta_base_wood/' + id, {method: 'DELETE'});
+    caricaListaWood();
+  }catch(e){
+    alert('❌ Errore di rete durante la cancellazione.');
+  }
+}
+
+async function esplodiBOMWood(){
+  const codice = document.getElementById('bom-wood-codice').value.trim();
+  const box = document.getElementById('bom-wood-result');
+  if(!codice){ box.innerHTML=''; return; }
+  box.innerHTML = '<p style="color:#999">Caricamento…</p>';
+  try{
+    const r = await fetch('/api/distinta_base_wood/' + encodeURIComponent(codice));
+    const d = await r.json();
+    if(!d.trovato){
+      box.innerHTML = `<p style="color:#999">Articolo <b>${codice}</b> non trovato nel magazzino condiviso.</p>`;
+    }
+    if(!d.ha_bom){
+      box.innerHTML += `<p style="color:#999">Nessuna distinta Iron Wood definita per <b>${codice}</b> (${d.descrizione||'—'}).</p>`;
+      return;
+    }
+    box.innerHTML = `<p style="margin-bottom:6px"><b>${codice}</b> — ${d.descrizione||'—'}</p>` + renderBOMLista(d.componenti);
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento della BOM.</p>';
+  }
+}
+
+caricaListaWood();
 {% endblock %}
 
