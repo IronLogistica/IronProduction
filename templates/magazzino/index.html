@@ -48,6 +48,60 @@
   <div id="bom-result" style="padding:0 14px 14px;font-size:13px"></div>
 </div>
 
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🏭 Centri di Costo / Reparti Iron Wood</div>
+  <div style="padding:14px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+      <input id="cc-nome" type="text" placeholder="Nome (es. Piegatrice 1, Sega, Verniciatura Esterna)"
+             style="min-width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px">
+        <input id="cc-esterno" type="checkbox" style="width:16px;height:16px"> Lavorazione esterna
+      </label>
+      <input id="cc-note" type="text" placeholder="Note (facoltative)"
+             style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <button class="btn btn-primary" onclick="aggiungiCentroCosto()">➕ Aggiungi reparto</button>
+    </div>
+    <div id="cc-lista" style="font-size:13px;color:#666">Caricamento...</div>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🔧 Cicli di Lavoro Iron Wood — routing per codice/sottocodice</div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Ogni riga è una fase del ciclo: un codice — padre o figlio, un sottocomponente può avere il proprio ciclo indipendente dal padre —
+      passa in sequenza per uno o più reparti, ognuno con la sua produttività oraria specifica per quel codice.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;position:relative">
+      <div style="position:relative">
+        <input id="cl-codice" type="text" placeholder="Codice (padre o figlio)" autocomplete="off"
+               style="width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)"
+               oninput="suggerisciCodiciCiclo()" onfocus="suggerisciCodiciCiclo()">
+        <div id="cl-suggerimenti" style="display:none;position:absolute;top:100%;left:0;z-index:20;background:#fff;
+             border:1px solid var(--border);border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);
+             max-height:220px;overflow-y:auto;width:280px"></div>
+      </div>
+      <input id="cl-sequenza" type="number" step="1" min="1" value="1" placeholder="Sequenza"
+             style="width:90px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <select id="cl-reparto" style="min-width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <option value="">Reparto...</option>
+      </select>
+      <input id="cl-produttivita" type="number" step="0.01" min="0" placeholder="Pezzi/ora"
+             style="width:110px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <input id="cl-note" type="text" placeholder="Note (facoltative)"
+             style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <button class="btn btn-primary" onclick="aggiungiFaseCiclo()">➕ Aggiungi fase</button>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <input id="cl-filtro-codice" type="text" placeholder="Filtra per codice (vuoto = tutti)"
+             style="width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)"
+             oninput="caricaListaCicli()">
+    </div>
+    <div id="cl-lista" style="font-size:13px;color:#666">Caricamento...</div>
+  </div>
+</div>
+
 {% endblock %}
 {% block scripts %}
 fetch('/api/materiali').then(r=>r.json()).then(data=>{
@@ -215,5 +269,149 @@ async function importaExcelWood(){
 }
 
 caricaListaWood();
+
+// ── CENTRI DI COSTO / REPARTI ────────────────────────────────────────────
+async function caricaCentriCosto(){
+  const box = document.getElementById('cc-lista');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/centri_costo_wood');
+    const righe = await r.json();
+    // popola anche la select del form Cicli di Lavoro
+    const sel = document.getElementById('cl-reparto');
+    sel.innerHTML = '<option value="">Reparto...</option>' +
+      righe.map(c => `<option value="${c.id}">${c.nome}${c.esterno?' (esterno)':''}</option>`).join('');
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun reparto inserito ancora.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
+      '<th>Nome</th><th>Tipo</th><th>Note</th><th></th></tr></thead><tbody>';
+    righe.forEach(c=>{
+      html += `<tr><td class="codice">${c.nome}</td><td>${c.esterno?'<span class="badge badge-warn">🚚 Esterno</span>':'<span class="badge badge-ok">🏭 Interno</span>'}</td>` +
+        `<td class="lav-td">${c.note||'—'}</td><td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaCentroCosto(${c.id})">🗑️</button></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function aggiungiCentroCosto(){
+  const payload = {
+    nome:    document.getElementById('cc-nome').value.trim(),
+    esterno: document.getElementById('cc-esterno').checked,
+    note:    document.getElementById('cc-note').value.trim(),
+  };
+  try{
+    const r = await fetch('/api/centri_costo_wood', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    document.getElementById('cc-nome').value = '';
+    document.getElementById('cc-esterno').checked = false;
+    document.getElementById('cc-note').value = '';
+    caricaCentriCosto();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function eliminaCentroCosto(id){
+  if(!confirm('Eliminare questo reparto/centro di costo?')) return;
+  try{
+    const r = await fetch('/api/centri_costo_wood/' + id, {method:'DELETE'});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    caricaCentriCosto();
+  }catch(e){
+    alert('❌ Errore di rete durante la cancellazione.');
+  }
+}
+
+// ── CICLI DI LAVORO (routing per codice/sottocodice) ─────────────────────
+let _codiciCicloCache = [];
+async function suggerisciCodiciCiclo(){
+  const input = document.getElementById('cl-codice');
+  const box = document.getElementById('cl-suggerimenti');
+  const val = input.value.trim().toLowerCase();
+  if(!_codiciCicloCache.length){
+    try{
+      const r = await fetch('/api/codici_wood_tutti');
+      _codiciCicloCache = await r.json();
+    }catch(e){ _codiciCicloCache = []; }
+  }
+  const match = val ? _codiciCicloCache.filter(c => c.codice.toLowerCase().includes(val)).slice(0,30) : _codiciCicloCache.slice(0,30);
+  if(!match.length){ box.style.display='none'; box.innerHTML=''; return; }
+  box.innerHTML = match.map(c => `<div style="padding:7px 10px;cursor:pointer;border-bottom:1px solid #eee"
+      onmousedown="document.getElementById('cl-codice').value='${c.codice}';document.getElementById('cl-suggerimenti').style.display='none';"
+      onmouseover="this.style.background='#f2f6fa'" onmouseout="this.style.background='#fff'">
+      <b>${c.codice}</b>${c.e_padre?' <span style="font-size:10px;color:#1e5fa8">PADRE</span>':''}
+      ${c.descrizione?`<br><span style="font-size:11px;color:#999">${c.descrizione}</span>`:''}</div>`).join('');
+  box.style.display = 'block';
+}
+document.addEventListener('click', e=>{
+  const box = document.getElementById('cl-suggerimenti');
+  if(box && !e.target.closest('#cl-codice') && !e.target.closest('#cl-suggerimenti')) box.style.display='none';
+});
+
+async function caricaListaCicli(){
+  const box = document.getElementById('cl-lista');
+  const filtro = document.getElementById('cl-filtro-codice').value.trim();
+  box.innerHTML = 'Caricamento...';
+  try{
+    const url = filtro ? '/api/ciclo_lavoro_wood?codice=' + encodeURIComponent(filtro) : '/api/ciclo_lavoro_wood';
+    const r = await fetch(url);
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna fase di ciclo inserita ancora.</p>'; return; }
+    // raggruppo per codice, in ordine di sequenza
+    const gruppi = {};
+    righe.forEach(r => { (gruppi[r.codice] = gruppi[r.codice] || []).push(r); });
+    let html = '';
+    Object.keys(gruppi).sort().forEach(codice => {
+      html += `<div style="margin-bottom:14px"><div style="font-weight:700;margin-bottom:4px">${codice}</div>` +
+        '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Seq.</th><th>Reparto</th><th>Pezzi/ora</th><th>Note</th><th></th></tr></thead><tbody>';
+      gruppi[codice].forEach(f=>{
+        html += `<tr><td class="num">${f.sequenza}</td><td>${f.centro_costo_nome}${f.centro_costo_esterno?' <span class="badge badge-warn" style="font-size:10px">esterno</span>':''}</td>` +
+          `<td class="num">${f.produttivita_oraria}</td><td class="lav-td">${f.note||'—'}</td>` +
+          `<td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaFaseCiclo(${f.id})">🗑️</button></td></tr>`;
+      });
+      html += '</tbody></table></div></div>';
+    });
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function aggiungiFaseCiclo(){
+  const payload = {
+    codice:              document.getElementById('cl-codice').value.trim(),
+    sequenza:            document.getElementById('cl-sequenza').value,
+    centro_costo_id:     document.getElementById('cl-reparto').value,
+    produttivita_oraria: document.getElementById('cl-produttivita').value,
+    note:                document.getElementById('cl-note').value.trim(),
+  };
+  try{
+    const r = await fetch('/api/ciclo_lavoro_wood', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    document.getElementById('cl-produttivita').value = '';
+    document.getElementById('cl-note').value = '';
+    caricaListaCicli();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function eliminaFaseCiclo(id){
+  if(!confirm('Eliminare questa fase del ciclo di lavoro?')) return;
+  try{
+    await fetch('/api/ciclo_lavoro_wood/' + id, {method:'DELETE'});
+    caricaListaCicli();
+  }catch(e){
+    alert('❌ Errore di rete durante la cancellazione.');
+  }
+}
+
+caricaCentriCosto();
+caricaListaCicli();
 {% endblock %}
 
