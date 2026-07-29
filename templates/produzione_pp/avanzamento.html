@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block content %}
 <div class="page-toolbar"><div class="page-title">📊 Avanzamento Ordini Produzione</div><a class="btn btn-ghost" href="/ordini-produzione">← Ordini</a></div>
 <div id="summary" class="monitor-grid"></div><div class="card" style="padding:18px;margin-top:16px;overflow:auto"><table class="kanban-table"><thead><tr><th>OP</th><th>Articolo</th><th>Stato</th><th>Avanzamento</th><th>Buoni / pianificato</th><th>Scarto</th><th>Tempo</th></tr></thead><tbody id="rows"></tbody></table></div>
-{% endblock %}{% block scripts %}<script>
+{% endblock %}{% block scripts %}
 const e=v=>String(v??'').replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
 (async()=>{const r=await fetch('/api/ordini-produzione'),a=await r.json(), totals=a.reduce((p,x)=>{p.plan+=x.qta_pianificata;p.good+=x.qta_buona;p.scrap+=x.qta_scarto;return p},{plan:0,good:0,scrap:0});summary.innerHTML=`<div class="card" style="padding:16px">OP: <b>${a.length}</b></div><div class="card" style="padding:16px">Buoni: <b>${totals.good} / ${totals.plan}</b></div><div class="card" style="padding:16px">Scarto: <b>${totals.scrap}</b></div>`;rows.innerHTML=a.map(x=>`<tr><td>${e(x.codice)}</td><td>${e(x.codice_articolo)}</td><td>${e(x.stato)}</td><td><div style="background:#dce5ed;width:130px"><div style="width:${Math.min(100,x.avanzamento_pct)}%;background:#2d8d57;color:white;text-align:center">${x.avanzamento_pct}%</div></div></td><td>${x.qta_buona} / ${x.qta_pianificata}</td><td>${x.qta_scarto}</td><td>${x.tempo_consuntivo_minuti} min</td></tr>`).join('')||'<tr><td colspan="7">Nessun OP.</td></tr>'})().catch(err=>rows.innerHTML='<tr><td colspan="7">Errore caricamento: '+e(err.message)+'</td></tr>');
-</script>{% endblock %}
+{% endblock %}
