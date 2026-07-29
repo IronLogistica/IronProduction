@@ -2,7 +2,8 @@ from flask import Blueprint, render_template, jsonify, request
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
-                    registra_ciclo_se_necessario, calcola_analisi_takt, PIN_ADMIN)
+                    registra_ciclo_se_necessario, calcola_analisi_takt, PIN_ADMIN,
+                    TIPI_APPROVVIGIONAMENTO)
 from datetime import datetime
 import re
 
@@ -134,6 +135,14 @@ def api_aggiorna(kid):
             storico_aggiungi_auto(p.id, delta)
         if 'val_medio'   in d: p.val_medio   = float(d['val_medio'])
         if 'lavorazioni' in d: p.lavorazioni = d['lavorazioni']
+        if 'tipo_approvvigionamento' in d:
+            tipo = d['tipo_approvvigionamento']
+            if tipo not in TIPI_APPROVVIGIONAMENTO:
+                return jsonify({'ok': False, 'error': 'Tipo di approvvigionamento non valido'}), 400
+            p.tipo_approvvigionamento = tipo
+        if 'lead_time_fornitura_giorni' in d:
+            valore = d['lead_time_fornitura_giorni']
+            p.lead_time_fornitura_giorni = float(valore) if valore not in (None, '') else None
         p.aggiornato_il = datetime.utcnow()
         stato_dopo = p.stato
         # ── Accumulazione dati cicli per Takt Time ──
@@ -156,6 +165,10 @@ def api_crea():
         prodotto = d.get('prodotto','').strip()
         if not prodotto:
             return jsonify({'ok': False, 'error': 'Nome prodotto obbligatorio'}), 400
+        tipo_approvvigionamento = d.get('tipo_approvvigionamento', 'DA_CLASSIFICARE')
+        if tipo_approvvigionamento not in TIPI_APPROVVIGIONAMENTO:
+            return jsonify({'ok': False, 'error': 'Tipo di approvvigionamento non valido'}), 400
+        lead_time_fornitura = d.get('lead_time_fornitura_giorni')
         p = KanbanProdotto(
             prodotto=prodotto,
             categoria=d.get('categoria', d.get('sheet_key','').replace('_',' ')),
@@ -167,6 +180,8 @@ def api_crea():
             lavorazioni=d.get('lavorazioni',''),
             scorta_sicurezza=float(d.get('scorta_sicurezza',0.15)),
             lead_time_giorni=float(d.get('lead_time_giorni',7.0)),
+            tipo_approvvigionamento=tipo_approvvigionamento,
+            lead_time_fornitura_giorni=float(lead_time_fornitura) if lead_time_fornitura not in (None, '') else None,
         )
         db.session.add(p)
         log(f'Kanban: creato prodotto {prodotto} (PIN autorizzato)')
