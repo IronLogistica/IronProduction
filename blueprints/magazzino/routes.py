@@ -444,6 +444,15 @@ def api_codici_padre_wood():
               .order_by(DistintaBaseWood.codice_padre).all()]
     risultato = []
     for codice in codici:
-        art = ArticoloML.query.filter_by(sku=codice).first()
-        risultato.append({'codice': codice, 'descrizione': art.descrizione if art else ''})
+        descrizione = ''
+        try:
+            art = ArticoloML.query.filter_by(sku=codice).first()
+            if art:
+                descrizione = art.descrizione
+        except Exception:
+            # MasterLogistic momentaneamente irraggiungibile: non far sparire
+            # l'intero widget per questo — il codice resta comunque selezionabile,
+            # semplicemente senza descrizione accanto.
+            db.session.rollback()
+        risultato.append({'codice': codice, 'descrizione': descrizione})
     return jsonify(risultato)
