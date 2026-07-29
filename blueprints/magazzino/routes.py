@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, jsonify, request
 from datetime import datetime
-from models import db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa
+from models import db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa, CentroCostoWood, CicloLavoroWood
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -456,3 +456,134 @@ def api_codici_padre_wood():
             db.session.rollback()
         risultato.append({'codice': codice, 'descrizione': descrizione})
     return jsonify(risultato)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TUTTI I CODICI IRON WOOD (padre + figlio) — per l'autocomplete del form
+#  Cicli di Lavoro: un ciclo può riguardare tanto il codice padre (prodotto
+#  finito) quanto un codice figlio (sottocomponente con lavorazione propria).
+# ══════════════════════════════════════════════════════════════════════════════
+@magazzino_bp.route('/api/codici_wood_tutti')
+def api_codici_wood_tutti():
+    padri  = {row[0] for row in db.session.query(DistintaBaseWood.codice_padre).distinct().all()}
+    figli  = {row[0] for row in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
+    codici = sorted(padri | figli)
+    risultato = []
+    for codice in codici:
+        descrizione = ''
+        try:
+            art = ArticoloML.query.filter_by(sku=codice).first()
+            if art:
+                descrizione = art.descrizione
+        except Exception:
+            db.session.rollback()
+        risultato.append({'codice': codice, 'descrizione': descrizione, 'e_padre': codice in padri})
+    return jsonify(risultato)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CENTRI DI COSTO / REPARTI IRON WOOD — macchine (piegatrice, sega,
+#  foratura...) o lavorazioni esterne (verniciatura esterna, piega esterna).
+#  Prerequisito dei Cicli di Lavoro: ogni fase del ciclo punta a uno di questi.
+# ══════════════════════════════════════════════════════════════════════════════
+@magazzino_bp.route('/api/centri_costo_wood')
+def api_centri_costo_lista():
+    righe = CentroCostoWood.query.order_by(CentroCostoWood.nome).all()
+    return jsonify([{
+        'id': c.id, 'nome': c.nome, 'esterno': c.esterno, 'note': c.note,
+    } for c in righe])
+
+
+@magazzino_bp.route('/api/centri_costo_wood', methods=['POST'])
+def api_centri_costo_crea():
+    d = request.get_json(force=True)
+    nome = (d.get('nome') or '').strip()
+    if not nome:
+        return jsonify({'errore': True, 'messaggio': 'Il nome del reparto/centro di costo è obbligatorio'}), 400
+    esistente = CentroCostoWood.query.filter(db.func.lower(CentroCostoWood.nome) == nome.lower()).first()
+    if esistente:
+        return jsonify({'errore': True, 'messaggio': f'Esiste già un centro di costo chiamato "{nome}"'}), 409
+    c = CentroCostoWood(nome=nome, esterno=bool(d.get('esterno')), note=(d.get('note') or '').strip())
+    db.session.add(c)
+    db.session.commit()
+    return jsonify({'ok': True, 'id': c.id})
+
+
+@magazzino_bp.route('/api/centri_costo_wood/<int:cid>', methods=['DELETE'])
+def api_centri_costo_elimina(cid):
+    c = CentroCostoWood.query.get_or_404(cid)
+    in_uso = CicloLavoroWood.query.filter_by(centro_costo_id=cid).count()
+    if in_uso:
+        return jsonify({'errore': True, 'messaggio': f'Impossibile eliminare: usato in {in_uso} fase/i di ciclo di lavoro'}), 409
+    db.session.delete(c)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CICLI DI LAVORO IRON WOOD — sequenza di reparti (con produttività oraria
+#  specifica) per un codice padre O figlio della distinta Iron Wood.
+# ══════════════════════════════════════════════════════════════════════════════
+def _ciclo_riga(r):
+    return {
+        'id': r.id, 'codice': r.codice, 'sequenza': r.sequenza,
+        'centro_costo_id': r.centro_costo_id,
+        'centro_costo_nome': r.centro_costo.nome if r.centro_costo else '',
+        'centro_costo_esterno': r.centro_costo.esterno if r.centro_costo else False,
+        'produttivita_oraria': r.produttivita_oraria, 'note': r.note,
+    }
+
+
+@magazzino_bp.route('/api/ciclo_lavoro_wood')
+def api_ciclo_lavoro_lista():
+    codice_filtro = request.args.get('codice', '').strip()
+    q = CicloLavoroWood.query
+    if codice_filtro:
+        q = q.filter_by(codice=codice_filtro)
+    righe = q.order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()
+    return jsonify([_ciclo_riga(r) for r in righe])
+
+
+@magazzino_bp.route('/api/ciclo_lavoro_wood', methods=['POST'])
+def api_ciclo_lavoro_crea():
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip()
+    if not codice:
+        return jsonify({'errore': True, 'messaggio': 'Il codice è obbligatorio'}), 400
+    try:
+        sequenza = int(d.get('sequenza'))
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'La sequenza deve essere un numero intero'}), 400
+    try:
+        centro_costo_id = int(d.get('centro_costo_id'))
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Seleziona un reparto/centro di costo'}), 400
+    if not CentroCostoWood.query.get(centro_costo_id):
+        return jsonify({'errore': True, 'messaggio': 'Reparto/centro di costo non trovato'}), 404
+    try:
+        produttivita = float(d.get('produttivita_oraria') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'La produttività oraria deve essere un numero'}), 400
+
+    esistente = CicloLavoroWood.query.filter_by(codice=codice, sequenza=sequenza).first()
+    if esistente:
+        # aggiorna la fase esistente invece di duplicarla (stesso codice+sequenza)
+        esistente.centro_costo_id = centro_costo_id
+        esistente.produttivita_oraria = produttivita
+        esistente.note = (d.get('note') or '').strip()
+        db.session.commit()
+        return jsonify({'ok': True, 'id': esistente.id, 'aggiornata': True})
+
+    r = CicloLavoroWood(codice=codice, sequenza=sequenza, centro_costo_id=centro_costo_id,
+                         produttivita_oraria=produttivita, note=(d.get('note') or '').strip())
+    db.session.add(r)
+    db.session.commit()
+    return jsonify({'ok': True, 'id': r.id, 'aggiornata': False})
+
+
+@magazzino_bp.route('/api/ciclo_lavoro_wood/<int:rid>', methods=['DELETE'])
+def api_ciclo_lavoro_elimina(rid):
+    r = CicloLavoroWood.query.get_or_404(rid)
+    db.session.delete(r)
+    db.session.commit()
+    return jsonify({'ok': True})
