@@ -119,11 +119,35 @@ def _esplodi_bom(codice, qta=1.0, _visitati=None, _profondita=0, _max_profondita
     return componenti
 
 
+def _raccogli_approvvigionamenti(codici):
+    """Restituisce le classificazioni locali per gli SKU richiesti, in una sola query."""
+    records = ArticoloApprovvigionamento.query.filter(
+        ArticoloApprovvigionamento.codice.in_(codici)
+    ).all() if codici else []
+    return {r.codice: {
+        'tipo_approvvigionamento': r.tipo_approvvigionamento,
+        'lead_time_fornitura_giorni': r.lead_time_fornitura_giorni,
+    } for r in records}
+
+
+def _applica_approvvigionamenti(componenti, approvv_map):
+    for c in componenti:
+        c['approvvigionamento'] = approvv_map.get(c['codice'], {
+            'tipo_approvvigionamento': 'DA_CLASSIFICARE',
+            'lead_time_fornitura_giorni': None,
+        })
+        _applica_approvvigionamenti(c.get('figli', []), approvv_map)
+
+
 @magazzino_bp.route('/api/distinta_base/<codice>')
 def api_distinta_base(codice):
     try:
         art = ArticoloML.query.filter_by(sku=codice).first()
         componenti = _esplodi_bom(codice)
+        codici = {codice}
+        _raccogli_codici_bom(componenti, codici)
+        approvv_map = _raccogli_approvvigionamenti(codici)
+        _applica_approvvigionamenti(componenti, approvv_map)
     except Exception as e:
         return jsonify({
             'errore': True,
@@ -135,6 +159,10 @@ def api_distinta_base(codice):
         'descrizione': art.descrizione if art else '',
         'trovato':     art is not None,
         'ha_bom':      len(componenti) > 0,
+        'approvvigionamento': approvv_map.get(codice, {
+            'tipo_approvvigionamento': 'DA_CLASSIFICARE',
+            'lead_time_fornitura_giorni': None,
+        }),
         'componenti':  componenti,
     })
 
@@ -188,7 +216,7 @@ def _raccogli_codici_bom(componenti, acc):
         _raccogli_codici_bom(c.get('figli', []), acc)
 
 
-def _arricchisci_bom_wood(componenti, descr_map, fasi_map):
+def _arricchisci_bom_wood(componenti, descr_map, fasi_map, approvv_map):
     for c in componenti:
         info = descr_map.get(c['codice'])
         if info:
@@ -196,7 +224,11 @@ def _arricchisci_bom_wood(componenti, descr_map, fasi_map):
             c['stock']       = info['stock']
             c['fornitore']   = info['fornitore']
         c['cicli_lavoro'] = fasi_map.get(c['codice'], [])
-        _arricchisci_bom_wood(c.get('figli', []), descr_map, fasi_map)
+        c['approvvigionamento'] = approvv_map.get(c['codice'], {
+            'tipo_approvvigionamento': 'DA_CLASSIFICARE',
+            'lead_time_fornitura_giorni': None,
+        })
+        _arricchisci_bom_wood(c.get('figli', []), descr_map, fasi_map, approvv_map)
 
 
 @magazzino_bp.route('/api/distinta_base_wood/<codice>')
@@ -223,7 +255,8 @@ def api_distinta_base_wood(codice):
             'produttivita_oraria':  f.produttivita_oraria,
         })
 
-    _arricchisci_bom_wood(componenti, descr_map, fasi_map)
+    approvv_map = _raccogli_approvvigionamenti(tutti_codici)
+    _arricchisci_bom_wood(componenti, descr_map, fasi_map, approvv_map)
 
     info_root = descr_map.get(codice)
     return jsonify({
@@ -232,6 +265,10 @@ def api_distinta_base_wood(codice):
         'trovato':      info_root is not None,
         'ha_bom':       len(componenti) > 0,
         'cicli_lavoro': fasi_map.get(codice, []),
+        'approvvigionamento': approvv_map.get(codice, {
+            'tipo_approvvigionamento': 'DA_CLASSIFICARE',
+            'lead_time_fornitura_giorni': None,
+        }),
         'componenti':   componenti,
     })
 
