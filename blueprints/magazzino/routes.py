@@ -106,6 +106,15 @@ def api_distinta_base(codice):
 #  distinta sono gestite qui per non toccare mai la tabella di MasterLogistic.
 # ══════════════════════════════════════════════════════════════════════════════
 def _esplodi_bom_wood(codice, qta=1.0, _visitati=None, _profondita=0, _max_profondita=12):
+    """
+    Costruisce l'albero grezzo dalla sola distinta_base_wood locale (nessuna
+    query remota qui dentro — vedi _arricchisci_bom_wood per descrizioni/cicli,
+    fatte in blocco DOPO aver costruito l'intero albero, non riga per riga).
+    'livello_effettivo' = profondità reale nell'albero rispetto al codice
+    padre esploso (1 = Sottogruppo 1° livello, 2 = Sottogruppo 2° livello...),
+    calcolato qui — NON il campo 'livello' grezzo inserito a mano nell'import,
+    che è solo un dato di riga e può non corrispondere alla vera profondità.
+    """
     if _visitati is None:
         _visitati = set()
     if codice in _visitati or _profondita >= _max_profondita:
@@ -115,32 +124,74 @@ def _esplodi_bom_wood(codice, qta=1.0, _visitati=None, _profondita=0, _max_profo
     righe = DistintaBaseWood.query.filter_by(codice_padre=codice).order_by(DistintaBaseWood.livello).all()
     componenti = []
     for r in righe:
-        art = ArticoloML.query.filter_by(sku=r.codice_figlio).first()
         qta_totale = (r.quantita or 1.0) * qta
         componenti.append({
             'id':                r.id,
             'codice':            r.codice_figlio,
-            'descrizione':       art.descrizione if art else '',
+            'descrizione':       '',
             'quantita_unitaria': r.quantita,
             'quantita_totale':   round(qta_totale, 3),
-            'stock':             art.stock if art else None,
-            'fornitore':         art.fornitore if art else None,
+            'stock':             None,
+            'fornitore':         None,
             'note':              r.note or '',
+            'livello_effettivo': _profondita + 1,
+            'cicli_lavoro':      [],
             'figli':             _esplodi_bom_wood(r.codice_figlio, qta_totale, _visitati, _profondita + 1, _max_profondita),
         })
     return componenti
 
 
+def _raccogli_codici_bom(componenti, acc):
+    for c in componenti:
+        acc.add(c['codice'])
+        _raccogli_codici_bom(c.get('figli', []), acc)
+
+
+def _arricchisci_bom_wood(componenti, descr_map, fasi_map):
+    for c in componenti:
+        info = descr_map.get(c['codice'])
+        if info:
+            c['descrizione'] = info['descrizione']
+            c['stock']       = info['stock']
+            c['fornitore']   = info['fornitore']
+        c['cicli_lavoro'] = fasi_map.get(c['codice'], [])
+        _arricchisci_bom_wood(c.get('figli', []), descr_map, fasi_map)
+
+
 @magazzino_bp.route('/api/distinta_base_wood/<codice>')
 def api_distinta_base_wood(codice):
-    art = ArticoloML.query.filter_by(sku=codice).first()
     componenti = _esplodi_bom_wood(codice)
+
+    tutti_codici = {codice}
+    _raccogli_codici_bom(componenti, tutti_codici)
+
+    descr_map = {}
+    try:
+        for a in ArticoloML.query.filter(ArticoloML.sku.in_(tutti_codici)).all():
+            descr_map[a.sku] = {'descrizione': a.descrizione, 'stock': a.stock, 'fornitore': a.fornitore}
+    except Exception:
+        db.session.rollback()
+
+    fasi_map = {}
+    for f in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_codici))
+              .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()):
+        fasi_map.setdefault(f.codice, []).append({
+            'sequenza':             f.sequenza,
+            'centro_costo_nome':    f.centro_costo.nome if f.centro_costo else '',
+            'centro_costo_esterno': f.centro_costo.esterno if f.centro_costo else False,
+            'produttivita_oraria':  f.produttivita_oraria,
+        })
+
+    _arricchisci_bom_wood(componenti, descr_map, fasi_map)
+
+    info_root = descr_map.get(codice)
     return jsonify({
-        'codice':      codice,
-        'descrizione': art.descrizione if art else '',
-        'trovato':     art is not None,
-        'ha_bom':      len(componenti) > 0,
-        'componenti':  componenti,
+        'codice':       codice,
+        'descrizione':  info_root['descrizione'] if info_root else '',
+        'trovato':      info_root is not None,
+        'ha_bom':       len(componenti) > 0,
+        'cicli_lavoro': fasi_map.get(codice, []),
+        'componenti':   componenti,
     })
 
 
