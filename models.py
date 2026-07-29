@@ -66,11 +66,12 @@ class CentroCostoWood(db.Model):
     di CicloLavoroWood punta a uno di questi come "reparto" della fase.
     """
     __tablename__ = 'centri_costo_wood'
-    id          = db.Column(db.Integer, primary_key=True)
-    nome        = db.Column(db.String(100), nullable=False, unique=True)
-    esterno     = db.Column(db.Boolean, default=False)   # True = lavorazione esterna (es. verniciatura esterna)
-    note        = db.Column(db.String(300), default='')
-    creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+    id            = db.Column(db.Integer, primary_key=True)
+    nome          = db.Column(db.String(100), nullable=False, unique=True)
+    esterno       = db.Column(db.Boolean, default=False)   # True = lavorazione esterna (es. verniciatura esterna)
+    costo_orario  = db.Column(db.Float, default=0)          # €/h SOLO macchina/reparto (ammortamento, energia, manutenzione...) — la manodopera si calcola a parte (tariffa operatore × ore da MasterWork)
+    note          = db.Column(db.String(300), default='')
+    creato_il     = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class CicloLavoroWood(db.Model):
@@ -915,6 +916,8 @@ def init_db():
         "UPDATE schede_trattamenti SET zincatura=TRUE, zincatura_tipo='FREDDO' WHERE tipo_trattamento='ZINCATURA_FREDDO' AND zincatura IS NOT TRUE",
         "UPDATE schede_trattamenti SET zincatura=TRUE, verniciatura=TRUE WHERE tipo_trattamento='ZINCATURA_VERNICIATURA' AND (zincatura IS NOT TRUE OR verniciatura IS NOT TRUE)",
         "UPDATE schede_trattamenti SET verniciatura=TRUE WHERE tipo_trattamento='VERNICIATURA' AND verniciatura IS NOT TRUE",
+        # ── Centro di Costo Iron Wood: costo orario macchina/reparto (senza manodopera) ──
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS costo_orario DOUBLE PRECISION DEFAULT 0",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
