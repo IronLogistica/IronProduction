@@ -240,7 +240,80 @@ def api_importa_distinta_wood():
             return jsonify({'errore': True, 'messaggio': 'Formato file non supportato o illeggibile (usare .xlsx, .xls o .csv).'}), 400
 
         df.columns = [str(c).strip().lower() for c in df.columns]
-        # Nomi colonna flessibili, per non dipendere da un'intestazione esatta
+
+        # ── FORMATO A: export Zucchetti multilivello (CODART, CODCOM, NUMLEV, QTAMOV, ...) ──
+        # Un codice prodotto (CODART) ripetuto su più righe; NUMLEV = livello di
+        # annidamento; CODCOM contiene il codice del componente preceduto da un
+        # prefisso di punti/numero d'ordine (es. ". . 3 P6025" → componente "P6025").
+        # Il padre di una riga di livello N è l'ultimo componente visto al livello
+        # N-1 (o il CODART stesso se N=1). NUMLEV=0 è la riga di intestazione del
+        # prodotto stesso, non una relazione BOM reale: si salta.
+        if {'codart', 'codcom', 'numlev', 'qtamov'}.issubset(set(df.columns)):
+            nuovi = aggiornati = scartate = 0
+            righe_scartate = []
+            esistenti = {(r.codice_padre, r.codice_figlio): r for r in DistintaBaseWood.query.all()}
+
+            root_corrente = None
+            stack = {}
+            for i, row in df.iterrows():
+                codart = str(row['codart']).strip().upper()
+                if not codart or codart.lower() == 'nan':
+                    continue
+                if codart != root_corrente:
+                    root_corrente = codart
+                    stack = {}
+
+                try:
+                    numlev = int(row['numlev'])
+                except (ValueError, TypeError):
+                    continue
+                if numlev == 0:
+                    continue  # riga di intestazione del prodotto, non un componente
+
+                codcom_raw = str(row['codcom']).strip()
+                child = codcom_raw.split()[-1].strip().upper() if codcom_raw else ''
+                if not child or child.lower() == 'nan':
+                    scartate += 1
+                    righe_scartate.append(f"riga {i+2}: componente illeggibile in CODCOM ('{codcom_raw}')")
+                    continue
+
+                padre = root_corrente if numlev == 1 else stack.get(numlev - 1, root_corrente)
+                if padre == child:
+                    scartate += 1
+                    righe_scartate.append(f"riga {i+2}: {child} risulterebbe componente di se stesso, saltata")
+                    stack[numlev] = child
+                    continue
+
+                try:
+                    qta = float(row['qtamov']) if pd.notna(row['qtamov']) else 1.0
+                except (ValueError, TypeError):
+                    qta = 1.0
+                note = str(row.get('db__note', '')).strip()
+                if note.lower() in ('nan', 'none'):
+                    note = ''
+
+                chiave = (padre, child)
+                if chiave in esistenti:
+                    r = esistenti[chiave]
+                    r.quantita, r.livello, r.note = qta, numlev, note
+                    aggiornati += 1
+                else:
+                    nr = DistintaBaseWood(codice_padre=padre, codice_figlio=child,
+                                          quantita=qta, livello=numlev, note=note,
+                                          creato_il=datetime.utcnow())
+                    db.session.add(nr)
+                    esistenti[chiave] = nr  # evita duplicati se la stessa coppia ricompare nel file
+                    nuovi += 1
+
+                stack[numlev] = child
+
+            db.session.commit()
+            return jsonify({
+                'ok': True, 'nuovi': nuovi, 'aggiornati': aggiornati,
+                'scartate': scartate, 'righe_scartate': righe_scartate[:30]
+            })
+
+        # ── FORMATO B: colonne semplici dirette (codice_padre, codice_figlio, ...) ──
         col_padre  = next((c for c in ['codice_padre', 'padre', 'codice padre'] if c in df.columns), None)
         col_figlio = next((c for c in ['codice_figlio', 'figlio', 'codice figlio'] if c in df.columns), None)
         if not col_padre or not col_figlio:
