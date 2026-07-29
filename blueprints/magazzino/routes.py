@@ -196,3 +196,94 @@ def api_del_distinta_wood(id_riga):
     except Exception as e:
         db.session.rollback()
         return jsonify({'errore': True, 'messaggio': str(e)}), 500
+
+
+@magazzino_bp.route('/api/distinta_base_wood/importa', methods=['POST'])
+def api_importa_distinta_wood():
+    """
+    Caricamento massivo da file Excel/CSV per la distinta Iron Wood.
+    Stesso principio del caricamento massivo articoli di MasterLogistic
+    (route /importazione_massiva): colonne lette PER NOME (non per
+    posizione fissa, quindi nessun rischio di sfasamento se il file
+    cambia struttura), UPSERT riga per riga — mai un replace/DROP.
+    """
+    file = request.files.get('file_excel')
+    if not file:
+        return jsonify({'errore': True, 'messaggio': 'Nessun file selezionato.'}), 400
+    try:
+        import io
+        import pandas as pd
+        filename = file.filename.lower()
+        raw = file.read()
+        df = None
+        if filename.endswith('.xlsx') or filename.endswith('.xls'):
+            df = pd.read_excel(io.BytesIO(raw), engine='openpyxl')
+        elif filename.endswith('.csv'):
+            for enc in ['utf-8', 'latin-1', 'cp1252']:
+                try:
+                    df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep=None, engine='python')
+                    break
+                except Exception:
+                    pass
+        if df is None:
+            return jsonify({'errore': True, 'messaggio': 'Formato file non supportato o illeggibile (usare .xlsx, .xls o .csv).'}), 400
+
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        # Nomi colonna flessibili, per non dipendere da un'intestazione esatta
+        col_padre  = next((c for c in ['codice_padre', 'padre', 'codice padre'] if c in df.columns), None)
+        col_figlio = next((c for c in ['codice_figlio', 'figlio', 'codice figlio'] if c in df.columns), None)
+        if not col_padre or not col_figlio:
+            return jsonify({'errore': True,
+                             'messaggio': f'Colonne codice_padre/codice_figlio non trovate. Colonne nel file: {list(df.columns)}'}), 400
+        col_qta    = next((c for c in ['quantita', 'quantità', 'qta'] if c in df.columns), None)
+        col_liv    = next((c for c in ['livello', 'liv'] if c in df.columns), None)
+        col_note   = next((c for c in ['note', 'nota'] if c in df.columns), None)
+
+        nuovi = aggiornati = scartate = 0
+        righe_scartate = []
+        for i, row in df.iterrows():
+            padre  = str(row[col_padre]).strip().upper()
+            figlio = str(row[col_figlio]).strip().upper()
+            if not padre or not figlio or padre.lower() == 'nan' or figlio.lower() == 'nan':
+                scartate += 1
+                righe_scartate.append(f"riga {i+2}: codice padre o figlio mancante")
+                continue
+            if padre == figlio:
+                scartate += 1
+                righe_scartate.append(f"riga {i+2}: {padre} non può essere componente di se stesso")
+                continue
+
+            try:
+                qta = float(str(row.get(col_qta, 1) if col_qta else 1).replace(',', '.') or 1)
+            except (ValueError, TypeError):
+                qta = 1.0
+            try:
+                liv = int(float(row.get(col_liv, 1))) if col_liv and pd.notna(row.get(col_liv)) else 1
+            except (ValueError, TypeError):
+                liv = 1
+            note = str(row.get(col_note, '')).strip() if col_note else ''
+            if note.lower() in ('nan', 'none'):
+                note = ''
+
+            esistente = DistintaBaseWood.query.filter_by(codice_padre=padre, codice_figlio=figlio).first()
+            if esistente:
+                esistente.quantita = qta
+                esistente.livello  = liv
+                esistente.note     = note
+                aggiornati += 1
+            else:
+                db.session.add(DistintaBaseWood(
+                    codice_padre=padre, codice_figlio=figlio,
+                    quantita=qta, livello=liv, note=note,
+                    creato_il=datetime.utcnow()
+                ))
+                nuovi += 1
+
+        db.session.commit()
+        return jsonify({
+            'ok': True, 'nuovi': nuovi, 'aggiornati': aggiornati,
+            'scartate': scartate, 'righe_scartate': righe_scartate[:30]
+        })
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'errore': True, 'messaggio': str(e)}), 500
