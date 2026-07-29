@@ -2,7 +2,8 @@ from datetime import datetime
 from flask import Blueprint, current_app, jsonify, render_template, request
 from sqlalchemy.exc import IntegrityError
 from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
-                    STATI_ORDINE_PP, ASA_MASTERWORK, prossimo_codice_ordine_pp)
+                    STATI_ORDINE_PP, ASA_MASTERWORK, prossimo_codice_ordine_pp,
+                    prossimo_numero_commessa)
 
 pp_bp = Blueprint("produzione_pp", __name__)
 
@@ -59,7 +60,8 @@ def crea():
         qty = _integer(d.get('qta_pianificata', 0), 'Quantità pianificata')
         priority = _integer(d.get('priorita', 5), 'Priorità', 1)
         if priority > 9: raise ValueError('Priorità deve essere fra 1 e 9')
-        client, job = str(d.get('cliente','')).strip(), str(d.get('commessa','')).strip()
+        client = str(d.get('cliente','')).strip()
+        job = prossimo_numero_commessa()  # generato in automatico, ignora eventuale valore inviato dal client
         legacy = str(d.get('cliente_commessa_esterna','')).strip() or ' / '.join(x for x in (client, job) if x)
         o = OrdineProduzione(codice=prossimo_codice_ordine_pp(), codice_articolo=article,
             descrizione=str(d.get('descrizione','')).strip(), cliente=client, commessa=job,
@@ -75,7 +77,7 @@ def modifica(oid):
     o = OrdineProduzione.query.get_or_404(oid); d = request.get_json(silent=True) or {}
     if o.stato not in ('Creato', 'Rilasciato'): return jsonify(ok=False, error='OP non modificabile nello stato corrente'), 409
     try:
-        for k in ('codice_articolo','descrizione','cliente','commessa','asa'):
+        for k in ('codice_articolo','descrizione','cliente','asa'):
             if k in d: setattr(o, k, str(d[k]).strip())
         if 'qta_pianificata' in d: o.qta_pianificata = _integer(d['qta_pianificata'], 'Quantità pianificata')
         if 'priorita' in d: o.priorita = _integer(d['priorita'], 'Priorità', 1)
