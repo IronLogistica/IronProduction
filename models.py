@@ -58,6 +58,43 @@ class DistintaBaseML(db.Model):
     creato_il     = db.Column(db.DateTime)
 
 
+class CentroCostoWood(db.Model):
+    """
+    Centro di costo / reparto di produzione Iron Wood — macchine come
+    piegatrice, sega, foratura, oppure lavorazioni esterne (verniciatura
+    esterna, piega esterna). Prerequisito dei Cicli di Lavoro: ogni riga
+    di CicloLavoroWood punta a uno di questi come "reparto" della fase.
+    """
+    __tablename__ = 'centri_costo_wood'
+    id          = db.Column(db.Integer, primary_key=True)
+    nome        = db.Column(db.String(100), nullable=False, unique=True)
+    esterno     = db.Column(db.Boolean, default=False)   # True = lavorazione esterna (es. verniciatura esterna)
+    note        = db.Column(db.String(300), default='')
+    creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class CicloLavoroWood(db.Model):
+    """
+    Ciclo di lavoro (routing) Iron Wood — sequenza di reparti attraversati
+    da un codice (padre O figlio: un sottocomponente può avere il proprio
+    ciclo, indipendente da quello del padre), con la produttività oraria
+    specifica per quel codice in quel reparto.
+    Una riga = una fase: (codice, sequenza) individua univocamente il suo
+    posto nell'ordine del ciclo; più righe con lo stesso codice e sequenza
+    crescente = reparti in serie.
+    """
+    __tablename__ = 'ciclo_lavoro_wood'
+    id                  = db.Column(db.Integer, primary_key=True)
+    codice              = db.Column(db.String(50), nullable=False)   # codice padre o figlio della distinta Iron Wood
+    sequenza            = db.Column(db.Integer, nullable=False)      # ordine del reparto nel ciclo (1,2,3...)
+    centro_costo_id     = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
+    produttivita_oraria = db.Column(db.Float, default=0)             # pezzi/ora per QUESTO codice in QUESTO reparto
+    note                = db.Column(db.String(300), default='')
+    creato_il           = db.Column(db.DateTime, default=datetime.utcnow)
+    centro_costo        = db.relationship('CentroCostoWood')
+    __table_args__ = (db.UniqueConstraint('codice', 'sequenza', name='_codice_sequenza_uc'),)
+
+
 class DistintaBaseWood(db.Model):
     """
     Distinta base (BOM) di Iron Wood — COPIA LOCALE, nel database di
