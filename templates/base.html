@@ -302,10 +302,17 @@
         <input class="modal-input" id="creaKanbanVal" type="number" value="0" step="0.01" min="0" placeholder="0.00">
       </div>
     </div>
+    <label class="modal-label">Tipo di approvvigionamento</label>
+    <select class="modal-input" id="creaKanbanTipoApprovvigionamento" onchange="aggiornaEtichettaLeadTimeFornitura()">
+      <option value="MATERIA_PRIMA_FORNITORE">Materia prima da fornitore</option>
+      <option value="COMPONENTE_ACQUISTO">Componente d'acquisto</option>
+      <option value="LASERATO">Laserato</option>
+    </select>
+    <div class="modal-hint" style="margin-top:6px">Il <strong>laserato</strong> è un acquisto da fornitore con tempo di consegna dedicato: non genera una lavorazione esterna o un rientro terzista.</div>
     <div class="modal-row">
       <div style="flex:1">
-        <label class="modal-label" style="margin-top:0">Lead Time (giorni)</label>
-        <input class="modal-input" id="creaKanbanLT" type="number" value="7" step="0.5" min="0.5">
+        <label class="modal-label" id="creaKanbanLeadTimeLabel" style="margin-top:0">Lead time fornitore (giorni)</label>
+        <input class="modal-input" id="creaKanbanLeadTimeFornitura" type="number" value="7" step="0.5" min="0.5">
       </div>
       <div style="flex:1">
         <label class="modal-label" style="margin-top:0">Scorta sicurezza %</label>
@@ -477,11 +484,19 @@ function openModalCreaKanban(sheetKey){
   document.getElementById('creaKanbanLotto').value   = '0';
   document.getElementById('creaKanbanRiserva').value = '0';
   document.getElementById('creaKanbanVal').value     = '0';
-  document.getElementById('creaKanbanLT').value      = '7';
+  document.getElementById('creaKanbanTipoApprovvigionamento').value = 'MATERIA_PRIMA_FORNITORE';
+  document.getElementById('creaKanbanLeadTimeFornitura').value = '7';
+  aggiornaEtichettaLeadTimeFornitura();
   document.getElementById('creaKanbanSS').value      = '15';
   document.getElementById('pinCreaKanban').value     = '';
   openModal('modalCreaKanban');
   setTimeout(()=>document.getElementById('creaKanbanNome').focus(),100);
+}
+function aggiornaEtichettaLeadTimeFornitura(){
+  const tipo = document.getElementById('creaKanbanTipoApprovvigionamento')?.value;
+  const label = document.getElementById('creaKanbanLeadTimeLabel');
+  if (!label) return;
+  label.textContent = tipo === 'LASERATO' ? 'Lead time laserato (giorni)' : 'Lead time fornitore (giorni)';
 }
 function confermCreaKanban(){
   const nome    = document.getElementById('creaKanbanNome').value.trim();
@@ -495,7 +510,9 @@ function confermCreaKanban(){
       lotto:    parseInt(document.getElementById('creaKanbanLotto').value)||0,
       riserva:  parseInt(document.getElementById('creaKanbanRiserva').value)||0,
       val_medio:parseFloat(document.getElementById('creaKanbanVal').value)||0,
-      lead_time_giorni: parseFloat(document.getElementById('creaKanbanLT').value)||7,
+      tipo_approvvigionamento: document.getElementById('creaKanbanTipoApprovvigionamento').value,
+      lead_time_fornitura_giorni: parseFloat(document.getElementById('creaKanbanLeadTimeFornitura').value)||7,
+      lead_time_giorni: parseFloat(document.getElementById('creaKanbanLeadTimeFornitura').value)||7,
       scorta_sicurezza: (parseFloat(document.getElementById('creaKanbanSS').value)||15)/100,
     })})
   .then(r=>r.json()).then(d=>{
