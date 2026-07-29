@@ -57,10 +57,28 @@
 <!-- ══ MODAL: CICLO DI LAVORO PER SINGOLO CODICE ═══════════════════════════ -->
 <div class="modal-overlay" id="modal-ciclo-lavoro">
   <div class="modal-box" style="width:540px;max-width:96vw">
-    <h3>🔧 Ciclo di Lavoro — <span id="cl-modal-codice"></span></h3>
+    <h3>📦 Scheda articolo — <span id="cl-modal-codice"></span></h3>
     <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
-      Sequenza di reparti attraversati da questo codice, con produttività oraria specifica.
+      Prima classifica l'articolo; aggiungi un ciclo solo se il codice viene effettivamente lavorato.
     </p>
+    <div id="cl-modal-approvvigionamento" style="padding:10px;margin-bottom:12px;border:1px solid var(--border);border-radius:7px;background:var(--bg)">
+      <div style="font-size:12px;font-weight:700;margin-bottom:7px">📦 Classificazione approvvigionamento</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+        <div style="flex:1;min-width:210px"><label class="modal-label" style="margin:0 0 4px">Tipo articolo</label>
+          <select id="cl-modal-tipo-approvvigionamento" class="modal-input" style="width:100%">
+            <option value="DA_CLASSIFICARE">Da classificare</option>
+            <option value="MATERIA_PRIMA_FORNITORE">Materia prima da fornitore</option>
+            <option value="COMPONENTE_ACQUISTO">Componente d’acquisto</option>
+            <option value="LASERATO">Laserato</option>
+          </select>
+        </div>
+        <div style="width:145px"><label class="modal-label" style="margin:0 0 4px">Lead time fornitore</label>
+          <input id="cl-modal-lead-time-fornitura" class="modal-input" type="number" min="0" step="0.5" placeholder="Giorni" style="width:100%">
+        </div>
+        <button class="btn btn-primary" onclick="salvaApprovvigionamentoModal()">💾 Salva</button>
+      </div>
+      <div id="cl-modal-approvvigionamento-esito" style="font-size:11px;margin-top:6px;color:var(--text-dim)"></div>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
       <input id="cl-modal-sequenza" type="number" step="1" min="1" value="1" placeholder="Sequenza"
              style="width:90px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
@@ -176,8 +194,8 @@ async function caricaListaWood(){
     let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
       '<th>Padre</th><th>Figlio</th><th>Quantità</th><th>Livello</th><th>Note</th><th></th></tr></thead><tbody>';
     righe.forEach(r=>{
-      html += `<tr><td class="codice">${r.codice_padre} <button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" onclick="apriCicloLavoro('${r.codice_padre}')" title="Ciclo di lavoro">🔧</button></td>` +
-        `<td class="codice">${r.codice_figlio} <button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" onclick="apriCicloLavoro('${r.codice_figlio}')" title="Ciclo di lavoro">🔧</button></td>` +
+      html += `<tr><td class="codice">${r.codice_padre} <button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" onclick="apriCicloLavoro('${r.codice_padre}')" title="Scheda articolo e ciclo">⚙️</button></td>` +
+        `<td class="codice">${r.codice_figlio} <button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" onclick="apriCicloLavoro('${r.codice_figlio}')" title="Scheda articolo e ciclo">⚙️</button></td>` +
         `<td class="num">${r.quantita}</td><td class="num">${r.livello}</td><td class="lav-td">${r.note||'—'}</td>` +
         `<td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="cancellaRigaWood(${r.id})">🗑️</button></td></tr>`;
     });
@@ -283,7 +301,42 @@ async function apriCicloLavoro(codice){
   document.getElementById('cl-modal-note').value = '';
   await popolaRepartiModal();
   await caricaFasiCicloModal();
+  await caricaApprovvigionamentoModal();
   openModal('modal-ciclo-lavoro');
+}
+
+async function caricaApprovvigionamentoModal(){
+  const box = document.getElementById('cl-modal-approvvigionamento');
+  const esito = document.getElementById('cl-modal-approvvigionamento-esito');
+  box.style.display = '';
+  esito.style.color = 'var(--text-dim)';
+  esito.textContent = 'Caricamento classificazione…';
+  try{
+    const r = await fetch('/api/articoli/' + encodeURIComponent(_clModalCodice) + '/approvvigionamento');
+    const d = await r.json();
+    if(!r.ok || !d.ok) throw new Error(d.error || 'Caricamento non riuscito');
+    document.getElementById('cl-modal-tipo-approvvigionamento').value = d.tipo_approvvigionamento || 'DA_CLASSIFICARE';
+    document.getElementById('cl-modal-lead-time-fornitura').value = d.lead_time_fornitura_giorni ?? '';
+    esito.textContent = 'La classificazione è indipendente dal ciclo di lavoro.';
+  }catch(e){ esito.textContent = 'Impossibile caricare la classificazione.'; }
+}
+
+async function salvaApprovvigionamentoModal(){
+  const esito = document.getElementById('cl-modal-approvvigionamento-esito');
+  const payload = {
+    tipo_approvvigionamento: document.getElementById('cl-modal-tipo-approvvigionamento').value,
+    lead_time_fornitura_giorni: document.getElementById('cl-modal-lead-time-fornitura').value
+  };
+  try{
+    const r = await fetch('/api/articoli/' + encodeURIComponent(_clModalCodice) + '/approvvigionamento', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
+    const d = await r.json();
+    if(!r.ok || !d.ok) throw new Error(d.error || 'Salvataggio non riuscito');
+    esito.style.color = '#2a9d5c';
+    esito.textContent = '✓ Classificazione salvata. Nessun ciclo di lavoro è stato creato.';
+  }catch(e){
+    esito.style.color = '#c0392b';
+    esito.textContent = '⚠️ ' + e.message;
+  }
 }
 
 async function popolaRepartiModal(){
