@@ -95,6 +95,32 @@ class CicloLavoroWood(db.Model):
     __table_args__ = (db.UniqueConstraint('codice', 'sequenza', name='_codice_sequenza_uc'),)
 
 
+class GiacenzaWood(db.Model):
+    """
+    Giacenza fisica LOCALE Iron Wood (materie prime, componenti d'acquisto,
+    laserati, semilavorati) — non più una lettura di MasterLogistic: qui è
+    la fonte di verità per governare materiali/impegni/fabbisogno delle
+    produzioni Iron Wood, aggiornata da carico iniziale, rettifiche manuali
+    e scarico automatico a consuntivo produzione.
+    """
+    __tablename__ = 'giacenza_wood'
+    codice        = db.Column(db.String(50), primary_key=True)
+    quantita      = db.Column(db.Float, default=0)
+    aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class MovimentoGiacenzaWood(db.Model):
+    """Storico di ogni variazione della giacenza Iron Wood (carico/scarico), per audit."""
+    __tablename__ = 'movimenti_giacenza_wood'
+    id          = db.Column(db.Integer, primary_key=True)
+    codice      = db.Column(db.String(50), nullable=False, index=True)
+    tipo        = db.Column(db.String(30), nullable=False)  # carico_iniziale | carico_manuale | scarico_manuale | scarico_produzione | rettifica_import
+    quantita    = db.Column(db.Float, nullable=False)        # positivo=carico, negativo=scarico
+    riferimento = db.Column(db.String(100), default='')      # es. codice OP che ha generato lo scarico
+    note        = db.Column(db.String(300), default='')
+    creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class DistintaBaseWood(db.Model):
     """
     Distinta base (BOM) di Iron Wood — COPIA LOCALE, nel database di
