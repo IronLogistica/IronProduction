@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, jsonify, request
 from datetime import datetime
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
-                    TIPI_APPROVVIGIONAMENTO)
+                    TIPI_APPROVVIGIONAMENTO, GiacenzaWood, MovimentoGiacenzaWood, OrdineProduzione)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -17,6 +17,11 @@ def index():
 @magazzino_bp.route('/centri-costo-wood')
 def pagina_centri_costo():
     return render_template('centri_costo_wood.html', active='centri_costo')
+
+
+@magazzino_bp.route('/giacenza-wood')
+def pagina_giacenza():
+    return render_template('giacenza_wood.html', active='giacenza_wood')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -548,35 +553,45 @@ def _flatten_componenti(componenti, aggregato):
 @magazzino_bp.route('/api/fabbisogno_produzione')
 def api_fabbisogno_produzione():
     """
-    Fabbisogno di materie prime/semilavorati per TUTTE le commesse Iron Wood
-    ancora aperte (non COMPLETATA/SPEDITA/ANNULLATA): per ogni riga con saldo
-    da produrre, esplode la distinta base locale (distinta_base_wood) e
-    aggrega i componenti necessari a ogni livello.
+    Fabbisogno di materie prime/semilavorati per TUTTI gli Ordini di
+    Produzione Iron Wood ancora aperti (stato in STATI_CHE_IMPEGNANO, saldo
+    da produrre > 0): per ognuno esplode la distinta base locale
+    (distinta_base_wood) e aggrega i componenti necessari a ogni livello.
     Nessuna scrittura qui: solo lettura, per essere interrogato da MasterLogistic.
+
+    NOTA: prima leggeva dalla tabella Commesse/RigaCommessa (sistema Iron
+    Segnaletica, mai popolato nel flusso reale — gli ordini clienti vivono
+    in Iron Segnaletica/MasterLogistic-WMS), che lasciava questo endpoint
+    sempre vuoto. Ora legge OrdineProduzione, il flusso Iron Wood realmente
+    usato — stessa fonte del motore di netting giacenza/impegni.
     """
     aggregato = {}
-    origine = {}  # codice -> lista di {commessa, riga_codice, quantita}
+    origine = {}  # codice -> lista di {commessa, riga_codice, quantita, op_code}
 
-    commesse = Commessa.query.filter(~Commessa.stato.in_(STATI_CHIUSI_COMMESSA)).all()
-    for c in commesse:
-        for riga in c.righe:
-            saldo = riga.saldo
-            if saldo <= 0:
-                continue
-            componenti = _esplodi_bom_wood(riga.codice, qta=saldo)
-            if not componenti:
-                continue
-            locale = {}
-            _flatten_componenti(componenti, locale)
-            for codice, qta in locale.items():
-                aggregato[codice] = aggregato.get(codice, 0) + qta
-                origine.setdefault(codice, []).append({
-                    'commessa': c.numero, 'riga_codice': riga.codice, 'quantita': round(qta, 3)
-                })
+    ordini = OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO)).all()
+    for o in ordini:
+        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        if saldo <= 0:
+            continue
+        componenti = _esplodi_bom_wood(o.codice_articolo, qta=saldo)
+        if not componenti:
+            continue
+        locale = {}
+        _flatten_componenti(componenti, locale)
+        for codice, qta in locale.items():
+            aggregato[codice] = aggregato.get(codice, 0) + qta
+            origine.setdefault(codice, []).append({
+                'commessa': o.commessa, 'riga_codice': o.codice_articolo,
+                'quantita': round(qta, 3), 'op_code': o.codice,
+            })
 
     risultato = []
     for codice, qta in aggregato.items():
-        art = ArticoloML.query.filter_by(sku=codice).first()
+        try:
+            art = ArticoloML.query.filter_by(sku=codice).first()
+        except Exception:
+            db.session.rollback()
+            art = None
         risultato.append({
             'codice':              codice,
             'descrizione':         art.descrizione if art else '',
@@ -586,6 +601,256 @@ def api_fabbisogno_produzione():
         })
     risultato.sort(key=lambda x: x['codice'])
     return jsonify({'fabbisogno': risultato, 'generato_il': datetime.utcnow().isoformat()})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  GIACENZA FISICA IRON WOOD — magazzino LOCALE (non più letto da altrove):
+#  carico iniziale/aggiornamento da Excel/CSV, rettifiche manuali, storico
+#  movimenti, e motore di netting multilivello per il controllo scorta ad
+#  ogni Ordine di Produzione (giacenza − impegni già presi da altri OP aperti
+#  = disponibile; solo il mancante genera fabbisogno dei componenti).
+# ══════════════════════════════════════════════════════════════════════════════
+STATI_CHE_IMPEGNANO = ('Rilasciato', 'In esecuzione', 'Tecnicamente completato')
+
+
+def _registra_movimento_giacenza(codice, delta, tipo, riferimento='', note=''):
+    """Applica un delta (positivo=carico, negativo=scarico) alla giacenza di un
+    codice e registra il movimento in storico. Non fa il commit (lo fa il chiamante)."""
+    g = GiacenzaWood.query.get(codice)
+    if not g:
+        g = GiacenzaWood(codice=codice, quantita=0)
+        db.session.add(g)
+    g.quantita = (g.quantita or 0) + delta
+    g.aggiornato_il = datetime.utcnow()
+    db.session.add(MovimentoGiacenzaWood(codice=codice, tipo=tipo, quantita=delta,
+                                          riferimento=riferimento, note=note))
+
+
+@magazzino_bp.route('/api/giacenza_wood', methods=['GET'])
+def api_giacenza_lista():
+    """Elenco giacenze, con limite di default (200) + ricerca — stesso principio
+    già usato per distinta_base_wood, per non appesantire la pagina con import enormi."""
+    LIMITE_DEFAULT = 200
+    q = (request.args.get('q') or '').strip()
+    query = GiacenzaWood.query
+    totale = query.count()
+    if q:
+        query = query.filter(GiacenzaWood.codice.ilike(f'%{q}%'))
+    righe = query.order_by(GiacenzaWood.aggiornato_il.desc()).limit(LIMITE_DEFAULT).all()
+    return jsonify({
+        'righe': [{'codice': g.codice, 'quantita': g.quantita,
+                   'aggiornato_il': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if g.aggiornato_il else ''} for g in righe],
+        'totale': totale, 'mostrate': len(righe), 'filtrato': bool(q), 'limite': LIMITE_DEFAULT,
+    })
+
+
+@magazzino_bp.route('/api/giacenza_wood/<codice>/movimenti')
+def api_giacenza_movimenti(codice):
+    righe = (MovimentoGiacenzaWood.query.filter_by(codice=codice)
+             .order_by(MovimentoGiacenzaWood.creato_il.desc()).limit(100).all())
+    return jsonify([{
+        'id': m.id, 'tipo': m.tipo, 'quantita': m.quantita, 'riferimento': m.riferimento,
+        'note': m.note, 'creato_il': m.creato_il.strftime('%d/%m/%Y %H:%M') if m.creato_il else '',
+    } for m in righe])
+
+
+@magazzino_bp.route('/api/giacenza_wood/rettifica', methods=['POST'])
+def api_giacenza_rettifica():
+    """Carico/scarico manuale su un singolo codice (es. rettifica da inventario fisico)."""
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip()
+    if not codice:
+        return jsonify({'errore': True, 'messaggio': 'Codice obbligatorio'}), 400
+    try:
+        delta = float(d.get('quantita'))
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Quantità non valida'}), 400
+    if delta == 0:
+        return jsonify({'errore': True, 'messaggio': 'La quantità non può essere zero'}), 400
+    tipo = 'carico_manuale' if delta > 0 else 'scarico_manuale'
+    _registra_movimento_giacenza(codice, delta, tipo, note=(d.get('note') or '').strip())
+    db.session.commit()
+    g = GiacenzaWood.query.get(codice)
+    return jsonify({'ok': True, 'codice': codice, 'quantita': g.quantita})
+
+
+@magazzino_bp.route('/api/giacenza_wood/importa', methods=['POST'])
+def api_importa_giacenza():
+    """
+    Caricamento massivo/aggiornamento giacenza da Excel/CSV — colonne lette per
+    nome: 'codice' (o 'sku'/'articolo') e 'quantita' (o 'giacenza'/'qta').
+    UPSERT: imposta la giacenza al valore del file (non somma) e registra la
+    differenza rispetto al valore precedente come movimento 'rettifica_import'
+    — così il primo caricamento fa da carico iniziale e i successivi da
+    aggiornamento, senza mai perdere lo storico di cosa è cambiato.
+    """
+    file = request.files.get('file_excel')
+    if not file:
+        return jsonify({'errore': True, 'messaggio': 'Nessun file selezionato.'}), 400
+    try:
+        import io
+        import pandas as pd
+        filename = file.filename.lower()
+        raw = file.read()
+        df = None
+        if filename.endswith('.xls'):
+            try:
+                df = pd.read_excel(io.BytesIO(raw), engine='xlrd')
+            except Exception:
+                df = pd.read_excel(io.BytesIO(raw), engine='openpyxl')
+        elif filename.endswith('.xlsx'):
+            df = pd.read_excel(io.BytesIO(raw), engine='openpyxl')
+        elif filename.endswith('.csv'):
+            for enc in ['utf-8', 'latin-1', 'cp1252']:
+                try:
+                    df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep=None, engine='python')
+                    break
+                except Exception:
+                    pass
+        if df is None:
+            return jsonify({'errore': True, 'messaggio': 'Formato file non supportato o illeggibile (usare .xlsx, .xls o .csv).'}), 400
+
+        df.columns = [str(c).strip().lower() for c in df.columns]
+        col_codice = next((c for c in ('codice', 'sku', 'articolo', 'codart') if c in df.columns), None)
+        col_qta    = next((c for c in ('quantita', 'quantità', 'giacenza', 'qta') if c in df.columns), None)
+        if not col_codice or not col_qta:
+            return jsonify({'errore': True,
+                             'messaggio': f'Colonne non trovate. Attese "codice" e "quantita", trovate: {", ".join(df.columns)}'}), 400
+
+        nuovi = aggiornati = scartate = 0
+        for _, row in df.iterrows():
+            codice = str(row[col_codice]).strip()
+            if not codice or codice.lower() == 'nan':
+                scartate += 1
+                continue
+            try:
+                nuova_qta = float(row[col_qta])
+            except (TypeError, ValueError):
+                scartate += 1
+                continue
+            g = GiacenzaWood.query.get(codice)
+            if g is None:
+                _registra_movimento_giacenza(codice, nuova_qta, 'carico_iniziale', note='Import massivo')
+                nuovi += 1
+            else:
+                delta = nuova_qta - (g.quantita or 0)
+                if delta != 0:
+                    _registra_movimento_giacenza(codice, delta, 'rettifica_import', note='Import massivo (aggiornamento)')
+                    aggiornati += 1
+        db.session.commit()
+        return jsonify({'ok': True, 'nuovi': nuovi, 'aggiornati': aggiornati, 'scartate': scartate,
+                        'totale_righe_file': len(df)})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'errore': True, 'messaggio': f'Errore durante l\'import: {e}'}), 500
+
+
+def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _profondita=0, _max_profondita=12):
+    """
+    Esplode la distinta Iron Wood da `codice` per una quantità `qta`, NETTANDO
+    ad ogni nodo contro `giacenza_residua` (dict mutabile {codice: qta libera},
+    CONSUMATO in-place: chiamate successive vedono meno disponibilità — così
+    più OP processati in sequenza si contendono realisticamente la stessa
+    scorta, primo arrivato primo servito).
+    Solo la quota MANCANTE (non coperta da giacenza) cascata sui componenti:
+    un semilavorato già pronto a scorta non genera fabbisogno inutile dei
+    suoi figli (ferro, laserati, ecc.).
+    Accumula in `out` (dict) una riga per ogni codice toccato in QUESTA
+    esplosione: {fabbisogno, usato, mancante} — sommati se il codice compare
+    più volte nell'albero (es. la stessa vite in più punti).
+    """
+    if _visitati is None:
+        _visitati = set()
+    if codice in _visitati or _profondita >= _max_profondita or qta <= 0:
+        return
+    _visitati = _visitati | {codice}
+
+    disponibile_prima = giacenza_residua.get(codice, 0.0)
+    usato = min(disponibile_prima, qta)
+    giacenza_residua[codice] = disponibile_prima - usato
+    mancante = qta - usato
+
+    riga = out.setdefault(codice, {'fabbisogno': 0.0, 'usato': 0.0, 'mancante': 0.0})
+    riga['fabbisogno'] += qta
+    riga['usato']      += usato
+    riga['mancante']   += mancante
+
+    if mancante <= 0:
+        return
+    righe_bom = DistintaBaseWood.query.filter_by(codice_padre=codice).all()
+    for r in righe_bom:
+        qta_figlio = (r.quantita or 1.0) * mancante
+        _netta_e_esplodi_wood(r.codice_figlio, qta_figlio, giacenza_residua, out, _visitati, _profondita + 1, _max_profondita)
+
+
+def _giacenza_residua_dopo_impegni(escludi_op_id=None):
+    """
+    Parte dalla giacenza fisica attuale e simula il consumo di TUTTI gli OP
+    aperti (stato in STATI_CHE_IMPEGNANO), in ordine di creazione (i più
+    vecchi vengono serviti prima) — ritorna il dict {codice: qta rimasta}
+    DOPO aver tolto quanto già impegnato da quegli OP.
+    """
+    giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
+    op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
+                 .order_by(OrdineProduzione.id.asc()).all())
+    for op in op_aperti:
+        if escludi_op_id and op.id == escludi_op_id:
+            continue
+        saldo = (op.qta_pianificata or 0) - (op.qta_buona or 0)
+        if saldo > 0:
+            _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua, {})
+    return giacenza_residua
+
+
+@magazzino_bp.route('/api/fabbisogno_disponibilita')
+def api_fabbisogno_disponibilita():
+    """
+    Controllo scorta per un codice+quantità (tipicamente l'OP che si sta per
+    creare, o un OP esistente da verificare): per ogni componente toccato
+    dall'esplosione, mostra Giacenza fisica, Già impegnato da altri OP aperti,
+    Disponibile, Fabbisogno di QUESTO OP, Mancante da acquistare/produrre.
+    Parametri: ?codice=...&qta=...  oppure ?op_id=... (usa l'OP esistente,
+    escludendolo dal calcolo di "già impegnato" per non contare se stesso).
+    """
+    codice = (request.args.get('codice') or '').strip()
+    qta_str = request.args.get('qta')
+    op_id = request.args.get('op_id', type=int)
+
+    if op_id:
+        op = OrdineProduzione.query.get_or_404(op_id)
+        codice = op.codice_articolo
+        qta = (op.qta_pianificata or 0) - (op.qta_buona or 0)
+    else:
+        if not codice:
+            return jsonify({'errore': True, 'messaggio': 'Specificare "codice" e "qta", oppure "op_id"'}), 400
+        try:
+            qta = float(qta_str)
+        except (TypeError, ValueError):
+            return jsonify({'errore': True, 'messaggio': 'Quantità non valida'}), 400
+
+    giacenza_iniziale = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
+    giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=op_id)
+    disponibile_prima_di_questo = dict(giacenza_residua)
+
+    righe = {}
+    if qta > 0 and codice:
+        _netta_e_esplodi_wood(codice, qta, giacenza_residua, righe)
+
+    risultato = []
+    for cod, r in righe.items():
+        giacenza_tot = giacenza_iniziale.get(cod, 0.0)
+        disponibile = disponibile_prima_di_questo.get(cod, 0.0)
+        gia_impegnato = giacenza_tot - disponibile
+        risultato.append({
+            'codice':              cod,
+            'giacenza':            round(giacenza_tot, 3),
+            'gia_impegnato':       round(max(gia_impegnato, 0), 3),
+            'disponibile':         round(max(disponibile, 0), 3),
+            'fabbisogno_nuovo_op': round(r['fabbisogno'], 3),
+            'mancante':            round(r['mancante'], 3),
+        })
+    risultato.sort(key=lambda x: (-x['mancante'], x['codice']))
+    return jsonify({'codice': codice, 'qta': qta, 'righe': risultato})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
