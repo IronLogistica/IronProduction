@@ -86,6 +86,7 @@ class DistintaBaseWood(db.Model):
     __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_padre_figlio_wood_uc'),)
 
 
+class Cliente(db.Model):
     __tablename__ = "clienti"
     id       = db.Column(db.Integer, primary_key=True)
     nome     = db.Column(db.String(200), nullable=False)
