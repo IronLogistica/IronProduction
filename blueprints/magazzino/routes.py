@@ -12,6 +12,11 @@ def index():
     return render_template('magazzino/index.html', active='magazzino')
 
 
+@magazzino_bp.route('/centri-costo-wood')
+def pagina_centri_costo():
+    return render_template('centri_costo_wood.html', active='centri_costo')
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  Nessuna anagrafica locale: si legge in tempo reale la tabella 'articoli'
 #  di MasterLogistic tramite il bind Postgres 'masterlogistic' (stesso
@@ -141,16 +146,38 @@ def api_distinta_base_wood(codice):
 
 @magazzino_bp.route('/api/distinta_base_wood', methods=['GET'])
 def api_lista_distinta_wood():
-    """Restituisce tutte le righe della distinta base Iron Wood (per la tabella di gestione)."""
-    righe = DistintaBaseWood.query.order_by(DistintaBaseWood.codice_padre, DistintaBaseWood.livello).all()
-    return jsonify([{
-        'id':            r.id,
-        'codice_padre':  r.codice_padre,
-        'codice_figlio': r.codice_figlio,
-        'quantita':      r.quantita,
-        'livello':       r.livello,
-        'note':          r.note or '',
-    } for r in righe])
+    """
+    Restituisce le righe della distinta base Iron Wood per la tabella di
+    gestione. Con un import massivo la tabella può avere migliaia di righe:
+    per non bloccare il browser (fetch enorme + migliaia di <tr> nel DOM),
+    di default ne restituisce al massimo LIMITE_DEFAULT, più recenti prima,
+    e richiede una ricerca (?q=) per vedere righe specifiche.
+    """
+    LIMITE_DEFAULT = 200
+    q = (request.args.get('q') or '').strip()
+    query = DistintaBaseWood.query
+    totale = query.count()
+    if q:
+        pattern = f'%{q}%'
+        query = query.filter(
+            db.or_(DistintaBaseWood.codice_padre.ilike(pattern),
+                   DistintaBaseWood.codice_figlio.ilike(pattern))
+        )
+    righe = query.order_by(DistintaBaseWood.id.desc()).limit(LIMITE_DEFAULT).all()
+    return jsonify({
+        'righe': [{
+            'id':            r.id,
+            'codice_padre':  r.codice_padre,
+            'codice_figlio': r.codice_figlio,
+            'quantita':      r.quantita,
+            'livello':       r.livello,
+            'note':          r.note or '',
+        } for r in righe],
+        'totale':      totale,
+        'mostrate':    len(righe),
+        'filtrato':    bool(q),
+        'limite':      LIMITE_DEFAULT,
+    })
 
 
 @magazzino_bp.route('/api/distinta_base_wood', methods=['POST'])
@@ -440,45 +467,22 @@ def api_fabbisogno_produzione():
 # ══════════════════════════════════════════════════════════════════════════════
 @magazzino_bp.route('/api/codici_padre_wood')
 def api_codici_padre_wood():
+    """Solo codici PADRE della distinta Iron Wood — presi da IronProduction, nessuna dipendenza da MasterLogistic."""
     codici = [row[0] for row in db.session.query(DistintaBaseWood.codice_padre).distinct()
               .order_by(DistintaBaseWood.codice_padre).all()]
-    risultato = []
-    for codice in codici:
-        descrizione = ''
-        try:
-            art = ArticoloML.query.filter_by(sku=codice).first()
-            if art:
-                descrizione = art.descrizione
-        except Exception:
-            # MasterLogistic momentaneamente irraggiungibile: non far sparire
-            # l'intero widget per questo — il codice resta comunque selezionabile,
-            # semplicemente senza descrizione accanto.
-            db.session.rollback()
-        risultato.append({'codice': codice, 'descrizione': descrizione})
-    return jsonify(risultato)
+    return jsonify([{'codice': c} for c in codici])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  TUTTI I CODICI IRON WOOD (padre + figlio) — per l'autocomplete del form
-#  Cicli di Lavoro: un ciclo può riguardare tanto il codice padre (prodotto
-#  finito) quanto un codice figlio (sottocomponente con lavorazione propria).
+#  TUTTI I CODICI IRON WOOD (padre + figlio) — usati per il popup Ciclo di
+#  Lavoro. Presi solo da IronProduction, nessuna dipendenza da MasterLogistic.
 # ══════════════════════════════════════════════════════════════════════════════
 @magazzino_bp.route('/api/codici_wood_tutti')
 def api_codici_wood_tutti():
     padri  = {row[0] for row in db.session.query(DistintaBaseWood.codice_padre).distinct().all()}
     figli  = {row[0] for row in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
     codici = sorted(padri | figli)
-    risultato = []
-    for codice in codici:
-        descrizione = ''
-        try:
-            art = ArticoloML.query.filter_by(sku=codice).first()
-            if art:
-                descrizione = art.descrizione
-        except Exception:
-            db.session.rollback()
-        risultato.append({'codice': codice, 'descrizione': descrizione, 'e_padre': codice in padri})
-    return jsonify(risultato)
+    return jsonify([{'codice': c, 'e_padre': c in padri} for c in codici])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
