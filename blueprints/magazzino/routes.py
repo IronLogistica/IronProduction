@@ -1,8 +1,10 @@
 from flask import Blueprint, render_template, jsonify, request
 from datetime import datetime
-from models import db, ArticoloML, DistintaBaseML, DistintaBaseWood
+from models import db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa
 
 magazzino_bp = Blueprint('magazzino', __name__)
+
+STATI_CHIUSI_COMMESSA = {"COMPLETATA", "SPEDITA", "ANNULLATA"}
 
 
 @magazzino_bp.route('/magazzino')
@@ -371,3 +373,77 @@ def api_importa_distinta_wood():
     except Exception as e:
         db.session.rollback()
         return jsonify({'errore': True, 'messaggio': str(e)}), 500
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FABBISOGNO PRODUZIONE — pensato per essere interrogato da MasterLogistic
+#  (pull, non push): un canale SEPARATO dagli ordini clienti via PDF, per non
+#  mescolare mai le due cose nello stesso motore/dashboard.
+# ══════════════════════════════════════════════════════════════════════════════
+def _flatten_componenti(componenti, aggregato):
+    """Somma ricorsivamente le quantità totali di ogni componente (a tutti i
+    livelli) in un unico dizionario {codice: quantita_totale}."""
+    for c in componenti:
+        aggregato[c['codice']] = aggregato.get(c['codice'], 0) + (c['quantita_totale'] or 0)
+        if c.get('figli'):
+            _flatten_componenti(c['figli'], aggregato)
+
+
+@magazzino_bp.route('/api/fabbisogno_produzione')
+def api_fabbisogno_produzione():
+    """
+    Fabbisogno di materie prime/semilavorati per TUTTE le commesse Iron Wood
+    ancora aperte (non COMPLETATA/SPEDITA/ANNULLATA): per ogni riga con saldo
+    da produrre, esplode la distinta base locale (distinta_base_wood) e
+    aggrega i componenti necessari a ogni livello.
+    Nessuna scrittura qui: solo lettura, per essere interrogato da MasterLogistic.
+    """
+    aggregato = {}
+    origine = {}  # codice -> lista di {commessa, riga_codice, quantita}
+
+    commesse = Commessa.query.filter(~Commessa.stato.in_(STATI_CHIUSI_COMMESSA)).all()
+    for c in commesse:
+        for riga in c.righe:
+            saldo = riga.saldo
+            if saldo <= 0:
+                continue
+            componenti = _esplodi_bom_wood(riga.codice, qta=saldo)
+            if not componenti:
+                continue
+            locale = {}
+            _flatten_componenti(componenti, locale)
+            for codice, qta in locale.items():
+                aggregato[codice] = aggregato.get(codice, 0) + qta
+                origine.setdefault(codice, []).append({
+                    'commessa': c.numero, 'riga_codice': riga.codice, 'quantita': round(qta, 3)
+                })
+
+    risultato = []
+    for codice, qta in aggregato.items():
+        art = ArticoloML.query.filter_by(sku=codice).first()
+        risultato.append({
+            'codice':              codice,
+            'descrizione':         art.descrizione if art else '',
+            'quantita_necessaria': round(qta, 3),
+            'stock_noto':          art.stock if art else None,
+            'origine':             origine.get(codice, []),
+        })
+    risultato.sort(key=lambda x: x['codice'])
+    return jsonify({'fabbisogno': risultato, 'generato_il': datetime.utcnow().isoformat()})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CODICI PADRE DISPONIBILI — per il widget di selezione nella pagina Ordini di
+#  Produzione: elenca SOLO i codici che sono "padre" in distinta_base_wood
+#  (cioè prodotti finiti Iron Wood con una distinta associata), non un
+#  qualsiasi codice del magazzino condiviso.
+# ══════════════════════════════════════════════════════════════════════════════
+@magazzino_bp.route('/api/codici_padre_wood')
+def api_codici_padre_wood():
+    codici = [row[0] for row in db.session.query(DistintaBaseWood.codice_padre).distinct()
+              .order_by(DistintaBaseWood.codice_padre).all()]
+    risultato = []
+    for codice in codici:
+        art = ArticoloML.query.filter_by(sku=codice).first()
+        risultato.append({'codice': codice, 'descrizione': art.descrizione if art else ''})
+    return jsonify(risultato)
