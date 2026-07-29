@@ -1,289 +1,180 @@
 from flask import Blueprint, render_template, jsonify, request
+from models import db, RigaMonitor, log
 from datetime import datetime
-from models import db, ArticoloML, DistintaBaseML, DistintaBaseWood
 
-magazzino_bp = Blueprint('magazzino', __name__)
+monitor_bp = Blueprint('monitor', __name__)
+
+# ── Mappa sezioni SEGATRICE ───────────────────────────────────────────────────
+SEZIONI_SEGATRICE = {
+    'lavorazione': ('🚧 IN LAVORAZIONE', 'lavorazione-hdr'),
+    'da_iniziare': ('✅ DA INIZIARE LAVORAZIONI', 'da_iniziare-hdr'),
+    'in_attesa':   ('🛬 IN ATTESA — Componenti / MP / Sospesi', 'in_attesa-hdr'),
+    'in_saldatura':('👨‍🏭 IN SALDATURA', 'in_saldatura-hdr'),
+    'postazione':  ('🔜 POSTAZIONE DA ASSEGNARE / LAVORAZIONI DA FINIRE', 'postazione-hdr'),
+    'terminati':   ('✅ APPENA TERMINATI', 'terminati-hdr'),
+}
+
+# ── Mappa sezioni TRAPANI ─────────────────────────────────────────────────────
+# Ogni trapano ha le sue 3 sezioni, prefissate con trap1_ e trap2_
+SEZIONI_TRAPANO = {
+    'trap1_lavorazione': ('🔩 TRAPANO 1 — In Lavorazione',    'trap1-lav-hdr'),
+    'trap1_in_attesa':   ('🛬 TRAPANO 1 — In Attesa',         'trap1-att-hdr'),
+    'trap1_terminati':   ('✅ TRAPANO 1 — Appena Terminati',  'trap1-ter-hdr'),
+    'trap2_lavorazione': ('🔩 TRAPANO 2 — In Lavorazione',    'trap2-lav-hdr'),
+    'trap2_in_attesa':   ('🛬 TRAPANO 2 — In Attesa',         'trap2-att-hdr'),
+    'trap2_terminati':   ('✅ TRAPANO 2 — Appena Terminati',  'trap2-ter-hdr'),
+}
+
+# Tutte le sezioni valide (per validazione)
+TUTTE_SEZIONI = list(SEZIONI_SEGATRICE.keys()) + list(SEZIONI_TRAPANO.keys())
+
+ICONE = {'done': '✅', 'wip': '🚧', 'todo': '🔜', 'na': '✗', 'nd': '·'}
 
 
-@magazzino_bp.route('/magazzino')
+def riga_to_dict(r):
+    return {
+        'id': r.id, 'sezione': r.sezione, 'comm_id': r.comm_id,
+        'codice': r.codice, 'descrizione': r.descrizione,
+        'totale': r.totale, 'saldo': r.saldo, 'pct': r.pct,
+        'priority': r.priority or '',
+        'taglio':   r.taglio   or 'nd',
+        'sgola':    r.sgola    or 'nd',
+        'piega':    r.piega    or 'nd',
+        'saldatura':r.saldatura or 'nd',
+    }
+
+
+# ── ROUTE: Monitor Segatrice ──────────────────────────────────────────────────
+@monitor_bp.route('/monitor')
 def index():
-    return render_template('magazzino/index.html', active='magazzino')
+    righe_per_sezione = {}
+    for sezione in SEZIONI_SEGATRICE:
+        righe_per_sezione[sezione] = RigaMonitor.query\
+            .filter_by(sezione=sezione)\
+            .order_by(RigaMonitor.ordine).all()
+    return render_template('monitor/index.html',
+        active='monitor',
+        active_page='monitor',
+        topbar_title='📊 Monitor Segatrice',
+        topbar_badge='Monitor Attivo',
+        sezioni_map=SEZIONI_SEGATRICE,
+        righe_per_sezione=righe_per_sezione,
+        icone=ICONE,
+        macchina='segatrice',
+        now=datetime.now().strftime('%d/%m/%Y'))
+
+
+# ── ROUTE: Monitor Trapani ────────────────────────────────────────────────────
+@monitor_bp.route('/monitor/trapani')
+def index_trapani():
+    righe_per_sezione = {}
+    for sezione in SEZIONI_TRAPANO:
+        righe_per_sezione[sezione] = RigaMonitor.query\
+            .filter_by(sezione=sezione)\
+            .order_by(RigaMonitor.ordine).all()
+    return render_template('monitor/trapani.html',
+        active='monitor_trapani',
+        active_page='monitor_trapani',
+        topbar_title='🔩 Monitor Trapani',
+        topbar_badge='Trapani Attivi',
+        sezioni_map=SEZIONI_TRAPANO,
+        righe_per_sezione=righe_per_sezione,
+        icone=ICONE,
+        macchina='trapani',
+        now=datetime.now().strftime('%d/%m/%Y'))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  Nessuna anagrafica locale: si legge in tempo reale la tabella 'articoli'
-#  di MasterLogistic tramite il bind Postgres 'masterlogistic' (stesso
-#  progetto Railway, DB separato — vedi config.py e models.ArticoloML).
-#  Sola lettura: nessuna route qui crea/modifica/elimina articoli.
+#  API REST — compatibili con entrambi i monitor
 # ══════════════════════════════════════════════════════════════════════════════
-@magazzino_bp.route('/api/materiali')
+
+@monitor_bp.route('/api/monitor')
 def api_lista():
-    try:
-        articoli = ArticoloML.query.order_by(ArticoloML.sku).all()
-    except Exception as e:
-        return jsonify({
-            'errore': True,
-            'messaggio': f'Connessione al database di MasterLogistic non disponibile ({e})',
-        }), 503
-
-    return jsonify([{
-        'codice':         a.sku,
-        'codice_esterno': a.codice_esterno,
-        'descrizione':    a.descrizione,
-        'stock':          a.stock or 0,
-        'ordinati':       a.ordinati or 0,
-        'incoming':       a.incoming or 0,
-        'scorta_min':     a.scorta_minima or 0,
-        'fornitore':      a.fornitore,
-        'ordine_n':       a.ordine_n,
-        'stato':          a.stato,
-    } for a in articoli])
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  DISTINTA BASE (BOM) — anch'essa letta in sola lettura da MasterLogistic
-#  (tabella distinta_base, bind 'masterlogistic' — vedi models.DistintaBaseML).
-#  Esplosione ricorsiva multilivello con protezione anti-ciclo e profondità
-#  massima; nessuna scrittura, MasterLogistic resta l'unica fonte di verità.
-# ══════════════════════════════════════════════════════════════════════════════
-def _esplodi_bom(codice, qta=1.0, _visitati=None, _profondita=0, _max_profondita=12):
-    if _visitati is None:
-        _visitati = set()
-    if codice in _visitati or _profondita >= _max_profondita:
-        return []
-    _visitati = _visitati | {codice}
-
-    righe = DistintaBaseML.query.filter_by(codice_padre=codice).order_by(DistintaBaseML.livello).all()
-    componenti = []
+    sezione_filter = request.args.get('macchina', None)
+    righe = RigaMonitor.query.order_by(RigaMonitor.sezione, RigaMonitor.ordine).all()
+    # Costruisce dict con tutte le sezioni della macchina richiesta
+    if sezione_filter == 'trapani':
+        result = {s: [] for s in SEZIONI_TRAPANO}
+    elif sezione_filter == 'segatrice':
+        result = {s: [] for s in SEZIONI_SEGATRICE}
+    else:
+        result = {s: [] for s in TUTTE_SEZIONI}
     for r in righe:
-        art = ArticoloML.query.filter_by(sku=r.codice_figlio).first()
-        qta_totale = (r.quantita or 1.0) * qta
-        componenti.append({
-            'codice':            r.codice_figlio,
-            'descrizione':       art.descrizione if art else '',
-            'quantita_unitaria': r.quantita,
-            'quantita_totale':   round(qta_totale, 3),
-            'stock':             art.stock if art else None,
-            'fornitore':         art.fornitore if art else None,
-            'note':              r.note or '',
-            'figli':             _esplodi_bom(r.codice_figlio, qta_totale, _visitati, _profondita + 1, _max_profondita),
-        })
-    return componenti
+        if r.sezione in result:
+            result[r.sezione].append(riga_to_dict(r))
+    return jsonify(result)
 
 
-@magazzino_bp.route('/api/distinta_base/<codice>')
-def api_distinta_base(codice):
+@monitor_bp.route('/api/monitor', methods=['POST'])
+def api_crea():
     try:
-        art = ArticoloML.query.filter_by(sku=codice).first()
-        componenti = _esplodi_bom(codice)
+        d = request.get_json(force=True)
+        sezione = d.get('sezione', 'da_iniziare')
+        if sezione not in TUTTE_SEZIONI:
+            return jsonify({'ok': False, 'error': f'Sezione non valida: {sezione}'}), 400
+        r = RigaMonitor(
+            sezione=sezione,
+            comm_id=d.get('comm_id', ''), codice=d.get('codice', ''),
+            descrizione=d.get('descrizione', ''),
+            totale=int(d.get('totale', 0)), saldo=int(d.get('saldo', 0)),
+            pct=int(d.get('pct', 0)), priority=d.get('priority', ''),
+            taglio=d.get('taglio', 'nd'), sgola=d.get('sgola', 'nd'),
+            piega=d.get('piega', 'nd'), saldatura=d.get('saldatura', 'nd'),
+        )
+        db.session.add(r)
+        log(f'Monitor: aggiunta riga {r.codice} in {r.sezione}')
+        db.session.commit()
+        return jsonify({'ok': True, 'id': r.id})
     except Exception as e:
-        return jsonify({
-            'errore': True,
-            'messaggio': f'Connessione al database di MasterLogistic non disponibile ({e})',
-        }), 503
-
-    return jsonify({
-        'codice':      codice,
-        'descrizione': art.descrizione if art else '',
-        'trovato':     art is not None,
-        'ha_bom':      len(componenti) > 0,
-        'componenti':  componenti,
-    })
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  DISTINTA BASE IRON WOOD — copia LOCALE (tabella distinta_base_wood, nel
-#  database di IronProduction, vedi models.DistintaBaseWood). A differenza
-#  della sezione sopra, qui si legge E si scrive: MasterLogistic non c'entra,
-#  gli articoli/stock restano quelli condivisi (ArticoloML), ma le righe di
-#  distinta sono gestite qui per non toccare mai la tabella di MasterLogistic.
-# ══════════════════════════════════════════════════════════════════════════════
-def _esplodi_bom_wood(codice, qta=1.0, _visitati=None, _profondita=0, _max_profondita=12):
-    if _visitati is None:
-        _visitati = set()
-    if codice in _visitati or _profondita >= _max_profondita:
-        return []
-    _visitati = _visitati | {codice}
-
-    righe = DistintaBaseWood.query.filter_by(codice_padre=codice).order_by(DistintaBaseWood.livello).all()
-    componenti = []
-    for r in righe:
-        art = ArticoloML.query.filter_by(sku=r.codice_figlio).first()
-        qta_totale = (r.quantita or 1.0) * qta
-        componenti.append({
-            'id':                r.id,
-            'codice':            r.codice_figlio,
-            'descrizione':       art.descrizione if art else '',
-            'quantita_unitaria': r.quantita,
-            'quantita_totale':   round(qta_totale, 3),
-            'stock':             art.stock if art else None,
-            'fornitore':         art.fornitore if art else None,
-            'note':              r.note or '',
-            'figli':             _esplodi_bom_wood(r.codice_figlio, qta_totale, _visitati, _profondita + 1, _max_profondita),
-        })
-    return componenti
-
-
-@magazzino_bp.route('/api/distinta_base_wood/<codice>')
-def api_distinta_base_wood(codice):
-    art = ArticoloML.query.filter_by(sku=codice).first()
-    componenti = _esplodi_bom_wood(codice)
-    return jsonify({
-        'codice':      codice,
-        'descrizione': art.descrizione if art else '',
-        'trovato':     art is not None,
-        'ha_bom':      len(componenti) > 0,
-        'componenti':  componenti,
-    })
-
-
-@magazzino_bp.route('/api/distinta_base_wood', methods=['GET'])
-def api_lista_distinta_wood():
-    """Restituisce tutte le righe della distinta base Iron Wood (per la tabella di gestione)."""
-    righe = DistintaBaseWood.query.order_by(DistintaBaseWood.codice_padre, DistintaBaseWood.livello).all()
-    return jsonify([{
-        'id':            r.id,
-        'codice_padre':  r.codice_padre,
-        'codice_figlio': r.codice_figlio,
-        'quantita':      r.quantita,
-        'livello':       r.livello,
-        'note':          r.note or '',
-    } for r in righe])
-
-
-@magazzino_bp.route('/api/distinta_base_wood', methods=['POST'])
-def api_add_distinta_wood():
-    """Aggiunge (o aggiorna se già esiste la stessa coppia padre+figlio) una riga alla distinta base Iron Wood."""
+@monitor_bp.route('/api/monitor/<int:rid>', methods=['PUT'])
+def api_sposta(rid):
     try:
-        data = request.get_json(force=True)
-        padre  = (data.get('codice_padre')  or '').strip().upper()
-        figlio = (data.get('codice_figlio') or '').strip().upper()
-        if not padre or not figlio:
-            return jsonify({'errore': True, 'messaggio': 'Codice padre e codice figlio sono obbligatori.'}), 400
-        if padre == figlio:
-            return jsonify({'errore': True, 'messaggio': 'Un articolo non può essere componente di se stesso.'}), 400
+        r = RigaMonitor.query.get_or_404(rid)
+        d = request.get_json(force=True)
+        if 'sezione' in d:
+            if d['sezione'] not in TUTTE_SEZIONI:
+                return jsonify({'ok': False, 'error': 'Sezione non valida'}), 400
+            r.sezione = d['sezione']
+        if 'ordine' in d:
+            r.ordine = d['ordine']
+        log(f'Monitor: spostata riga {r.codice} → {r.sezione}')
+        db.session.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
-        quantita = float(data.get('quantita') or 1.0)
-        livello  = int(data.get('livello') or 1)
-        note     = (data.get('note') or '').strip()
 
-        esistente = DistintaBaseWood.query.filter_by(codice_padre=padre, codice_figlio=figlio).first()
-        if esistente:
-            esistente.quantita = quantita
-            esistente.livello  = livello
-            esistente.note     = note
+@monitor_bp.route('/api/monitor/<int:rid>/fase', methods=['PATCH'])
+def api_fase(rid):
+    try:
+        r = RigaMonitor.query.get_or_404(rid)
+        d = request.get_json(force=True)
+        fase  = d.get('fase', '')
+        stato = d.get('stato', 'nd')
+        if fase in ('taglio', 'sgola', 'piega', 'saldatura'):
+            setattr(r, fase, stato)
         else:
-            db.session.add(DistintaBaseWood(
-                codice_padre=padre, codice_figlio=figlio,
-                quantita=quantita, livello=livello, note=note,
-                creato_il=datetime.utcnow()
-            ))
+            return jsonify({'ok': False, 'error': f'Fase sconosciuta: {fase}'}), 400
         db.session.commit()
         return jsonify({'ok': True})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'errore': True, 'messaggio': str(e)}), 500
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
-@magazzino_bp.route('/api/distinta_base_wood/<int:id_riga>', methods=['DELETE'])
-def api_del_distinta_wood(id_riga):
-    """Elimina una riga dalla distinta base Iron Wood."""
+@monitor_bp.route('/api/monitor/<int:rid>', methods=['DELETE'])
+def api_elimina(rid):
     try:
-        riga = DistintaBaseWood.query.get_or_404(id_riga)
-        db.session.delete(riga)
+        r = RigaMonitor.query.get_or_404(rid)
+        log(f'Monitor: eliminata riga {r.codice}')
+        db.session.delete(r)
         db.session.commit()
         return jsonify({'ok': True})
     except Exception as e:
         db.session.rollback()
-        return jsonify({'errore': True, 'messaggio': str(e)}), 500
-
-
-@magazzino_bp.route('/api/distinta_base_wood/importa', methods=['POST'])
-def api_importa_distinta_wood():
-    """
-    Caricamento massivo da file Excel/CSV per la distinta Iron Wood.
-    Stesso principio del caricamento massivo articoli di MasterLogistic
-    (route /importazione_massiva): colonne lette PER NOME (non per
-    posizione fissa, quindi nessun rischio di sfasamento se il file
-    cambia struttura), UPSERT riga per riga — mai un replace/DROP.
-    """
-    file = request.files.get('file_excel')
-    if not file:
-        return jsonify({'errore': True, 'messaggio': 'Nessun file selezionato.'}), 400
-    try:
-        import io
-        import pandas as pd
-        filename = file.filename.lower()
-        raw = file.read()
-        df = None
-        if filename.endswith('.xlsx') or filename.endswith('.xls'):
-            df = pd.read_excel(io.BytesIO(raw), engine='openpyxl')
-        elif filename.endswith('.csv'):
-            for enc in ['utf-8', 'latin-1', 'cp1252']:
-                try:
-                    df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep=None, engine='python')
-                    break
-                except Exception:
-                    pass
-        if df is None:
-            return jsonify({'errore': True, 'messaggio': 'Formato file non supportato o illeggibile (usare .xlsx, .xls o .csv).'}), 400
-
-        df.columns = [str(c).strip().lower() for c in df.columns]
-        # Nomi colonna flessibili, per non dipendere da un'intestazione esatta
-        col_padre  = next((c for c in ['codice_padre', 'padre', 'codice padre'] if c in df.columns), None)
-        col_figlio = next((c for c in ['codice_figlio', 'figlio', 'codice figlio'] if c in df.columns), None)
-        if not col_padre or not col_figlio:
-            return jsonify({'errore': True,
-                             'messaggio': f'Colonne codice_padre/codice_figlio non trovate. Colonne nel file: {list(df.columns)}'}), 400
-        col_qta    = next((c for c in ['quantita', 'quantità', 'qta'] if c in df.columns), None)
-        col_liv    = next((c for c in ['livello', 'liv'] if c in df.columns), None)
-        col_note   = next((c for c in ['note', 'nota'] if c in df.columns), None)
-
-        nuovi = aggiornati = scartate = 0
-        righe_scartate = []
-        for i, row in df.iterrows():
-            padre  = str(row[col_padre]).strip().upper()
-            figlio = str(row[col_figlio]).strip().upper()
-            if not padre or not figlio or padre.lower() == 'nan' or figlio.lower() == 'nan':
-                scartate += 1
-                righe_scartate.append(f"riga {i+2}: codice padre o figlio mancante")
-                continue
-            if padre == figlio:
-                scartate += 1
-                righe_scartate.append(f"riga {i+2}: {padre} non può essere componente di se stesso")
-                continue
-
-            try:
-                qta = float(str(row.get(col_qta, 1) if col_qta else 1).replace(',', '.') or 1)
-            except (ValueError, TypeError):
-                qta = 1.0
-            try:
-                liv = int(float(row.get(col_liv, 1))) if col_liv and pd.notna(row.get(col_liv)) else 1
-            except (ValueError, TypeError):
-                liv = 1
-            note = str(row.get(col_note, '')).strip() if col_note else ''
-            if note.lower() in ('nan', 'none'):
-                note = ''
-
-            esistente = DistintaBaseWood.query.filter_by(codice_padre=padre, codice_figlio=figlio).first()
-            if esistente:
-                esistente.quantita = qta
-                esistente.livello  = liv
-                esistente.note     = note
-                aggiornati += 1
-            else:
-                db.session.add(DistintaBaseWood(
-                    codice_padre=padre, codice_figlio=figlio,
-                    quantita=qta, livello=liv, note=note,
-                    creato_il=datetime.utcnow()
-                ))
-                nuovi += 1
-
-        db.session.commit()
-        return jsonify({
-            'ok': True, 'nuovi': nuovi, 'aggiornati': aggiornati,
-            'scartate': scartate, 'righe_scartate': righe_scartate[:30]
-        })
-    except Exception as e:
-        db.session.rollback()
-        return jsonify({'errore': True, 'messaggio': str(e)}), 500
+        return jsonify({'ok': False, 'error': str(e)}), 500
