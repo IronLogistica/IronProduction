@@ -124,9 +124,26 @@ fetch('/api/materiali').then(r=>r.json()).then(data=>{
   document.getElementById('mag-app').innerHTML='<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
 });
 
-function renderCicloLavoroInline(cicli){
-  if(cicli === undefined) return ''; // risposta senza questo dato (es. BOM MasterLogistic) — non mostrare nulla
+function renderApprovvigionamentoInline(approvvigionamento){
+  const a = approvvigionamento || {};
+  const etichette = {
+    MATERIA_PRIMA_FORNITORE: 'Materia prima da fornitore',
+    COMPONENTE_ACQUISTO: 'Componente d’acquisto',
+    LASERATO: 'Laserato'
+  };
+  const testo = etichette[a.tipo_approvvigionamento];
+  if(!testo) return '';
+  const lead = a.lead_time_fornitura_giorni !== null && a.lead_time_fornitura_giorni !== undefined
+    ? ` · Lead time: ${a.lead_time_fornitura_giorni} gg` : '';
+  return `<div style="margin:3px 0 3px 10px;font-size:11px;color:#1e5fa8;font-weight:700">📦 ${testo}${lead}</div>`;
+}
+
+function renderCicloLavoroInline(cicli, approvvigionamento){
+  if(cicli === undefined) return '';
   if(!cicli || !cicli.length){
+    // Un articolo acquistato/laserato non ha ciclo per definizione: la sua etichetta
+    // di approvvigionamento viene mostrata sopra, senza falso avviso.
+    if(approvvigionamento && approvvigionamento.tipo_approvvigionamento !== 'DA_CLASSIFICARE') return '';
     return '<div style="margin:3px 0 3px 10px;font-size:11px;color:#b8860b">⚠️ Nessun ciclo di lavoro registrato per questo codice</div>';
   }
   const fasi = cicli.map(f => `${f.sequenza}) ${f.centro_costo_nome}${f.centro_costo_esterno?' 🚚':''} — ${f.produttivita_oraria} pz/h`).join('&nbsp;&nbsp;→&nbsp;&nbsp;');
@@ -143,7 +160,8 @@ function renderBOMLista(componenti){
       <span style="margin-left:8px;font-weight:600">× ${c.quantita_totale}</span>
       ${c.stock!==null && c.stock!==undefined ? `<span style="margin-left:8px;font-size:11px;color:${c.stock<=0?'#c0392b':'#2a9d5c'}">(stock ${c.stock})</span>` : ''}
       ${c.note ? `<span style="margin-left:8px;font-size:11px;color:#999">${c.note}</span>` : ''}
-      ${renderCicloLavoroInline(c.cicli_lavoro)}
+      ${renderApprovvigionamentoInline(c.approvvigionamento)}
+      ${renderCicloLavoroInline(c.cicli_lavoro, c.approvvigionamento)}
       ${renderBOMLista(c.figli)}
     </li>`).join('') + '</ul>';
 }
@@ -253,11 +271,11 @@ async function esplodiBOMWood(){
       box.innerHTML = `<p style="color:#999">Articolo <b>${codice}</b> non trovato nel magazzino condiviso.</p>`;
     }
     if(!d.ha_bom){
-      box.innerHTML += `<p style="color:#999">Nessuna distinta Iron Wood definita per <b>${codice}</b> (${d.descrizione||'—'}).</p>` + renderCicloLavoroInline(d.cicli_lavoro);
+      box.innerHTML += `<p style="color:#999">Nessuna distinta Iron Wood definita per <b>${codice}</b> (${d.descrizione||'—'}).</p>` + renderApprovvigionamentoInline(d.approvvigionamento) + renderCicloLavoroInline(d.cicli_lavoro, d.approvvigionamento);
       return;
     }
     box.innerHTML = `<p style="margin-bottom:6px"><b>${codice}</b> — ${d.descrizione||'—'} <span style="font-size:10px;color:#1e5fa8;font-weight:700">CODICE PADRE</span></p>` +
-      renderCicloLavoroInline(d.cicli_lavoro) + renderBOMLista(d.componenti);
+      renderApprovvigionamentoInline(d.approvvigionamento) + renderCicloLavoroInline(d.cicli_lavoro, d.approvvigionamento) + renderBOMLista(d.componenti);
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento della BOM.</p>';
   }
