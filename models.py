@@ -57,7 +57,35 @@ class DistintaBaseML(db.Model):
     note          = db.Column(db.String(200), default='')
     creato_il     = db.Column(db.DateTime)
 
-class Cliente(db.Model):
+
+class DistintaBaseWood(db.Model):
+    """
+    Distinta base (BOM) di Iron Wood — COPIA LOCALE, nel database di
+    IronProduction (nessun __bind_key__: vive nel bind di default,
+    creata da db.create_all(bind_key=None)).
+
+    Perché una copia locale e non la stessa tabella di MasterLogistic:
+    'distinta_base' su MasterLogistic non ha nessuna colonna che distingue
+    l'azienda ed è pensata per un caricamento riga-per-riga (nessun bulk
+    replace nell'app) — un import massivo delle distinte di Iron Wood lì
+    rischia di sovrascrivere/confondersi con quelle di Iron Segnaletica.
+    Tenendole qui, separate, si evita il problema alla radice.
+
+    Il magazzino (articoli/stock) resta invece UNICO e condiviso su
+    MasterLogistic (vedi ArticoloML) — qui dentro, codice_padre e
+    codice_figlio fanno riferimento agli stessi SKU di quel magazzino.
+    """
+    __tablename__ = 'distinta_base_wood'
+    id            = db.Column(db.Integer, primary_key=True)
+    codice_padre  = db.Column(db.String(50), nullable=False)
+    codice_figlio = db.Column(db.String(50), nullable=False)
+    quantita      = db.Column(db.Float, default=1.0)
+    livello       = db.Column(db.Integer, default=1)
+    note          = db.Column(db.String(200), default='')
+    creato_il     = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_padre_figlio_wood_uc'),)
+
+
     __tablename__ = "clienti"
     id       = db.Column(db.Integer, primary_key=True)
     nome     = db.Column(db.String(200), nullable=False)
