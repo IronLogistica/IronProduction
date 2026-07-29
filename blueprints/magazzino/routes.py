@@ -1,6 +1,8 @@
 from flask import Blueprint, render_template, jsonify, request
 from datetime import datetime
-from models import db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa, CentroCostoWood, CicloLavoroWood
+from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
+                    CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
+                    TIPI_APPROVVIGIONAMENTO)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -45,6 +47,45 @@ def api_lista():
         'ordine_n':       a.ordine_n,
         'stato':          a.stato,
     } for a in articoli])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CLASSIFICAZIONE APPROVVIGIONAMENTO — locale e separata dal Kanban
+# ══════════════════════════════════════════════════════════════════════════════
+@magazzino_bp.route('/api/articoli/<path:codice>/approvvigionamento', methods=['GET', 'PUT'])
+def api_approvvigionamento_articolo(codice):
+    codice = codice.strip()
+    if not codice:
+        return jsonify({'ok': False, 'error': 'Codice articolo obbligatorio'}), 400
+    record = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
+    if request.method == 'GET':
+        return jsonify({
+            'ok': True, 'codice': codice,
+            'tipo_approvvigionamento': record.tipo_approvvigionamento if record else 'DA_CLASSIFICARE',
+            'lead_time_fornitura_giorni': record.lead_time_fornitura_giorni if record else None,
+        })
+    try:
+        d = request.get_json(force=True)
+        tipo = d.get('tipo_approvvigionamento', 'DA_CLASSIFICARE')
+        if tipo not in TIPI_APPROVVIGIONAMENTO:
+            return jsonify({'ok': False, 'error': 'Tipo di approvvigionamento non valido'}), 400
+        if record is None:
+            record = ArticoloApprovvigionamento(codice=codice)
+            db.session.add(record)
+        record.tipo_approvvigionamento = tipo
+        valore = d.get('lead_time_fornitura_giorni')
+        record.lead_time_fornitura_giorni = float(valore) if valore not in (None, '') else None
+        record.aggiornato_il = datetime.utcnow()
+        db.session.commit()
+        return jsonify({'ok': True, 'codice': codice,
+                        'tipo_approvvigionamento': record.tipo_approvvigionamento,
+                        'lead_time_fornitura_giorni': record.lead_time_fornitura_giorni})
+    except (TypeError, ValueError):
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': 'Lead time non valido'}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
 
 
 # ══════════════════════════════════════════════════════════════════════════════
