@@ -315,6 +315,13 @@ class MovimentoMagazzino(db.Model):
 # ═══════════════════════════════════════════════════════════════════════════════
 # KANBAN PRODOTTO
 # ═══════════════════════════════════════════════════════════════════════════════
+TIPI_APPROVVIGIONAMENTO = {
+    'MATERIA_PRIMA_FORNITORE',
+    'COMPONENTE_ACQUISTO',
+    'LASERATO',
+    'DA_CLASSIFICARE',
+}
+
 class KanbanProdotto(db.Model):
     __tablename__ = "kanban_prodotti"
     id           = db.Column(db.Integer, primary_key=True)
@@ -336,6 +343,9 @@ class KanbanProdotto(db.Model):
     # ── Parametri Lean ──────────────────────────────────────────────────────
     scorta_sicurezza    = db.Column(db.Float, default=0.15)   # SS — 15% default
     lead_time_giorni    = db.Column(db.Float, default=7.0)    # RT — lead time rimpiazzo
+    # Approvvigionamento: il laserato è un acquisto con lead time proprio, non una fase terzista.
+    tipo_approvvigionamento = db.Column(db.String(40), default='DA_CLASSIFICARE', nullable=False)
+    lead_time_fornitura_giorni = db.Column(db.Float, default=None)
     takt_time_min       = db.Column(db.Float, default=None)   # minuti/pezzo — NULL=non impostato
     domanda_giornaliera = db.Column(db.Float, default=0.0)    # D — aggiornata automaticamente
     n_kanban_suggerito  = db.Column(db.Integer, default=0)    # N calcolato
@@ -389,7 +399,9 @@ class KanbanProdotto(db.Model):
     def calcola_n_kanban(self):
         """Formula N = D × RT × (1+SS) / C — ritorna float o None se dati mancanti."""
         D  = self.domanda_giornaliera or 0
-        RT = self.lead_time_giorni    or 0
+        # Per gli articoli acquistati usa il lead time del fornitore, se impostato.
+        RT = self.lead_time_fornitura_giorni if self.lead_time_fornitura_giorni is not None else self.lead_time_giorni
+        RT = RT or 0
         SS = self.scorta_sicurezza    or 0.15
         C  = self.lotto               or 1
         if D <= 0 or RT <= 0: return None
@@ -623,6 +635,8 @@ def kanban_to_dict(p):
         'buffer_pct': p.buffer_pct, 'buffer_colore': p.buffer_colore,
         'scorta_sicurezza': p.scorta_sicurezza,
         'lead_time_giorni': p.lead_time_giorni,
+        'tipo_approvvigionamento': p.tipo_approvvigionamento or 'DA_CLASSIFICARE',
+        'lead_time_fornitura_giorni': p.lead_time_fornitura_giorni,
         'takt_time_min': p.takt_time_min,
         'domanda_giornaliera': p.domanda_giornaliera,
         'n_kanban_suggerito': p.n_kanban_suggerito,
@@ -846,6 +860,8 @@ def init_db():
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS sort_order INTEGER DEFAULT 0",
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS scorta_sicurezza FLOAT DEFAULT 0.15",
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS lead_time_giorni FLOAT DEFAULT 7.0",
+        "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS tipo_approvvigionamento VARCHAR(40) DEFAULT 'DA_CLASSIFICARE'",
+        "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS lead_time_fornitura_giorni FLOAT",
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS takt_time_min FLOAT",
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS domanda_giornaliera FLOAT DEFAULT 0",
         "ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS n_kanban_suggerito INTEGER DEFAULT 0",
