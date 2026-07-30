@@ -6,7 +6,7 @@ from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     prossimo_numero_commessa, GiacenzaWood, MovimentoGiacenzaWood, CicloLavoroWood,
                     CentroCostoWood, VarianzaProduzioneWood, ArticoloApprovvigionamento,
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood, DistintaBaseWood,
-                    CostoStandardVersioneDettaglioWood)
+                    CostoStandardVersioneDettaglioWood, OrdineAcquistoWood, RigaOrdineAcquistoWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -160,6 +160,100 @@ def rilascia(oid):
 
     db.session.commit(); return jsonify(ok=True, ordine=_ordine(o))
 
+
+@pp_bp.get('/ordini-produzione/situazione')
+def pagina_ordini_situazione():
+    return render_template('produzione_pp/situazione_cards.html', active='produzione_pp')
+
+
+@pp_bp.route('/api/ordini-produzione/riepilogo_disponibilita')
+def api_ordini_riepilogo_disponibilita():
+    """
+    Sintesi disponibilità materiali per OGNI Ordine di Produzione ancora
+    aperto (tutti tranne 'Chiuso CO') — alimenta le card della pagina
+    Ordini di Produzione: dice se è tutto disponibile o quanti componenti
+    mancano, senza il dettaglio completo (quello è nel popup, vedi
+    /api/ordini-produzione/<codice>/situazione_completa).
+    Ogni ordine è valutato ESCLUDENDO se stesso dagli "impegni già presi",
+    coerente con /api/fabbisogno_disponibilita.
+    """
+    ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato != 'Chiuso CO')
+              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+    risultato = []
+    for o in ordini:
+        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        righe = {}
+        if saldo > 0:
+            giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
+            _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe)
+        mancanti = [r for r in righe.values() if r['mancante'] > 0]
+        risultato.append({
+            'id': o.id, 'codice': o.codice, 'codice_articolo': o.codice_articolo,
+            'descrizione': o.descrizione, 'cliente': o.cliente, 'commessa': o.commessa,
+            'stato': o.stato, 'priorita': o.priorita,
+            'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona, 'qta_scarto': o.qta_scarto,
+            'asa': o.asa,
+            'data_inizio': o.data_inizio.isoformat() if o.data_inizio else None,
+            'data_prevista': o.data_prevista.isoformat() if o.data_prevista else None,
+            'tutto_disponibile': len(mancanti) == 0,
+            'n_componenti_mancanti': len(mancanti),
+            'n_componenti_totali': len(righe),
+        })
+    return jsonify(risultato)
+
+
+@pp_bp.route('/api/ordini-produzione/<codice>/situazione_completa')
+def api_ordine_situazione_completa(codice):
+    """
+    Dettaglio per il popup di una card: distinta base ESPLOSA multilivello
+    (stessa gerarchia mostrata in Magazzino/Costo Standard) annotata con
+    disponibilità (giacenza/impegnato/mancante) per ogni nodo, e — per ogni
+    componente mancante — gli Ordini di Acquisto aperti che lo contengono
+    (fornitore, numero ordine, data di consegna, quanto ne arriva).
+    """
+    o = OrdineProduzione.query.filter_by(codice=codice).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+
+    saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+    righe_disponibilita = {}
+    if saldo > 0:
+        giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
+        _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe_disponibilita)
+
+    albero = _esplodi_bom_wood(o.codice_articolo, qta=saldo if saldo > 0 else 1.0)
+
+    def _annota_disponibilita(nodi):
+        for n in nodi:
+            r = righe_disponibilita.get(n['codice'])
+            if r:
+                n['disponibile'] = round(max(r['fabbisogno'] - r['mancante'], 0), 3)
+                n['mancante'] = round(r['mancante'], 3)
+                n['fabbisogno'] = round(r['fabbisogno'], 3)
+            else:
+                n['disponibile'] = n['quantita_totale']; n['mancante'] = 0; n['fabbisogno'] = n['quantita_totale']
+            if n['mancante'] > 0:
+                righe_oa = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
+                            .filter(RigaOrdineAcquistoWood.codice == n['codice'],
+                                    OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all())
+                n['ordini_acquisto'] = [{
+                    'ordine_n': r_oa.ordine.ordine_n, 'fornitore': r_oa.ordine.fornitore,
+                    'stato_label': r_oa.ordine.stato_label,
+                    'data_consegna': r_oa.ordine.data_consegna.isoformat() if r_oa.ordine.data_consegna else None,
+                    'qta_in_arrivo': round((r_oa.qta_originale or 0) - (r_oa.qta_ricevuta or 0), 3),
+                } for r_oa in righe_oa if (r_oa.qta_originale or 0) > (r_oa.qta_ricevuta or 0)]
+            else:
+                n['ordini_acquisto'] = []
+            _annota_disponibilita(n.get('figli', []))
+    _annota_disponibilita(albero)
+
+    mancanti_totali = sum(1 for r in righe_disponibilita.values() if r['mancante'] > 0)
+    return jsonify(ok=True, codice=o.codice, codice_articolo=o.codice_articolo, descrizione=o.descrizione,
+                   cliente=o.cliente, commessa=o.commessa, stato=o.stato, priorita=o.priorita,
+                   qta_pianificata=o.qta_pianificata, qta_buona=o.qta_buona, qta_scarto=o.qta_scarto,
+                   tutto_disponibile=(mancanti_totali == 0), componenti=albero)
+
+
 @pp_bp.post('/api/ordini-produzione/<int:oid>/chiudi-co')
 def chiudi_co(oid):
     o = OrdineProduzione.query.get_or_404(oid)
@@ -246,14 +340,9 @@ def api_evento():
                               .first())
                 if riga_ciclo and riga_ciclo.produttivita_oraria:
                     tempo_standard_min = (good / riga_ciclo.produttivita_oraria) * 60
-                    # La lavorazione è composta da due voci distinte nello standard:
-                    # macchina/reparto + manodopera diretta. Il consuntivo deve usare
-                    # la stessa base, altrimenti le varianze sottostimano il costo reale.
-                    tariffa_macchina = riga_ciclo.centro_costo.costo_orario or 0
-                    tariffa_manodopera = riga_ciclo.centro_costo.tariffa_manodopera_diretta_oraria or 0
-                    tariffa_conversione = tariffa_macchina + tariffa_manodopera
-                    costo_standard_lav = (tempo_standard_min / 60) * tariffa_conversione
-                    costo_reale_lav = (tempo / 60) * tariffa_conversione
+                    costo_orario = riga_ciclo.centro_costo.costo_orario or 0
+                    costo_standard_lav = (tempo_standard_min / 60) * costo_orario
+                    costo_reale_lav = (tempo / 60) * costo_orario
                     db.session.add(VarianzaProduzioneWood(
                         op_code=o.codice, codice_articolo=o.codice_articolo, fase=fase_nome, quantita=good,
                         tempo_standard_minuti=round(tempo_standard_min, 2), tempo_reale_minuti=tempo,
@@ -297,10 +386,11 @@ def api_analisi_costo_ordine(codice):
     if not versione:
         limiti.append('Nessuna versione di Costo Standard agganciata a questo OP (probabilmente non ancora rilasciato, '
                        'o l\'aggancio non è riuscito): i confronti sotto usano 0 come standard e vanno considerati inattendibili.')
-        std_unit = {'costo_materiali': 0, 'costo_lavorazione': 0, 'costo_overhead': 0, 'costo_totale': 0}
+        std_unit = {'costo_materiali': 0, 'costo_lavorazione': 0, 'costo_manodopera': 0, 'costo_overhead': 0, 'costo_totale': 0}
         versione_info = None
     else:
         std_unit = {'costo_materiali': versione.costo_materiali, 'costo_lavorazione': versione.costo_lavorazione,
+                    'costo_manodopera': versione.costo_manodopera,
                     'costo_overhead': versione.costo_overhead, 'costo_totale': versione.costo_totale}
         versione_info = {'versione': versione.versione, 'calcolato_il': versione.calcolato_il.strftime('%d/%m/%Y %H:%M') if versione.calcolato_il else None,
                           'completo': versione.completo, 'codici_senza_costo': versione.codici_senza_costo.split(',') if versione.codici_senza_costo else []}
@@ -313,6 +403,7 @@ def api_analisi_costo_ordine(codice):
 
     std_materiali_tot = round(std_unit['costo_materiali'] * qta_buona, 2)
     std_lavorazione_tot = round(std_unit['costo_lavorazione'] * qta_buona, 2)
+    std_manodopera_tot = round(std_unit['costo_manodopera'] * qta_buona, 2)
     std_overhead_tot = round(std_unit['costo_overhead'] * qta_buona, 2)
     std_totale_tot = round(std_unit['costo_totale'] * qta_buona, 2)
     std_totale_pianificato = round(std_unit['costo_totale'] * (o.qta_pianificata or 0), 2)
@@ -394,18 +485,12 @@ def api_analisi_costo_ordine(codice):
     impatto_scarto = round(std_unit['costo_totale'] * qta_scarto, 2)
 
     # ── Overhead ─────────────────────────────────────────────────────────
-    # L'overhead di conversione non grava sui materiali: segue esclusivamente
-    # il costo di lavorazione (macchina + manodopera diretta). Per gli OP già
-    # rilasciati non esiste ancora uno snapshot dell'aliquota di ogni fase;
-    # si usa quindi il rapporto overhead/lavorazione dello standard congelato.
-    if std_lavorazione_tot:
-        coefficiente_overhead_standard = std_overhead_tot / std_lavorazione_tot
-        eff_overhead_tot = round(eff_lavorazione_tot * coefficiente_overhead_standard, 2)
-    else:
-        eff_overhead_tot = 0.0
+    overhead_pct_corrente = _overhead_pct()
+    eff_overhead_tot = round((eff_materiali_tot + eff_lavorazione_tot) * (overhead_pct_corrente / 100.0), 2)
     var_overhead = round(eff_overhead_tot - std_overhead_tot, 2)
-    if not versione:
-        limiti.append('Overhead effettivo non calcolabile con attendibilità senza uno standard congelato: viene esposto a zero.')
+    if versione and versione.overhead_pct_usata != overhead_pct_corrente:
+        limiti.append(f'Aliquota overhead cambiata dopo il rilascio: era {versione.overhead_pct_usata}% allo standard, '
+                       f'ora è {overhead_pct_corrente}% — parte della varianza overhead deriva da questo cambio, non da un vero scostamento operativo.')
 
     # ── Totali ───────────────────────────────────────────────────────────
     eff_totale_tot = round(eff_materiali_tot + eff_lavorazione_tot + eff_overhead_tot, 2)
