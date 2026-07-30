@@ -1247,7 +1247,7 @@ def _calcola_costo_standard(codice, _visitati=None, _cache=None, _profondita=0, 
 
     approvv = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
     if approvv and approvv.tipo_approvvigionamento != 'DA_CLASSIFICARE':
-        if approvv.costo_acquisto_standard is None:
+        if (approvv.costo_acquisto_standard or 0) <= 0:
             risultato = {'costo_materiali': 0.0, 'costo_macchina': 0.0, 'costo_manodopera_diretta': 0.0,
                          'costo_lavorazione': 0.0, 'costo_overhead': 0.0, 'costo_totale': 0.0,
                          'ore_manodopera_standard': 0.0, 'codici_senza_costo': {codice}}
@@ -1312,6 +1312,41 @@ def _costo_standard_serializzabile(r):
     return out
 
 
+def _diagnostica_configurazione_costo(codice):
+    """Restituisce gli interventi necessari per rendere configurabile il costo di un codice."""
+    approvv = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
+    tipo = approvv.tipo_approvvigionamento if approvv else 'DA_CLASSIFICARE'
+    righe_bom = DistintaBaseWood.query.filter_by(codice_padre=codice).count()
+    fasi = CicloLavoroWood.query.filter_by(codice=codice).all()
+    avvisi = []
+
+    if tipo == 'DA_CLASSIFICARE':
+        avvisi.append({'tipo': 'classificazione', 'testo': 'Articolo da classificare: indica se è acquistato, materia prima, laserato o lavorato internamente.', 'azione': 'articolo'})
+    elif (approvv.costo_acquisto_standard or 0) <= 0:
+        avvisi.append({'tipo': 'prezzo', 'testo': 'Prezzo di acquisto standard non impostato.', 'azione': 'articolo'})
+
+    # Un codice non classificato può anche essere un semilavorato interno: in
+    # quel caso mostriamo comunque subito BOM e ciclo mancanti, invece di
+    # costringere l'utente a scoprirli in più passaggi.
+    if tipo == 'DA_CLASSIFICARE' and righe_bom == 0:
+        avvisi.append({'tipo': 'distinta', 'testo': 'Distinta base assente: aggiungi i componenti se questo è un semilavorato/prodotto.', 'azione': 'distinta'})
+    if tipo == 'DA_CLASSIFICARE' and not fasi:
+        avvisi.append({'tipo': 'ciclo', 'testo': 'Ciclo di lavoro assente: inserisci fasi, tempi e reparto se il codice viene lavorato internamente.', 'azione': 'ciclo'})
+    if tipo == 'DA_CLASSIFICARE':
+        return avvisi
+
+    # I codici acquistati non necessitano di routing. Per un articolo interno
+    # (riconoscibile dalla sua BOM) il ciclo è invece necessario al costo di conversione.
+    if righe_bom and not fasi:
+        avvisi.append({'tipo': 'ciclo', 'testo': 'Ciclo di lavoro assente: non sono presenti fasi/tempi per questo articolo prodotto.', 'azione': 'ciclo'})
+    for fase in fasi:
+        if not fase.centro_costo:
+            avvisi.append({'tipo': 'centro', 'testo': f'Fase {fase.sequenza}: centro di costo non associato.', 'azione': 'centri'})
+        elif (fase.produttivita_oraria or 0) <= 0:
+            avvisi.append({'tipo': 'tempo', 'testo': f'Fase {fase.sequenza}: produttività/tempo non impostato.', 'azione': 'ciclo'})
+    return avvisi
+
+
 def _annota_costo_albero(componenti, _cache):
     """
     Cammina l'albero già costruito da _esplodi_bom_wood e annota, per ogni
@@ -1328,7 +1363,7 @@ def _annota_costo_albero(componenti, _cache):
         if approvv and approvv.tipo_approvvigionamento != 'DA_CLASSIFICARE':
             c['tipo'] = 'ACQUISTO'
             c['origine_costo'] = approvv.tipo_approvvigionamento
-            if approvv.costo_acquisto_standard is None:
+            if (approvv.costo_acquisto_standard or 0) <= 0:
                 c['costo_unitario'] = None
                 c['costo_esteso'] = None
                 c['disponibile'] = False
@@ -1348,6 +1383,7 @@ def _annota_costo_albero(componenti, _cache):
                 c['costo_unitario'] = sub['costo_totale']
                 c['costo_esteso'] = round(sub['costo_totale'] * c['quantita_totale'], 4)
                 c['disponibile'] = True
+        c['avvisi_configurazione'] = _diagnostica_configurazione_costo(c['codice'])
         _annota_costo_albero(c.get('figli', []), _cache)
 
 
@@ -1368,6 +1404,7 @@ def api_costo_standard_dettaglio_materiali(codice):
     return jsonify({
         'codice': codice,
         'costo_radice': _costo_standard_serializzabile(radice),
+        'avvisi_radice': _diagnostica_configurazione_costo(codice),
         'componenti': componenti,
     })
 
