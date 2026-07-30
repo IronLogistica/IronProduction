@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">📊 Analisi Costo — {{ codice }}</div>
+  <a class="btn btn-ghost" href="/ordini-produzione" style="margin-left:auto">← Torna agli Ordini</a>
+</div>
+
+<div id="ac-testata" class="mon-section" style="padding:14px">Caricamento...</div>
+
+<div id="ac-limiti" class="mon-section" style="margin-top:14px;display:none">
+  <div class="section-hdr postazione-hdr" style="background:#7a5c00">⚠️ Limiti e avvertenze sui dati sottostanti</div>
+  <div id="ac-limiti-lista" style="padding:14px;font-size:12px"></div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div class="section-hdr postazione-hdr">💰 Confronto Standard vs Effettivo</div>
+  <div id="ac-confronto" style="padding:14px">Caricamento...</div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div class="section-hdr postazione-hdr">📦 Dettaglio varianza materiali per componente</div>
+  <div id="ac-materiali" style="padding:14px">Caricamento...</div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div class="section-hdr postazione-hdr">🔧 Dettaglio varianza lavorazione per fase</div>
+  <div id="ac-lavorazione" style="padding:14px">Caricamento...</div>
+</div>
+{% endblock %}
+{% block scripts %}
+const CODICE_OP = {{ codice|tojson }};
+
+function coloreVarianza(v){
+  if(v === null || v === undefined) return '#999';
+  return v > 0 ? '#c0392b' : (v < 0 ? '#2a9d5c' : '#666');
+}
+function fmt(v){ return v === null || v === undefined ? '—' : v; }
+function segno(v){ return v === null || v === undefined ? '' : (v > 0 ? '+' : ''); }
+
+async function caricaAnalisiCosto(){
+  try{
+    const r = await fetch('/api/ordini-produzione/' + encodeURIComponent(CODICE_OP) + '/analisi-costo');
+    const d = await r.json();
+    if(!d.ok){ document.getElementById('ac-testata').innerHTML = '<p style="color:#c0392b">❌ ' + (d.error||'Errore') + '</p>'; return; }
+
+    // ── Testata ──
+    document.getElementById('ac-testata').innerHTML = `
+      <div style="display:flex;gap:20px;flex-wrap:wrap;font-size:13px">
+        <div><b>Articolo:</b> ${d.codice_articolo}</div>
+        <div><b>Stato:</b> ${d.stato}</div>
+        <div><b>Rilasciato il:</b> ${d.data_rilascio || '—'}</div>
+        <div><b>Pianificata:</b> ${d.qta_pianificata}</div>
+        <div><b>Buona:</b> ${d.qta_buona}</div>
+        <div><b>Scarto:</b> ${d.qta_scarto}</div>
+        <div><b>Standard versione:</b> ${d.versione_standard ? '#'+d.versione_standard.versione+' del '+d.versione_standard.calcolato_il + (d.versione_standard.completo?'':' ⚠️ incompleto') : '⚠️ nessuna'}</div>
+      </div>`;
+
+    // ── Limiti ──
+    if(d.limiti && d.limiti.length){
+      document.getElementById('ac-limiti').style.display = '';
+      document.getElementById('ac-limiti-lista').innerHTML = '<ul style="margin:0;padding-left:18px">' +
+        d.limiti.map(l => `<li style="margin-bottom:6px">${l}</li>`).join('') + '</ul>';
+    }
+
+    // ── Confronto Standard / Effettivo / Varianza € / Varianza % ──
+    const righe = [
+      ['Materiali', d.standard.materiali, d.effettivo.materiali, d.varianza.materiali],
+      ['Lavorazione', d.standard.lavorazione, d.effettivo.lavorazione, d.varianza.lavorazione],
+      ['Overhead', d.standard.overhead, d.effettivo.overhead, d.varianza.overhead],
+      ['TOTALE', d.standard.totale, d.effettivo.totale, d.varianza.totale],
+    ];
+    let htmlConf = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
+      '<th>Voce</th><th>Standard (su qtà buona)</th><th>Effettivo</th><th>Varianza €</th><th>Varianza %</th></tr></thead><tbody>';
+    righe.forEach(([nome, std, eff, varr], i)=>{
+      const pct = std ? Math.round((varr/std)*10000)/100 : null;
+      const bold = nome === 'TOTALE' ? 'font-weight:700' : '';
+      htmlConf += `<tr style="${bold}"><td>${nome}</td><td class="num">€ ${fmt(std)}</td><td class="num">€ ${fmt(eff)}</td>` +
+        `<td class="num" style="color:${coloreVarianza(varr)}">${segno(varr)}€ ${fmt(varr)}</td>` +
+        `<td class="num" style="color:${coloreVarianza(varr)}">${pct!==null?segno(pct)+pct+'%':'—'}</td></tr>`;
+    });
+    htmlConf += '</tbody></table></div>';
+    htmlConf += `<div style="margin-top:12px;font-size:12px;color:var(--text-dim)">
+      <div>📉 Standard totale su quantità <b>pianificata</b>: € ${d.standard.totale_su_pianificata}</div>
+      <div>🗑️ Impatto economico dello scarto (${d.qta_scarto} pz al costo standard pieno): <b style="color:#c0392b">€ ${d.varianza.scarto_impatto}</b></div>
+      <div>⚙️ Di cui varianza lavorazione da efficienza/tempo: <b style="color:${coloreVarianza(d.varianza.lavorazione_efficienza)}">${segno(d.varianza.lavorazione_efficienza)}€ ${fmt(d.varianza.lavorazione_efficienza)}</b>
+        — varianza tariffa: <b>${d.varianza.lavorazione_tariffa===null?'non disponibile con i dati attuali':d.varianza.lavorazione_tariffa}</b></div>
+    </div>`;
+    document.getElementById('ac-confronto').innerHTML = htmlConf;
+
+    // ── Dettaglio materiali ──
+    if(!d.dettaglio_materiali.length){
+      document.getElementById('ac-materiali').innerHTML = '<p style="color:#aaa;font-style:italic">Nessun dato materiali per questo ordine.</p>';
+    }else{
+      let htmlMat = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
+        '<th>Codice</th><th>Qtà standard</th><th>Qtà effettiva</th><th>Prezzo standard</th><th>Prezzo effettivo</th><th>Var. quantità €</th><th>Var. prezzo €</th></tr></thead><tbody>';
+      d.dettaglio_materiali.forEach(r=>{
+        htmlMat += `<tr><td class="codice">${r.codice}</td>` +
+          `<td class="num">${fmt(r.quantita_standard)}</td><td class="num">${fmt(r.quantita_effettiva)}</td>` +
+          `<td class="num">${r.standard_disponibile?'€ '+r.prezzo_standard:'<span class="badge badge-warn">n/d</span>'}</td>` +
+          `<td class="num">${r.valore_disponibile?'€ '+r.prezzo_effettivo:'<span class="badge badge-warn">n/d</span>'}</td>` +
+          `<td class="num" style="color:${coloreVarianza(r.varianza_quantita)}">${r.varianza_quantita!==null?segno(r.varianza_quantita)+'€ '+r.varianza_quantita:'—'}</td>` +
+          `<td class="num" style="color:${coloreVarianza(r.varianza_prezzo)}">${r.varianza_prezzo!==null?segno(r.varianza_prezzo)+'€ '+r.varianza_prezzo:'—'}</td></tr>`;
+      });
+      htmlMat += '</tbody></table></div>';
+      document.getElementById('ac-materiali').innerHTML = htmlMat;
+    }
+
+    // ── Dettaglio lavorazione ──
+    if(!d.dettaglio_lavorazione.length){
+      document.getElementById('ac-lavorazione').innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna fase di lavorazione abbinata a un reparto per questo ordine.</p>';
+    }else{
+      let htmlLav = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
+        '<th>Fase</th><th>Tempo standard (min)</th><th>Tempo reale (min)</th><th>Costo standard</th><th>Costo reale</th><th>Varianza €</th></tr></thead><tbody>';
+      d.dettaglio_lavorazione.forEach(r=>{
+        htmlLav += `<tr><td>${r.fase}</td><td class="num">${r.tempo_standard_minuti}</td><td class="num">${r.tempo_reale_minuti}</td>` +
+          `<td class="num">€ ${r.costo_standard}</td><td class="num">€ ${r.costo_reale}</td>` +
+          `<td class="num" style="color:${coloreVarianza(r.varianza)}">${segno(r.varianza)}€ ${r.varianza}</td></tr>`;
+      });
+      htmlLav += '</tbody></table></div>';
+      document.getElementById('ac-lavorazione').innerHTML = htmlLav;
+    }
+  }catch(e){
+    document.getElementById('ac-testata').innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+caricaAnalisiCosto();
+{% endblock %}
