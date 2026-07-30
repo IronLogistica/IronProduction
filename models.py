@@ -256,6 +256,28 @@ class CostoStandardVersioneDettaglioWood(db.Model):
     versione = db.relationship('CostoStandardVersioneWood', backref='dettagli')
 
 
+class CostoStandardVersioneFaseWood(db.Model):
+    """
+    Snapshot PER FASE di routing (Ciclo di Lavoro) del codice calcolato in
+    una versione di Costo Standard — reparto, produttività e TARIFFE (macchina
+    e manodopera) congelate a quel momento. Senza questo, la varianza di
+    lavorazione/manodopera a consuntivo può misurare solo tempo/efficienza
+    (la tariffa usata per "standard" e "reale" sarebbe sempre la stessa,
+    quella corrente): con le tariffe congelate qui, si può isolare anche una
+    vera varianza di TARIFFA se il costo del centro cambia tra il rilascio
+    dell'ordine e il consuntivo.
+    """
+    __tablename__ = 'costo_standard_versione_fase_wood'
+    id                              = db.Column(db.Integer, primary_key=True)
+    versione_id                     = db.Column(db.Integer, db.ForeignKey('costo_standard_versioni_wood.id'), nullable=False, index=True)
+    sequenza                        = db.Column(db.Integer, default=1)
+    nome_reparto                    = db.Column(db.String(100), nullable=False)   # denormalizzato: resta leggibile anche se il centro viene rinominato/eliminato
+    produttivita_oraria_congelata   = db.Column(db.Float, default=0)
+    costo_orario_congelato          = db.Column(db.Float, default=0)   # tariffa macchina/reparto al momento del calcolo
+    tariffa_manodopera_congelata    = db.Column(db.Float, default=0)   # tariffa manodopera diretta al momento del calcolo
+    versione = db.relationship('CostoStandardVersioneWood', backref='fasi')
+
+
 class CostoStandardWood(db.Model):
     """
     Costo standard calcolato (e salvato) per un codice Iron Wood, secondo la
@@ -302,8 +324,10 @@ class VarianzaProduzioneWood(db.Model):
     costo_reale_lavorazione     = db.Column(db.Float, default=0)
     costo_standard_manodopera   = db.Column(db.Float, default=0)   # manodopera diretta, tariffa propria
     costo_reale_manodopera      = db.Column(db.Float, default=0)
-    varianza                    = db.Column(db.Float, default=0)  # lavorazione: reale − standard (positivo = peggio dello standard)
-    varianza_manodopera         = db.Column(db.Float, default=0)  # manodopera: reale − standard
+    varianza                    = db.Column(db.Float, default=0)  # lavorazione TOTALE: reale − standard (positivo = peggio dello standard)
+    varianza_manodopera         = db.Column(db.Float, default=0)  # manodopera TOTALE: reale − standard
+    varianza_tariffa_lavorazione = db.Column(db.Float, default=0)  # SOLO quota dovuta al cambio tariffa macchina (0 se non congelata)
+    varianza_tariffa_manodopera  = db.Column(db.Float, default=0)  # SOLO quota dovuta al cambio tariffa manodopera (0 se non congelata)
     creato_il                   = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -1125,6 +1149,8 @@ def init_db():
         "ALTER TABLE varianze_produzione_wood ADD COLUMN IF NOT EXISTS costo_standard_manodopera DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE varianze_produzione_wood ADD COLUMN IF NOT EXISTS costo_reale_manodopera DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE varianze_produzione_wood ADD COLUMN IF NOT EXISTS varianza_manodopera DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE varianze_produzione_wood ADD COLUMN IF NOT EXISTS varianza_tariffa_lavorazione DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE varianze_produzione_wood ADD COLUMN IF NOT EXISTS varianza_tariffa_manodopera DOUBLE PRECISION DEFAULT 0",
         # ── Centro di Costo: anagrafica estesa e capacità/driver (Configura) ──
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS reparto_gruppo VARCHAR(100) DEFAULT ''",
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS attivo BOOLEAN DEFAULT TRUE",
