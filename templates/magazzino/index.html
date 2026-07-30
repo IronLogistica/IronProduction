@@ -16,6 +16,17 @@
       <input id="wood-note" type="text" placeholder="Note (facoltative)" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
       <button class="btn btn-primary" onclick="aggiungiRigaWood()">➕ Aggiungi / aggiorna riga</button>
     </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <input id="wood-gruppo" type="text" placeholder="Gruppo alternativa (facoltativo, es. BARRA_FERRO)"
+             style="width:260px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <label style="font-size:12px;color:var(--text-dim);display:flex;align-items:center;gap:4px">
+        <input id="wood-preferita" type="checkbox" checked> componente attivo di default in questo gruppo
+      </label>
+      <span style="font-size:11px;color:var(--text-dim)">
+        Lascia vuoto per una riga normale. Valorizza con lo STESSO nome su più righe dello stesso codice padre
+        per crearle come alternative mutuamente esclusive (es. barra da 7m / barra da 6m) — solo quella "attiva" viene usata nell'esplosione BOM/costo standard.
+      </span>
+    </div>
 
     <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;padding-top:10px;border-top:1px solid var(--border)">
       <span style="font-size:12px;color:var(--text-dim)">📤 Caricamento massivo da file:</span>
@@ -213,17 +224,34 @@ async function caricaListaWood(){
     }
     if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna riga trovata.</p>'; return; }
     let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
-      '<th>Padre</th><th>Figlio</th><th>Quantità</th><th>Livello</th><th>Note</th><th></th></tr></thead><tbody>';
+      '<th>Padre</th><th>Figlio</th><th>Quantità</th><th>Livello</th><th>Gruppo alternativa</th><th>Note</th><th></th></tr></thead><tbody>';
     righe.forEach(r=>{
+      let gruppoCell = '—';
+      if(r.gruppo_alternativa){
+        gruppoCell = r.preferita
+          ? `<span style="color:#2a9d5c;font-weight:700">★ ATTIVA</span> <span style="color:#999">(${r.gruppo_alternativa})</span>`
+          : `<button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" onclick="selezionaAlternativaWood(${r.id})" title="Rendi questa la componente attiva del gruppo">☆ rendi attiva</button> <span style="color:#999">(${r.gruppo_alternativa})</span>`;
+      }
       html += `<tr><td class="codice">${r.codice_padre} <button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" onclick="apriCicloLavoro('${r.codice_padre}')" title="Scheda articolo e ciclo">⚙️</button></td>` +
         `<td class="codice">${r.codice_figlio} <button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" onclick="apriCicloLavoro('${r.codice_figlio}')" title="Scheda articolo e ciclo">⚙️</button></td>` +
-        `<td class="num">${r.quantita}</td><td class="num">${r.livello}</td><td class="lav-td">${r.note||'—'}</td>` +
+        `<td class="num">${r.quantita}</td><td class="num">${r.livello}</td><td style="font-size:11px">${gruppoCell}</td><td class="lav-td">${r.note||'—'}</td>` +
         `<td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="cancellaRigaWood(${r.id})">🗑️</button></td></tr>`;
     });
     html += '</tbody></table></div>';
     box.innerHTML = html;
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function selezionaAlternativaWood(id){
+  try{
+    const r = await fetch('/api/distinta_base_wood/' + id + '/seleziona_alternativa', {method: 'POST'});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    caricaListaWood();
+  }catch(e){
+    alert('❌ Errore di rete durante il cambio di alternativa.');
   }
 }
 
@@ -234,6 +262,8 @@ async function aggiungiRigaWood(){
     quantita:      document.getElementById('wood-quantita').value,
     livello:       document.getElementById('wood-livello').value,
     note:          document.getElementById('wood-note').value.trim(),
+    gruppo_alternativa: document.getElementById('wood-gruppo').value.trim(),
+    preferita:     document.getElementById('wood-preferita').checked,
   };
   try{
     const r = await fetch('/api/distinta_base_wood', {
@@ -246,6 +276,8 @@ async function aggiungiRigaWood(){
     document.getElementById('wood-quantita').value = '1';
     document.getElementById('wood-livello').value = '1';
     document.getElementById('wood-note').value = '';
+    document.getElementById('wood-gruppo').value = '';
+    document.getElementById('wood-preferita').checked = true;
     caricaListaWood();
   }catch(e){
     alert('❌ Errore di rete durante il salvataggio.');
