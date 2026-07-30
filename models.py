@@ -285,6 +285,10 @@ class VarianzaProduzioneWood(db.Model):
     oraria del Ciclo di Lavoro) con quello REALE consuntivato (da tempo_minuti
     dell'evento), quando la fase dell'evento è abbinabile per nome a un
     Centro di Costo — se non abbinabile, nessuna varianza viene registrata.
+    Manodopera diretta tracciata in PARALLELO al costo macchina (stesso
+    tempo standard/reale, tariffa propria) — mai sommata al costo macchina,
+    coerente con la separazione costo_lavorazione/costo_manodopera del
+    Costo Standard.
     """
     __tablename__ = 'varianze_produzione_wood'
     id                          = db.Column(db.Integer, primary_key=True)
@@ -294,9 +298,12 @@ class VarianzaProduzioneWood(db.Model):
     quantita                    = db.Column(db.Integer, nullable=False)   # pezzi buoni di questo evento
     tempo_standard_minuti       = db.Column(db.Float, default=0)
     tempo_reale_minuti          = db.Column(db.Float, default=0)
-    costo_standard_lavorazione  = db.Column(db.Float, default=0)
+    costo_standard_lavorazione  = db.Column(db.Float, default=0)   # SOLO macchina/reparto
     costo_reale_lavorazione     = db.Column(db.Float, default=0)
-    varianza                    = db.Column(db.Float, default=0)  # reale − standard (positivo = peggio dello standard)
+    costo_standard_manodopera   = db.Column(db.Float, default=0)   # manodopera diretta, tariffa propria
+    costo_reale_manodopera      = db.Column(db.Float, default=0)
+    varianza                    = db.Column(db.Float, default=0)  # lavorazione: reale − standard (positivo = peggio dello standard)
+    varianza_manodopera         = db.Column(db.Float, default=0)  # manodopera: reale − standard
     creato_il                   = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -1115,6 +1122,9 @@ def init_db():
         "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS costo_overhead_produzione DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS overhead_materiali_pct_usata DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS overhead_produzione_pct_usata DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE varianze_produzione_wood ADD COLUMN IF NOT EXISTS costo_standard_manodopera DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE varianze_produzione_wood ADD COLUMN IF NOT EXISTS costo_reale_manodopera DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE varianze_produzione_wood ADD COLUMN IF NOT EXISTS varianza_manodopera DOUBLE PRECISION DEFAULT 0",
         # ── Centro di Costo: anagrafica estesa e capacità/driver (Configura) ──
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS reparto_gruppo VARCHAR(100) DEFAULT ''",
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS attivo BOOLEAN DEFAULT TRUE",
