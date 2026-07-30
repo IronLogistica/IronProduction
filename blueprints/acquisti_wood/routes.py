@@ -5,7 +5,9 @@ from datetime import datetime, date
 import PyPDF2
 from flask import Blueprint, render_template, jsonify, request, Response
 
-from models import db, OrdineAcquistoWood, RigaOrdineAcquistoWood
+from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
+                    DDTCaricoWood, RigaDDTCaricoWood)
+from blueprints.magazzino.routes import _registra_movimento_giacenza
 
 acquisti_wood_bp = Blueprint('acquisti_wood', __name__)
 
@@ -264,3 +266,162 @@ def api_scarica_pdf(oid):
         return jsonify({'errore': True, 'messaggio': 'PDF non disponibile per questo ordine.'}), 404
     return Response(o.pdf_bytes, mimetype='application/pdf',
                      headers={'Content-Disposition': f'inline; filename="{o.filename}"'})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FASE 2 — DDT DI CARICO (arrivo merce): parsing PDF (clone adattato di
+#  MasterLogistic, che qui gestisce DDT multi-ordine tramite "Ns. doc.(ORDFO)
+#  n.: XXX"), abbinamento automatico alle righe dell'Ordine di Acquisto
+#  corrispondente, e carico automatico della Giacenza Iron Wood.
+#  NOTA: la risoluzione codice-fornitore → SKU interno (mappa_esterni in
+#  MasterLogistic) non è ancora presente qui: si usa il codice così com'è
+#  scritto sul DDT. Se i fornitori Iron Wood usano codici propri diversi dai
+#  codici interni, andrà aggiunta una mappa dedicata in un prossimo passo.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _estrai_dati_ddt_carico(testo):
+    """Parsing DDT di carico multi-ordine — stessa logica del sistema già in uso su MasterLogistic-WMS."""
+    dati = {"fornitore": "", "numero_ddt": "", "data_ddt": "", "sezioni": []}
+    linee = [l.strip() for l in testo.split('\n') if l.strip()]
+
+    e_vendita = ('Uscita Merci' in testo or 'ORDCL' in testo or bool(re.search(r'Ns\.\s*doc\.\(ORDCL\)', testo)))
+    e_acquisto = ('Entrata Merci' in testo or 'ORDFO' in testo or bool(re.search(r'Ns\.\s*doc\.\(ORDFO\)', testo)))
+    if e_vendita and not e_acquisto:
+        dati['tipo_ddt'] = 'vendita'
+        return dati
+
+    m_ddt = re.search(r'(\d+)\s*/\s*DDT', testo)
+    if m_ddt:
+        dati['numero_ddt'] = m_ddt.group(1)
+    m_data = re.search(r'(\d{2}/\d{2}/\d{4})', testo)
+    if m_data:
+        dati['data_ddt'] = m_data.group(1)
+    if "Destinatario:" in testo:
+        parte = testo.split("Destinatario:")[1]
+        ll = [l.strip() for l in parte.split('\n') if l.strip()]
+        if len(ll) >= 2:
+            dati['fornitore'] = ll[1] if ll[0].isdigit() else ll[0]
+
+    RE_ORDFO = re.compile(r'Ns\.\s*doc\.\(ORDFO\)\s*n\.:\s*(\d+)')
+    RE_ART = re.compile(r'([A-Za-z0-9][A-Za-z0-9./_-]+)\s+(.*?)\s+([a-z]{1,3})\s*\.\s+([\d\.]+)(?:,\d+)?')
+    sezione_corrente = None
+    for riga in linee:
+        m_ordfo = RE_ORDFO.search(riga)
+        if m_ordfo:
+            if sezione_corrente is not None:
+                dati['sezioni'].append(sezione_corrente)
+            sezione_corrente = {'ordine_n': m_ordfo.group(1), 'articoli': []}
+            continue
+        m_art = RE_ART.search(riga)
+        if m_art and m_art.group(1) not in SKIP_CODICI_PDF:
+            art_entry = {
+                "codice": m_art.group(1), "descrizione": m_art.group(2).strip(),
+                "quantita": m_art.group(4).replace('.', '').split(',')[0],
+            }
+            if sezione_corrente is not None:
+                sezione_corrente['articoli'].append(art_entry)
+            else:
+                dati.setdefault('articoli_senza_sezione', []).append(art_entry)
+    if sezione_corrente is not None:
+        dati['sezioni'].append(sezione_corrente)
+    return dati
+
+
+def _ddt_dict(d):
+    return {
+        'id': d.id, 'filename': d.filename, 'fornitore': d.fornitore, 'numero_ddt': d.numero_ddt,
+        'data_ddt': d.data_ddt, 'caricato_il': d.caricato_il.isoformat() if d.caricato_il else None,
+        'righe': [{
+            'id': r.id, 'codice': r.codice, 'descrizione': r.descrizione, 'quantita': r.quantita,
+            'ordine_n_riferimento': r.ordine_n_riferimento, 'abbinata': r.abbinata,
+            'ordine_acquisto_id': r.ordine_acquisto_id,
+        } for r in d.righe],
+    }
+
+
+@acquisti_wood_bp.route('/api/ddt_carico_wood', methods=['GET'])
+def api_lista_ddt_carico():
+    ddts = DDTCaricoWood.query.order_by(DDTCaricoWood.caricato_il.desc()).all()
+    return jsonify([_ddt_dict(d) for d in ddts])
+
+
+@acquisti_wood_bp.route('/api/ddt_carico_wood/upload', methods=['POST'])
+def api_upload_ddt_carico():
+    file = request.files.get('file_pdf')
+    if not file or not file.filename.lower().endswith('.pdf'):
+        return jsonify({'errore': True, 'messaggio': 'Carica un file PDF valido.'}), 400
+    if DDTCaricoWood.query.filter_by(filename=file.filename).first():
+        return jsonify({'errore': True, 'messaggio': f'Un DDT con il file "{file.filename}" è già stato caricato.'}), 409
+
+    pdf_bytes = file.read()
+    try:
+        reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
+        testo = "\n".join(page.extract_text() or '' for page in reader.pages)
+    except Exception as e:
+        return jsonify({'errore': True, 'messaggio': f'Impossibile leggere il PDF: {e}'}), 400
+
+    dati = _estrai_dati_ddt_carico(testo)
+    if dati.get('tipo_ddt') == 'vendita':
+        return jsonify({'errore': True, 'messaggio': 'Questo PDF sembra un DDT di VENDITA (uscita merci), non di carico/acquisto.'}), 400
+
+    ddt = DDTCaricoWood(filename=file.filename, pdf_bytes=pdf_bytes, fornitore=dati['fornitore'],
+                        numero_ddt=dati['numero_ddt'], data_ddt=dati['data_ddt'], testo_grezzo_pdf=testo)
+    db.session.add(ddt)
+    db.session.flush()
+
+    n_abbinate = 0
+    n_totali = 0
+    n_ordini_completati = 0
+    tutte_le_righe = [(sez['ordine_n'], art) for sez in dati['sezioni'] for art in sez['articoli']]
+    tutte_le_righe += [('', art) for art in dati.get('articoli_senza_sezione', [])]
+
+    for ordine_n_rif, art in tutte_le_righe:
+        n_totali += 1
+        try:
+            qta = float(art['quantita'])
+        except (TypeError, ValueError):
+            qta = 0
+        riga_ddt = RigaDDTCaricoWood(ddt_id=ddt.id, ordine_n_riferimento=ordine_n_rif,
+                                     codice=art['codice'], descrizione=art['descrizione'], quantita=qta)
+
+        oa = OrdineAcquistoWood.query.filter_by(ordine_n=ordine_n_rif).first() if ordine_n_rif else None
+        if oa:
+            riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=art['codice']).first()
+            if riga_oa:
+                riga_oa.qta_ricevuta = (riga_oa.qta_ricevuta or 0) + qta
+                riga_ddt.ordine_acquisto_id = oa.id
+                riga_ddt.abbinata = True
+                n_abbinate += 1
+
+        db.session.add(riga_ddt)
+
+        # Carica la Giacenza Iron Wood indipendentemente dall'abbinamento: la
+        # merce È arrivata fisicamente, va tracciata comunque. costo_unitario
+        # non disponibile qui (gli Ordini di Acquisto Fase 1 non estraggono
+        # ancora il prezzo dal PDF) — movimento registrato senza valorizzazione.
+        if qta > 0 and art['codice']:
+            _registra_movimento_giacenza(art['codice'], qta, 'carico_acquisto',
+                                          riferimento=ddt.filename,
+                                          note=f'DDT {dati["numero_ddt"] or ddt.filename}' +
+                                               (f' — rif. OA {ordine_n_rif}' if ordine_n_rif else ''))
+
+    # Se tutte le righe di un OA abbinato sono ora coperte, segna l'ordine come ricevuto
+    ordini_toccati = {r.ordine_acquisto_id for r in ddt.righe if r.ordine_acquisto_id}
+    for oa_id in ordini_toccati:
+        oa = OrdineAcquistoWood.query.get(oa_id)
+        if oa and all((r.qta_ricevuta or 0) >= (r.qta_originale or 0) for r in oa.righe if r.qta_originale):
+            oa.stato_label = 'ORDINE_RICEVUTO'
+            n_ordini_completati += 1
+
+    db.session.commit()
+    return jsonify({'ok': True, 'ddt': _ddt_dict(ddt), 'n_righe_totali': n_totali,
+                    'n_righe_abbinate': n_abbinate, 'n_ordini_completati': n_ordini_completati})
+
+
+@acquisti_wood_bp.route('/ddt_carico_wood/<int:did>/pdf')
+def api_scarica_pdf_ddt(did):
+    d = DDTCaricoWood.query.get_or_404(did)
+    if not d.pdf_bytes:
+        return jsonify({'errore': True, 'messaggio': 'PDF non disponibile per questo DDT.'}), 404
+    return Response(d.pdf_bytes, mimetype='application/pdf',
+                     headers={'Content-Disposition': f'inline; filename="{d.filename}"'})
