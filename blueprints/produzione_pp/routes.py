@@ -7,7 +7,7 @@ from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     CentroCostoWood, VarianzaProduzioneWood, ArticoloApprovvigionamento,
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood, DistintaBaseWood,
                     CostoStandardVersioneDettaglioWood, OrdineAcquistoWood, RigaOrdineAcquistoWood,
-                    CostoStandardVersioneFaseWood)
+                    CostoStandardVersioneFaseWood, ManodoperaRealeWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -361,7 +361,17 @@ def api_evento():
 
                     tempo_standard_min = (good / produttivita_std) * 60 if produttivita_std else 0
                     ore_standard = tempo_standard_min / 60
-                    ore_reali = tempo / 60
+                    # PLACEHOLDER integrazione MasterWork: se esiste un consuntivo reale
+                    # importato da MasterWork per questo OP (ManodoperaRealeWood.fonte
+                    # == 'masterwork'), si usa quello al posto del tempo auto-riportato
+                    # dall'operatore in questo evento consuntivo. Finché l'integrazione
+                    # non è collegata, non ci sarà mai nessuna riga con fonte='masterwork'
+                    # e il comportamento resta quello di sempre (tempo/60).
+                    ore_reali_masterwork = (ManodoperaRealeWood.query
+                                            .filter_by(ordine_produzione_id=o.id, fonte='masterwork')
+                                            .filter(ManodoperaRealeWood.ore_reali.isnot(None))
+                                            .order_by(ManodoperaRealeWood.creato_il.desc()).first())
+                    ore_reali = ore_reali_masterwork.ore_reali if ore_reali_masterwork else tempo / 60
 
                     costo_standard_lav = ore_standard * tariffa_macchina_std
                     costo_reale_lav = ore_reali * tariffa_macchina_reale
@@ -572,3 +582,41 @@ def api_analisi_costo_ordine(codice):
         } for v in varianze_lav],
         limiti=limiti,
     )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MANODOPERA REALE — PLACEHOLDER in attesa dell'integrazione con MasterWork.
+#  Oggi non c'è nessun collegamento automatico: queste API permettono solo di
+#  inserire/consultare a mano un consuntivo ore con fonte='masterwork' per un
+#  OP, che (se presente) viene già usato al posto del tempo auto-riportato
+#  nel calcolo della varianza manodopera (vedi sopra). Quando l'integrazione
+#  vera sarà collegata, basterà farla scrivere qui con fonte='masterwork'
+#  invece di passare da un inserimento manuale.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@pp_bp.route('/api/ordini_produzione/<int:oid>/manodopera_reale', methods=['GET'])
+def api_lista_manodopera_reale(oid):
+    OrdineProduzione.query.get_or_404(oid)
+    righe = ManodoperaRealeWood.query.filter_by(ordine_produzione_id=oid).order_by(ManodoperaRealeWood.creato_il.desc()).all()
+    return jsonify([{
+        'id': r.id, 'ore_reali': r.ore_reali, 'fonte': r.fonte, 'note': r.note or '',
+        'creato_il': r.creato_il.isoformat() if r.creato_il else None,
+    } for r in righe])
+
+
+@pp_bp.route('/api/ordini_produzione/<int:oid>/manodopera_reale', methods=['POST'])
+def api_add_manodopera_reale(oid):
+    OrdineProduzione.query.get_or_404(oid)
+    d = request.get_json(force=True)
+    try:
+        ore_reali = float(d['ore_reali']) if d.get('ore_reali') not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Ore reali non valide'}), 400
+    fonte = d.get('fonte') or 'placeholder'
+    if fonte not in ('placeholder', 'masterwork'):
+        return jsonify({'errore': True, 'messaggio': 'Fonte non valida'}), 400
+    db.session.add(ManodoperaRealeWood(
+        ordine_produzione_id=oid, ore_reali=ore_reali, fonte=fonte, note=(d.get('note') or '').strip(),
+    ))
+    db.session.commit()
+    return jsonify({'ok': True})
