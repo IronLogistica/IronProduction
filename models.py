@@ -1025,6 +1025,23 @@ class DocumentoTecnicoArticolo(db.Model):
     caricato_il       = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class FotoArticolo(db.Model):
+    """
+    Foto di RIFERIMENTO del prodotto (com'è fatto, non come sta andando una
+    lavorazione specifica) — legata solo al codice_articolo, non a un OP:
+    resta archiviata e consultabile sempre, indipendentemente da quale OP è
+    in corso. Diversa da FotoLavorazioneMacchina (quella è per OP+macchina,
+    documenta l'andamento di UN lotto specifico).
+    """
+    __tablename__ = 'foto_articolo'
+    id                = db.Column(db.Integer, primary_key=True)
+    codice_articolo   = db.Column(db.String(100), nullable=False, index=True)
+    nome_file         = db.Column(db.String(255), nullable=False)
+    contenuto_base64  = db.Column(db.Text, nullable=False)
+    note              = db.Column(db.String(300), default='')
+    caricato_il       = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class FotoLavorazioneMacchina(db.Model):
     """
     Foto scattate dall'operatore dal totem durante la lavorazione (come da
