@@ -355,6 +355,14 @@ class DistintaBaseWood(db.Model):
     quantita      = db.Column(db.Float, default=1.0)
     livello       = db.Column(db.Integer, default=1)
     note          = db.Column(db.String(200), default='')
+    # ── Componenti alternativi (es. stesso articolo, a volte barra di ferro
+    # da 7m, a volte da 6m): righe con lo stesso (codice_padre, gruppo_alternativa)
+    # sono mutuamente esclusive. 'preferita' indica quale delle alternative va
+    # usata di default nell'esplosione BOM/costo standard/fabbisogno finché non
+    # viene cambiata a mano (vedi _righe_bom_attive in blueprints/magazzino).
+    # gruppo_alternativa = None → riga normale, nessuna alternativa, sempre inclusa.
+    gruppo_alternativa = db.Column(db.String(50), nullable=True)
+    preferita          = db.Column(db.Boolean, default=True)
     creato_il     = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_padre_figlio_wood_uc'),)
 
@@ -1162,6 +1170,12 @@ def init_db():
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS pct_efficienza DOUBLE PRECISION DEFAULT 100",
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS periodo_riferimento VARCHAR(10) DEFAULT 'mensile'",
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS tariffa_manodopera_diretta_oraria DOUBLE PRECISION DEFAULT 0",
+        # ── Distinta Base Wood: componenti alternativi (es. barra 7m/6m) ──
+        "ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS gruppo_alternativa VARCHAR(50)",
+        "ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS preferita BOOLEAN DEFAULT TRUE",
+        # ── Ordini di Acquisto Wood: prezzo estratto dal PDF + codice fornitore originale (prima della mappa) ──
+        "ALTER TABLE righe_ordine_acquisto_wood ADD COLUMN IF NOT EXISTS prezzo_unitario DOUBLE PRECISION",
+        "ALTER TABLE righe_ordine_acquisto_wood ADD COLUMN IF NOT EXISTS codice_fornitore_originale VARCHAR(100) DEFAULT ''",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
@@ -1290,13 +1304,53 @@ class RigaOrdineAcquistoWood(db.Model):
     __tablename__ = 'righe_ordine_acquisto_wood'
     id             = db.Column(db.Integer, primary_key=True)
     ordine_id      = db.Column(db.Integer, db.ForeignKey('ordini_acquisto_wood.id'), nullable=False, index=True)
-    codice         = db.Column(db.String(100), nullable=False)
+    codice         = db.Column(db.String(100), nullable=False)   # codice interno, dopo risoluzione via MappaCodiceFornitoreWood (se mappato)
+    codice_fornitore_originale = db.Column(db.String(100), default='')  # codice così come scritto sul PDF, PRIMA della risoluzione — vuoto se coincide con 'codice' (nessuna mappa trovata/necessaria)
     descrizione    = db.Column(db.String(300), default='')
     unita_misura   = db.Column(db.String(10), default='')
     qta_originale  = db.Column(db.Float, default=0)
     qta_ricevuta   = db.Column(db.Float, default=0)
+    prezzo_unitario = db.Column(db.Float, nullable=True)   # €/unità estratto dal PDF ordine — None = non trovato dal parsing, va inserito a mano
     data_evasione  = db.Column(db.String(20), default='')   # come estratta dal PDF, stringa gg/mm/aaaa
     ordine = db.relationship('OrdineAcquistoWood', backref='righe')
+
+
+class MappaCodiceFornitoreWood(db.Model):
+    """
+    Mappa codice-articolo-del-fornitore -> codice interno IronProduction.
+    Serve perché ogni fornitore scrive sui propri PDF (ordini/DDT) il PROPRIO
+    codice articolo, non necessariamente lo SKU interno (ArticoloML). Se per
+    una coppia (fornitore, codice_fornitore) esiste una riga qui, il parsing
+    usa 'codice_interno' al posto del codice grezzo letto dal PDF; altrimenti
+    (nessuna riga trovata) si usa il codice grezzo così com'è — comportamento
+    identico a prima, nessuna rottura per i fornitori non ancora mappati.
+    """
+    __tablename__ = 'mappa_codici_fornitore_wood'
+    id               = db.Column(db.Integer, primary_key=True)
+    fornitore        = db.Column(db.String(200), nullable=False)
+    codice_fornitore = db.Column(db.String(100), nullable=False)
+    codice_interno   = db.Column(db.String(50), nullable=False)
+    note             = db.Column(db.String(200), default='')
+    creato_il        = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('fornitore', 'codice_fornitore', name='_fornitore_codice_uc'),)
+
+
+class ManodoperaRealeWood(db.Model):
+    """
+    PLACEHOLDER — manodopera reale consuntivata per Ordine di Produzione.
+    In attesa dell'integrazione con MasterWork (che ha i consuntivi orari
+    reali): 'ore_reali' resta NULL e 'fonte' resta 'placeholder' finché
+    l'integrazione non viene collegata. Creato già ora per avere la tabella
+    pronta ed evitare un'altra migrazione quando si collega MasterWork.
+    """
+    __tablename__ = 'manodopera_reale_wood'
+    id                   = db.Column(db.Integer, primary_key=True)
+    ordine_produzione_id = db.Column(db.Integer, db.ForeignKey('ordini_produzione_pp.id'), nullable=False, index=True)
+    ore_reali            = db.Column(db.Float, nullable=True)   # None = non ancora valorizzato
+    fonte                = db.Column(db.String(30), default='placeholder')  # 'placeholder' / 'masterwork' (quando collegato davvero)
+    note                 = db.Column(db.String(200), default='')
+    creato_il            = db.Column(db.DateTime, default=datetime.utcnow)
+    ordine = db.relationship('OrdineProduzione')
 
 
 class DDTCaricoWood(db.Model):
