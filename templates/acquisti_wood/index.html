@@ -42,6 +42,25 @@
   </div>
 </div>
 
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🔗 Mappa Codici Fornitore → Codice Interno</div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Se un fornitore usa un proprio codice articolo diverso dallo SKU interno, aggiungi qui la corrispondenza:
+      da quel momento gli Ordini di Acquisto e i DDT di quel fornitore vengono risolti automaticamente sul codice
+      interno. Senza una riga qui, il codice del PDF viene usato così com'è (nessuna mappa non blocca nulla).
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <input id="mappa-fornitore" type="text" placeholder="Fornitore (esatto, come su PDF)" style="width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <input id="mappa-codice-fornitore" type="text" placeholder="Codice fornitore" style="width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <input id="mappa-codice-interno" type="text" placeholder="Codice interno" style="width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <input id="mappa-note" type="text" placeholder="Note (facoltative)" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <button class="btn btn-primary" onclick="aggiungiMappaCodice()">➕ Aggiungi / aggiorna</button>
+    </div>
+    <div id="mappa-lista" style="font-size:13px;color:#666">Caricamento...</div>
+  </div>
+</div>
+
 <!-- ══ MODAL: DETTAGLIO ORDINE / RICEVIMENTO RIGHE ═══════════════════════ -->
 <div class="modal-overlay" id="modal-ordine-acquisto">
   <div class="modal-box" style="width:680px;max-width:97vw;max-height:88vh;overflow-y:auto">
@@ -132,12 +151,15 @@ async function apriOrdine(id){
       <input type="text" id="oa-nota" placeholder="Nota interna" value="${(o.nota_interna||'').replace(/"/g,'&quot;')}" onblur="cambiaNota()" style="flex:1;min-width:150px;padding:5px 8px;border-radius:5px;border:1px solid var(--border)">
     </div>`;
 
-  let righe = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>Qtà ordinata</th><th>Qtà ricevuta</th><th>Evasione</th></tr></thead><tbody>';
+  let righe = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>Qtà ordinata</th><th>Qtà ricevuta</th><th>Prezzo unit. €</th><th>Evasione</th></tr></thead><tbody>';
   o.articoli.forEach(a=>{
     const completo = a.qta_originale > 0 && a.qta_ricevuta >= a.qta_originale;
-    righe += `<tr style="${completo?'opacity:.6':''}"><td class="codice">${a.codice}</td><td class="lav-td">${a.descrizione||'—'}</td>
+    const prezzoIgnoto = (a.prezzo_unitario === null || a.prezzo_unitario === undefined);
+    righe += `<tr style="${completo?'opacity:.6':''}"><td class="codice">${a.codice}${a.codice_fornitore_originale?` <span style="font-size:9px;color:#999" title="Codice originale sul PDF fornitore">(${a.codice_fornitore_originale})</span>`:''}</td><td class="lav-td">${a.descrizione||'—'}</td>
       <td class="num">${a.qta_originale} ${a.unita_misura||''}</td>
       <td class="num"><input type="number" step="0.01" min="0" value="${a.qta_ricevuta}" style="width:80px" onchange="aggiornaRicevuto(${a.id}, this.value)"></td>
+      <td class="num"><input type="number" step="0.0001" min="0" value="${prezzoIgnoto?'':a.prezzo_unitario}" placeholder="${prezzoIgnoto?'non trovato':''}"
+          style="width:90px;${prezzoIgnoto?'border-color:#b8860b':''}" onchange="aggiornaPrezzoUnitario(${a.id}, this.value)"></td>
       <td class="lav-td">${a.data_evasione||'—'}</td></tr>`;
   });
   righe += '</tbody></table></div>';
@@ -162,6 +184,9 @@ async function cambiaNota(){
 async function aggiornaRicevuto(rigaId, valore){
   await fetch('/api/ordini_acquisto_wood/righe/' + rigaId, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({qta_ricevuta: valore})});
   caricaListaOrdini();
+}
+async function aggiornaPrezzoUnitario(rigaId, valore){
+  await fetch('/api/ordini_acquisto_wood/righe/' + rigaId, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({prezzo_unitario: valore})});
 }
 
 caricaListaOrdini();
@@ -217,4 +242,60 @@ async function caricaListaDdt(){
 }
 
 caricaListaDdt();
+
+// ── Mappa Codici Fornitore → Codice Interno ────────────────────────────
+async function caricaListaMappa(){
+  const box = document.getElementById('mappa-lista');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/mappa_codici_fornitore_wood');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna mappatura configurata — i codici dei PDF vengono usati così come sono.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
+      '<th>Fornitore</th><th>Codice fornitore</th><th>Codice interno</th><th>Note</th><th></th></tr></thead><tbody>';
+    righe.forEach(r=>{
+      html += `<tr><td>${r.fornitore}</td><td class="codice">${r.codice_fornitore}</td><td class="codice">${r.codice_interno}</td>` +
+        `<td class="lav-td">${r.note||'—'}</td><td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="cancellaMappaCodice(${r.id})">🗑️</button></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function aggiungiMappaCodice(){
+  const payload = {
+    fornitore:        document.getElementById('mappa-fornitore').value.trim(),
+    codice_fornitore: document.getElementById('mappa-codice-fornitore').value.trim(),
+    codice_interno:   document.getElementById('mappa-codice-interno').value.trim(),
+    note:             document.getElementById('mappa-note').value.trim(),
+  };
+  try{
+    const r = await fetch('/api/mappa_codici_fornitore_wood', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    document.getElementById('mappa-fornitore').value = '';
+    document.getElementById('mappa-codice-fornitore').value = '';
+    document.getElementById('mappa-codice-interno').value = '';
+    document.getElementById('mappa-note').value = '';
+    caricaListaMappa();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function cancellaMappaCodice(id){
+  if(!confirm('Cancellare questa mappatura?')) return;
+  try{
+    await fetch('/api/mappa_codici_fornitore_wood/' + id, {method: 'DELETE'});
+    caricaListaMappa();
+  }catch(e){
+    alert('❌ Errore di rete durante la cancellazione.');
+  }
+}
+
+caricaListaMappa();
 {% endblock %}
