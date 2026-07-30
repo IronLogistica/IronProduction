@@ -18,10 +18,10 @@
 
 <!-- ══ MODAL: SITUAZIONE COMPLETA DISTINTA BASE ═══════════════════════════ -->
 <div class="modal-overlay" id="modal-situazione-op">
-  <div class="modal-box" style="width:720px;max-width:97vw;max-height:88vh;overflow-y:auto">
+  <div class="modal-box" style="width:980px;max-width:97vw;max-height:88vh;overflow-y:auto">
     <h3>🏭 Situazione — <span id="sit-titolo"></span></h3>
     <div id="sit-testata" style="margin-bottom:12px"></div>
-    <div id="sit-albero" style="font-size:13px">Caricamento...</div>
+    <div id="sit-albero">Caricamento...</div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-situazione-op')">Chiudi</button>
     </div>
@@ -71,25 +71,34 @@ async function carica(){
   }
 }
 
-function renderAlberoSituazione(componenti){
-  if(!componenti || !componenti.length) return '<p style="color:#aaa;font-style:italic;margin:4px 0 4px 10px">Nessun componente.</p>';
-  return '<ul style="margin:4px 0 4px 16px;padding:0;list-style:none">' + componenti.map(c => {
-    const okDisp = c.mancante <= 0;
-    let oaHtml = '';
-    if(!okDisp && c.ordini_acquisto && c.ordini_acquisto.length){
-      oaHtml = c.ordini_acquisto.map(oa => `<div style="font-size:11px;color:#00d2ff;margin-top:2px">🛒 OA n° ${oa.ordine_n} — ${oa.fornitore} — ${oa.qta_in_arrivo} in arrivo${oa.data_consegna?' per '+oa.data_consegna:''} (${oa.stato_label})</div>`).join('');
-    } else if(!okDisp){
-      oaHtml = '<div style="font-size:11px;color:#c0392b;margin-top:2px">⚠️ Non ancora ordinato a nessun fornitore</div>';
-    }
-    return `<li style="padding:5px 0;border-left:2px solid var(--border);padding-left:10px;margin-bottom:2px">
-      <span style="font-size:10px;color:#1e5fa8;font-weight:700;margin-right:6px">SOTTOGRUPPO ${c.livello_effettivo}° LIVELLO</span>
-      <span class="cod" style="font-weight:700">${c.codice}</span>
-      <span style="font-size:11px;color:var(--text-dim);margin-left:6px">${c.descrizione||''}</span><br>
-      <span style="font-size:12px">Fabbisogno: <b>${c.fabbisogno}</b> — Disponibile: <b style="color:${okDisp?'#2a9d5c':'#c0392b'}">${c.disponibile}</b>${!okDisp?` — Mancante: <b style="color:#c0392b">${c.mancante}</b>`:''}</span>
-      ${oaHtml}
-      ${renderAlberoSituazione(c.figli)}
-    </li>`;
-  }).join('') + '</ul>';
+function _statoRigaSituazione(c){
+  const okDisp = c.mancante <= 0;
+  const haOA = c.ordini_acquisto && c.ordini_acquisto.length;
+  if(okDisp)  return {colore:'#1a9e5c', bg:'rgba(26,158,92,.15)', label:'✓ DISPONIBILE'};
+  if(haOA)    return {colore:'#2589c7', bg:'rgba(37,137,199,.18)', label:'🚚 IN ARRIVO'};
+  return        {colore:'#c0392b', bg:'rgba(192,57,43,.18)', label:'🔴 DA ORDINARE'};
+}
+
+function renderAlberoSituazione(componenti, livello){
+  livello = livello || 0;
+  if(!componenti || !componenti.length){
+    return livello === 0 ? '<tr><td colspan="8" style="text-align:center;color:#aaa;font-style:italic;padding:14px">Nessun componente.</td></tr>' : '';
+  }
+  return componenti.map(c => {
+    const stato = _statoRigaSituazione(c);
+    const oa = (c.ordini_acquisto && c.ordini_acquisto[0]) || null;
+    const altriOA = (c.ordini_acquisto && c.ordini_acquisto.length > 1) ? ` <span style="color:var(--text-dim)">+${c.ordini_acquisto.length - 1} altro/i</span>` : '';
+    return `<tr style="border-left:3px solid ${stato.colore}">
+        <td class="codice" style="padding-left:${10 + livello * 18}px">${livello > 0 ? '↳ ' : ''}${c.codice}</td>
+        <td class="lav-td" style="max-width:220px">${c.descrizione||'—'}</td>
+        <td class="num">${c.fabbisogno}</td>
+        <td class="num" style="color:${stato.colore};font-weight:700">${c.disponibile}</td>
+        <td class="num" style="${c.mancante>0?'color:#c0392b;font-weight:700':'color:var(--text-dim)'}">${c.mancante>0?c.mancante:'—'}</td>
+        <td><span style="background:${stato.bg};color:${stato.colore};font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap">${stato.label}</span></td>
+        <td class="lav-td">${oa ? oa.fornitore : (c.mancante>0?'—':'')}</td>
+        <td class="lav-td">${oa ? `OA ${oa.ordine_n} — ${oa.qta_in_arrivo}${oa.data_consegna?' per '+oa.data_consegna:''}${altriOA}` : ''}</td>
+      </tr>` + renderAlberoSituazione(c.figli, livello + 1);
+  }).join('');
 }
 
 async function apriSituazione(codice){
@@ -107,7 +116,9 @@ async function apriSituazione(codice){
       <div>Pianificata: <b>${d.qta_pianificata}</b> — Buona: <b>${d.qta_buona}</b> — Scarto: <b>${d.qta_scarto}</b></div>
       ${d.tutto_disponibile ? '<span class="badge badge-ok">✅ Tutto disponibile</span>' : '<span class="badge badge-warn">❌ Manca qualcosa</span>'}
     </div>`;
-    box.innerHTML = renderAlberoSituazione(d.componenti);
+    box.innerHTML = `<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>
+        <th style="text-align:left">Codice</th><th style="text-align:left">Descrizione</th><th>Fabbisogno</th><th>Disponibile</th><th>Mancante</th><th>Stato</th><th style="text-align:left">Fornitore</th><th style="text-align:left">Ordine / arrivo</th>
+      </tr></thead><tbody>${renderAlberoSituazione(d.componenti)}</tbody></table></div>`;
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
   }
