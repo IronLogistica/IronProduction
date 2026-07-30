@@ -7,7 +7,7 @@ from flask import Blueprint, render_template, jsonify, request, Response
 
 from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood)
-from blueprints.magazzino.routes import _registra_movimento_giacenza
+from blueprints.magazzino.routes import _registra_movimento_giacenza, api_fabbisogno_produzione
 
 acquisti_wood_bp = Blueprint('acquisti_wood', __name__)
 
@@ -266,6 +266,57 @@ def api_scarica_pdf(oid):
         return jsonify({'errore': True, 'messaggio': 'PDF non disponibile per questo ordine.'}), 404
     return Response(o.pdf_bytes, mimetype='application/pdf',
                      headers={'Content-Disposition': f'inline; filename="{o.filename}"'})
+
+
+@acquisti_wood_bp.route('/materiale-in-arrivo')
+def pagina_materiale_in_arrivo():
+    return render_template('acquisti_wood/materiale_in_arrivo.html', active='acquisti_wood')
+
+
+@acquisti_wood_bp.route('/api/materiale_in_arrivo')
+def api_materiale_in_arrivo():
+    """
+    Vista consolidata degli Ordini di Acquisto NON ancora ricevuti
+    completamente, ordinati per urgenza di consegna, con le righe ancora
+    mancanti e un collegamento a cosa serve davvero alla produzione aperta
+    (riusa /api/fabbisogno_produzione, già costruito) — per capire a colpo
+    d'occhio se un ritardo sta bloccando un Ordine di Produzione o no.
+    """
+    from datetime import date
+    oggi = date.today()
+
+    try:
+        risposta_fabbisogno = api_fabbisogno_produzione()
+        fabbisogno_json = risposta_fabbisogno.get_json() if hasattr(risposta_fabbisogno, 'get_json') else risposta_fabbisogno
+        codici_richiesti_produzione = {v['codice'] for v in fabbisogno_json.get('fabbisogno', [])}
+    except Exception:
+        codici_richiesti_produzione = set()
+
+    ordini = (OrdineAcquistoWood.query.filter(OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO')
+              .order_by(db.case((OrdineAcquistoWood.data_consegna.is_(None), 1), else_=0),
+                        OrdineAcquistoWood.data_consegna.asc()).all())
+
+    risultato = []
+    for o in ordini:
+        righe_mancanti = [r for r in o.righe if (r.qta_originale or 0) > (r.qta_ricevuta or 0)]
+        if not righe_mancanti:
+            continue  # tutte le righe già ricevute manualmente ma l'OA non è stato chiuso: non è "in arrivo"
+        giorni_alla_consegna = (o.data_consegna - oggi).days if o.data_consegna else None
+        risultato.append({
+            'id': o.id, 'ordine_n': o.ordine_n, 'fornitore': o.fornitore, 'stato_label': o.stato_label,
+            'ritiro_proprio': o.ritiro_proprio,
+            'data_consegna': o.data_consegna.isoformat() if o.data_consegna else None,
+            'giorni_alla_consegna': giorni_alla_consegna,
+            'scaduto': giorni_alla_consegna is not None and giorni_alla_consegna < 0,
+            'imminente': giorni_alla_consegna is not None and 0 <= giorni_alla_consegna <= 3,
+            'righe_mancanti': [{
+                'codice': r.codice, 'descrizione': r.descrizione,
+                'mancante': round((r.qta_originale or 0) - (r.qta_ricevuta or 0), 3),
+                'unita_misura': r.unita_misura,
+                'richiesto_da_produzione': r.codice in codici_richiesti_produzione,
+            } for r in righe_mancanti],
+        })
+    return jsonify(risultato)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
