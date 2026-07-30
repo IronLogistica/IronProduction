@@ -75,6 +75,9 @@
         <div style="width:145px"><label class="modal-label" style="margin:0 0 4px">Lead time fornitore</label>
           <input id="cl-modal-lead-time-fornitura" class="modal-input" type="number" min="0" step="0.5" placeholder="Giorni" style="width:100%">
         </div>
+        <div style="width:150px"><label class="modal-label" style="margin:0 0 4px">Costo acquisto €/pz</label>
+          <input id="cl-modal-costo-acquisto" class="modal-input" type="number" min="0" step="0.01" placeholder="0.00" style="width:100%">
+        </div>
         <button class="btn btn-primary" onclick="salvaApprovvigionamentoModal()">💾 Salva</button>
       </div>
       <div id="cl-modal-approvvigionamento-esito" style="font-size:11px;margin-top:6px;color:var(--text-dim)"></div>
@@ -335,6 +338,7 @@ async function caricaApprovvigionamentoModal(){
     if(!r.ok || !d.ok) throw new Error(d.error || 'Caricamento non riuscito');
     document.getElementById('cl-modal-tipo-approvvigionamento').value = d.tipo_approvvigionamento || 'DA_CLASSIFICARE';
     document.getElementById('cl-modal-lead-time-fornitura').value = d.lead_time_fornitura_giorni ?? '';
+    document.getElementById('cl-modal-costo-acquisto').value = d.costo_acquisto_standard || '';
     esito.textContent = 'La classificazione è indipendente dal ciclo di lavoro.';
   }catch(e){ esito.textContent = 'Impossibile caricare la classificazione.'; }
 }
@@ -343,7 +347,8 @@ async function salvaApprovvigionamentoModal(){
   const esito = document.getElementById('cl-modal-approvvigionamento-esito');
   const payload = {
     tipo_approvvigionamento: document.getElementById('cl-modal-tipo-approvvigionamento').value,
-    lead_time_fornitura_giorni: document.getElementById('cl-modal-lead-time-fornitura').value
+    lead_time_fornitura_giorni: document.getElementById('cl-modal-lead-time-fornitura').value,
+    costo_acquisto_standard: document.getElementById('cl-modal-costo-acquisto').value,
   };
   try{
     const r = await fetch('/api/articoli/' + encodeURIComponent(_clModalCodice) + '/approvvigionamento', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
