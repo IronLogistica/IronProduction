@@ -1,1 +1,150 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🛒 Ordini di Acquisto Iron Wood</div>
+</div>
 
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Carica il PDF dell'ordine fornitore: viene letto e parsato automaticamente (fornitore, numero ordine, articoli,
+      quantità, date di evasione). Il PDF resta consultabile da qui in qualsiasi momento.<br>
+      <b>Fase 1</b> di questo modulo: caricamento, parsing, elenco a card, ricevimento manuale delle quantità.
+      Nelle fasi successive: ricevimento automatico da DDT, aggiornamento automatico della Giacenza, pagina
+      "Materiale in Arrivo" dedicata.
+    </p>
+
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+      <input type="file" id="oa-file" accept=".pdf" style="margin-bottom:8px">
+      <button class="btn btn-primary" onclick="caricaPdfOrdine()">📥 Carica ordine (PDF)</button>
+      <div id="oa-upload-esito" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
+    <div id="oa-lista" style="font-size:13px;color:#666">Caricamento...</div>
+  </div>
+</div>
+
+<!-- ══ MODAL: DETTAGLIO ORDINE / RICEVIMENTO RIGHE ═══════════════════════ -->
+<div class="modal-overlay" id="modal-ordine-acquisto">
+  <div class="modal-box" style="width:680px;max-width:97vw;max-height:88vh;overflow-y:auto">
+    <h3>🛒 Ordine — <span id="oa-modal-titolo"></span></h3>
+    <div id="oa-modal-testata" style="margin-bottom:14px"></div>
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px">Articoli</div>
+    <div id="oa-modal-righe">Caricamento...</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-ordine-acquisto')">Chiudi</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+let _oaCorrente = null;
+
+async function caricaPdfOrdine(){
+  const fileInput = document.getElementById('oa-file');
+  const esito = document.getElementById('oa-upload-esito');
+  if(!fileInput.files.length){ esito.innerHTML = '<span style="color:#c0392b">Seleziona un file PDF prima.</span>'; return; }
+  const fd = new FormData();
+  fd.append('file_pdf', fileInput.files[0]);
+  esito.innerHTML = 'Caricamento e lettura PDF in corso...';
+  try{
+    const r = await fetch('/api/ordini_acquisto_wood/upload', {method:'POST', body: fd});
+    const d = await r.json();
+    if(d.errore){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.messaggio + '</span>'; return; }
+    esito.innerHTML = `<span style="color:#2a9d5c">✅ Ordine caricato — fornitore "${d.ordine.fornitore}", ${d.n_articoli_trovati} articoli riconosciuti. Controlla e correggi se necessario.</span>`;
+    fileInput.value = '';
+    caricaListaOrdini();
+  }catch(e){
+    esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete durante il caricamento.</span>';
+  }
+}
+
+const STATO_LABEL = {
+  DA_CONFERMARE: {testo:'🟠 Da confermare', colore:'#f0ad4e'},
+  ORDINE_CONFERMATO: {testo:'✅ Confermato', colore:'#28a745'},
+  ORDINE_IN_ARRIVO: {testo:'🚢 In arrivo', colore:'#00d2ff'},
+  ORDINE_DA_RITIRARE: {testo:'🚚 Da ritirare', colore:'#ff9800'},
+  ORDINE_RICEVUTO: {testo:'📦 Ricevuto', colore:'#888'},
+};
+
+async function caricaListaOrdini(){
+  const box = document.getElementById('oa-lista');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/ordini_acquisto_wood');
+    const ordini = await r.json();
+    if(!ordini.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di acquisto caricato ancora.</p>'; return; }
+    let html = '<div style="display:flex;flex-wrap:wrap;gap:12px">';
+    ordini.forEach(o=>{
+      const st = STATO_LABEL[o.stato_label] || {testo:o.stato_label, colore:'#999'};
+      const totRighe = o.articoli.length;
+      const ricevute = o.articoli.filter(a => a.qta_ricevuta >= a.qta_originale && a.qta_originale > 0).length;
+      html += `<div style="width:280px;border:1px solid var(--border);border-radius:8px;padding:12px;cursor:pointer" onclick="apriOrdine(${o.id})">
+        <div style="font-weight:700;font-size:14px">${o.fornitore}</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">OA n° ${o.ordine_n} — ${o.filename}</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">${totRighe} articoli — ${ricevute}/${totRighe} ricevuti</div>
+        <span class="badge" style="background:${st.colore}22;color:${st.colore};border:1px solid ${st.colore}55;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">${st.testo}</span>
+        ${o.data_consegna?`<div style="font-size:11px;margin-top:6px">📅 ${o.data_consegna}</div>`:''}
+      </div>`;
+    });
+    html += '</div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function apriOrdine(id){
+  _oaCorrente = id;
+  const r = await fetch('/api/ordini_acquisto_wood');
+  const ordini = await r.json();
+  const o = ordini.find(x => x.id === id);
+  if(!o) return;
+  document.getElementById('oa-modal-titolo').textContent = o.fornitore + ' — OA n° ' + o.ordine_n;
+
+  const stati = Object.keys(STATO_LABEL).map(k => `<option value="${k}" ${o.stato_label===k?'selected':''}>${STATO_LABEL[k].testo}</option>`).join('');
+  document.getElementById('oa-modal-testata').innerHTML = `
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+      <select id="oa-stato-sel" onchange="cambiaStatoOrdine()">${stati}</select>
+      <label style="font-size:12px"><input type="checkbox" id="oa-ritiro" ${o.ritiro_proprio?'checked':''} onchange="cambiaRitiro()"> Ritiriamo noi</label>
+      <a href="/ordini_acquisto_wood/${o.id}/pdf" target="_blank" class="btn btn-ghost" style="padding:5px 10px;font-size:12px">📄 Apri PDF</a>
+    </div>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <label style="font-size:12px">Consegna: <input type="date" id="oa-data-consegna" value="${o.data_consegna||''}" onchange="cambiaDataConsegna()"></label>
+      <input type="text" id="oa-nota" placeholder="Nota interna" value="${(o.nota_interna||'').replace(/"/g,'&quot;')}" onblur="cambiaNota()" style="flex:1;min-width:150px;padding:5px 8px;border-radius:5px;border:1px solid var(--border)">
+    </div>`;
+
+  let righe = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>Qtà ordinata</th><th>Qtà ricevuta</th><th>Evasione</th></tr></thead><tbody>';
+  o.articoli.forEach(a=>{
+    const completo = a.qta_originale > 0 && a.qta_ricevuta >= a.qta_originale;
+    righe += `<tr style="${completo?'opacity:.6':''}"><td class="codice">${a.codice}</td><td class="lav-td">${a.descrizione||'—'}</td>
+      <td class="num">${a.qta_originale} ${a.unita_misura||''}</td>
+      <td class="num"><input type="number" step="0.01" min="0" value="${a.qta_ricevuta}" style="width:80px" onchange="aggiornaRicevuto(${a.id}, this.value)"></td>
+      <td class="lav-td">${a.data_evasione||'—'}</td></tr>`;
+  });
+  righe += '</tbody></table></div>';
+  document.getElementById('oa-modal-righe').innerHTML = righe;
+  openModal('modal-ordine-acquisto');
+}
+
+async function cambiaStatoOrdine(){
+  await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({stato_label: document.getElementById('oa-stato-sel').value})});
+  caricaListaOrdini();
+}
+async function cambiaRitiro(){
+  await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ritiro_proprio: document.getElementById('oa-ritiro').checked})});
+}
+async function cambiaDataConsegna(){
+  await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({data_consegna: document.getElementById('oa-data-consegna').value})});
+  caricaListaOrdini();
+}
+async function cambiaNota(){
+  await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nota_interna: document.getElementById('oa-nota').value})});
+}
+async function aggiornaRicevuto(rigaId, valore){
+  await fetch('/api/ordini_acquisto_wood/righe/' + rigaId, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({qta_ricevuta: valore})});
+  caricaListaOrdini();
+}
+
+caricaListaOrdini();
+{% endblock %}
