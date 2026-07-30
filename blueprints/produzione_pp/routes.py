@@ -6,7 +6,8 @@ from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     prossimo_numero_commessa, GiacenzaWood, MovimentoGiacenzaWood, CicloLavoroWood,
                     CentroCostoWood, VarianzaProduzioneWood, ArticoloApprovvigionamento,
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood, DistintaBaseWood,
-                    CostoStandardVersioneDettaglioWood, OrdineAcquistoWood, RigaOrdineAcquistoWood)
+                    CostoStandardVersioneDettaglioWood, OrdineAcquistoWood, RigaOrdineAcquistoWood,
+                    CostoStandardVersioneFaseWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -339,13 +340,38 @@ def api_evento():
                               .filter(db.func.lower(CentroCostoWood.nome) == fase_nome.lower())
                               .first())
                 if riga_ciclo and riga_ciclo.produttivita_oraria:
-                    tempo_standard_min = (good / riga_ciclo.produttivita_oraria) * 60
-                    costo_orario = riga_ciclo.centro_costo.costo_orario or 0
-                    tariffa_manodopera = riga_ciclo.centro_costo.tariffa_manodopera_diretta_oraria or 0
-                    costo_standard_lav = (tempo_standard_min / 60) * costo_orario
-                    costo_reale_lav = (tempo / 60) * costo_orario
-                    costo_standard_mdo = (tempo_standard_min / 60) * tariffa_manodopera
-                    costo_reale_mdo = (tempo / 60) * tariffa_manodopera
+                    # Tariffa/produttività CONGELATE al momento del rilascio, se disponibili
+                    # (snapshot salvato dall'ultimo "Ricalcola e salva" prima del rilascio) —
+                    # permette di isolare una vera varianza di TARIFFA, non solo di tempo.
+                    # Senza snapshot, standard e reale usano la stessa tariffa corrente
+                    # (comportamento precedente): varianza di tariffa resta 0.
+                    fase_congelata = None
+                    legame = LegameCostoStandardOrdineWood.query.get(o.codice)
+                    if legame and legame.costo_standard_versione_id:
+                        fase_congelata = (CostoStandardVersioneFaseWood.query
+                                          .filter_by(versione_id=legame.costo_standard_versione_id)
+                                          .filter(db.func.lower(CostoStandardVersioneFaseWood.nome_reparto) == fase_nome.lower())
+                                          .first())
+
+                    produttivita_std = fase_congelata.produttivita_oraria_congelata if fase_congelata else riga_ciclo.produttivita_oraria
+                    tariffa_macchina_std = fase_congelata.costo_orario_congelato if fase_congelata else (riga_ciclo.centro_costo.costo_orario or 0)
+                    tariffa_mdo_std = fase_congelata.tariffa_manodopera_congelata if fase_congelata else (riga_ciclo.centro_costo.tariffa_manodopera_diretta_oraria or 0)
+                    tariffa_macchina_reale = riga_ciclo.centro_costo.costo_orario or 0     # sempre quella corrente
+                    tariffa_mdo_reale = riga_ciclo.centro_costo.tariffa_manodopera_diretta_oraria or 0
+
+                    tempo_standard_min = (good / produttivita_std) * 60 if produttivita_std else 0
+                    ore_standard = tempo_standard_min / 60
+                    ore_reali = tempo / 60
+
+                    costo_standard_lav = ore_standard * tariffa_macchina_std
+                    costo_reale_lav = ore_reali * tariffa_macchina_reale
+                    costo_standard_mdo = ore_standard * tariffa_mdo_std
+                    costo_reale_mdo = ore_reali * tariffa_mdo_reale
+
+                    # Scomposizione classica a due vie: efficienza (tempo, a tariffa standard) + tariffa (a tempo reale)
+                    var_tariffa_lav = (tariffa_macchina_reale - tariffa_macchina_std) * ore_reali
+                    var_tariffa_mdo = (tariffa_mdo_reale - tariffa_mdo_std) * ore_reali
+
                     db.session.add(VarianzaProduzioneWood(
                         op_code=o.codice, codice_articolo=o.codice_articolo, fase=fase_nome, quantita=good,
                         tempo_standard_minuti=round(tempo_standard_min, 2), tempo_reale_minuti=tempo,
@@ -355,6 +381,8 @@ def api_evento():
                         costo_reale_manodopera=round(costo_reale_mdo, 4),
                         varianza=round(costo_reale_lav - costo_standard_lav, 4),
                         varianza_manodopera=round(costo_reale_mdo - costo_standard_mdo, 4),
+                        varianza_tariffa_lavorazione=round(var_tariffa_lav, 4) if fase_congelata else 0,
+                        varianza_tariffa_manodopera=round(var_tariffa_mdo, 4) if fase_congelata else 0,
                     ))
             except Exception:
                 pass  # nessuna varianza registrabile (fase non abbinabile) non deve bloccare il consuntivo
@@ -474,9 +502,11 @@ def api_analisi_costo_ordine(codice):
     varianze_lav = VarianzaProduzioneWood.query.filter_by(op_code=o.codice).all()
     eff_lavorazione_tot = round(sum(v.costo_reale_lavorazione for v in varianze_lav), 2)
     std_lavorazione_da_eventi = round(sum(v.costo_standard_lavorazione for v in varianze_lav), 2)
-    var_efficienza_tot = round(sum(v.varianza for v in varianze_lav), 2)
+    var_tariffa_lav_tot = round(sum(v.varianza_tariffa_lavorazione for v in varianze_lav), 2)
+    var_efficienza_tot = round(sum(v.varianza - v.varianza_tariffa_lavorazione for v in varianze_lav), 2)
     eff_manodopera_tot = round(sum(v.costo_reale_manodopera for v in varianze_lav), 2)
-    var_efficienza_manodopera_tot = round(sum(v.varianza_manodopera for v in varianze_lav), 2)
+    var_tariffa_mdo_tot = round(sum(v.varianza_tariffa_manodopera for v in varianze_lav), 2)
+    var_efficienza_manodopera_tot = round(sum(v.varianza_manodopera - v.varianza_tariffa_manodopera for v in varianze_lav), 2)
 
     eventi = EventoConsuntivoPP.query.filter_by(op_code=o.codice).all()
     fasi_tracciate = {v.fase for v in varianze_lav}
@@ -484,10 +514,16 @@ def api_analisi_costo_ordine(codice):
     if fasi_non_tracciate:
         limiti.append(f'Fasi consuntivate ma non abbinabili a un reparto del Ciclo di Lavoro (nome fase diverso dal nome '
                        f'reparto): {", ".join(fasi_non_tracciate)} — il loro tempo/costo NON è incluso nella lavorazione/manodopera effettiva.')
-    limiti.append('Varianza tariffa manodopera/centro di costo: NON disponibile con i dati attualmente registrati — '
-                   'il sistema non conserva la tariffa oraria del centro di costo separata per lo standard congelato '
-                   'al rilascio; le varianze di lavorazione e manodopera mostrate sono quindi solo di TEMPO/EFFICIENZA '
-                   '(tariffa identica usata sia per lo standard che per il reale, quella corrente del centro al momento del consuntivo).')
+    versione_id_corrente = legame.costo_standard_versione_id if legame else None
+    fasi_con_tariffa_congelata = ({f.nome_reparto.lower() for f in
+                                   CostoStandardVersioneFaseWood.query.filter_by(versione_id=versione_id_corrente).all()}
+                                  if versione_id_corrente else set())
+    fasi_senza_tariffa_congelata = sorted({f for f in fasi_tracciate if f.lower() not in fasi_con_tariffa_congelata})
+    if fasi_senza_tariffa_congelata:
+        limiti.append(f'Varianza di tariffa non disponibile per: {", ".join(fasi_senza_tariffa_congelata)} — nessuna '
+                       f'tariffa congelata trovata per quella fase al momento del rilascio (probabilmente il Costo '
+                       f'Standard non era ancora stato ricalcolato con le tariffe attuali). La varianza mostrata per '
+                       f'quella fase è quindi solo di tempo/efficienza.')
 
     # ── Scarto ──────────────────────────────────────────────────────────
     impatto_scarto = round(std_unit['costo_totale'] * qta_scarto, 2)
@@ -524,13 +560,15 @@ def api_analisi_costo_ordine(codice):
                    'overhead': var_overhead, 'totale': var_totale, 'totale_pct': var_totale_pct,
                    'scarto_impatto': impatto_scarto, 'scarto_pct': var_scarto_pct,
                    'lavorazione_efficienza': var_efficienza_tot, 'manodopera_efficienza': var_efficienza_manodopera_tot,
-                   'lavorazione_tariffa': None, 'manodopera_tariffa': None},
+                   'lavorazione_tariffa': var_tariffa_lav_tot, 'manodopera_tariffa': var_tariffa_mdo_tot},
         dettaglio_materiali=dettaglio_materiali,
         dettaglio_lavorazione=[{
             'fase': v.fase, 'tempo_standard_minuti': v.tempo_standard_minuti, 'tempo_reale_minuti': v.tempo_reale_minuti,
             'costo_standard': v.costo_standard_lavorazione, 'costo_reale': v.costo_reale_lavorazione, 'varianza': v.varianza,
             'costo_standard_manodopera': v.costo_standard_manodopera, 'costo_reale_manodopera': v.costo_reale_manodopera,
             'varianza_manodopera': v.varianza_manodopera,
+            'varianza_tariffa_lavorazione': v.varianza_tariffa_lavorazione,
+            'varianza_tariffa_manodopera': v.varianza_tariffa_manodopera,
         } for v in varianze_lav],
         limiti=limiti,
     )
