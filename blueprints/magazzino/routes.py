@@ -2,7 +2,8 @@ from flask import Blueprint, render_template, jsonify, request
 from datetime import datetime
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
-                    TIPI_APPROVVIGIONAMENTO, GiacenzaWood, MovimentoGiacenzaWood, OrdineProduzione)
+                    TIPI_APPROVVIGIONAMENTO, GiacenzaWood, MovimentoGiacenzaWood, OrdineProduzione,
+                    ImpostazioneCostoWood, CostoStandardWood, VarianzaProduzioneWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -22,6 +23,11 @@ def pagina_centri_costo():
 @magazzino_bp.route('/giacenza-wood')
 def pagina_giacenza():
     return render_template('giacenza_wood.html', active='giacenza_wood')
+
+
+@magazzino_bp.route('/costo-standard-wood')
+def pagina_costo_standard():
+    return render_template('costo_standard_wood.html', active='costo_standard')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -68,6 +74,7 @@ def api_approvvigionamento_articolo(codice):
             'ok': True, 'codice': codice,
             'tipo_approvvigionamento': record.tipo_approvvigionamento if record else 'DA_CLASSIFICARE',
             'lead_time_fornitura_giorni': record.lead_time_fornitura_giorni if record else None,
+            'costo_acquisto_standard': record.costo_acquisto_standard if record else 0,
         })
     try:
         d = request.get_json(force=True)
@@ -80,11 +87,15 @@ def api_approvvigionamento_articolo(codice):
         record.tipo_approvvigionamento = tipo
         valore = d.get('lead_time_fornitura_giorni')
         record.lead_time_fornitura_giorni = float(valore) if valore not in (None, '') else None
+        if 'costo_acquisto_standard' in d:
+            costo = d.get('costo_acquisto_standard')
+            record.costo_acquisto_standard = float(costo) if costo not in (None, '') else 0
         record.aggiornato_il = datetime.utcnow()
         db.session.commit()
         return jsonify({'ok': True, 'codice': codice,
                         'tipo_approvvigionamento': record.tipo_approvvigionamento,
-                        'lead_time_fornitura_giorni': record.lead_time_fornitura_giorni})
+                        'lead_time_fornitura_giorni': record.lead_time_fornitura_giorni,
+                        'costo_acquisto_standard': record.costo_acquisto_standard})
     except (TypeError, ValueError):
         db.session.rollback()
         return jsonify({'ok': False, 'error': 'Lead time non valido'}), 400
@@ -613,16 +624,20 @@ def api_fabbisogno_produzione():
 STATI_CHE_IMPEGNANO = ('Rilasciato', 'In esecuzione', 'Tecnicamente completato')
 
 
-def _registra_movimento_giacenza(codice, delta, tipo, riferimento='', note=''):
+def _registra_movimento_giacenza(codice, delta, tipo, riferimento='', note='', costo_unitario=None):
     """Applica un delta (positivo=carico, negativo=scarico) alla giacenza di un
-    codice e registra il movimento in storico. Non fa il commit (lo fa il chiamante)."""
+    codice e registra il movimento in storico. Non fa il commit (lo fa il chiamante).
+    costo_unitario è facoltativo: se dato, il movimento viene valorizzato
+    (valore = costo_unitario × |delta|) — usato per i carichi a costo standard."""
     g = GiacenzaWood.query.get(codice)
     if not g:
         g = GiacenzaWood(codice=codice, quantita=0)
         db.session.add(g)
     g.quantita = (g.quantita or 0) + delta
     g.aggiornato_il = datetime.utcnow()
+    valore = round(costo_unitario * abs(delta), 4) if costo_unitario is not None else None
     db.session.add(MovimentoGiacenzaWood(codice=codice, tipo=tipo, quantita=delta,
+                                          costo_unitario=costo_unitario, valore=valore,
                                           riferimento=riferimento, note=note))
 
 
@@ -1008,3 +1023,162 @@ def api_ciclo_lavoro_elimina(rid):
     db.session.delete(r)
     db.session.commit()
     return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  COSTO STANDARD IRON WOOD — logica SAP: Materiali (BOM ricorsiva) +
+#  Lavorazione (Routing/Ciclo di Lavoro) + Overhead (% su materiali+lavorazione).
+#  Un codice foglia (classificato come materia prima/componente
+#  acquisto/laserato in ArticoloApprovvigionamento) non ha BOM/routing sotto:
+#  il suo costo standard è semplicemente il prezzo d'acquisto registrato.
+# ══════════════════════════════════════════════════════════════════════════════
+def _overhead_pct():
+    imp = ImpostazioneCostoWood.query.first()
+    return imp.aliquota_overhead_pct if imp else 0
+
+
+def _calcola_costo_standard(codice, _visitati=None, _cache=None, _profondita=0, _max_profondita=15):
+    """
+    Ricorsivo bottom-up. Ritorna sempre un dict con costi (materiali/
+    lavorazione/overhead/totale) E ore di manodopera standard (dirette di
+    questo codice + quelle di ogni sottocomponente, ricorsivamente — lo
+    "standard ore" di un prodotto finito include il tempo di lavorazione
+    di TUTTI i suoi semilavorati interni, non solo l'ultima fase).
+    Ritorna sempre le stesse chiavi anche in caso di ciclo nella distinta o
+    profondità eccessiva (tutto a 0 — un ciclo è un errore di dati, non deve
+    far fallire il calcolo).
+    """
+    vuoto = {'costo_materiali': 0.0, 'costo_lavorazione': 0.0, 'costo_overhead': 0.0,
+             'costo_totale': 0.0, 'ore_manodopera_standard': 0.0}
+    if _visitati is None:
+        _visitati = set()
+    if _cache is None:
+        _cache = {}
+    if codice in _cache:
+        return _cache[codice]
+    if codice in _visitati or _profondita >= _max_profondita:
+        return vuoto
+    _visitati = _visitati | {codice}
+
+    approvv = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
+    if approvv and approvv.tipo_approvvigionamento != 'DA_CLASSIFICARE':
+        prezzo = round(approvv.costo_acquisto_standard or 0, 4)
+        risultato = {'costo_materiali': prezzo, 'costo_lavorazione': 0.0, 'costo_overhead': 0.0,
+                     'costo_totale': prezzo, 'ore_manodopera_standard': 0.0}
+        _cache[codice] = risultato
+        return risultato
+
+    costo_materiali = 0.0
+    ore_materiali = 0.0
+    for r in DistintaBaseWood.query.filter_by(codice_padre=codice).all():
+        sub = _calcola_costo_standard(r.codice_figlio, _visitati, _cache, _profondita + 1, _max_profondita)
+        costo_materiali += sub['costo_totale'] * (r.quantita or 1.0)
+        ore_materiali += sub['ore_manodopera_standard'] * (r.quantita or 1.0)
+
+    costo_lavorazione = 0.0
+    ore_dirette = 0.0
+    for f in CicloLavoroWood.query.filter_by(codice=codice).all():
+        if f.produttivita_oraria and f.produttivita_oraria > 0 and f.centro_costo:
+            ore_fase = 1.0 / f.produttivita_oraria
+            ore_dirette += ore_fase
+            costo_lavorazione += ore_fase * (f.centro_costo.costo_orario or 0)
+
+    overhead_pct = _overhead_pct()
+    costo_overhead = (costo_materiali + costo_lavorazione) * (overhead_pct / 100.0)
+    costo_totale = costo_materiali + costo_lavorazione + costo_overhead
+
+    risultato = {
+        'costo_materiali':          round(costo_materiali, 4),
+        'costo_lavorazione':        round(costo_lavorazione, 4),
+        'costo_overhead':           round(costo_overhead, 4),
+        'costo_totale':             round(costo_totale, 4),
+        'ore_manodopera_standard':  round(ore_dirette + ore_materiali, 4),
+    }
+    _cache[codice] = risultato
+    return risultato
+
+
+@magazzino_bp.route('/api/costo_standard/<codice>/dettaglio_materiali')
+def api_costo_standard_dettaglio_materiali(codice):
+    """
+    Quantità standard di materiale per unità di prodotto finito, appiattite
+    su tutta la distinta esplosa (stessa esplosione già usata per BOM/fabbisogno) —
+    per confrontare quantità standard vs quantità realmente consumate.
+    """
+    componenti = _esplodi_bom_wood(codice, qta=1.0)
+    aggregato = {}
+    _flatten_componenti(componenti, aggregato)
+    righe = []
+    for cod, qta in sorted(aggregato.items()):
+        approvv = ArticoloApprovvigionamento.query.filter_by(codice=cod).first()
+        prezzo = approvv.costo_acquisto_standard if approvv else None
+        righe.append({
+            'codice': cod, 'quantita_standard_unitaria': round(qta, 4),
+            'costo_acquisto_standard': prezzo,
+            'valore_standard': round(qta * prezzo, 4) if prezzo else None,
+        })
+    return jsonify({'codice': codice, 'componenti': righe})
+
+
+@magazzino_bp.route('/api/costo_standard/<codice>')
+def api_costo_standard_calcola(codice):
+    """Calcolo LIVE (non salvato) — usato per anteprima prima di 'Ricalcola e salva'."""
+    r = _calcola_costo_standard(codice)
+    return jsonify({'codice': codice, **r})
+
+
+@magazzino_bp.route('/api/costo_standard/<codice>/salva', methods=['POST'])
+def api_costo_standard_salva(codice):
+    """Calcola e PERSISTE il costo standard di un codice (upsert)."""
+    r = _calcola_costo_standard(codice)
+    cs = CostoStandardWood.query.get(codice)
+    if not cs:
+        cs = CostoStandardWood(codice=codice)
+        db.session.add(cs)
+    cs.costo_materiali          = r['costo_materiali']
+    cs.costo_lavorazione        = r['costo_lavorazione']
+    cs.costo_overhead           = r['costo_overhead']
+    cs.costo_totale             = r['costo_totale']
+    cs.ore_manodopera_standard  = r['ore_manodopera_standard']
+    cs.calcolato_il             = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'ok': True, 'codice': codice, **r})
+
+
+@magazzino_bp.route('/api/costo_standard')
+def api_costo_standard_lista():
+    """Elenco dei costi standard già salvati (i codici padre della distinta Iron Wood, con o senza calcolo salvato)."""
+    padri = sorted({row[0] for row in db.session.query(DistintaBaseWood.codice_padre).distinct().all()})
+    salvati = {c.codice: c for c in CostoStandardWood.query.all()}
+    risultato = []
+    for codice in padri:
+        cs = salvati.get(codice)
+        risultato.append({
+            'codice': codice,
+            'costo_materiali':         cs.costo_materiali if cs else None,
+            'costo_lavorazione':       cs.costo_lavorazione if cs else None,
+            'costo_overhead':          cs.costo_overhead if cs else None,
+            'costo_totale':            cs.costo_totale if cs else None,
+            'ore_manodopera_standard': cs.ore_manodopera_standard if cs else None,
+            'calcolato_il':            cs.calcolato_il.strftime('%d/%m/%Y %H:%M') if cs and cs.calcolato_il else None,
+        })
+    return jsonify(risultato)
+
+
+@magazzino_bp.route('/api/impostazioni_costo', methods=['GET', 'PUT'])
+def api_impostazioni_costo():
+    imp = ImpostazioneCostoWood.query.first()
+    if request.method == 'GET':
+        return jsonify({'aliquota_overhead_pct': imp.aliquota_overhead_pct if imp else 0})
+    d = request.get_json(force=True)
+    try:
+        valore = float(d.get('aliquota_overhead_pct') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Aliquota non valida'}), 400
+    if not imp:
+        imp = ImpostazioneCostoWood()
+        db.session.add(imp)
+    imp.aliquota_overhead_pct = valore
+    imp.aggiornato_il = datetime.utcnow()
+    db.session.commit()
+    return jsonify({'ok': True, 'aliquota_overhead_pct': imp.aliquota_overhead_pct})
