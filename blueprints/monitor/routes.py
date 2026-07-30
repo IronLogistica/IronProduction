@@ -128,6 +128,19 @@ def macchina(cid):
         now=datetime.now().strftime('%d/%m/%Y'))
 
 
+# ── TOTEM — view live a bordo macchina, sola lettura, auto-refresh ────────────
+# Pensata per un monitor/tablet fissato fisicamente vicino alla macchina: NON
+# estende base.html (niente sidebar, niente editing), solo ciò che l'operaio
+# deve vedere per sapere cosa lavorare adesso e cosa viene dopo in coda.
+@monitor_bp.route('/totem/macchina/<int:cid>')
+def totem_macchina(cid):
+    centro = CentroCostoWood.query.get_or_404(cid)
+    righe = _righe_macchina(centro)
+    return render_template('monitor/totem.html',
+        centro=centro, righe=righe, macchine=get_macchine_monitor(),
+        now=datetime.now().strftime('%d/%m/%Y'))
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  API — dati macchina (per refresh AJAX) e riordino manuale della coda
 # ══════════════════════════════════════════════════════════════════════════════
