@@ -193,6 +193,33 @@ def api_distinta_base(codice):
 #  gli articoli/stock restano quelli condivisi (ArticoloML), ma le righe di
 #  distinta sono gestite qui per non toccare mai la tabella di MasterLogistic.
 # ══════════════════════════════════════════════════════════════════════════════
+def _righe_bom_attive_wood(codice_padre, query=None):
+    """
+    Righe di distinta_base_wood da usare per un dato codice_padre in TUTTE le
+    esplosioni di default (albero BOM, fabbisogno/netting, costo standard):
+    - righe senza gruppo_alternativa → sempre incluse (comportamento invariato);
+    - righe con lo stesso gruppo_alternativa → mutuamente esclusive, si tiene
+      SOLO quella con preferita=True (se per errore ce ne fosse più di una
+      preferita nello stesso gruppo, si tiene la prima per id, per determinismo).
+    Il parametro 'query' opzionale permette di riusare una query già filtrata
+    (es. con order_by) invece di ripartire da DistintaBaseWood.query.
+    """
+    righe = (query if query is not None
+             else DistintaBaseWood.query.filter_by(codice_padre=codice_padre)).all()
+    per_gruppo = {}
+    risultato = []
+    for r in righe:
+        if not r.gruppo_alternativa:
+            risultato.append(r)
+            continue
+        scelta_attuale = per_gruppo.get(r.gruppo_alternativa)
+        if scelta_attuale is None or (r.preferita and not scelta_attuale.preferita) or \
+           (r.preferita == scelta_attuale.preferita and r.id < scelta_attuale.id):
+            per_gruppo[r.gruppo_alternativa] = r
+    risultato.extend(per_gruppo.values())
+    return risultato
+
+
 def _esplodi_bom_wood(codice, qta=1.0, _visitati=None, _profondita=0, _max_profondita=12):
     """
     Costruisce l'albero grezzo dalla sola distinta_base_wood locale (nessuna
@@ -209,7 +236,8 @@ def _esplodi_bom_wood(codice, qta=1.0, _visitati=None, _profondita=0, _max_profo
         return []
     _visitati = _visitati | {codice}
 
-    righe = DistintaBaseWood.query.filter_by(codice_padre=codice).order_by(DistintaBaseWood.livello).all()
+    righe = _righe_bom_attive_wood(
+        codice, query=DistintaBaseWood.query.filter_by(codice_padre=codice).order_by(DistintaBaseWood.livello))
     componenti = []
     for r in righe:
         qta_totale = (r.quantita or 1.0) * qta
@@ -320,6 +348,8 @@ def api_lista_distinta_wood():
             'quantita':      r.quantita,
             'livello':       r.livello,
             'note':          r.note or '',
+            'gruppo_alternativa': r.gruppo_alternativa or '',
+            'preferita':          bool(r.preferita) if r.gruppo_alternativa else None,
         } for r in righe],
         'totale':      totale,
         'mostrate':    len(righe),
@@ -343,23 +373,59 @@ def api_add_distinta_wood():
         quantita = float(data.get('quantita') or 1.0)
         livello  = int(data.get('livello') or 1)
         note     = (data.get('note') or '').strip()
+        # gruppo_alternativa: vuoto/assente = riga normale (nessuna alternativa).
+        # Se valorizzato, la riga entra in un gruppo di componenti mutuamente
+        # esclusivi per lo stesso codice_padre (es. barra 7m vs barra 6m) — solo
+        # quella con preferita=True viene usata nell'esplosione BOM di default.
+        gruppo_alternativa = (data.get('gruppo_alternativa') or '').strip().upper() or None
+        preferita = bool(data.get('preferita', True)) if gruppo_alternativa else True
 
         esistente = DistintaBaseWood.query.filter_by(codice_padre=padre, codice_figlio=figlio).first()
         if esistente:
             esistente.quantita = quantita
             esistente.livello  = livello
             esistente.note     = note
+            esistente.gruppo_alternativa = gruppo_alternativa
+            esistente.preferita = preferita
         else:
             db.session.add(DistintaBaseWood(
                 codice_padre=padre, codice_figlio=figlio,
                 quantita=quantita, livello=livello, note=note,
+                gruppo_alternativa=gruppo_alternativa, preferita=preferita,
                 creato_il=datetime.utcnow()
             ))
+        # Se questa riga diventa la preferita di un gruppo, tutte le altre righe
+        # dello stesso codice_padre+gruppo_alternativa smettono di esserlo — un
+        # solo componente attivo per gruppo, sempre.
+        if gruppo_alternativa and preferita:
+            (DistintaBaseWood.query
+             .filter_by(codice_padre=padre, gruppo_alternativa=gruppo_alternativa)
+             .filter(DistintaBaseWood.codice_figlio != figlio)
+             .update({'preferita': False}))
         db.session.commit()
         return jsonify({'ok': True})
     except Exception as e:
         db.session.rollback()
         return jsonify({'errore': True, 'messaggio': str(e)}), 500
+
+
+@magazzino_bp.route('/api/distinta_base_wood/<int:id_riga>/seleziona_alternativa', methods=['POST'])
+def api_seleziona_alternativa_wood(id_riga):
+    """
+    Rende questa riga la componente ATTIVA (preferita) del suo gruppo di
+    alternative, disattivando le altre righe dello stesso codice_padre +
+    gruppo_alternativa — es. per passare da 'barra 7m' a 'barra 6m' su un
+    articolo quando cambia la disponibilità del materiale in magazzino.
+    """
+    riga = DistintaBaseWood.query.get_or_404(id_riga)
+    if not riga.gruppo_alternativa:
+        return jsonify({'errore': True, 'messaggio': 'Questa riga non fa parte di un gruppo di alternative.'}), 400
+    (DistintaBaseWood.query
+     .filter_by(codice_padre=riga.codice_padre, gruppo_alternativa=riga.gruppo_alternativa)
+     .update({'preferita': False}))
+    riga.preferita = True
+    db.session.commit()
+    return jsonify({'ok': True})
 
 
 @magazzino_bp.route('/api/distinta_base_wood/<int:id_riga>', methods=['DELETE'])
@@ -795,7 +861,7 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
 
     if mancante <= 0:
         return
-    righe_bom = DistintaBaseWood.query.filter_by(codice_padre=codice).all()
+    righe_bom = _righe_bom_attive_wood(codice)
     for r in righe_bom:
         qta_figlio = (r.quantita or 1.0) * mancante
         _netta_e_esplodi_wood(r.codice_figlio, qta_figlio, giacenza_residua, out, _visitati, _profondita + 1, _max_profondita)
@@ -1266,7 +1332,7 @@ def _calcola_costo_standard(codice, _visitati=None, _cache=None, _profondita=0, 
     costo_materiali = 0.0
     ore_materiali = 0.0
     codici_senza_costo = set()
-    for r in DistintaBaseWood.query.filter_by(codice_padre=codice).all():
+    for r in _righe_bom_attive_wood(codice):
         sub = _calcola_costo_standard(r.codice_figlio, _visitati, _cache, _profondita + 1, _max_profondita)
         costo_materiali += sub['costo_totale'] * (r.quantita or 1.0)
         ore_materiali += sub['ore_manodopera_standard'] * (r.quantita or 1.0)
