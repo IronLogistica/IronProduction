@@ -97,6 +97,11 @@ class CentroCostoWood(db.Model):
     pct_efficienza                      = db.Column(db.Float, default=100)        # % di utilizzo pianificato (assenze, setup, manutenzione...)
     periodo_riferimento                 = db.Column(db.String(10), default='mensile')  # 'mensile' o 'annuale' — unità delle ore teoriche sopra
     tariffa_manodopera_diretta_oraria   = db.Column(db.Float, default=0)          # €/h manodopera diretta, calcolata separatamente da costo_orario
+    # True = questo reparto/macchina NON compare nei Monitor/Totem di produzione
+    # di IronProduction (es. la Saldatura è già programmata e consuntivata in
+    # MasterWork) — resta comunque un centro di costo valido per Cicli di
+    # Lavoro e Costo Standard, semplicemente non genera una coda/totem qui.
+    escluso_da_monitor_produzione       = db.Column(db.Boolean, default=False)
 
 
 class CostoPianificatoCentroWood(db.Model):
@@ -982,7 +987,7 @@ def get_macchine_monitor():
     """
     righe = (db.session.query(CentroCostoWood.id, CentroCostoWood.nome)
              .join(CicloLavoroWood, CicloLavoroWood.centro_costo_id == CentroCostoWood.id)
-             .filter(CentroCostoWood.esterno == False)
+             .filter(CentroCostoWood.esterno == False, CentroCostoWood.escluso_da_monitor_produzione == False)
              .distinct().order_by(CentroCostoWood.nome).all())
     return [{'id': r.id, 'nome': r.nome} for r in righe]
 
@@ -1378,6 +1383,7 @@ def init_db():
         "ALTER TABLE righe_ordine_acquisto_wood ADD COLUMN IF NOT EXISTS prezzo_unitario DOUBLE PRECISION",
         "ALTER TABLE righe_ordine_acquisto_wood ADD COLUMN IF NOT EXISTS codice_fornitore_originale VARCHAR(100) DEFAULT ''",
         "ALTER TABLE ciclo_lavoro_wood ADD COLUMN IF NOT EXISTS scarto_max_pct DOUBLE PRECISION",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS escluso_da_monitor_produzione BOOLEAN DEFAULT FALSE",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
