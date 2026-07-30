@@ -6,7 +6,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     ImpostazioneCostoWood, CostoStandardWood, VarianzaProduzioneWood,
                     CostoPianificatoCentroWood, DRIVER_ATTIVITA_WOOD, VOCI_COSTO_PIANIFICATO_WOOD,
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood,
-                    CostoStandardVersioneDettaglioWood)
+                    CostoStandardVersioneDettaglioWood, CostoStandardVersioneFaseWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -1006,7 +1006,6 @@ def api_centro_costo_configurazione(cid):
         'driver_attivita': c.driver_attivita, 'n_risorse_equivalenti': c.n_risorse_equivalenti,
         'ore_teoriche_periodo': c.ore_teoriche_periodo, 'pct_efficienza': c.pct_efficienza,
         'periodo_riferimento': c.periodo_riferimento,
-        'aliquota_overhead_conversione_pct': c.aliquota_overhead_conversione_pct or 0,
         'costo_orario_attuale': c.costo_orario,
         'tariffa_manodopera_diretta_oraria_attuale': c.tariffa_manodopera_diretta_oraria,
         'ore_pratiche_pianificate': round(ore_pratiche, 4) if ore_pratiche else None,
@@ -1065,10 +1064,6 @@ def api_centro_costo_configurazione_salva(cid):
             if periodo not in ('mensile', 'annuale'):
                 return jsonify({'errore': True, 'messaggio': 'Periodo di riferimento non valido'}), 400
             c.periodo_riferimento = periodo
-        if 'aliquota_overhead_conversione_pct' in d:
-            c.aliquota_overhead_conversione_pct = float(d.get('aliquota_overhead_conversione_pct') or 0)
-            if c.aliquota_overhead_conversione_pct < 0:
-                return jsonify({'errore': True, 'messaggio': "L’overhead di conversione non può essere negativo"}), 400
     except (TypeError, ValueError):
         return jsonify({'errore': True, 'messaggio': 'Valore numerico non valido'}), 400
     db.session.commit()
@@ -1207,34 +1202,47 @@ def api_ciclo_lavoro_elimina(rid):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  COSTO STANDARD IRON WOOD — logica SAP: Materiali + Macchina/Reparto +
-#  Manodopera diretta + Overhead di conversione. L'overhead è impostato sul
-#  singolo centro di costo e si applica SOLO alla conversione della fase
-#  (macchina + manodopera), mai ai materiali. Le voci già incluse nella tariffa
-#  macchina (ammortamento, manutenzione, energia...) non vanno replicate qui.
+#  COSTO STANDARD IRON WOOD — logica SAP: Materiali (BOM ricorsiva) +
+#  Lavorazione (Routing/Ciclo di Lavoro) + Overhead (% su materiali+lavorazione).
+#  Un codice foglia (classificato come materia prima/componente
+#  acquisto/laserato in ArticoloApprovvigionamento) non ha BOM/routing sotto:
+#  il suo costo standard è semplicemente il prezzo d'acquisto registrato.
 # ══════════════════════════════════════════════════════════════════════════════
 def _overhead_pct():
-    # Compatibilità con gli standard storici: le nuove elaborazioni non usano
-    # più l'aliquota globale, ma l'aliquota del singolo centro di costo.
+    """LEGACY — mantenuta solo per non rompere eventuali chiamate esterne, non più usata dal motore di calcolo."""
     imp = ImpostazioneCostoWood.query.first()
     return imp.aliquota_overhead_pct if imp else 0
 
 
+def _overhead_pct_materiali():
+    imp = ImpostazioneCostoWood.query.first()
+    return imp.aliquota_overhead_materiali_pct if imp else 0
+
+
+def _overhead_pct_produzione():
+    imp = ImpostazioneCostoWood.query.first()
+    return imp.aliquota_overhead_produzione_pct if imp else 0
+
+
 def _calcola_costo_standard(codice, _visitati=None, _cache=None, _profondita=0, _max_profondita=15):
     """
-    Ricorsivo bottom-up. Ritorna un dict con costi (materiali/lavorazione/
-    overhead/totale), ore di manodopera standard cumulate, e 'codici_senza_costo':
-    l'insieme di TUTTI i codici foglia nell'albero (di questo codice o di
-    qualunque suo sottocomponente) classificati come materia
-    prima/acquisto/laserato ma SENZA prezzo configurato — per questi il
-    contributo al costo è 0 per necessità di calcolo, ma il totale va
-    considerato NON AFFIDABILE (sottostimato) finché non si registra il prezzo:
-    non inventiamo mai un valore, lo segnaliamo sempre esplicitamente.
-    Stesse chiavi anche in caso di ciclo nella distinta o profondità eccessiva.
+    Ricorsivo bottom-up, logica SAP: Materiali + Lavorazione (SOLO macchina/
+    reparto) + Manodopera diretta (tariffa propria, separata) + Overhead a
+    DUE basi distinte — Overhead Materiali (% su costo_materiali) e Overhead
+    Produzione (% su costo_lavorazione + costo_manodopera). Le due aliquote
+    si applicano ad OGNI livello della distinta: un semilavorato porta il
+    proprio overhead già dentro il suo costo_totale, e quando diventa
+    "materiale" del prodotto sopra, l'overhead materiali del padre si
+    riapplica su di lui — è corretto, è così anche in SAP.
+    Ritorna sempre le stesse chiavi anche in caso di ciclo nella distinta o
+    profondità eccessiva. 'codici_senza_costo': i codici foglia nell'albero
+    classificati ma senza prezzo — il contributo è 0 per necessità di
+    calcolo, il totale va considerato NON AFFIDABILE finché non si registra
+    il prezzo: non inventiamo mai un valore, lo segnaliamo sempre.
     """
-    vuoto = {'costo_materiali': 0.0, 'costo_macchina': 0.0, 'costo_manodopera_diretta': 0.0,
-             'costo_lavorazione': 0.0, 'costo_overhead': 0.0, 'costo_totale': 0.0,
-             'ore_manodopera_standard': 0.0, 'codici_senza_costo': set()}
+    vuoto = {'costo_materiali': 0.0, 'costo_lavorazione': 0.0, 'costo_manodopera': 0.0,
+             'costo_overhead': 0.0, 'costo_overhead_materiali': 0.0, 'costo_overhead_produzione': 0.0,
+             'costo_totale': 0.0, 'ore_manodopera_standard': 0.0, 'codici_senza_costo': set()}
     if _visitati is None:
         _visitati = set()
     if _cache is None:
@@ -1247,58 +1255,50 @@ def _calcola_costo_standard(codice, _visitati=None, _cache=None, _profondita=0, 
 
     approvv = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
     if approvv and approvv.tipo_approvvigionamento != 'DA_CLASSIFICARE':
-        if (approvv.costo_acquisto_standard or 0) <= 0:
-            risultato = {'costo_materiali': 0.0, 'costo_macchina': 0.0, 'costo_manodopera_diretta': 0.0,
-                         'costo_lavorazione': 0.0, 'costo_overhead': 0.0, 'costo_totale': 0.0,
-                         'ore_manodopera_standard': 0.0, 'codici_senza_costo': {codice}}
+        if approvv.costo_acquisto_standard is None:
+            risultato = dict(vuoto); risultato['codici_senza_costo'] = {codice}
         else:
             prezzo = round(approvv.costo_acquisto_standard, 4)
-            risultato = {'costo_materiali': prezzo, 'costo_macchina': 0.0, 'costo_manodopera_diretta': 0.0,
-                         'costo_lavorazione': 0.0, 'costo_overhead': 0.0, 'costo_totale': prezzo,
-                         'ore_manodopera_standard': 0.0, 'codici_senza_costo': set()}
+            risultato = dict(vuoto); risultato['costo_materiali'] = prezzo; risultato['costo_totale'] = prezzo
         _cache[codice] = risultato
         return risultato
 
-    # I quattro bucket vengono riportati ricorsivamente: un semilavorato non
-    # diventa artificialmente tutto "materiale" nel padre, ma conserva la
-    # propria quota di macchina, manodopera e overhead.
-    costo_materiali = costo_macchina = costo_manodopera = costo_overhead = 0.0
+    costo_materiali = 0.0
     ore_materiali = 0.0
     codici_senza_costo = set()
     for r in DistintaBaseWood.query.filter_by(codice_padre=codice).all():
-        qta = r.quantita or 1.0
         sub = _calcola_costo_standard(r.codice_figlio, _visitati, _cache, _profondita + 1, _max_profondita)
-        costo_materiali += sub['costo_materiali'] * qta
-        costo_macchina += sub['costo_macchina'] * qta
-        costo_manodopera += sub['costo_manodopera_diretta'] * qta
-        costo_overhead += sub['costo_overhead'] * qta
-        ore_materiali += sub['ore_manodopera_standard'] * qta
+        costo_materiali += sub['costo_totale'] * (r.quantita or 1.0)
+        ore_materiali += sub['ore_manodopera_standard'] * (r.quantita or 1.0)
         codici_senza_costo |= sub['codici_senza_costo']
 
+    costo_lavorazione = 0.0    # SOLO macchina/reparto (costo_orario, esclusa manodopera)
+    costo_manodopera = 0.0     # manodopera diretta, tariffa propria (tariffa_manodopera_diretta_oraria)
     ore_dirette = 0.0
     for f in CicloLavoroWood.query.filter_by(codice=codice).all():
         if f.produttivita_oraria and f.produttivita_oraria > 0 and f.centro_costo:
             ore_fase = 1.0 / f.produttivita_oraria
-            centro = f.centro_costo
-            costo_macchina_fase = ore_fase * (centro.costo_orario or 0)
-            costo_manodopera_fase = ore_fase * (centro.tariffa_manodopera_diretta_oraria or 0)
-            costo_macchina += costo_macchina_fase
-            costo_manodopera += costo_manodopera_fase
-            costo_overhead += (costo_macchina_fase + costo_manodopera_fase) * ((centro.aliquota_overhead_conversione_pct or 0) / 100.0)
             ore_dirette += ore_fase
+            costo_lavorazione += ore_fase * (f.centro_costo.costo_orario or 0)
+            costo_manodopera += ore_fase * (f.centro_costo.tariffa_manodopera_diretta_oraria or 0)
 
-    costo_lavorazione = costo_macchina + costo_manodopera
-    costo_totale = costo_materiali + costo_lavorazione + costo_overhead
+    oh_materiali_pct = _overhead_pct_materiali()
+    oh_produzione_pct = _overhead_pct_produzione()
+    costo_overhead_materiali = costo_materiali * (oh_materiali_pct / 100.0)
+    costo_overhead_produzione = (costo_lavorazione + costo_manodopera) * (oh_produzione_pct / 100.0)
+    costo_overhead = costo_overhead_materiali + costo_overhead_produzione
+    costo_totale = costo_materiali + costo_lavorazione + costo_manodopera + costo_overhead
 
     risultato = {
-        'costo_materiali':          round(costo_materiali, 4),
-        'costo_macchina':           round(costo_macchina, 4),
-        'costo_manodopera_diretta': round(costo_manodopera, 4),
-        'costo_lavorazione':        round(costo_lavorazione, 4),
-        'costo_overhead':           round(costo_overhead, 4),
-        'costo_totale':             round(costo_totale, 4),
-        'ore_manodopera_standard':  round(ore_dirette + ore_materiali, 4),
-        'codici_senza_costo':       codici_senza_costo,
+        'costo_materiali':           round(costo_materiali, 4),
+        'costo_lavorazione':         round(costo_lavorazione, 4),
+        'costo_manodopera':          round(costo_manodopera, 4),
+        'costo_overhead':            round(costo_overhead, 4),
+        'costo_overhead_materiali':  round(costo_overhead_materiali, 4),
+        'costo_overhead_produzione': round(costo_overhead_produzione, 4),
+        'costo_totale':              round(costo_totale, 4),
+        'ore_manodopera_standard':   round(ore_dirette + ore_materiali, 4),
+        'codici_senza_costo':        codici_senza_costo,
     }
     _cache[codice] = risultato
     return risultato
@@ -1310,41 +1310,6 @@ def _costo_standard_serializzabile(r):
     out['codici_senza_costo'] = sorted(r.get('codici_senza_costo', set()))
     out['completo'] = len(out['codici_senza_costo']) == 0
     return out
-
-
-def _diagnostica_configurazione_costo(codice):
-    """Restituisce gli interventi necessari per rendere configurabile il costo di un codice."""
-    approvv = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
-    tipo = approvv.tipo_approvvigionamento if approvv else 'DA_CLASSIFICARE'
-    righe_bom = DistintaBaseWood.query.filter_by(codice_padre=codice).count()
-    fasi = CicloLavoroWood.query.filter_by(codice=codice).all()
-    avvisi = []
-
-    if tipo == 'DA_CLASSIFICARE':
-        avvisi.append({'tipo': 'classificazione', 'testo': 'Articolo da classificare: indica se è acquistato, materia prima, laserato o lavorato internamente.', 'azione': 'articolo'})
-    elif (approvv.costo_acquisto_standard or 0) <= 0:
-        avvisi.append({'tipo': 'prezzo', 'testo': 'Prezzo di acquisto standard non impostato.', 'azione': 'articolo'})
-
-    # Un codice non classificato può anche essere un semilavorato interno: in
-    # quel caso mostriamo comunque subito BOM e ciclo mancanti, invece di
-    # costringere l'utente a scoprirli in più passaggi.
-    if tipo == 'DA_CLASSIFICARE' and righe_bom == 0:
-        avvisi.append({'tipo': 'distinta', 'testo': 'Distinta base assente: aggiungi i componenti se questo è un semilavorato/prodotto.', 'azione': 'distinta'})
-    if tipo == 'DA_CLASSIFICARE' and not fasi:
-        avvisi.append({'tipo': 'ciclo', 'testo': 'Ciclo di lavoro assente: inserisci fasi, tempi e reparto se il codice viene lavorato internamente.', 'azione': 'ciclo'})
-    if tipo == 'DA_CLASSIFICARE':
-        return avvisi
-
-    # I codici acquistati non necessitano di routing. Per un articolo interno
-    # (riconoscibile dalla sua BOM) il ciclo è invece necessario al costo di conversione.
-    if righe_bom and not fasi:
-        avvisi.append({'tipo': 'ciclo', 'testo': 'Ciclo di lavoro assente: non sono presenti fasi/tempi per questo articolo prodotto.', 'azione': 'ciclo'})
-    for fase in fasi:
-        if not fase.centro_costo:
-            avvisi.append({'tipo': 'centro', 'testo': f'Fase {fase.sequenza}: centro di costo non associato.', 'azione': 'centri'})
-        elif (fase.produttivita_oraria or 0) <= 0:
-            avvisi.append({'tipo': 'tempo', 'testo': f'Fase {fase.sequenza}: produttività/tempo non impostato.', 'azione': 'ciclo'})
-    return avvisi
 
 
 def _annota_costo_albero(componenti, _cache):
@@ -1363,7 +1328,7 @@ def _annota_costo_albero(componenti, _cache):
         if approvv and approvv.tipo_approvvigionamento != 'DA_CLASSIFICARE':
             c['tipo'] = 'ACQUISTO'
             c['origine_costo'] = approvv.tipo_approvvigionamento
-            if (approvv.costo_acquisto_standard or 0) <= 0:
+            if approvv.costo_acquisto_standard is None:
                 c['costo_unitario'] = None
                 c['costo_esteso'] = None
                 c['disponibile'] = False
@@ -1383,7 +1348,6 @@ def _annota_costo_albero(componenti, _cache):
                 c['costo_unitario'] = sub['costo_totale']
                 c['costo_esteso'] = round(sub['costo_totale'] * c['quantita_totale'], 4)
                 c['disponibile'] = True
-        c['avvisi_configurazione'] = _diagnostica_configurazione_costo(c['codice'])
         _annota_costo_albero(c.get('figli', []), _cache)
 
 
@@ -1404,7 +1368,6 @@ def api_costo_standard_dettaglio_materiali(codice):
     return jsonify({
         'codice': codice,
         'costo_radice': _costo_standard_serializzabile(radice),
-        'avvisi_radice': _diagnostica_configurazione_costo(codice),
         'componenti': componenti,
     })
 
@@ -1425,9 +1388,10 @@ def _crea_versione_costo_standard(codice):
         db.session.add(cs)
     cs.costo_materiali          = r['costo_materiali']
     cs.costo_lavorazione        = r['costo_lavorazione']
-    cs.costo_macchina            = r['costo_macchina']
-    cs.costo_manodopera_diretta  = r['costo_manodopera_diretta']
+    cs.costo_manodopera         = r['costo_manodopera']
     cs.costo_overhead           = r['costo_overhead']
+    cs.costo_overhead_materiali = r['costo_overhead_materiali']
+    cs.costo_overhead_produzione = r['costo_overhead_produzione']
     cs.costo_totale             = r['costo_totale']
     cs.ore_manodopera_standard  = r['ore_manodopera_standard']
     cs.completo                 = r['completo']
@@ -1439,11 +1403,12 @@ def _crea_versione_costo_standard(codice):
     versione = CostoStandardVersioneWood(
         codice=codice, versione=ultima_versione + 1,
         costo_materiali=r['costo_materiali'], costo_lavorazione=r['costo_lavorazione'],
-        costo_macchina=r['costo_macchina'], costo_manodopera_diretta=r['costo_manodopera_diretta'],
-        costo_overhead=r['costo_overhead'], costo_totale=r['costo_totale'],
+        costo_manodopera=r['costo_manodopera'],
+        costo_overhead=r['costo_overhead'], costo_overhead_materiali=r['costo_overhead_materiali'],
+        costo_overhead_produzione=r['costo_overhead_produzione'], costo_totale=r['costo_totale'],
         ore_manodopera_standard=r['ore_manodopera_standard'],
-        overhead_pct_usata=_overhead_pct(), completo=r['completo'],
-        codici_senza_costo=','.join(r['codici_senza_costo']),
+        overhead_materiali_pct_usata=_overhead_pct_materiali(), overhead_produzione_pct_usata=_overhead_pct_produzione(),
+        completo=r['completo'], codici_senza_costo=','.join(r['codici_senza_costo']),
     )
     db.session.add(versione)
     db.session.flush()  # per avere versione.id disponibile subito, senza commit qui (lo fa il chiamante)
@@ -1467,6 +1432,19 @@ def _crea_versione_costo_standard(codice):
             versione_id=versione.id, codice_componente=cod, quantita_standard=round(info['quantita'], 4),
             prezzo_standard_unitario=info['prezzo'], tipo=info['tipo'],
         ))
+
+    # Congela le fasi di routing DEL CODICE STESSO (non dei sottocomponenti:
+    # solo il routing del codice calcolato viene mai confrontato a consuntivo
+    # con gli eventi di produzione) — reparto, produttività e tariffe di
+    # QUESTO momento, per poter isolare in futuro una vera varianza di tariffa.
+    for f in CicloLavoroWood.query.filter_by(codice=codice).all():
+        if f.centro_costo:
+            db.session.add(CostoStandardVersioneFaseWood(
+                versione_id=versione.id, sequenza=f.sequenza, nome_reparto=f.centro_costo.nome,
+                produttivita_oraria_congelata=f.produttivita_oraria or 0,
+                costo_orario_congelato=f.centro_costo.costo_orario or 0,
+                tariffa_manodopera_congelata=f.centro_costo.tariffa_manodopera_diretta_oraria or 0,
+            ))
 
     return r, versione
 
@@ -1494,8 +1472,7 @@ def api_costo_standard_versioni(codice):
                 .order_by(CostoStandardVersioneWood.versione.desc()).all())
     return jsonify([{
         'id': v.id, 'versione': v.versione, 'costo_materiali': v.costo_materiali,
-        'costo_lavorazione': v.costo_lavorazione, 'costo_macchina': v.costo_macchina,
-        'costo_manodopera_diretta': v.costo_manodopera_diretta, 'costo_overhead': v.costo_overhead,
+        'costo_lavorazione': v.costo_lavorazione, 'costo_overhead': v.costo_overhead,
         'costo_totale': v.costo_totale, 'ore_manodopera_standard': v.ore_manodopera_standard,
         'overhead_pct_usata': v.overhead_pct_usata, 'completo': v.completo,
         'codici_senza_costo': v.codici_senza_costo.split(',') if v.codici_senza_costo else [],
@@ -1513,34 +1490,48 @@ def api_costo_standard_lista():
         cs = salvati.get(codice)
         risultato.append({
             'codice': codice,
-            'costo_materiali':         cs.costo_materiali if cs else None,
-            'costo_lavorazione':       cs.costo_lavorazione if cs else None,
-            'costo_macchina':           cs.costo_macchina if cs else None,
-            'costo_manodopera_diretta': cs.costo_manodopera_diretta if cs else None,
-            'costo_overhead':          cs.costo_overhead if cs else None,
-            'costo_totale':            cs.costo_totale if cs else None,
-            'ore_manodopera_standard': cs.ore_manodopera_standard if cs else None,
-            'completo':                cs.completo if cs else None,
-            'codici_senza_costo':      cs.codici_senza_costo.split(',') if cs and cs.codici_senza_costo else [],
-            'calcolato_il':            cs.calcolato_il.strftime('%d/%m/%Y %H:%M') if cs and cs.calcolato_il else None,
+            'costo_materiali':          cs.costo_materiali if cs else None,
+            'costo_lavorazione':        cs.costo_lavorazione if cs else None,
+            'costo_manodopera':         cs.costo_manodopera if cs else None,
+            'costo_overhead':           cs.costo_overhead if cs else None,
+            'costo_overhead_materiali': cs.costo_overhead_materiali if cs else None,
+            'costo_overhead_produzione': cs.costo_overhead_produzione if cs else None,
+            'costo_totale':             cs.costo_totale if cs else None,
+            'ore_manodopera_standard':  cs.ore_manodopera_standard if cs else None,
+            'completo':                 cs.completo if cs else None,
+            'codici_senza_costo':       cs.codici_senza_costo.split(',') if cs and cs.codici_senza_costo else [],
+            'calcolato_il':             cs.calcolato_il.strftime('%d/%m/%Y %H:%M') if cs and cs.calcolato_il else None,
         })
     return jsonify(risultato)
 
 
 @magazzino_bp.route('/api/impostazioni_costo', methods=['GET', 'PUT'])
 def api_impostazioni_costo():
+    """
+    Due aliquote separate, come in SAP (costing sheet): Overhead Materiali
+    (% su costo_materiali) e Overhead Produzione (% su lavorazione+manodopera).
+    Non una percentuale unica su tutto.
+    """
     imp = ImpostazioneCostoWood.query.first()
     if request.method == 'GET':
-        return jsonify({'aliquota_overhead_pct': imp.aliquota_overhead_pct if imp else 0})
+        return jsonify({
+            'aliquota_overhead_materiali_pct': imp.aliquota_overhead_materiali_pct if imp else 0,
+            'aliquota_overhead_produzione_pct': imp.aliquota_overhead_produzione_pct if imp else 0,
+        })
     d = request.get_json(force=True)
     try:
-        valore = float(d.get('aliquota_overhead_pct') or 0)
+        materiali_pct = float(d.get('aliquota_overhead_materiali_pct') or 0)
+        produzione_pct = float(d.get('aliquota_overhead_produzione_pct') or 0)
     except (TypeError, ValueError):
         return jsonify({'errore': True, 'messaggio': 'Aliquota non valida'}), 400
+    if materiali_pct < 0 or produzione_pct < 0:
+        return jsonify({'errore': True, 'messaggio': 'Le aliquote non possono essere negative'}), 400
     if not imp:
         imp = ImpostazioneCostoWood()
         db.session.add(imp)
-    imp.aliquota_overhead_pct = valore
+    imp.aliquota_overhead_materiali_pct = materiali_pct
+    imp.aliquota_overhead_produzione_pct = produzione_pct
     imp.aggiornato_il = datetime.utcnow()
     db.session.commit()
-    return jsonify({'ok': True, 'aliquota_overhead_pct': imp.aliquota_overhead_pct})
+    return jsonify({'ok': True, 'aliquota_overhead_materiali_pct': imp.aliquota_overhead_materiali_pct,
+                    'aliquota_overhead_produzione_pct': imp.aliquota_overhead_produzione_pct})
