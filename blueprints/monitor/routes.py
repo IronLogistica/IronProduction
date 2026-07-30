@@ -1,8 +1,11 @@
+import base64
 from datetime import datetime
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
-                    EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor)
+                    EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
+                    SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina)
 from blueprints.magazzino.routes import _giacenza_residua_dopo_impegni, _netta_e_esplodi_wood
+from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria
 
 monitor_bp = Blueprint('monitor', __name__)
 
@@ -75,6 +78,9 @@ def _righe_macchina(centro):
                 pronto = _pezzi_fase(o.codice, fase_prec.centro_costo.nome) >= (o.qta_pianificata or 0)
             sezione = 'da_iniziare' if pronto else 'in_attesa'
 
+        fase_ciclo = fasi_ciclo[idx]
+        tempo_standard_min_pz = (60 / fase_ciclo.produttivita_oraria) if fase_ciclo.produttivita_oraria else None
+
         posizione_manuale = sequenze_manuali.get((o.id, centro.id))
         chiave_ordine = (0, posizione_manuale) if posizione_manuale is not None else (
             1, o.priorita, o.data_prevista or datetime.max.date(), o.id)
@@ -86,6 +92,10 @@ def _righe_macchina(centro):
             'totale': o.qta_pianificata, 'saldo': saldo_fase, 'pct': pct_fase,
             'posizione_manuale': posizione_manuale,
             'data_prevista': o.data_prevista.isoformat() if o.data_prevista else None,
+            'tempo_standard_min_pz': round(tempo_standard_min_pz, 2) if tempo_standard_min_pz else None,
+            'scarto_max_pct': fase_ciclo.scarto_max_pct,
+            'scarto_max_pezzi': (round((o.qta_pianificata or 0) * fase_ciclo.scarto_max_pct / 100))
+                                 if fase_ciclo.scarto_max_pct else None,
             '_chiave_ordine': chiave_ordine,
         })
 
@@ -136,8 +146,35 @@ def macchina(cid):
 def totem_macchina(cid):
     centro = CentroCostoWood.query.get_or_404(cid)
     righe = _righe_macchina(centro)
+
+    sessione = SessioneLavoroMacchina.query.filter_by(centro_costo_id=cid, terminata_il=None).first()
+    sessione_info = None
+    riga_attiva = None
+    if sessione:
+        minuti = round((datetime.utcnow() - sessione.iniziata_il).total_seconds() / 60)
+        sessione_info = {'sessione_id': sessione.id, 'op_id': sessione.ordine_produzione_id,
+                          'iniziata_il': sessione.iniziata_il.isoformat(), 'minuti_trascorsi': minuti}
+        for lista in (righe['lavorazione'], righe['da_iniziare'], righe['in_attesa'], righe['terminati']):
+            riga_attiva = next((r for r in lista if r['op_id'] == sessione.ordine_produzione_id), None)
+            if riga_attiva:
+                break
+        if riga_attiva is None:
+            # L'OP con sessione aperta non compare in nessun bucket (es. completato
+            # nel frattempo): ricostruisco comunque i dati minimi per mostrarlo.
+            o = sessione.ordine_produzione
+            riga_attiva = {'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
+                           'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
+                           'totale': o.qta_pianificata, 'saldo': max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0),
+                           'pct': round((o.qta_buona or 0) / o.qta_pianificata * 100) if o.qta_pianificata else 0,
+                           'tempo_standard_min_pz': None, 'scarto_max_pct': None, 'scarto_max_pezzi': None}
+    elif righe['lavorazione']:
+        riga_attiva = righe['lavorazione'][0]
+    elif righe['da_iniziare']:
+        riga_attiva = righe['da_iniziare'][0]
+
     return render_template('monitor/totem.html',
         centro=centro, righe=righe, macchine=get_macchine_monitor(),
+        riga_attiva=riga_attiva, sessione=sessione_info,
         now=datetime.now().strftime('%d/%m/%Y'))
 
 
@@ -184,4 +221,190 @@ def api_reset_ordine_macchina(cid, op_id):
     if riga:
         db.session.delete(riga)
         db.session.commit()
+    return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  TOTEM — INIZIO / FINE LAVORO
+#  L'operatore preme un bottone sul totem: nessuna tastiera, nessun form,
+#  tranne i due numeri (pezzi buoni/scarto) richiesti alla chiusura. Il
+#  consuntivo generato alla chiusura passa dallo STESSO motore usato
+#  dall'integrazione MasterWork (_registra_evento_consuntivo): scarico
+#  giacenza, carico prodotto finito, varianza di lavorazione — tutto incluso.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@monitor_bp.route('/api/totem/<int:cid>/sessione_aperta')
+def api_totem_sessione_aperta(cid):
+    s = (SessioneLavoroMacchina.query
+         .filter_by(centro_costo_id=cid, terminata_il=None).first())
+    if not s:
+        return jsonify({'aperta': False})
+    minuti = round((datetime.utcnow() - s.iniziata_il).total_seconds() / 60)
+    return jsonify({
+        'aperta': True, 'sessione_id': s.id, 'ordine_produzione_id': s.ordine_produzione_id,
+        'op_codice': s.ordine_produzione.codice, 'iniziata_il': s.iniziata_il.isoformat(),
+        'minuti_trascorsi': minuti,
+    })
+
+
+@monitor_bp.route('/api/totem/<int:cid>/inizia', methods=['POST'])
+def api_totem_inizia(cid):
+    centro = CentroCostoWood.query.get_or_404(cid)
+    d = request.get_json(force=True)
+    try:
+        op_id = int(d['ordine_produzione_id'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'ordine_produzione_id obbligatorio'}), 400
+    o = OrdineProduzione.query.get_or_404(op_id)
+
+    esistente = SessioneLavoroMacchina.query.filter_by(centro_costo_id=cid, terminata_il=None).first()
+    if esistente:
+        if esistente.ordine_produzione_id == op_id:
+            return jsonify({'ok': True, 'sessione_id': esistente.id, 'gia_aperta': True})
+        return jsonify({'errore': True,
+                        'messaggio': f'Macchina già impegnata su {esistente.ordine_produzione.codice} — chiudi prima quel lavoro'}), 409
+
+    if not _is_carpenteria(o.asa) or o.stato not in ('Rilasciato', 'In esecuzione'):
+        return jsonify({'errore': True, 'messaggio': 'OP non attivo o non disponibile per Carpenteria Propria'}), 409
+
+    s = SessioneLavoroMacchina(ordine_produzione_id=op_id, centro_costo_id=cid, iniziata_il=datetime.utcnow())
+    db.session.add(s)
+    log(f'Totem {centro.nome}: iniziato lavoro su OP {o.codice}')
+    db.session.commit()
+    return jsonify({'ok': True, 'sessione_id': s.id})
+
+
+@monitor_bp.route('/api/totem/<int:cid>/termina', methods=['POST'])
+def api_totem_termina(cid):
+    centro = CentroCostoWood.query.get_or_404(cid)
+    d = request.get_json(force=True)
+    try:
+        op_id = int(d['ordine_produzione_id'])
+        good = int(d.get('pezzi_buoni', 0) or 0)
+        scrap = int(d.get('pezzi_scarto', 0) or 0)
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'ordine_produzione_id, pezzi_buoni e pezzi_scarto sono obbligatori (numerici)'}), 400
+    if good < 0 or scrap < 0:
+        return jsonify({'errore': True, 'messaggio': 'I pezzi non possono essere negativi'}), 400
+
+    s = (SessioneLavoroMacchina.query
+         .filter_by(ordine_produzione_id=op_id, centro_costo_id=cid, terminata_il=None).first())
+    if not s:
+        return jsonify({'errore': True, 'messaggio': 'Nessuna sessione di lavoro aperta per questo OP su questa macchina'}), 404
+
+    now = datetime.utcnow()
+    tempo_minuti = max(round((now - s.iniziata_il).total_seconds() / 60), 0)
+    o = OrdineProduzione.query.filter_by(id=op_id).with_for_update().first()
+    if not o:
+        return jsonify({'errore': True, 'messaggio': 'OP non trovato'}), 404
+    if o.stato not in ('Rilasciato', 'In esecuzione'):
+        return jsonify({'errore': True, 'messaggio': f'OP non modificabile nello stato {o.stato}'}), 409
+
+    event_id = f'totem-sessione-{s.id}'
+    try:
+        _registra_evento_consuntivo(o, centro.nome, now, good, scrap, tempo_minuti, event_id)
+        s.terminata_il = now
+        s.pezzi_buoni = good
+        s.pezzi_scarto = scrap
+        s.event_id_generato = event_id
+        log(f'Totem {centro.nome}: terminato lavoro su OP {o.codice} — {good} buoni, {scrap} scarto, {tempo_minuti} min')
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'errore': True, 'messaggio': f'Errore nella registrazione del consuntivo: {e}'}), 500
+    return jsonify({'ok': True, 'tempo_minuti': tempo_minuti})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DOCUMENTAZIONE TECNICA PER ARTICOLO — disegni/istruzioni mostrati sul totem
+#  quando quell'articolo è in lavorazione. Salvata come base64 nel DB.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@monitor_bp.route('/api/totem/documenti/<codice_articolo>')
+def api_lista_documenti_tecnici(codice_articolo):
+    righe = (DocumentoTecnicoArticolo.query.filter_by(codice_articolo=codice_articolo)
+             .order_by(DocumentoTecnicoArticolo.caricato_il.desc()).all())
+    return jsonify([{
+        'id': r.id, 'nome_file': r.nome_file, 'tipo_mime': r.tipo_mime, 'note': r.note or '',
+        'caricato_il': r.caricato_il.isoformat(),
+    } for r in righe])
+
+
+@monitor_bp.route('/api/totem/documenti', methods=['POST'])
+def api_carica_documento_tecnico():
+    """Body JSON: {codice_articolo, nome_file, tipo_mime, contenuto_base64, note?} — contenuto_base64 SENZA il prefisso data:...;base64,"""
+    d = request.get_json(force=True)
+    codice = (d.get('codice_articolo') or '').strip()
+    nome_file = (d.get('nome_file') or '').strip()
+    contenuto = d.get('contenuto_base64') or ''
+    if not codice or not nome_file or not contenuto:
+        return jsonify({'errore': True, 'messaggio': 'codice_articolo, nome_file e contenuto_base64 sono obbligatori'}), 400
+    r = DocumentoTecnicoArticolo(codice_articolo=codice, nome_file=nome_file,
+                                  tipo_mime=(d.get('tipo_mime') or 'application/octet-stream'),
+                                  contenuto_base64=contenuto, note=(d.get('note') or '').strip())
+    db.session.add(r)
+    db.session.commit()
+    return jsonify({'ok': True, 'id': r.id})
+
+
+@monitor_bp.route('/api/totem/documenti/file/<int:did>')
+def api_file_documento_tecnico(did):
+    r = DocumentoTecnicoArticolo.query.get_or_404(did)
+    return Response(base64.b64decode(r.contenuto_base64), mimetype=r.tipo_mime,
+                     headers={'Content-Disposition': f'inline; filename="{r.nome_file}"'})
+
+
+@monitor_bp.route('/api/totem/documenti/<int:did>', methods=['DELETE'])
+def api_elimina_documento_tecnico(did):
+    r = DocumentoTecnicoArticolo.query.get_or_404(did)
+    db.session.delete(r)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  FOTO LAVORAZIONE — scattate dall'operatore dal totem (come da cellulare),
+#  legate a un OP + centro di costo. Salvate come base64 nel DB.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@monitor_bp.route('/api/totem/<int:cid>/foto/<int:op_id>')
+def api_lista_foto_lavorazione(cid, op_id):
+    righe = (FotoLavorazioneMacchina.query
+             .filter_by(centro_costo_id=cid, ordine_produzione_id=op_id)
+             .order_by(FotoLavorazioneMacchina.caricato_il.desc()).all())
+    return jsonify([{'id': r.id, 'nome_file': r.nome_file, 'caricato_il': r.caricato_il.isoformat()} for r in righe])
+
+
+@monitor_bp.route('/api/totem/<int:cid>/foto', methods=['POST'])
+def api_carica_foto_lavorazione(cid):
+    """Body JSON: {ordine_produzione_id, nome_file, contenuto_base64} — contenuto_base64 SENZA il prefisso data:...;base64,"""
+    CentroCostoWood.query.get_or_404(cid)
+    d = request.get_json(force=True)
+    try:
+        op_id = int(d['ordine_produzione_id'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'ordine_produzione_id obbligatorio'}), 400
+    OrdineProduzione.query.get_or_404(op_id)
+    contenuto = d.get('contenuto_base64') or ''
+    nome_file = (d.get('nome_file') or 'foto.jpg').strip()
+    if not contenuto:
+        return jsonify({'errore': True, 'messaggio': 'contenuto_base64 obbligatorio'}), 400
+    r = FotoLavorazioneMacchina(ordine_produzione_id=op_id, centro_costo_id=cid,
+                                 nome_file=nome_file, contenuto_base64=contenuto)
+    db.session.add(r)
+    db.session.commit()
+    return jsonify({'ok': True, 'id': r.id})
+
+
+@monitor_bp.route('/api/totem/foto/file/<int:fid>')
+def api_file_foto_lavorazione(fid):
+    r = FotoLavorazioneMacchina.query.get_or_404(fid)
+    return Response(base64.b64decode(r.contenuto_base64), mimetype='image/jpeg')
+
+
+@monitor_bp.route('/api/totem/foto/<int:fid>', methods=['DELETE'])
+def api_elimina_foto_lavorazione(fid):
+    r = FotoLavorazioneMacchina.query.get_or_404(fid)
+    db.session.delete(r)
+    db.session.commit()
     return jsonify({'ok': True})
