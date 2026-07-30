@@ -58,20 +58,66 @@ class DistintaBaseML(db.Model):
     creato_il     = db.Column(db.DateTime)
 
 
+DRIVER_ATTIVITA_WOOD = ['ora_macchina', 'ora_reparto', 'ora_uomo', 'pezzo', 'tariffa_fissa']
+VOCI_COSTO_PIANIFICATO_WOOD = ['ammortamento', 'manutenzione', 'energia', 'consumabili',
+                               'affitti', 'supervisione', 'altro', 'manodopera_diretta']
+
+
 class CentroCostoWood(db.Model):
     """
     Centro di costo / reparto di produzione Iron Wood — macchine come
     piegatrice, sega, foratura, oppure lavorazioni esterne (verniciatura
     esterna, piega esterna). Prerequisito dei Cicli di Lavoro: ogni riga
     di CicloLavoroWood punta a uno di questi come "reparto" della fase.
+
+    'costo_orario' resta il campo che il motore di Costo Standard legge per
+    il costo macchina/reparto (SENZA manodopera) — può essere scritto a mano
+    (rapido) oppure calcolato dalla configurazione dettagliata sotto
+    (Costi Pianificati / Capacità) tramite "Calcola e salva tariffa": in
+    entrambi i casi resta l'unico valore usato a valle, per compatibilità.
+    'tariffa_manodopera_diretta_oraria' è la SUA controparte per la manodopera
+    diretta, tenuta volutamente separata (non sommata qui dentro).
     """
     __tablename__ = 'centri_costo_wood'
-    id            = db.Column(db.Integer, primary_key=True)
-    nome          = db.Column(db.String(100), nullable=False, unique=True)
-    esterno       = db.Column(db.Boolean, default=False)   # True = lavorazione esterna (es. verniciatura esterna)
-    costo_orario  = db.Column(db.Float, default=0)          # €/h SOLO macchina/reparto (ammortamento, energia, manutenzione...) — la manodopera si calcola a parte (tariffa operatore × ore da MasterWork)
-    note          = db.Column(db.String(300), default='')
-    creato_il     = db.Column(db.DateTime, default=datetime.utcnow)
+    id                                  = db.Column(db.Integer, primary_key=True)
+    nome                                = db.Column(db.String(100), nullable=False, unique=True)
+    esterno                             = db.Column(db.Boolean, default=False)   # True = lavorazione esterna (es. verniciatura esterna)
+    costo_orario                        = db.Column(db.Float, default=0)          # €/h macchina/reparto, SENZA manodopera — vedi nota classe
+    note                                = db.Column(db.String(300), default='')
+    creato_il                           = db.Column(db.DateTime, default=datetime.utcnow)
+    # ── Anagrafica estesa ──
+    reparto_gruppo                      = db.Column(db.String(100), default='')   # raggruppamento libero (es. più macchine sotto lo stesso reparto)
+    attivo                              = db.Column(db.Boolean, default=True)
+    fornitore_esterno                   = db.Column(db.String(200), default='')   # solo se esterno=True
+    tariffa_esterna                     = db.Column(db.Float, nullable=True)      # €/h o €/pz pattuito col fornitore esterno, se noto
+    # ── Capacità e driver ──
+    driver_attivita                     = db.Column(db.String(20), default='ora_reparto')  # vedi DRIVER_ATTIVITA_WOOD
+    n_risorse_equivalenti               = db.Column(db.Float, default=1)          # es. 3 macchine identiche nello stesso centro
+    ore_teoriche_periodo                = db.Column(db.Float, default=0)          # ore teoriche disponibili nel periodo, PER SINGOLA risorsa
+    pct_efficienza                      = db.Column(db.Float, default=100)        # % di utilizzo pianificato (assenze, setup, manutenzione...)
+    periodo_riferimento                 = db.Column(db.String(10), default='mensile')  # 'mensile' o 'annuale' — unità delle ore teoriche sopra
+    tariffa_manodopera_diretta_oraria   = db.Column(db.Float, default=0)          # €/h manodopera diretta, calcolata separatamente da costo_orario
+
+
+class CostoPianificatoCentroWood(db.Model):
+    """
+    Voce di costo pianificato di un Centro di Costo (ammortamento,
+    manutenzione, energia, ...), storicizzata per data di validità: quando si
+    modifica l'importo di una voce, la riga precedente viene chiusa
+    (valido_al = oggi) e se ne apre una nuova (valido_dal = oggi) — non si
+    sovrascrive mai un valore storico. La riga "corrente" di una voce è
+    sempre quella con valido_al IS NULL.
+    """
+    __tablename__ = 'costi_pianificati_centro_wood'
+    id               = db.Column(db.Integer, primary_key=True)
+    centro_costo_id  = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
+    voce             = db.Column(db.String(30), nullable=False)   # vedi VOCI_COSTO_PIANIFICATO_WOOD
+    importo          = db.Column(db.Float, nullable=False, default=0)
+    valido_dal       = db.Column(db.Date, nullable=False)
+    valido_al        = db.Column(db.Date, nullable=True)          # NULL = tuttora valida
+    note             = db.Column(db.String(300), default='')
+    creato_il        = db.Column(db.DateTime, default=datetime.utcnow)
+    centro_costo     = db.relationship('CentroCostoWood')
 
 
 class CicloLavoroWood(db.Model):
@@ -146,6 +192,8 @@ class CostoStandardWood(db.Model):
     costo_overhead            = db.Column(db.Float, default=0)
     costo_totale              = db.Column(db.Float, default=0)
     ore_manodopera_standard   = db.Column(db.Float, default=0)  # ore totali standard per pezzo (dirette + di ogni sottocomponente)
+    completo                  = db.Column(db.Boolean, default=True)   # False = almeno un componente foglia nell'albero non ha un prezzo configurato: il totale è sottostimato, non affidabile
+    codici_senza_costo        = db.Column(db.Text, default='')        # lista codici mancanti separata da virgola, per mostrarli senza dover riesplodere l'albero
     calcolato_il              = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -405,7 +453,7 @@ class ArticoloApprovvigionamento(db.Model):
     codice = db.Column(db.String(100), nullable=False, unique=True, index=True)
     tipo_approvvigionamento = db.Column(db.String(40), default='DA_CLASSIFICARE', nullable=False)
     lead_time_fornitura_giorni = db.Column(db.Float, default=None)
-    costo_acquisto_standard = db.Column(db.Float, default=0)  # €/pz — base del costo standard per i codici foglia (materia prima/componente acquisto/laserato): niente BOM/routing sotto, il costo standard è questo prezzo
+    costo_acquisto_standard = db.Column(db.Float, default=None)  # €/pz — NULL = non configurato (non 0!). Base del costo standard per i codici foglia (materia prima/componente acquisto/laserato): niente BOM/routing sotto, il costo standard è questo prezzo
     aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class KanbanProdotto(db.Model):
@@ -973,6 +1021,19 @@ def init_db():
         "ALTER TABLE movimenti_giacenza_wood ADD COLUMN IF NOT EXISTS costo_unitario DOUBLE PRECISION",
         "ALTER TABLE movimenti_giacenza_wood ADD COLUMN IF NOT EXISTS valore DOUBLE PRECISION",
         "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS ore_manodopera_standard DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS completo BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS codici_senza_costo TEXT DEFAULT ''",
+        # ── Centro di Costo: anagrafica estesa e capacità/driver (Configura) ──
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS reparto_gruppo VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS attivo BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS fornitore_esterno VARCHAR(200) DEFAULT ''",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS tariffa_esterna DOUBLE PRECISION",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS driver_attivita VARCHAR(20) DEFAULT 'ora_reparto'",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS n_risorse_equivalenti DOUBLE PRECISION DEFAULT 1",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS ore_teoriche_periodo DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS pct_efficienza DOUBLE PRECISION DEFAULT 100",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS periodo_riferimento VARCHAR(10) DEFAULT 'mensile'",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS tariffa_manodopera_diretta_oraria DOUBLE PRECISION DEFAULT 0",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
