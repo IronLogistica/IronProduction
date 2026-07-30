@@ -65,7 +65,8 @@ async function caricaAnalisiCosto(){
     // ── Confronto Standard / Effettivo / Varianza € / Varianza % ──
     const righe = [
       ['Materiali', d.standard.materiali, d.effettivo.materiali, d.varianza.materiali],
-      ['Lavorazione', d.standard.lavorazione, d.effettivo.lavorazione, d.varianza.lavorazione],
+      ['Lavorazione (macchina)', d.standard.lavorazione, d.effettivo.lavorazione, d.varianza.lavorazione],
+      ['Manodopera', d.standard.manodopera, d.effettivo.manodopera, d.varianza.manodopera],
       ['Overhead', d.standard.overhead, d.effettivo.overhead, d.varianza.overhead],
       ['TOTALE', d.standard.totale, d.effettivo.totale, d.varianza.totale],
     ];
@@ -81,9 +82,12 @@ async function caricaAnalisiCosto(){
     htmlConf += '</tbody></table></div>';
     htmlConf += `<div style="margin-top:12px;font-size:12px;color:var(--text-dim)">
       <div>📉 Standard totale su quantità <b>pianificata</b>: € ${d.standard.totale_su_pianificata}</div>
-      <div>🗑️ Impatto economico dello scarto (${d.qta_scarto} pz al costo standard pieno): <b style="color:#c0392b">€ ${d.varianza.scarto_impatto}</b></div>
-      <div>⚙️ Di cui varianza lavorazione da efficienza/tempo: <b style="color:${coloreVarianza(d.varianza.lavorazione_efficienza)}">${segno(d.varianza.lavorazione_efficienza)}€ ${fmt(d.varianza.lavorazione_efficienza)}</b>
+      <div>🗑️ Impatto economico dello scarto (${d.qta_scarto} pz al costo standard pieno): <b style="color:#c0392b">€ ${d.varianza.scarto_impatto}</b>
+        ${d.varianza.scarto_pct!==null?` — <b>${d.varianza.scarto_pct}%</b> dei pezzi lavorati`:''}</div>
+      <div>⚙️ Varianza lavorazione da efficienza/tempo: <b style="color:${coloreVarianza(d.varianza.lavorazione_efficienza)}">${segno(d.varianza.lavorazione_efficienza)}€ ${fmt(d.varianza.lavorazione_efficienza)}</b>
         — varianza tariffa: <b>${d.varianza.lavorazione_tariffa===null?'non disponibile con i dati attuali':d.varianza.lavorazione_tariffa}</b></div>
+      <div>👷 Varianza manodopera da efficienza/tempo: <b style="color:${coloreVarianza(d.varianza.manodopera_efficienza)}">${segno(d.varianza.manodopera_efficienza)}€ ${fmt(d.varianza.manodopera_efficienza)}</b>
+        — varianza tariffa: <b>${d.varianza.manodopera_tariffa===null?'non disponibile con i dati attuali':d.varianza.manodopera_tariffa}</b></div>
     </div>`;
     document.getElementById('ac-confronto').innerHTML = htmlConf;
 
@@ -110,11 +114,14 @@ async function caricaAnalisiCosto(){
       document.getElementById('ac-lavorazione').innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna fase di lavorazione abbinata a un reparto per questo ordine.</p>';
     }else{
       let htmlLav = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
-        '<th>Fase</th><th>Tempo standard (min)</th><th>Tempo reale (min)</th><th>Costo standard</th><th>Costo reale</th><th>Varianza €</th></tr></thead><tbody>';
+        '<th>Fase</th><th>Tempo std. (min)</th><th>Tempo reale (min)</th><th>Macchina std.</th><th>Macchina reale</th><th>Var. macchina €</th>' +
+        '<th>Manodopera std.</th><th>Manodopera reale</th><th>Var. manodopera €</th></tr></thead><tbody>';
       d.dettaglio_lavorazione.forEach(r=>{
         htmlLav += `<tr><td>${r.fase}</td><td class="num">${r.tempo_standard_minuti}</td><td class="num">${r.tempo_reale_minuti}</td>` +
           `<td class="num">€ ${r.costo_standard}</td><td class="num">€ ${r.costo_reale}</td>` +
-          `<td class="num" style="color:${coloreVarianza(r.varianza)}">${segno(r.varianza)}€ ${r.varianza}</td></tr>`;
+          `<td class="num" style="color:${coloreVarianza(r.varianza)}">${segno(r.varianza)}€ ${r.varianza}</td>` +
+          `<td class="num">€ ${r.costo_standard_manodopera}</td><td class="num">€ ${r.costo_reale_manodopera}</td>` +
+          `<td class="num" style="color:${coloreVarianza(r.varianza_manodopera)}">${segno(r.varianza_manodopera)}€ ${r.varianza_manodopera}</td></tr>`;
       });
       htmlLav += '</tbody></table></div>';
       document.getElementById('ac-lavorazione').innerHTML = htmlLav;
