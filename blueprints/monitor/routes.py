@@ -3,7 +3,7 @@ from datetime import datetime
 from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
-                    SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina)
+                    SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo)
 from blueprints.magazzino.routes import _giacenza_residua_dopo_impegni, _netta_e_esplodi_wood, _righe_bom_attive_wood
 from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria
 
@@ -414,6 +414,56 @@ def api_file_foto_lavorazione(fid):
 @monitor_bp.route('/api/totem/foto/<int:fid>', methods=['DELETE'])
 def api_elimina_foto_lavorazione(fid):
     r = FotoLavorazioneMacchina.query.get_or_404(fid)
+    db.session.delete(r)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DOCUMENTAZIONE ARTICOLO — pagina indipendente dal totem: qui si cerca un
+#  codice articolo e si vede/carica sia la documentazione tecnica (stessi
+#  endpoint /api/totem/documenti/... già usati dal totem — condivisi, non
+#  duplicati) sia le foto di riferimento del prodotto (FotoArticolo, nuove).
+#  Sempre disponibile, non serve nessun OP aperto né sessione di lavoro.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@monitor_bp.route('/documentazione-articolo')
+def pagina_documentazione_articolo():
+    return render_template('monitor/documentazione_articolo.html', active='documentazione_articolo')
+
+
+@monitor_bp.route('/api/foto_articolo/<codice_articolo>')
+def api_lista_foto_articolo(codice_articolo):
+    righe = (FotoArticolo.query.filter_by(codice_articolo=codice_articolo)
+             .order_by(FotoArticolo.caricato_il.desc()).all())
+    return jsonify([{'id': r.id, 'nome_file': r.nome_file, 'note': r.note or '',
+                      'caricato_il': r.caricato_il.isoformat()} for r in righe])
+
+
+@monitor_bp.route('/api/foto_articolo', methods=['POST'])
+def api_carica_foto_articolo():
+    """Body JSON: {codice_articolo, nome_file, contenuto_base64, note?} — contenuto_base64 SENZA il prefisso data:...;base64,"""
+    d = request.get_json(force=True)
+    codice = (d.get('codice_articolo') or '').strip()
+    nome_file = (d.get('nome_file') or '').strip()
+    contenuto = d.get('contenuto_base64') or ''
+    if not codice or not nome_file or not contenuto:
+        return jsonify({'errore': True, 'messaggio': 'codice_articolo, nome_file e contenuto_base64 sono obbligatori'}), 400
+    r = FotoArticolo(codice_articolo=codice, nome_file=nome_file, contenuto_base64=contenuto, note=(d.get('note') or '').strip())
+    db.session.add(r)
+    db.session.commit()
+    return jsonify({'ok': True, 'id': r.id})
+
+
+@monitor_bp.route('/api/foto_articolo/file/<int:fid>')
+def api_file_foto_articolo(fid):
+    r = FotoArticolo.query.get_or_404(fid)
+    return Response(base64.b64decode(r.contenuto_base64), mimetype='image/jpeg')
+
+
+@monitor_bp.route('/api/foto_articolo/<int:fid>', methods=['DELETE'])
+def api_elimina_foto_articolo(fid):
+    r = FotoArticolo.query.get_or_404(fid)
     db.session.delete(r)
     db.session.commit()
     return jsonify({'ok': True})
