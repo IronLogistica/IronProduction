@@ -4,7 +4,9 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
                     TIPI_APPROVVIGIONAMENTO, GiacenzaWood, MovimentoGiacenzaWood, OrdineProduzione,
                     ImpostazioneCostoWood, CostoStandardWood, VarianzaProduzioneWood,
-                    CostoPianificatoCentroWood, DRIVER_ATTIVITA_WOOD, VOCI_COSTO_PIANIFICATO_WOOD)
+                    CostoPianificatoCentroWood, DRIVER_ATTIVITA_WOOD, VOCI_COSTO_PIANIFICATO_WOOD,
+                    CostoStandardVersioneWood, LegameCostoStandardOrdineWood,
+                    CostoStandardVersioneDettaglioWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -1348,17 +1350,16 @@ def api_costo_standard_dettaglio_materiali(codice):
     })
 
 
-@magazzino_bp.route('/api/costo_standard/<codice>')
-def api_costo_standard_calcola(codice):
-    """Calcolo LIVE (non salvato) — usato per anteprima prima di 'Ricalcola e salva'."""
+def _crea_versione_costo_standard(codice):
+    """
+    Calcola il costo standard di un codice e lo salva SIA nella tabella
+    "ultimo calcolo" (CostoStandardWood, per la vista rapida) SIA come nuova
+    riga immutabile in CostoStandardVersioneWood (versione incrementale) —
+    ogni chiamata crea sempre una nuova versione, mai sovrascrive una
+    versione precedente. Ritorna (dict_calcolo, oggetto_versione).
+    """
     r = _costo_standard_serializzabile(_calcola_costo_standard(codice))
-    return jsonify({'codice': codice, **r})
 
-
-@magazzino_bp.route('/api/costo_standard/<codice>/salva', methods=['POST'])
-def api_costo_standard_salva(codice):
-    """Calcola e PERSISTE il costo standard di un codice (upsert)."""
-    r = _costo_standard_serializzabile(_calcola_costo_standard(codice))
     cs = CostoStandardWood.query.get(codice)
     if not cs:
         cs = CostoStandardWood(codice=codice)
@@ -1371,8 +1372,72 @@ def api_costo_standard_salva(codice):
     cs.completo                 = r['completo']
     cs.codici_senza_costo       = ','.join(r['codici_senza_costo'])
     cs.calcolato_il             = datetime.utcnow()
+
+    ultima_versione = (db.session.query(db.func.max(CostoStandardVersioneWood.versione))
+                       .filter_by(codice=codice).scalar() or 0)
+    versione = CostoStandardVersioneWood(
+        codice=codice, versione=ultima_versione + 1,
+        costo_materiali=r['costo_materiali'], costo_lavorazione=r['costo_lavorazione'],
+        costo_overhead=r['costo_overhead'], costo_totale=r['costo_totale'],
+        ore_manodopera_standard=r['ore_manodopera_standard'],
+        overhead_pct_usata=_overhead_pct(), completo=r['completo'],
+        codici_senza_costo=','.join(r['codici_senza_costo']),
+    )
+    db.session.add(versione)
+    db.session.flush()  # per avere versione.id disponibile subito, senza commit qui (lo fa il chiamante)
+
+    # Dettaglio per componente, congelato in QUESTO momento — riusa la stessa
+    # esplosione/annotazione del popup "Materiali", poi appiattisce sommando
+    # le quantità se un codice compare più volte nell'albero (il prezzo resta
+    # lo stesso ovunque compaia, quindi non serve mediarlo).
+    albero = _esplodi_bom_wood(codice, qta=1.0)
+    cache_costi = {}
+    _annota_costo_albero(albero, cache_costi)
+    dettaglio_per_codice = {}
+    def _raccogli_dettaglio(nodi):
+        for n in nodi:
+            riga = dettaglio_per_codice.setdefault(n['codice'], {'quantita': 0.0, 'prezzo': n['costo_unitario'], 'tipo': n['tipo']})
+            riga['quantita'] += n['quantita_totale']
+            _raccogli_dettaglio(n.get('figli', []))
+    _raccogli_dettaglio(albero)
+    for cod, info in dettaglio_per_codice.items():
+        db.session.add(CostoStandardVersioneDettaglioWood(
+            versione_id=versione.id, codice_componente=cod, quantita_standard=round(info['quantita'], 4),
+            prezzo_standard_unitario=info['prezzo'], tipo=info['tipo'],
+        ))
+
+    return r, versione
+
+
+@magazzino_bp.route('/api/costo_standard/<codice>')
+def api_costo_standard_calcola(codice):
+    """Calcolo LIVE (non salvato, nessuna nuova versione) — usato per anteprima prima di 'Ricalcola e salva'."""
+    r = _costo_standard_serializzabile(_calcola_costo_standard(codice))
+    return jsonify({'codice': codice, **r})
+
+
+@magazzino_bp.route('/api/costo_standard/<codice>/salva', methods=['POST'])
+def api_costo_standard_salva(codice):
+    """Calcola e PERSISTE il costo standard di un codice: aggiorna la vista
+    rapida (CostoStandardWood) e crea una nuova versione immutabile."""
+    r, versione = _crea_versione_costo_standard(codice)
     db.session.commit()
-    return jsonify({'ok': True, 'codice': codice, **r})
+    return jsonify({'ok': True, 'codice': codice, 'versione': versione.versione, **r})
+
+
+@magazzino_bp.route('/api/costo_standard/<codice>/versioni')
+def api_costo_standard_versioni(codice):
+    """Storico di tutte le versioni salvate del costo standard di un codice."""
+    versioni = (CostoStandardVersioneWood.query.filter_by(codice=codice)
+                .order_by(CostoStandardVersioneWood.versione.desc()).all())
+    return jsonify([{
+        'id': v.id, 'versione': v.versione, 'costo_materiali': v.costo_materiali,
+        'costo_lavorazione': v.costo_lavorazione, 'costo_overhead': v.costo_overhead,
+        'costo_totale': v.costo_totale, 'ore_manodopera_standard': v.ore_manodopera_standard,
+        'overhead_pct_usata': v.overhead_pct_usata, 'completo': v.completo,
+        'codici_senza_costo': v.codici_senza_costo.split(',') if v.codici_senza_costo else [],
+        'calcolato_il': v.calcolato_il.strftime('%d/%m/%Y %H:%M') if v.calcolato_il else None,
+    } for v in versioni])
 
 
 @magazzino_bp.route('/api/costo_standard')
