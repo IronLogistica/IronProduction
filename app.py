@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from flask import Flask, redirect, url_for
 from config import Config
-from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi
+from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor
 
 def create_app():
     app = Flask(__name__)
@@ -31,7 +31,11 @@ def create_app():
             gruppi = get_kanban_gruppi()
         except Exception:
             gruppi = []
-        return {'now': datetime.now().strftime('%d/%m/%y'), 'kanban_gruppi': gruppi}
+        try:
+            macchine = get_macchine_monitor()
+        except Exception:
+            macchine = []
+        return {'now': datetime.now().strftime('%d/%m/%y'), 'kanban_gruppi': gruppi, 'macchine_monitor': macchine}
 
     @app.route('/')
     def index():

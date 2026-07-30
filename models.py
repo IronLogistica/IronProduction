@@ -855,6 +855,40 @@ class RigaMonitor(db.Model):
 
 MonitorRiga = RigaMonitor
 
+
+class SequenzaMonitorMacchina(db.Model):
+    """
+    Posizione scelta A MANO dal capo per un Ordine di Produzione nella coda di
+    UNA specifica macchina (centro di costo) — i Monitor Macchina (vedi
+    blueprints/monitor) NON sono più righe inserite a mano: gli OP e il loro
+    stato di avanzamento vengono estratti da OrdineProduzione + CicloLavoroWood
+    + EventoConsuntivoPP. Questa tabella serve SOLO per lasciare al capo la
+    possibilità di riordinare manualmente la coda di una macchina (es. mettere
+    in cima un OP urgente) — se un OP non ha una riga qui, va in coda con un
+    ordine di default (priorità OP, poi data di consegna).
+    """
+    __tablename__ = 'sequenza_monitor_macchina'
+    id                    = db.Column(db.Integer, primary_key=True)
+    ordine_produzione_id  = db.Column(db.Integer, db.ForeignKey('ordini_produzione_pp.id'), nullable=False)
+    centro_costo_id       = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
+    posizione             = db.Column(db.Integer, default=0)   # più basso = più in alto in coda
+    aggiornato_il         = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('ordine_produzione_id', 'centro_costo_id', name='_op_centro_seq_uc'),)
+
+
+def get_macchine_monitor():
+    """
+    Macchine (centri di costo) da mostrare nel Monitor: solo quelle REALMENTE
+    usate in almeno un Ciclo di Lavoro (righe di CicloLavoroWood) e non
+    esterne — una lavorazione esterna non è una macchina che il capo mette
+    in coda internamente. Alimenta sia la sidebar sia la pagina /monitor.
+    """
+    righe = (db.session.query(CentroCostoWood.id, CentroCostoWood.nome)
+             .join(CicloLavoroWood, CicloLavoroWood.centro_costo_id == CentroCostoWood.id)
+             .filter(CentroCostoWood.esterno == False)
+             .distinct().order_by(CentroCostoWood.nome).all())
+    return [{'id': r.id, 'nome': r.nome} for r in righe]
+
 class LogOperazione(db.Model):
     __tablename__ = "log_operazioni"
     id        = db.Column(db.Integer, primary_key=True)
