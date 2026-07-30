@@ -13,6 +13,7 @@
 <div class="page-toolbar">
   <div class="page-title">⚙️ Monitor {{ centro.nome }}</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
+    <a href="/totem/macchina/{{ centro.id }}" target="_blank" class="btn btn-primary" style="font-size:11px">📺 Apri Totem Live</a>
     {% for m in macchine %}
     <a href="/monitor/macchina/{{ m.id }}" class="btn {% if m.id == centro.id %}btn-primary{% else %}btn-ghost{% endif %}" style="font-size:11px">{{ m.nome }}</a>
     {% endfor %}

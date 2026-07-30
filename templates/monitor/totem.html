@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta http-equiv="refresh" content="25">
+<title>LIVE {{ centro.nome|upper }} — MES Carpenteria</title>
+<style>
+  :root{
+    --bg:#07090d; --surf:#0e1117; --surf2:#141920; --border:#1e2a38;
+    --text:#d4e0f0; --muted:#4a6080; --accent:#00b4d8;
+    --ok:#22c55e; --warn:#f59e0b; --danger:#ef4444;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',Arial,sans-serif;min-height:100vh;padding:18px}
+  .header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--border);padding-bottom:12px;margin-bottom:16px}
+  .titolo{font-size:1.5rem;font-weight:800;color:var(--accent);display:flex;align-items:center;gap:10px;text-transform:uppercase;letter-spacing:.5px}
+  .titolo .dot{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok);animation:blink 2s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+  #clock{font-size:1.5rem;font-family:'Consolas',monospace;color:var(--text)}
+  .nav-macchine{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+  .nav-macchine a{padding:5px 12px;border-radius:7px;border:1px solid var(--border);color:var(--muted);text-decoration:none;font-size:.75rem}
+  .nav-macchine a.attivo{border-color:var(--accent);color:var(--accent)}
+
+  .sezione-titolo{font-size:.85rem;font-weight:700;text-transform:uppercase;letter-spacing:.5px;margin:18px 0 10px;display:flex;align-items:center;gap:8px}
+
+  .card-grande{background:var(--surf);border:1px solid var(--border);border-left:5px solid var(--ok);border-radius:14px;padding:22px;margin-bottom:14px}
+  .card-grande.attesa-avvio{border-left-color:var(--accent)}
+  .cg-op{font-family:'Consolas',monospace;color:var(--muted);font-size:.85rem}
+  .cg-codice{font-size:2.6rem;font-weight:800;color:var(--text);line-height:1.1;margin:4px 0}
+  .cg-descrizione{font-size:1.05rem;color:var(--muted);margin-bottom:10px}
+  .cg-riga{display:flex;gap:22px;flex-wrap:wrap;font-size:1rem}
+  .cg-riga b{color:var(--text);font-size:1.2rem}
+  .pct-bar{background:var(--surf2);border-radius:8px;height:14px;overflow:hidden;margin-top:12px;position:relative}
+  .pct-fill{background:linear-gradient(90deg,var(--ok),#16a34a);height:100%}
+  .pct-label{position:absolute;top:-1px;right:8px;font-size:.7rem;color:var(--text)}
+
+  .grid-coda{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
+  .mini-card{background:var(--surf);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:9px;padding:12px 14px}
+  .mini-card .mc-op{font-size:.72rem;color:var(--muted);font-family:'Consolas',monospace}
+  .mini-card .mc-codice{font-size:1.25rem;font-weight:800;margin:2px 0}
+  .mini-card .mc-descrizione{font-size:.78rem;color:var(--muted)}
+
+  .bottom-section{margin-top:22px;display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  .footer-card{padding:14px;border-radius:10px;min-height:100px}
+  .title-footer{font-weight:700;margin-bottom:10px;font-size:.85rem;text-transform:uppercase;letter-spacing:.5px}
+  .tag-name{display:inline-block;background:var(--surf2);border:1px solid var(--border);padding:5px 12px;margin:3px;border-radius:6px;font-size:.8rem;font-weight:700}
+
+  .empty{text-align:center;padding:50px 20px;color:var(--muted)}
+  .empty i{font-size:2.4rem;opacity:.4;display:block;margin-bottom:12px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="titolo"><span class="dot"></span> LIVE — {{ centro.nome }}</div>
+  <div id="clock"></div>
+</div>
+
+<div class="nav-macchine">
+  {% for m in macchine %}
+  <a href="/totem/macchina/{{ m.id }}" class="{{ 'attivo' if m.id == centro.id else '' }}">{{ m.nome }}</a>
+  {% endfor %}
+</div>
+
+{% if righe.lavorazione %}
+<div class="sezione-titolo" style="color:var(--ok)">🚧 IN LAVORAZIONE ADESSO</div>
+{% for r in righe.lavorazione %}
+<div class="card-grande">
+  <div class="cg-op">{{ r.op_codice }} · {{ r.commessa }}</div>
+  <div class="cg-codice">{{ r.codice_articolo }}</div>
+  <div class="cg-descrizione">{{ r.descrizione }}</div>
+  <div class="cg-riga"><span>Saldo da fare: <b>{{ r.saldo }}</b></span><span>Totale: <b>{{ r.totale }}</b></span></div>
+  <div class="pct-bar"><div class="pct-fill" style="width:{{ [r.pct,100]|min }}%"></div><span class="pct-label">{{ r.pct }}%</span></div>
+</div>
+{% endfor %}
+{% elif righe.da_iniziare %}
+{% set primo = righe.da_iniziare[0] %}
+<div class="sezione-titolo" style="color:var(--accent)">▶ PROSSIMO DA AVVIARE</div>
+<div class="card-grande attesa-avvio">
+  <div class="cg-op">{{ primo.op_codice }} · {{ primo.commessa }}</div>
+  <div class="cg-codice">{{ primo.codice_articolo }}</div>
+  <div class="cg-descrizione">{{ primo.descrizione }}</div>
+  <div class="cg-riga"><span>Da fare: <b>{{ primo.saldo }}</b></span><span>Totale: <b>{{ primo.totale }}</b></span></div>
+</div>
+{% else %}
+<div class="empty">✓<br>Nessun lavoro pronto per questa macchina in questo momento.</div>
+{% endif %}
+
+{% set resto_coda = righe.da_iniziare if righe.lavorazione else righe.da_iniziare[1:] %}
+{% if resto_coda %}
+<div class="sezione-titolo" style="color:var(--muted)">📋 IN CODA (prossimi)</div>
+<div class="grid-coda">
+  {% for r in resto_coda %}
+  <div class="mini-card">
+    <div class="mc-op">{{ r.op_codice }} · {{ r.commessa }}</div>
+    <div class="mc-codice">{{ r.codice_articolo }}</div>
+    <div class="mc-descrizione">{{ r.descrizione }} — saldo {{ r.saldo }}/{{ r.totale }}</div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="bottom-section">
+  <div class="footer-card" style="border:2px solid var(--danger);background:rgba(239,68,68,.05)">
+    <div class="title-footer" style="color:var(--danger)">🛬 IN ATTESA — Materiale / Fase precedente</div>
+    {% for r in righe.in_attesa %}
+      <span class="tag-name" style="border-color:var(--danger);color:var(--danger)">{{ r.op_codice }} — {{ r.codice_articolo }}</span>
+    {% else %}
+      <span style="color:var(--muted)">Nessuno in attesa</span>
+    {% endfor %}
+  </div>
+  <div class="footer-card" style="border:2px solid var(--muted);background:rgba(255,255,255,.02)">
+    <div class="title-footer" style="color:var(--muted)">✅ APPENA TERMINATI (questa fase)</div>
+    {% for r in righe.terminati[:6] %}
+      <span class="tag-name">{{ r.op_codice }} — {{ r.codice_articolo }}</span>
+    {% else %}
+      <span style="color:var(--muted)">Nessuno recente</span>
+    {% endfor %}
+  </div>
+</div>
+
+<script>
+function clock(){
+  const now = new Date();
+  document.getElementById('clock').textContent = now.toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
+}
+setInterval(clock, 1000); clock();
+</script>
+</body>
+</html>
