@@ -1,5 +1,5 @@
-from datetime import datetime
-from flask import Blueprint, current_app, jsonify, render_template, request
+from datetime import datetime, date
+from flask import Blueprint, current_app, jsonify, render_template, request, Response
 from sqlalchemy.exc import IntegrityError
 from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     STATI_ORDINE_PP, ASA_MASTERWORK, prossimo_codice_ordine_pp,
@@ -7,11 +7,15 @@ from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     CentroCostoWood, VarianzaProduzioneWood, ArticoloApprovvigionamento,
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood, DistintaBaseWood,
                     CostoStandardVersioneDettaglioWood, OrdineAcquistoWood, RigaOrdineAcquistoWood,
-                    CostoStandardVersioneFaseWood, ManodoperaRealeWood)
+                    CostoStandardVersioneFaseWood, ManodoperaRealeWood,
+                    SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
+                    VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
                     _overhead_pct)
+from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
+                    varianza_efficienza_tempo, varianza_tariffa)
 
 pp_bp = Blueprint("produzione_pp", __name__)
 
@@ -381,8 +385,8 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id):
                 costo_standard_mdo = ore_standard * tariffa_mdo_std
                 costo_reale_mdo = ore_reali * tariffa_mdo_reale
 
-                var_tariffa_lav = (tariffa_macchina_reale - tariffa_macchina_std) * ore_reali
-                var_tariffa_mdo = (tariffa_mdo_reale - tariffa_mdo_std) * ore_reali
+                var_tariffa_lav = varianza_tariffa(tariffa_macchina_reale, tariffa_macchina_std, ore_reali)
+                var_tariffa_mdo = varianza_tariffa(tariffa_mdo_reale, tariffa_mdo_std, ore_reali)
 
                 db.session.add(VarianzaProduzioneWood(
                     op_code=o.codice, codice_articolo=o.codice_articolo, fase=fase_nome, quantita=good,
@@ -436,11 +440,20 @@ def pagina_analisi_costo(codice):
     return render_template('produzione_pp/analisi_costo.html', active='produzione_pp', codice=codice)
 
 
-@pp_bp.get('/api/ordini-produzione/<codice>/analisi-costo')
-def api_analisi_costo_ordine(codice):
-    o = OrdineProduzione.query.filter_by(codice=codice).first()
-    if not o:
-        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+@pp_bp.get('/impostazioni-contabili')
+def pagina_impostazioni_contabili():
+    return render_template('produzione_pp/impostazioni_contabili.html', active='impostazioni_contabili')
+
+
+def _analisi_costo_ordine_dict(o):
+    """
+    Calcolo COMPLETO standard-vs-effettivo per un OP (già recuperato e
+    validato dal chiamante): unica fonte di verità, usata sia dalla route
+    JSON /analisi-costo sia dalla generazione dei movimenti contabili
+    (_genera_movimenti_contabili_ordine) — così i numeri del report e quelli
+    scritti in contabilità sono SEMPRE gli stessi. Ritorna un dict "grezzo"
+    (senza jsonify) con tutti i campi già usati dal report.
+    """
 
     limiti = []
 
@@ -513,9 +526,9 @@ def api_analisi_costo_ordine(codice):
             qty_effettiva = round(riga_eff['quantita'], 4) if riga_eff else 0.0
             prezzo_effettivo = (round(riga_eff['valore'] / riga_eff['quantita'], 4)
                                  if riga_eff and riga_eff['valore_disponibile'] and riga_eff['quantita'] else None)
-            var_quantita = (round((qty_effettiva - qty_standard) * prezzo_standard, 2)
+            var_quantita = (round(varianza_quantita_materiale(qty_standard, qty_effettiva, prezzo_standard), 2)
                              if qty_standard is not None and prezzo_standard is not None else None)
-            var_prezzo = (round((prezzo_effettivo - prezzo_standard) * qty_effettiva, 2)
+            var_prezzo = (round(varianza_prezzo_materiale(prezzo_standard, prezzo_effettivo, qty_effettiva), 2)
                           if prezzo_effettivo is not None and prezzo_standard is not None else None)
             dettaglio_materiali.append({
                 'codice': cod, 'quantita_standard': qty_standard, 'quantita_effettiva': qty_effettiva,
@@ -523,6 +536,7 @@ def api_analisi_costo_ordine(codice):
                 'valore_disponibile': bool(riga_eff and riga_eff['valore_disponibile']),
                 'standard_disponibile': det_std is not None and prezzo_standard is not None,
                 'varianza_quantita': var_quantita, 'varianza_prezzo': var_prezzo,
+                'tipo': det_std.tipo if det_std else '',
             })
     if versione is None:
         limiti.append('Nessuno snapshot standard per componente disponibile (nessuna versione agganciata): '
@@ -575,7 +589,60 @@ def api_analisi_costo_ordine(codice):
     var_totale_pct = round((var_totale / std_totale_tot) * 100, 2) if std_totale_tot else None
     var_scarto_pct = round((qta_scarto / (qta_buona + qta_scarto)) * 100, 2) if (qta_buona + qta_scarto) else None
 
-    return jsonify(ok=True, codice=o.codice, codice_articolo=o.codice_articolo, stato=o.stato,
+    # ── Soglie di allarme (configurabili) e segnalazioni automatiche ──────
+    soglie = SogliaAllarmeVarianzaWood.query.first()
+    if not soglie:
+        soglie = SogliaAllarmeVarianzaWood()
+        db.session.add(soglie); db.session.commit()
+
+    def _pct(varr, std):
+        return round((varr / std) * 100, 2) if std else None
+
+    pct_materiali = _pct(var_materiali_tot, std_materiali_tot)
+    pct_lavorazione = _pct(var_lavorazione_tot, std_lavorazione_tot)
+    pct_manodopera = _pct(var_manodopera_tot, std_manodopera_tot)
+
+    segnalazioni = []
+    if pct_materiali is not None and abs(pct_materiali) >= soglie.soglia_materiali_pct:
+        segnalazioni.append({'categoria': 'materiali', 'livello': 'sfavorevole' if var_materiali_tot > 0 else 'favorevole',
+                              'messaggio': f'Varianza materiali {"+"if var_materiali_tot>0 else ""}{var_materiali_tot} € ({pct_materiali}%) oltre la soglia configurata di {soglie.soglia_materiali_pct}%'})
+    if pct_lavorazione is not None and abs(pct_lavorazione) >= soglie.soglia_lavorazione_pct:
+        segnalazioni.append({'categoria': 'lavorazione', 'livello': 'sfavorevole' if var_lavorazione_tot > 0 else 'favorevole',
+                              'messaggio': f'Varianza lavorazione {"+"if var_lavorazione_tot>0 else ""}{var_lavorazione_tot} € ({pct_lavorazione}%) oltre la soglia configurata di {soglie.soglia_lavorazione_pct}%'})
+    if pct_manodopera is not None and abs(pct_manodopera) >= soglie.soglia_manodopera_pct:
+        segnalazioni.append({'categoria': 'manodopera', 'livello': 'sfavorevole' if var_manodopera_tot > 0 else 'favorevole',
+                              'messaggio': f'Varianza manodopera {"+"if var_manodopera_tot>0 else ""}{var_manodopera_tot} € ({pct_manodopera}%) oltre la soglia configurata di {soglie.soglia_manodopera_pct}%'})
+    if var_totale_pct is not None and abs(var_totale_pct) >= soglie.soglia_totale_pct:
+        segnalazioni.append({'categoria': 'totale', 'livello': 'sfavorevole' if var_totale > 0 else 'favorevole',
+                              'messaggio': f'Varianza totale commessa {"+"if var_totale>0 else ""}{var_totale} € ({var_totale_pct}%) oltre la soglia configurata di {soglie.soglia_totale_pct}%'})
+    if var_scarto_pct is not None and var_scarto_pct >= soglie.soglia_scarto_pct:
+        segnalazioni.append({'categoria': 'scarto', 'livello': 'sfavorevole',
+                              'messaggio': f'Scarto {var_scarto_pct}% oltre la soglia configurata di {soglie.soglia_scarto_pct}%'})
+
+    # ── Riepilogo manageriale in linguaggio naturale ──────────────────────
+    riepilogo_manageriale = []
+    materiali_peggiori = sorted([r for r in dettaglio_materiali if r['varianza_quantita']], key=lambda r: abs(r['varianza_quantita']), reverse=True)[:3]
+    for r in materiali_peggiori:
+        delta_q = round(r['quantita_effettiva'] - (r['quantita_standard'] or 0), 3)
+        if delta_q:
+            riepilogo_manageriale.append(
+                f"Materiale {r['codice']} consumato {'oltre' if delta_q > 0 else 'sotto'} lo standard: "
+                f"{'+' if delta_q > 0 else ''}{delta_q} — varianza {'sfavorevole' if r['varianza_quantita'] > 0 else 'favorevole'} € {r['varianza_quantita']}")
+    if var_efficienza_tot:
+        ore_delta = round(sum((v.tempo_reale_minuti - v.tempo_standard_minuti) for v in varianze_lav) / 60, 2)
+        riepilogo_manageriale.append(
+            f"Tempo di lavorazione {'superiore' if ore_delta > 0 else 'inferiore'} allo standard: "
+            f"{'+' if ore_delta > 0 else ''}{ore_delta} ore — varianza {'sfavorevole' if var_efficienza_tot > 0 else 'favorevole'} € {var_efficienza_tot}")
+    if var_totale:
+        riepilogo_manageriale.append(
+            f"Costo effettivo commessa {'superiore' if var_totale > 0 else 'inferiore'} al costo standard di € {abs(var_totale)}"
+            + (f" ({var_totale_pct}%)" if var_totale_pct is not None else ''))
+    if impatto_scarto:
+        riepilogo_manageriale.append(f"Impatto economico dello scarto ({qta_scarto} pz): € {impatto_scarto}")
+    if not riepilogo_manageriale:
+        riepilogo_manageriale.append("Nessuno scostamento rilevante rispetto allo standard.")
+
+    return dict(ok=True, codice=o.codice, codice_articolo=o.codice_articolo, stato=o.stato,
         qta_pianificata=o.qta_pianificata, qta_buona=qta_buona, qta_scarto=qta_scarto,
         data_rilascio=o.data_rilascio.strftime('%d/%m/%Y %H:%M') if o.data_rilascio else None,
         versione_standard=versione_info,
@@ -600,8 +667,21 @@ def api_analisi_costo_ordine(codice):
             'varianza_tariffa_lavorazione': v.varianza_tariffa_lavorazione,
             'varianza_tariffa_manodopera': v.varianza_tariffa_manodopera,
         } for v in varianze_lav],
+        soglie={'materiali_pct': soglie.soglia_materiali_pct, 'lavorazione_pct': soglie.soglia_lavorazione_pct,
+                'manodopera_pct': soglie.soglia_manodopera_pct, 'totale_pct': soglie.soglia_totale_pct,
+                'scarto_pct': soglie.soglia_scarto_pct},
+        segnalazioni=segnalazioni,
+        riepilogo_manageriale=riepilogo_manageriale,
         limiti=limiti,
     )
+
+
+@pp_bp.get('/api/ordini-produzione/<codice>/analisi-costo')
+def api_analisi_costo_ordine(codice):
+    o = OrdineProduzione.query.filter_by(codice=codice).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+    return jsonify(**_analisi_costo_ordine_dict(o))
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -638,5 +718,234 @@ def api_add_manodopera_reale(oid):
     db.session.add(ManodoperaRealeWood(
         ordine_produzione_id=oid, ore_reali=ore_reali, fonte=fonte, note=(d.get('note') or '').strip(),
     ))
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  PREDISPOSIZIONE CONTABILE PER MASTERLEDGER (non ancora integrato)
+#  ---------------------------------------------------------------
+#  Questo modulo NON trasmette nulla a nessun sistema esterno: genera solo
+#  righe strutturate in partita doppia a partire dagli stessi numeri già
+#  mostrati in Analisi Costo (_analisi_costo_ordine_dict è l'unica fonte di
+#  verità condivisa), pronte per una futura integrazione. Finché
+#  MasterLedger non è collegato, l'unica "uscita" è l'export CSV qui sotto.
+#
+#  Logica di ogni riga generata (vedi _genera_movimenti_contabili_ordine):
+#   - Consumo materiali: DARE Consumo materiali standard / AVERE Magazzino,
+#     valorizzato a QUANTITÀ STANDARD × PREZZO STANDARD; le differenze reali
+#     (quantità consumata ed eventuale prezzo diverso) finiscono su righe di
+#     varianza separate, sempre in contropartita al Magazzino — così il
+#     Magazzino si muove per il valore ESATTO realmente scaricato, mentre a
+#     conto economico restano visibili standard e varianze separati.
+#   - Lavorazione/manodopera: assorbimento a costo standard in Produzione in
+#     Corso (WIP), con varianze di efficienza e tariffa separate.
+#   - Chiusura: il prodotto finito entra a magazzino al costo standard pieno
+#     (mai al costo effettivo), il residuo del WIP diventa Varianza di
+#     Produzione — esattamente lo schema SAP richiesto.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _riga_varianza_contabile(rows, data, op, conti, voce_varianza, voce_contropartita, importo, causale, centro_costo='', tipo_varianza=''):
+    """
+    Aggiunge una coppia DARE/AVERE per una varianza: se importo > 0 (sfavorevole)
+    la varianza va a DARE (costo aggiuntivo) e la contropartita ad AVERE;
+    se importo < 0 (favorevole) è il contrario. Non scrive nulla se importo è ~0.
+    """
+    importo = round(importo, 2)
+    if abs(importo) < 0.005:
+        return
+    conto_varianza = conti.get(voce_varianza, '')
+    conto_contro = conti.get(voce_contropartita, '')
+    if importo > 0:
+        rows.append(MovimentoContabileWood(data=data, causale=causale, op_code=op.codice, codice_articolo=op.codice_articolo,
+                                            conto=conto_varianza, centro_costo=centro_costo, dare_avere='DARE', importo=abs(importo), tipo_varianza=tipo_varianza))
+        rows.append(MovimentoContabileWood(data=data, causale=causale, op_code=op.codice, codice_articolo=op.codice_articolo,
+                                            conto=conto_contro, centro_costo=centro_costo, dare_avere='AVERE', importo=abs(importo), tipo_varianza=tipo_varianza))
+    else:
+        rows.append(MovimentoContabileWood(data=data, causale=causale, op_code=op.codice, codice_articolo=op.codice_articolo,
+                                            conto=conto_contro, centro_costo=centro_costo, dare_avere='DARE', importo=abs(importo), tipo_varianza=tipo_varianza))
+        rows.append(MovimentoContabileWood(data=data, causale=causale, op_code=op.codice, codice_articolo=op.codice_articolo,
+                                            conto=conto_varianza, centro_costo=centro_costo, dare_avere='AVERE', importo=abs(importo), tipo_varianza=tipo_varianza))
+
+
+def _genera_movimenti_contabili_ordine(o):
+    """
+    Genera (rigenerando le sole righe NON ancora esportate) i movimenti
+    contabili strutturati per l'OP o, a partire da _analisi_costo_ordine_dict.
+    Ritorna (righe_create: int, avvisi: list[str]).
+    """
+    assicura_conti_contabili_wood()
+    conti = {c.voce: c.conto for c in ContoContabileMappaWood.query.all()}
+    conti_mancanti = sorted(v for v, conto in conti.items() if not conto)
+
+    d = _analisi_costo_ordine_dict(o)
+    oggi = date.today()
+    rows = []
+
+    # ── Materiali ──────────────────────────────────────────────────────
+    for r in d['dettaglio_materiali']:
+        if r['quantita_standard'] is None or r['prezzo_standard'] is None:
+            continue
+        voce_magazzino = 'MAGAZZINO_SEMILAVORATI' if r['tipo'] == 'SEMILAVORATO' else 'MAGAZZINO_MP'
+        base_std = round(r['quantita_standard'] * r['prezzo_standard'], 2)
+        if base_std:
+            rows.append(MovimentoContabileWood(data=oggi, causale=f"Consumo standard {r['codice']} — {o.codice}",
+                                                op_code=o.codice, codice_articolo=o.codice_articolo,
+                                                conto=conti.get('CONSUMO_MATERIALI_STD', ''), dare_avere='DARE', importo=base_std))
+            rows.append(MovimentoContabileWood(data=oggi, causale=f"Consumo standard {r['codice']} — {o.codice}",
+                                                op_code=o.codice, codice_articolo=o.codice_articolo,
+                                                conto=conti.get(voce_magazzino, ''), dare_avere='AVERE', importo=base_std))
+        if r['varianza_quantita']:
+            _riga_varianza_contabile(rows, oggi, o, conti, 'VARIANZA_QUANTITA_MATERIALI', voce_magazzino,
+                                      r['varianza_quantita'], f"Varianza quantità {r['codice']} — {o.codice}", tipo_varianza='quantita_materiale')
+        if r['varianza_prezzo']:
+            _riga_varianza_contabile(rows, oggi, o, conti, 'VARIANZA_PREZZO_MATERIALI', voce_magazzino,
+                                      r['varianza_prezzo'], f"Varianza prezzo {r['codice']} — {o.codice}", tipo_varianza='prezzo_materiale')
+
+    # ── Lavorazione (macchina) + Manodopera, per fase ───────────────────
+    for v in d['dettaglio_lavorazione']:
+        if v['costo_standard']:
+            rows.append(MovimentoContabileWood(data=oggi, causale=f"Assorbimento macchina std. {v['fase']} — {o.codice}",
+                                                op_code=o.codice, codice_articolo=o.codice_articolo, centro_costo=v['fase'],
+                                                conto=conti.get('PRODUZIONE_IN_CORSO', ''), dare_avere='DARE', importo=v['costo_standard']))
+            rows.append(MovimentoContabileWood(data=oggi, causale=f"Assorbimento macchina std. {v['fase']} — {o.codice}",
+                                                op_code=o.codice, codice_articolo=o.codice_articolo, centro_costo=v['fase'],
+                                                conto=conti.get('ASSORBIMENTO_MACCHINA_STD', ''), dare_avere='AVERE', importo=v['costo_standard']))
+        var_efficienza_macch = round(v['varianza'] - v['varianza_tariffa_lavorazione'], 2)
+        _riga_varianza_contabile(rows, oggi, o, conti, 'VARIANZA_EFFICIENZA_MACCHINA', 'ASSORBIMENTO_MACCHINA_STD',
+                                  var_efficienza_macch, f"Varianza efficienza macchina {v['fase']} — {o.codice}", v['fase'], 'efficienza_macchina')
+        _riga_varianza_contabile(rows, oggi, o, conti, 'VARIANZA_TARIFFA_MACCHINA', 'ASSORBIMENTO_MACCHINA_STD',
+                                  v['varianza_tariffa_lavorazione'], f"Varianza tariffa macchina {v['fase']} — {o.codice}", v['fase'], 'tariffa_macchina')
+
+        if v['costo_standard_manodopera']:
+            rows.append(MovimentoContabileWood(data=oggi, causale=f"Assorbimento manodopera std. {v['fase']} — {o.codice}",
+                                                op_code=o.codice, codice_articolo=o.codice_articolo, centro_costo=v['fase'],
+                                                conto=conti.get('PRODUZIONE_IN_CORSO', ''), dare_avere='DARE', importo=v['costo_standard_manodopera']))
+            rows.append(MovimentoContabileWood(data=oggi, causale=f"Assorbimento manodopera std. {v['fase']} — {o.codice}",
+                                                op_code=o.codice, codice_articolo=o.codice_articolo, centro_costo=v['fase'],
+                                                conto=conti.get('ASSORBIMENTO_MANODOPERA_STD', ''), dare_avere='AVERE', importo=v['costo_standard_manodopera']))
+        var_efficienza_mdo = round(v['varianza_manodopera'] - v['varianza_tariffa_manodopera'], 2)
+        _riga_varianza_contabile(rows, oggi, o, conti, 'VARIANZA_EFFICIENZA_MANODOPERA', 'ASSORBIMENTO_MANODOPERA_STD',
+                                  var_efficienza_mdo, f"Varianza efficienza manodopera {v['fase']} — {o.codice}", v['fase'], 'efficienza_manodopera')
+        _riga_varianza_contabile(rows, oggi, o, conti, 'VARIANZA_TARIFFA_MANODOPERA', 'ASSORBIMENTO_MANODOPERA_STD',
+                                  v['varianza_tariffa_manodopera'], f"Varianza tariffa manodopera {v['fase']} — {o.codice}", v['fase'], 'tariffa_manodopera')
+
+    # ── Carico prodotto finito a costo standard + chiusura varianza di produzione ──
+    std_tot = d['standard']['totale']
+    if std_tot:
+        rows.append(MovimentoContabileWood(data=oggi, causale=f"Carico PF a costo standard — {o.codice}",
+                                            op_code=o.codice, codice_articolo=o.codice_articolo,
+                                            conto=conti.get('MAGAZZINO_PF', ''), dare_avere='DARE', importo=std_tot))
+        rows.append(MovimentoContabileWood(data=oggi, causale=f"Carico PF a costo standard — {o.codice}",
+                                            op_code=o.codice, codice_articolo=o.codice_articolo,
+                                            conto=conti.get('PRODUZIONE_IN_CORSO', ''), dare_avere='AVERE', importo=std_tot))
+    _riga_varianza_contabile(rows, oggi, o, conti, 'VARIANZA_PRODUZIONE', 'PRODUZIONE_IN_CORSO',
+                              d['varianza']['totale'], f"Varianza di produzione — {o.codice}", tipo_varianza='produzione')
+
+    # Rigenerazione idempotente: cancella solo le righe NON ancora esportate di questo OP
+    MovimentoContabileWood.query.filter_by(op_code=o.codice, esportato=False).delete()
+    for r in rows:
+        db.session.add(r)
+    db.session.commit()
+
+    avvisi = []
+    if conti_mancanti:
+        avvisi.append(f"Conti non ancora mappati (righe generate con conto vuoto): {', '.join(conti_mancanti)} — "
+                       f"compilali in Impostazioni → Mappa Conti Contabili.")
+    return len(rows), avvisi
+
+
+@pp_bp.route('/api/ordini-produzione/<codice>/genera-movimenti-contabili', methods=['POST'])
+def api_genera_movimenti_contabili(codice):
+    o = OrdineProduzione.query.filter_by(codice=codice).first()
+    if not o:
+        return jsonify({'errore': True, 'messaggio': 'Ordine di produzione non trovato'}), 404
+    n, avvisi = _genera_movimenti_contabili_ordine(o)
+    return jsonify({'ok': True, 'righe_generate': n, 'avvisi': avvisi})
+
+
+@pp_bp.route('/api/ordini-produzione/<codice>/movimenti-contabili')
+def api_lista_movimenti_contabili(codice):
+    righe = (MovimentoContabileWood.query.filter_by(op_code=codice)
+             .order_by(MovimentoContabileWood.id).all())
+    return jsonify([{
+        'id': r.id, 'data': r.data.isoformat(), 'causale': r.causale, 'conto': r.conto,
+        'centro_costo': r.centro_costo, 'dare_avere': r.dare_avere, 'importo': r.importo,
+        'tipo_varianza': r.tipo_varianza, 'esportato': r.esportato,
+    } for r in righe])
+
+
+@pp_bp.route('/api/movimenti-contabili/export.csv')
+def api_export_movimenti_contabili():
+    """
+    Export CSV di tutti i movimenti NON ancora esportati (o tutti, con
+    ?tutti=1) — marca esportato=True quelli inclusi, PRONTI per una futura
+    trasmissione a MasterLedger (oggi solo scaricabili a mano).
+    """
+    solo_non_esportati = request.args.get('tutti') != '1'
+    q = MovimentoContabileWood.query
+    if solo_non_esportati:
+        q = q.filter_by(esportato=False)
+    righe = q.order_by(MovimentoContabileWood.data, MovimentoContabileWood.op_code, MovimentoContabileWood.id).all()
+
+    intestazione = 'data;causale;commessa;codice_articolo;conto;centro_costo;dare_avere;importo;tipo_varianza;riferimento\n'
+    corpo = ''.join(
+        f"{r.data.isoformat()};{r.causale};{r.op_code};{r.codice_articolo};{r.conto};{r.centro_costo};"
+        f"{r.dare_avere};{r.importo:.2f};{r.tipo_varianza};MOV-{r.id}\n"
+        for r in righe
+    )
+    now = datetime.utcnow()
+    for r in righe:
+        r.esportato = True
+        r.esportato_il = now
+    db.session.commit()
+    return Response(intestazione + corpo, mimetype='text/csv',
+                     headers={'Content-Disposition': 'attachment; filename="movimenti_contabili_wood.csv"'})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  IMPOSTAZIONI: soglie di allarme varianza + mappa conti contabili
+# ══════════════════════════════════════════════════════════════════════════════
+
+@pp_bp.route('/api/impostazioni/soglie_varianza', methods=['GET'])
+def api_get_soglie_varianza():
+    s = SogliaAllarmeVarianzaWood.query.first()
+    if not s:
+        s = SogliaAllarmeVarianzaWood(); db.session.add(s); db.session.commit()
+    return jsonify({'materiali_pct': s.soglia_materiali_pct, 'lavorazione_pct': s.soglia_lavorazione_pct,
+                     'manodopera_pct': s.soglia_manodopera_pct, 'totale_pct': s.soglia_totale_pct,
+                     'scarto_pct': s.soglia_scarto_pct})
+
+
+@pp_bp.route('/api/impostazioni/soglie_varianza', methods=['POST'])
+def api_set_soglie_varianza():
+    s = SogliaAllarmeVarianzaWood.query.first()
+    if not s:
+        s = SogliaAllarmeVarianzaWood(); db.session.add(s)
+    d = request.get_json(force=True)
+    try:
+        for campo, chiave in (('soglia_materiali_pct', 'materiali_pct'), ('soglia_lavorazione_pct', 'lavorazione_pct'),
+                               ('soglia_manodopera_pct', 'manodopera_pct'), ('soglia_totale_pct', 'totale_pct'),
+                               ('soglia_scarto_pct', 'scarto_pct')):
+            if chiave in d:
+                setattr(s, campo, float(d[chiave]))
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Valori soglia non validi'}), 400
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@pp_bp.route('/api/impostazioni/conti_contabili', methods=['GET'])
+def api_get_conti_contabili():
+    assicura_conti_contabili_wood()
+    righe = ContoContabileMappaWood.query.order_by(ContoContabileMappaWood.voce).all()
+    return jsonify([{'id': r.id, 'voce': r.voce, 'conto': r.conto, 'descrizione_conto': r.descrizione_conto} for r in righe])
+
+
+@pp_bp.route('/api/impostazioni/conti_contabili/<int:cid>', methods=['PUT'])
+def api_set_conto_contabile(cid):
+    r = ContoContabileMappaWood.query.get_or_404(cid)
+    d = request.get_json(force=True)
+    r.conto = (d.get('conto') or '').strip()
     db.session.commit()
     return jsonify({'ok': True})
