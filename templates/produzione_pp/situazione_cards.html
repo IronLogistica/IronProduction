@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🏭 Situazione Ordini di Produzione</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Una card per ogni Ordine di Produzione aperto: dice subito se hai tutto quello che serve o cosa manca.
+      Apri la card per vedere la distinta base multilivello completa, con disponibilità componente per componente
+      e — per quelli mancanti — da chi e quando arriva (se già ordinato).
+    </p>
+    <div id="stats" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap"></div>
+    <div id="op-cards" style="display:flex;flex-wrap:wrap;gap:12px">Caricamento...</div>
+  </div>
+</div>
+
+<!-- ══ MODAL: SITUAZIONE COMPLETA DISTINTA BASE ═══════════════════════════ -->
+<div class="modal-overlay" id="modal-situazione-op">
+  <div class="modal-box" style="width:720px;max-width:97vw;max-height:88vh;overflow-y:auto">
+    <h3>🏭 Situazione — <span id="sit-titolo"></span></h3>
+    <div id="sit-testata" style="margin-bottom:12px"></div>
+    <div id="sit-albero" style="font-size:13px">Caricamento...</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-situazione-op')">Chiudi</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+async function carica(){
+  const box = document.getElementById('op-cards');
+  const stats = document.getElementById('stats');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/ordini-produzione/riepilogo_disponibilita');
+    const ordini = await r.json();
+
+    const pronti = ordini.filter(o => o.tutto_disponibile).length;
+    const bloccati = ordini.length - pronti;
+    stats.innerHTML = `
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center">
+        <div style="font-size:22px;font-weight:800">${ordini.length}</div><div style="font-size:11px;color:var(--text-dim)">OP aperti</div></div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center">
+        <div style="font-size:22px;font-weight:800;color:#2a9d5c">${pronti}</div><div style="font-size:11px;color:var(--text-dim)">✅ Tutto disponibile</div></div>
+      <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center">
+        <div style="font-size:22px;font-weight:800;color:${bloccati?'#c0392b':'inherit'}">${bloccati}</div><div style="font-size:11px;color:var(--text-dim)">❌ Manca qualcosa</div></div>
+    `;
+
+    if(!ordini.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun Ordine di Produzione aperto.</p>'; return; }
+
+    box.innerHTML = ordini.map(o => {
+      const badge = o.tutto_disponibile
+        ? '<span class="badge badge-ok">✅ Tutto disponibile</span>'
+        : `<span class="badge badge-warn">❌ Mancano ${o.n_componenti_mancanti}/${o.n_componenti_totali}</span>`;
+      return `<div style="width:270px;border:1px solid var(--border);border-radius:8px;padding:12px;cursor:pointer" onclick="apriSituazione('${o.codice}')">
+        <div style="font-weight:700;font-size:14px">${o.codice}</div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:4px">${o.codice_articolo} — ${o.descrizione||''}</div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">${o.cliente||''} ${o.commessa?'— '+o.commessa:''}</div>
+        <div style="font-size:12px;margin-bottom:6px">P${o.priorita} · ${o.qta_pianificata}·${o.qta_buona}·${o.qta_scarto} · ${o.stato}</div>
+        ${badge}
+      </div>`;
+    }).join('');
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+function renderAlberoSituazione(componenti){
+  if(!componenti || !componenti.length) return '<p style="color:#aaa;font-style:italic;margin:4px 0 4px 10px">Nessun componente.</p>';
+  return '<ul style="margin:4px 0 4px 16px;padding:0;list-style:none">' + componenti.map(c => {
+    const okDisp = c.mancante <= 0;
+    let oaHtml = '';
+    if(!okDisp && c.ordini_acquisto && c.ordini_acquisto.length){
+      oaHtml = c.ordini_acquisto.map(oa => `<div style="font-size:11px;color:#00d2ff;margin-top:2px">🛒 OA n° ${oa.ordine_n} — ${oa.fornitore} — ${oa.qta_in_arrivo} in arrivo${oa.data_consegna?' per '+oa.data_consegna:''} (${oa.stato_label})</div>`).join('');
+    } else if(!okDisp){
+      oaHtml = '<div style="font-size:11px;color:#c0392b;margin-top:2px">⚠️ Non ancora ordinato a nessun fornitore</div>';
+    }
+    return `<li style="padding:5px 0;border-left:2px solid var(--border);padding-left:10px;margin-bottom:2px">
+      <span style="font-size:10px;color:#1e5fa8;font-weight:700;margin-right:6px">SOTTOGRUPPO ${c.livello_effettivo}° LIVELLO</span>
+      <span class="cod" style="font-weight:700">${c.codice}</span>
+      <span style="font-size:11px;color:var(--text-dim);margin-left:6px">${c.descrizione||''}</span><br>
+      <span style="font-size:12px">Fabbisogno: <b>${c.fabbisogno}</b> — Disponibile: <b style="color:${okDisp?'#2a9d5c':'#c0392b'}">${c.disponibile}</b>${!okDisp?` — Mancante: <b style="color:#c0392b">${c.mancante}</b>`:''}</span>
+      ${oaHtml}
+      ${renderAlberoSituazione(c.figli)}
+    </li>`;
+  }).join('') + '</ul>';
+}
+
+async function apriSituazione(codice){
+  document.getElementById('sit-titolo').textContent = codice;
+  const testata = document.getElementById('sit-testata');
+  const box = document.getElementById('sit-albero');
+  testata.innerHTML = ''; box.innerHTML = 'Caricamento...';
+  openModal('modal-situazione-op');
+  try{
+    const r = await fetch('/api/ordini-produzione/' + encodeURIComponent(codice) + '/situazione_completa');
+    const d = await r.json();
+    if(!d.ok){ box.innerHTML = '<p style="color:#c0392b">❌ ' + (d.error||'Errore') + '</p>'; return; }
+    testata.innerHTML = `<div style="display:flex;gap:14px;flex-wrap:wrap;font-size:13px">
+      <div>${d.codice_articolo} — ${d.descrizione||''}</div>
+      <div>Pianificata: <b>${d.qta_pianificata}</b> — Buona: <b>${d.qta_buona}</b> — Scarto: <b>${d.qta_scarto}</b></div>
+      ${d.tutto_disponibile ? '<span class="badge badge-ok">✅ Tutto disponibile</span>' : '<span class="badge badge-warn">❌ Manca qualcosa</span>'}
+    </div>`;
+    box.innerHTML = renderAlberoSituazione(d.componenti);
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+carica();
+{% endblock %}

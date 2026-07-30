@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-toolbar"><div class="page-title">🏭 Ordini di Produzione</div><a class="btn btn-ghost" href="/ordini-produzione/avanzamento">📊 Avanzamento</a></div>
+<div class="page-toolbar"><div class="page-title">🏭 Ordini di Produzione</div><a class="btn btn-ghost" href="/ordini-produzione/situazione">🗂️ Situazione (card)</a> <a class="btn btn-ghost" href="/ordini-produzione/avanzamento">📊 Avanzamento</a></div>
 <div class="card" style="padding:18px;margin-bottom:16px"><form id="opForm" class="op-grid">
 <div style="position:relative"><input id="opCodiceArticolo" name="codice_articolo" required maxlength="100" placeholder="Codice articolo *" autocomplete="off" oninput="suggerisciCodiciOP()" onfocus="suggerisciCodiciOP()">
 <div id="opCodiceSuggerimenti" style="display:none;position:absolute;top:100%;left:0;z-index:20;background:#fff;border:1px solid #ccd5df;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;width:100%"></div></div>
