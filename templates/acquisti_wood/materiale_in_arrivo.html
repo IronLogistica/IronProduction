@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🚚 Materiale in Arrivo</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Ordini di Acquisto Iron Wood non ancora ricevuti completamente, in ordine di urgenza di consegna.
+      🏭 indica che quel codice serve davvero a un Ordine di Produzione aperto in questo momento — un ritardo lì
+      può bloccare una produzione, non solo "mancare a scorta".
+    </p>
+    <div id="stats" style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap"></div>
+    <div id="ma-lista" style="font-size:13px;color:#666">Caricamento...</div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+async function carica(){
+  const box = document.getElementById('ma-lista');
+  const stats = document.getElementById('stats');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/materiale_in_arrivo');
+    const ordini = await r.json();
+
+    const scaduti = ordini.filter(o => o.scaduto).length;
+    const imminenti = ordini.filter(o => o.imminente).length;
+    const bloccantiProduzione = ordini.filter(o => o.righe_mancanti.some(x => x.richiesto_da_produzione)).length;
+    stats.innerHTML = `
+      <div class="stat-box" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center">
+        <div style="font-size:22px;font-weight:800">${ordini.length}</div><div style="font-size:11px;color:var(--text-dim)">Ordini in arrivo</div></div>
+      <div class="stat-box" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center">
+        <div style="font-size:22px;font-weight:800;color:${scaduti?'#c0392b':'inherit'}">${scaduti}</div><div style="font-size:11px;color:var(--text-dim)">Scaduti</div></div>
+      <div class="stat-box" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center">
+        <div style="font-size:22px;font-weight:800;color:${imminenti?'#b8860b':'inherit'}">${imminenti}</div><div style="font-size:11px;color:var(--text-dim)">Imminenti (≤3gg)</div></div>
+      <div class="stat-box" style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center">
+        <div style="font-size:22px;font-weight:800;color:${bloccantiProduzione?'#c0392b':'inherit'}">${bloccantiProduzione}</div><div style="font-size:11px;color:var(--text-dim)">🏭 Bloccano produzione</div></div>
+    `;
+
+    if(!ordini.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun materiale in arrivo al momento — tutti gli ordini sono ricevuti o non ci sono ordini aperti.</p>'; return; }
+
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
+      '<th>OA n.</th><th>Fornitore</th><th>Consegna</th><th>Modalità</th><th>Righe mancanti</th></tr></thead><tbody>';
+    ordini.forEach(o=>{
+      const rigaStile = o.scaduto ? 'background:rgba(220,53,69,0.08)' : (o.imminente ? 'background:rgba(240,173,78,0.08)' : '');
+      const dataLabel = o.data_consegna
+        ? `${o.data_consegna}${o.scaduto?' ⚠️ SCADUTO':(o.imminente?' ⚡ imminente':'')}`
+        : '<span style="color:#999">non specificata</span>';
+      html += `<tr style="${rigaStile}"><td class="codice">${o.ordine_n}</td><td>${o.fornitore}</td>` +
+        `<td class="lav-td" style="color:${o.scaduto?'#c0392b':(o.imminente?'#b8860b':'inherit')};font-weight:${o.scaduto||o.imminente?'700':'400'}">${dataLabel}</td>` +
+        `<td>${o.ritiro_proprio?'🚚 Ritiriamo noi':'📦 Consegnano loro'}</td>` +
+        `<td>`;
+      o.righe_mancanti.forEach(r=>{
+        html += `<div style="font-size:11px;margin-bottom:2px">${r.richiesto_da_produzione?'🏭 <b>':''}${r.codice} — ${r.descrizione||''} (mancano ${r.mancante} ${r.unita_misura||''})${r.richiesto_da_produzione?'</b>':''}</div>`;
+      });
+      html += `</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+carica();
+{% endblock %}
