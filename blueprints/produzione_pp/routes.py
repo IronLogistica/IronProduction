@@ -3,10 +3,11 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 from sqlalchemy.exc import IntegrityError
 from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     STATI_ORDINE_PP, ASA_MASTERWORK, prossimo_codice_ordine_pp,
-                    prossimo_numero_commessa, GiacenzaWood)
+                    prossimo_numero_commessa, GiacenzaWood, CicloLavoroWood,
+                    CentroCostoWood, VarianzaProduzioneWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
-                    _netta_e_esplodi_wood)
+                    _netta_e_esplodi_wood, _calcola_costo_standard)
 
 pp_bp = Blueprint("produzione_pp", __name__)
 
@@ -175,6 +176,10 @@ def api_evento():
         # Scarico automatico giacenza Iron Wood in proporzione ai pezzi buoni
         # appena consuntivati: esplode l'intera distinta (nessun netting qui,
         # solo la quantità reale consumata) e scarica ogni componente toccato.
+        # Poi carica il PRODOTTO FINITO stesso a magazzino, valorizzato al suo
+        # costo standard (materiali + lavorazione + overhead), e registra la
+        # varianza di lavorazione (tempo reale vs standard) quando la fase
+        # dell'evento è abbinabile per nome a un reparto del suo Ciclo di Lavoro.
         if good > 0:
             try:
                 componenti = _esplodi_bom_wood(o.codice_articolo, qta=good)
@@ -186,6 +191,35 @@ def api_evento():
                                                       riferimento=o.codice, note=f'Consuntivo {good} pz buoni')
             except Exception:
                 pass  # lo scarico giacenza non deve mai bloccare la registrazione del consuntivo
+
+            try:
+                costo = _calcola_costo_standard(o.codice_articolo)
+                _registra_movimento_giacenza(o.codice_articolo, good, 'carico_produzione',
+                                              riferimento=o.codice, note=f'Consuntivo {good} pz buoni',
+                                              costo_unitario=costo['costo_totale'])
+            except Exception:
+                pass  # il carico a magazzino non deve mai bloccare la registrazione del consuntivo
+
+            try:
+                fase_nome = str(d['fase']).strip()
+                riga_ciclo = (CicloLavoroWood.query.filter_by(codice=o.codice_articolo)
+                              .join(CicloLavoroWood.centro_costo)
+                              .filter(db.func.lower(CentroCostoWood.nome) == fase_nome.lower())
+                              .first())
+                if riga_ciclo and riga_ciclo.produttivita_oraria:
+                    tempo_standard_min = (good / riga_ciclo.produttivita_oraria) * 60
+                    costo_orario = riga_ciclo.centro_costo.costo_orario or 0
+                    costo_standard_lav = (tempo_standard_min / 60) * costo_orario
+                    costo_reale_lav = (tempo / 60) * costo_orario
+                    db.session.add(VarianzaProduzioneWood(
+                        op_code=o.codice, codice_articolo=o.codice_articolo, fase=fase_nome, quantita=good,
+                        tempo_standard_minuti=round(tempo_standard_min, 2), tempo_reale_minuti=tempo,
+                        costo_standard_lavorazione=round(costo_standard_lav, 4),
+                        costo_reale_lavorazione=round(costo_reale_lav, 4),
+                        varianza=round(costo_reale_lav - costo_standard_lav, 4),
+                    ))
+            except Exception:
+                pass  # nessuna varianza registrabile (fase non abbinabile) non deve bloccare il consuntivo
 
         db.session.commit(); return jsonify(ok=True, deduplicated=False, ordine=_ordine(o)), 201
     except ValueError as exc: return jsonify(ok=False, error=str(exc)), 400
