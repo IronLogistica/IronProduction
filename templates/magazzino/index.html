@@ -427,6 +427,20 @@ async function eliminaFaseCicloModal(id){
   }
 }
 
+// Apertura guidata dai collegamenti del dettaglio Costo Standard.
+// ?articolo=CODICE / ?ciclo=CODICE aprono la scheda; ?distinta=CODICE porta
+// direttamente alla distinta locale e alla sua esplosione.
+(function apriConfigurazioneDaCostoStandard(){
+  const q = new URLSearchParams(window.location.search);
+  const articolo = q.get('articolo') || q.get('ciclo');
+  const distinta = q.get('distinta');
+  if(articolo) setTimeout(() => apriCicloLavoro(articolo), 0);
+  if(distinta){
+    document.getElementById('wood-ricerca').value = distinta;
+    document.getElementById('bom-wood-codice').value = distinta;
+    setTimeout(() => { caricaListaWood(); esplodiBOMWood(); }, 0);
+  }
+})();
 caricaListaWood();
 {% endblock %}
 
