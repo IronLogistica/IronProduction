@@ -1,0 +1,142 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">📚 Documentazione Articolo</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+      Cerca un codice articolo per vedere/caricare la sua documentazione tecnica (disegni, istruzioni, PDF) e le
+      foto di riferimento del prodotto — restano archiviate qui per sempre, richiamabili in qualsiasi momento,
+      indipendentemente da quale Ordine di Produzione è in corso. Le stesse informazioni compaiono anche sul
+      totem quando quell'articolo è in lavorazione.
+    </p>
+    <div style="display:flex;gap:8px;max-width:420px">
+      <input id="inp-codice" type="text" placeholder="Codice articolo (es. T200)" style="flex:1;padding:9px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"
+             onkeydown="if(event.key==='Enter') cercaArticolo()">
+      <button class="btn btn-primary" onclick="cercaArticolo()">🔍 Cerca</button>
+    </div>
+  </div>
+</div>
+
+<div id="sezione-articolo" style="display:none">
+  <div class="doc-foto-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px">
+    <div class="mon-section">
+      <div class="section-hdr postazione-hdr">📄 Documentazione tecnica — <span id="titolo-codice-doc"></span></div>
+      <div style="padding:14px">
+        <label class="btn btn-primary" style="display:inline-flex;cursor:pointer">+ Carica documento
+          <input type="file" accept=".pdf,image/*" style="display:none" onchange="caricaDocumento(this)">
+        </label>
+        <div id="lista-documenti" style="margin-top:12px">Caricamento...</div>
+      </div>
+    </div>
+    <div class="mon-section">
+      <div class="section-hdr postazione-hdr">📷 Foto di riferimento prodotto — <span id="titolo-codice-foto"></span></div>
+      <div style="padding:14px">
+        <label class="btn btn-primary" style="display:inline-flex;cursor:pointer">+ Carica foto
+          <input type="file" accept="image/*" style="display:none" onchange="caricaFoto(this)">
+        </label>
+        <div id="lista-foto" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">Caricamento...</div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+let CODICE_ATTIVO = null;
+
+function cercaArticolo(){
+  const val = document.getElementById('inp-codice').value.trim();
+  if(!val){ return; }
+  CODICE_ATTIVO = val;
+  document.getElementById('titolo-codice-doc').textContent = val;
+  document.getElementById('titolo-codice-foto').textContent = val;
+  document.getElementById('sezione-articolo').style.display = '';
+  caricaListaDocumenti();
+  caricaListaFoto();
+}
+
+function leggiFileBase64(file){
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = () => resolve(rd.result.split(',')[1]);
+    rd.onerror = () => reject(new Error('Lettura file fallita'));
+    rd.readAsDataURL(file);
+  });
+}
+
+async function caricaDocumento(input){
+  const file = input.files[0];
+  if(!file || !CODICE_ATTIVO) return;
+  try{
+    const b64 = await leggiFileBase64(file);
+    const r = await fetch('/api/totem/documenti', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice_articolo: CODICE_ATTIVO, nome_file: file.name, tipo_mime: file.type, contenuto_base64: b64})
+    });
+    const d = await r.json();
+    if(d.errore){ showToast('❌ ' + d.messaggio, true); return; }
+    showToast('✅ Documento caricato'); caricaListaDocumenti();
+  }catch(e){ showToast('❌ Errore caricamento documento', true); }
+  input.value = '';
+}
+
+async function caricaListaDocumenti(){
+  const box = document.getElementById('lista-documenti');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/totem/documenti/' + encodeURIComponent(CODICE_ATTIVO));
+    const lista = await r.json();
+    box.innerHTML = lista.length ? lista.map(dd =>
+      `<div style="display:flex;justify-content:space-between;align-items:center;padding:6px 0;border-bottom:1px solid var(--border)">
+        <a href="/api/totem/documenti/file/${dd.id}" target="_blank" style="color:var(--accent2)">📄 ${dd.nome_file}</a>
+        <button class="btn btn-ghost" style="padding:3px 8px;font-size:11px;color:#c0392b" onclick="eliminaDocumento(${dd.id})">🗑️</button>
+      </div>`
+    ).join('') : '<span style="color:var(--text-dim);font-size:.85rem">Nessun documento caricato</span>';
+  }catch(e){ box.innerHTML = '<span style="color:#c0392b">Errore caricamento</span>'; }
+}
+
+async function eliminaDocumento(id){
+  if(!confirm('Eliminare questo documento?')) return;
+  await fetch('/api/totem/documenti/' + id, {method:'DELETE'});
+  caricaListaDocumenti();
+}
+
+async function caricaFoto(input){
+  const file = input.files[0];
+  if(!file || !CODICE_ATTIVO) return;
+  try{
+    const b64 = await leggiFileBase64(file);
+    const r = await fetch('/api/foto_articolo', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice_articolo: CODICE_ATTIVO, nome_file: file.name, contenuto_base64: b64})
+    });
+    const d = await r.json();
+    if(d.errore){ showToast('❌ ' + d.messaggio, true); return; }
+    showToast('✅ Foto caricata'); caricaListaFoto();
+  }catch(e){ showToast('❌ Errore caricamento foto', true); }
+  input.value = '';
+}
+
+async function caricaListaFoto(){
+  const box = document.getElementById('lista-foto');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/foto_articolo/' + encodeURIComponent(CODICE_ATTIVO));
+    const lista = await r.json();
+    box.innerHTML = lista.length ? lista.map(f => `
+      <div style="position:relative">
+        <img src="/api/foto_articolo/file/${f.id}" style="width:90px;height:90px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer" onclick="window.open(this.src,'_blank')">
+        <button onclick="eliminaFoto(${f.id})" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:20px;height:20px;font-size:11px;cursor:pointer">✕</button>
+      </div>`
+    ).join('') : '<span style="color:var(--text-dim);font-size:.85rem">Nessuna foto caricata</span>';
+  }catch(e){ box.innerHTML = '<span style="color:#c0392b">Errore caricamento</span>'; }
+}
+
+async function eliminaFoto(id){
+  if(!confirm('Eliminare questa foto?')) return;
+  await fetch('/api/foto_articolo/' + id, {method:'DELETE'});
+  caricaListaFoto();
+}
+{% endblock %}
