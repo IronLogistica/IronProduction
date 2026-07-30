@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+.monitor-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+@media(max-width:1100px){.monitor-grid{grid-template-columns:1fr}}
+.section-hdr-wrap{display:flex;align-items:center;justify-content:space-between;padding:10px 16px}
+.section-hdr-wrap span{font-size:13px;font-weight:700;color:#fff}
+.prio-input{width:36px;background:rgba(255,255,255,.08);border:1px solid var(--border);border-radius:4px;
+            color:var(--text);text-align:center;font-size:11px;padding:2px}
+.prio-input:focus{border-color:var(--accent2);outline:none}
+</style>
+
+<div class="page-toolbar">
+  <div class="page-title">⚙️ Monitor {{ centro.nome }}</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    {% for m in macchine %}
+    <a href="/monitor/macchina/{{ m.id }}" class="btn {% if m.id == centro.id %}btn-primary{% else %}btn-ghost{% endif %}" style="font-size:11px">{{ m.nome }}</a>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:0">
+      Coda di lavoro per <b>{{ centro.nome }}</b>, estratta dagli Ordini di Produzione aperti in base al loro Ciclo di
+      Lavoro e ai consuntivi già registrati — nessuna riga inserita a mano. Scrivi un numero nella colonna PRIO
+      per fissare a mano la posizione di un OP in coda (es. metterlo davanti a tutti); lascia vuoto per l'ordine
+      automatico (priorità OP, poi data di consegna).
+    </p>
+  </div>
+</div>
+
+<div class="monitor-grid">
+{% for col_sezioni in [['in_attesa','da_iniziare'],['lavorazione','terminati']] %}
+<div>
+{% for sezione in col_sezioni %}
+{% set label, hdr_class = sezioni_map[sezione] %}
+<div class="mon-section">
+  <div class="{{ hdr_class }}">
+    <div class="section-hdr-wrap"><span>{{ label }}</span><span style="font-size:11px;color:rgba(255,255,255,.8)">{{ righe_per_sezione[sezione]|length }}</span></div>
+  </div>
+  <table class="mon-table">
+    <thead><tr>
+      <th>Prio</th><th>Commessa</th><th>OP</th><th>Codice</th><th>Saldo</th><th>Descrizione</th><th>%</th><th>Tot.</th>
+    </tr></thead>
+    <tbody id="tbody-{{ sezione }}">
+    {% set righe = righe_per_sezione[sezione] %}
+    {% if righe %}
+      {% for r in righe %}
+      <tr id="row-{{ r.op_id }}">
+        <td><input class="prio-input" type="number" value="{{ r.posizione_manuale if r.posizione_manuale is not none else '' }}"
+                   placeholder="{{ r.priorita }}" onchange="impostaPosizione({{ r.op_id }}, this.value)"></td>
+        <td class="comm-id">{{ r.commessa }}</td>
+        <td class="codice" style="cursor:pointer" onclick="apriSituazioneOP('{{ r.op_codice }}')">{{ r.op_codice }}</td>
+        <td class="codice">{{ r.codice_articolo }}</td>
+        <td class="num {% if r.saldo > 0 %}num-pos{% endif %}">{{ r.saldo }}</td>
+        <td class="descr-td">{{ r.descrizione }}</td>
+        <td><div class="pct-bar"><div class="pct-fill" style="width:{{ [r.pct,100]|min }}%"></div><span>{{ r.pct }}%</span></div></td>
+        <td class="num">{{ r.totale }}</td>
+      </tr>
+      {% endfor %}
+    {% else %}
+      <tr><td colspan="8" style="text-align:center;color:#5a7090;padding:10px;font-style:italic">Nessun OP in questa sezione</td></tr>
+    {% endif %}
+    </tbody>
+  </table>
+</div>
+{% endfor %}
+</div>
+{% endfor %}
+</div>
+{% endblock %}
+
+{% block scripts %}
+const CENTRO_ID = {{ centro.id }};
+
+function impostaPosizione(opId, valore){
+  valore = (valore || '').trim();
+  if(valore === ''){
+    fetch(`/api/monitor_macchina/${CENTRO_ID}/ordina/${opId}`, {method:'DELETE'})
+      .then(r=>r.json()).then(d=>{ showToast('↩️ Torna all\'ordine automatico'); setTimeout(()=>location.reload(), 500); });
+    return;
+  }
+  fetch(`/api/monitor_macchina/${CENTRO_ID}/ordina`, {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ordine_produzione_id: opId, posizione: parseInt(valore)})
+  }).then(r=>r.json()).then(d=>{
+    if(d.errore){ showToast('❌ ' + d.messaggio, true); return; }
+    showToast('✅ Posizione aggiornata'); setTimeout(()=>location.reload(), 500);
+  }).catch(()=>showToast('❌ Errore di rete', true));
+}
+
+function apriSituazioneOP(codice){
+  window.location.href = '/ordini-produzione';
+}
+{% endblock %}
