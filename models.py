@@ -113,13 +113,62 @@ class GiacenzaWood(db.Model):
 class MovimentoGiacenzaWood(db.Model):
     """Storico di ogni variazione della giacenza Iron Wood (carico/scarico), per audit."""
     __tablename__ = 'movimenti_giacenza_wood'
-    id          = db.Column(db.Integer, primary_key=True)
-    codice      = db.Column(db.String(50), nullable=False, index=True)
-    tipo        = db.Column(db.String(30), nullable=False)  # carico_iniziale | carico_manuale | scarico_manuale | scarico_produzione | rettifica_import
-    quantita    = db.Column(db.Float, nullable=False)        # positivo=carico, negativo=scarico
-    riferimento = db.Column(db.String(100), default='')      # es. codice OP che ha generato lo scarico
-    note        = db.Column(db.String(300), default='')
-    creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+    id             = db.Column(db.Integer, primary_key=True)
+    codice         = db.Column(db.String(50), nullable=False, index=True)
+    tipo           = db.Column(db.String(30), nullable=False)  # carico_iniziale | carico_manuale | scarico_manuale | scarico_produzione | carico_produzione | rettifica_import
+    quantita       = db.Column(db.Float, nullable=False)        # positivo=carico, negativo=scarico
+    costo_unitario = db.Column(db.Float, nullable=True)         # €/pz — valorizzato solo per carico_produzione (costo standard al momento del carico)
+    valore         = db.Column(db.Float, nullable=True)         # costo_unitario × |quantita|
+    riferimento    = db.Column(db.String(100), default='')      # es. codice OP che ha generato lo scarico/carico
+    note           = db.Column(db.String(300), default='')
+    creato_il      = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ImpostazioneCostoWood(db.Model):
+    """Impostazioni globali per il calcolo del costo standard Iron Wood (riga singola)."""
+    __tablename__ = 'impostazioni_costo_wood'
+    id                     = db.Column(db.Integer, primary_key=True)
+    aliquota_overhead_pct  = db.Column(db.Float, default=0)   # % spese generali applicata su (materiali + lavorazione)
+    aggiornato_il          = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CostoStandardWood(db.Model):
+    """
+    Costo standard calcolato (e salvato) per un codice Iron Wood, secondo la
+    logica SAP: Materiali (BOM ricorsiva) + Lavorazione (Routing/Ciclo di
+    Lavoro) + Overhead (% su materiali+lavorazione). Ricalcolato su richiesta
+    (bottone "Ricalcola"), non automaticamente ad ogni modifica di BOM/routing.
+    """
+    __tablename__ = 'costo_standard_wood'
+    codice                    = db.Column(db.String(50), primary_key=True)
+    costo_materiali           = db.Column(db.Float, default=0)
+    costo_lavorazione         = db.Column(db.Float, default=0)
+    costo_overhead            = db.Column(db.Float, default=0)
+    costo_totale              = db.Column(db.Float, default=0)
+    ore_manodopera_standard   = db.Column(db.Float, default=0)  # ore totali standard per pezzo (dirette + di ogni sottocomponente)
+    calcolato_il              = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class VarianzaProduzioneWood(db.Model):
+    """
+    Varianza di lavorazione registrata ad ogni consuntivo di produzione:
+    confronta il tempo/costo di lavorazione STANDARD atteso (da produttività
+    oraria del Ciclo di Lavoro) con quello REALE consuntivato (da tempo_minuti
+    dell'evento), quando la fase dell'evento è abbinabile per nome a un
+    Centro di Costo — se non abbinabile, nessuna varianza viene registrata.
+    """
+    __tablename__ = 'varianze_produzione_wood'
+    id                          = db.Column(db.Integer, primary_key=True)
+    op_code                     = db.Column(db.String(20), nullable=False, index=True)
+    codice_articolo             = db.Column(db.String(50), nullable=False)
+    fase                        = db.Column(db.String(100), default='')
+    quantita                    = db.Column(db.Integer, nullable=False)   # pezzi buoni di questo evento
+    tempo_standard_minuti       = db.Column(db.Float, default=0)
+    tempo_reale_minuti          = db.Column(db.Float, default=0)
+    costo_standard_lavorazione  = db.Column(db.Float, default=0)
+    costo_reale_lavorazione     = db.Column(db.Float, default=0)
+    varianza                    = db.Column(db.Float, default=0)  # reale − standard (positivo = peggio dello standard)
+    creato_il                   = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class DistintaBaseWood(db.Model):
@@ -356,6 +405,7 @@ class ArticoloApprovvigionamento(db.Model):
     codice = db.Column(db.String(100), nullable=False, unique=True, index=True)
     tipo_approvvigionamento = db.Column(db.String(40), default='DA_CLASSIFICARE', nullable=False)
     lead_time_fornitura_giorni = db.Column(db.Float, default=None)
+    costo_acquisto_standard = db.Column(db.Float, default=0)  # €/pz — base del costo standard per i codici foglia (materia prima/componente acquisto/laserato): niente BOM/routing sotto, il costo standard è questo prezzo
     aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 class KanbanProdotto(db.Model):
@@ -918,6 +968,11 @@ def init_db():
         "UPDATE schede_trattamenti SET verniciatura=TRUE WHERE tipo_trattamento='VERNICIATURA' AND verniciatura IS NOT TRUE",
         # ── Centro di Costo Iron Wood: costo orario macchina/reparto (senza manodopera) ──
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS costo_orario DOUBLE PRECISION DEFAULT 0",
+        # ── Costo Standard Iron Wood: prezzo acquisto per i codici foglia, valorizzazione carichi/scarichi ──
+        "ALTER TABLE articoli_approvvigionamento ADD COLUMN IF NOT EXISTS costo_acquisto_standard DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE movimenti_giacenza_wood ADD COLUMN IF NOT EXISTS costo_unitario DOUBLE PRECISION",
+        "ALTER TABLE movimenti_giacenza_wood ADD COLUMN IF NOT EXISTS valore DOUBLE PRECISION",
+        "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS ore_manodopera_standard DOUBLE PRECISION DEFAULT 0",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
