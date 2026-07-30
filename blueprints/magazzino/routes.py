@@ -1016,6 +1016,8 @@ def api_centri_costo_modifica(cid):
             return jsonify({'errore': True, 'messaggio': 'Costo orario non valido'}), 400
     if 'esterno' in d:
         c.esterno = bool(d.get('esterno'))
+    if 'escluso_da_monitor_produzione' in d:
+        c.escluso_da_monitor_produzione = bool(d.get('escluso_da_monitor_produzione'))
     if 'note' in d:
         c.note = (d.get('note') or '').strip()
     db.session.commit()
