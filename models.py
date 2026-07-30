@@ -335,6 +335,99 @@ class VarianzaProduzioneWood(db.Model):
     creato_il                   = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class SogliaAllarmeVarianzaWood(db.Model):
+    """
+    Soglie configurabili (riga singola, come ImpostazioneCostoWood) oltre le
+    quali il report di commessa segnala automaticamente una varianza come
+    da tenere d'occhio — non bloccano nulla, sono solo per l'evidenza visiva
+    nel report (vedi 'segnalazioni' in api_analisi_costo_ordine).
+    """
+    __tablename__ = 'soglie_allarme_varianza_wood'
+    id                      = db.Column(db.Integer, primary_key=True)
+    soglia_materiali_pct    = db.Column(db.Float, default=5.0)
+    soglia_lavorazione_pct  = db.Column(db.Float, default=5.0)
+    soglia_manodopera_pct   = db.Column(db.Float, default=5.0)
+    soglia_totale_pct       = db.Column(db.Float, default=5.0)
+    soglia_scarto_pct       = db.Column(db.Float, default=3.0)
+    aggiornato_il           = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# Voci contabili standard per cui serve una mappatura verso un conto — vedi
+# ContoContabileMappaWood. L'elenco segue esattamente la struttura richiesta
+# per la futura integrazione MasterLedger/MasterFico (sez. 6 della specifica
+# costo standard): magazzini, produzione in corso, assorbimenti standard e
+# varianze separate per tipo.
+VOCI_CONTABILI_WOOD = [
+    ('MAGAZZINO_MP',                   'Magazzino materie prime'),
+    ('MAGAZZINO_SEMILAVORATI',         'Magazzino semilavorati'),
+    ('MAGAZZINO_PF',                   'Magazzino prodotti finiti'),
+    ('PRODUZIONE_IN_CORSO',            'Produzione in corso (WIP)'),
+    ('CONSUMO_MATERIALI_STD',          'Consumo materiali standard'),
+    ('ASSORBIMENTO_MANODOPERA_STD',    'Assorbimento manodopera standard'),
+    ('ASSORBIMENTO_MACCHINA_STD',      'Assorbimento macchina standard'),
+    ('VARIANZA_PREZZO_MATERIALI',      'Varianza prezzo materiali'),
+    ('VARIANZA_QUANTITA_MATERIALI',    'Varianza quantità/consumo materiali'),
+    ('VARIANZA_EFFICIENZA_MANODOPERA', 'Varianza efficienza manodopera'),
+    ('VARIANZA_TARIFFA_MANODOPERA',    'Varianza tariffa manodopera'),
+    ('VARIANZA_EFFICIENZA_MACCHINA',   'Varianza efficienza macchina'),
+    ('VARIANZA_TARIFFA_MACCHINA',      'Varianza tariffa macchina'),
+    ('VARIANZA_PRODUZIONE',            'Varianza di produzione (carico PF)'),
+]
+
+
+class ContoContabileMappaWood(db.Model):
+    """
+    Mappa CONFIGURABILE voce contabile → conto — una riga per voce di
+    VOCI_CONTABILI_WOOD, precreata vuota (conto='') da
+    assicura_conti_contabili_wood() e compilabile dall'utente. Usata da
+    _genera_movimenti_contabili_ordine per scrivere il conto giusto su ogni
+    riga di MovimentoContabileWood.
+    """
+    __tablename__ = 'conti_contabili_mappa_wood'
+    id                = db.Column(db.Integer, primary_key=True)
+    voce              = db.Column(db.String(50), nullable=False, unique=True)
+    conto             = db.Column(db.String(30), default='')
+    descrizione_conto = db.Column(db.String(200), default='')
+
+
+def assicura_conti_contabili_wood():
+    """Crea (se mancanti) le righe della mappa conti per tutte le VOCI_CONTABILI_WOOD, conto vuoto — idempotente."""
+    esistenti = {c.voce for c in ContoContabileMappaWood.query.all()}
+    for voce, descr in VOCI_CONTABILI_WOOD:
+        if voce not in esistenti:
+            db.session.add(ContoContabileMappaWood(voce=voce, descrizione_conto=descr))
+    db.session.commit()
+
+
+class MovimentoContabileWood(db.Model):
+    """
+    Movimento contabile STRUTTURATO in partita doppia, generato su richiesta
+    per un Ordine di Produzione (vedi _genera_movimenti_contabili_ordine) a
+    partire dagli stessi numeri già mostrati nel report Analisi Costo — MAI
+    scritto automaticamente ad ogni evento: si genera quando si vuole
+    "chiudere" contabilmente un OP (tipicamente a completamento). Predisposto
+    per una futura trasmissione a MasterLedger/MasterFico — 'esportato'
+    resta False finché quell'integrazione non esiste davvero; per ora
+    l'unica via d'uscita è l'export CSV (vedi /api/movimenti-contabili/export).
+    Rigenerare i movimenti di un OP cancella e ricrea SOLO le righe non ancora
+    esportate, per non alterare dati già trasmessi.
+    """
+    __tablename__ = 'movimenti_contabili_wood'
+    id                  = db.Column(db.Integer, primary_key=True)
+    data                = db.Column(db.Date, nullable=False, default=date.today)
+    causale             = db.Column(db.String(150), nullable=False)
+    op_code             = db.Column(db.String(20), default='', index=True)
+    codice_articolo     = db.Column(db.String(50), default='')
+    conto               = db.Column(db.String(30), default='')
+    centro_costo        = db.Column(db.String(100), default='')
+    dare_avere          = db.Column(db.String(5), nullable=False)   # 'DARE' o 'AVERE'
+    importo             = db.Column(db.Float, nullable=False, default=0)
+    tipo_varianza       = db.Column(db.String(50), default='')      # '' se non è una riga di varianza (assorbimento/consumo standard)
+    esportato           = db.Column(db.Boolean, default=False)
+    esportato_il        = db.Column(db.DateTime, nullable=True)
+    creato_il           = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class DistintaBaseWood(db.Model):
     """
     Distinta base (BOM) di Iron Wood — COPIA LOCALE, nel database di
