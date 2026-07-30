@@ -246,9 +246,14 @@ def api_evento():
                               .first())
                 if riga_ciclo and riga_ciclo.produttivita_oraria:
                     tempo_standard_min = (good / riga_ciclo.produttivita_oraria) * 60
-                    costo_orario = riga_ciclo.centro_costo.costo_orario or 0
-                    costo_standard_lav = (tempo_standard_min / 60) * costo_orario
-                    costo_reale_lav = (tempo / 60) * costo_orario
+                    # La lavorazione è composta da due voci distinte nello standard:
+                    # macchina/reparto + manodopera diretta. Il consuntivo deve usare
+                    # la stessa base, altrimenti le varianze sottostimano il costo reale.
+                    tariffa_macchina = riga_ciclo.centro_costo.costo_orario or 0
+                    tariffa_manodopera = riga_ciclo.centro_costo.tariffa_manodopera_diretta_oraria or 0
+                    tariffa_conversione = tariffa_macchina + tariffa_manodopera
+                    costo_standard_lav = (tempo_standard_min / 60) * tariffa_conversione
+                    costo_reale_lav = (tempo / 60) * tariffa_conversione
                     db.session.add(VarianzaProduzioneWood(
                         op_code=o.codice, codice_articolo=o.codice_articolo, fase=fase_nome, quantita=good,
                         tempo_standard_minuti=round(tempo_standard_min, 2), tempo_reale_minuti=tempo,
@@ -389,12 +394,18 @@ def api_analisi_costo_ordine(codice):
     impatto_scarto = round(std_unit['costo_totale'] * qta_scarto, 2)
 
     # ── Overhead ─────────────────────────────────────────────────────────
-    overhead_pct_corrente = _overhead_pct()
-    eff_overhead_tot = round((eff_materiali_tot + eff_lavorazione_tot) * (overhead_pct_corrente / 100.0), 2)
+    # L'overhead di conversione non grava sui materiali: segue esclusivamente
+    # il costo di lavorazione (macchina + manodopera diretta). Per gli OP già
+    # rilasciati non esiste ancora uno snapshot dell'aliquota di ogni fase;
+    # si usa quindi il rapporto overhead/lavorazione dello standard congelato.
+    if std_lavorazione_tot:
+        coefficiente_overhead_standard = std_overhead_tot / std_lavorazione_tot
+        eff_overhead_tot = round(eff_lavorazione_tot * coefficiente_overhead_standard, 2)
+    else:
+        eff_overhead_tot = 0.0
     var_overhead = round(eff_overhead_tot - std_overhead_tot, 2)
-    if versione and versione.overhead_pct_usata != overhead_pct_corrente:
-        limiti.append(f'Aliquota overhead cambiata dopo il rilascio: era {versione.overhead_pct_usata}% allo standard, '
-                       f'ora è {overhead_pct_corrente}% — parte della varianza overhead deriva da questo cambio, non da un vero scostamento operativo.')
+    if not versione:
+        limiti.append('Overhead effettivo non calcolabile con attendibilità senza uno standard congelato: viene esposto a zero.')
 
     # ── Totali ───────────────────────────────────────────────────────────
     eff_totale_tot = round(eff_materiali_tot + eff_lavorazione_tot + eff_overhead_tot, 2)
