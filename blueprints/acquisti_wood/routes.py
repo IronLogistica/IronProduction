@@ -6,7 +6,7 @@ import PyPDF2
 from flask import Blueprint, render_template, jsonify, request, Response
 
 from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
-                    DDTCaricoWood, RigaDDTCaricoWood)
+                    DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood)
 from blueprints.magazzino.routes import _registra_movimento_giacenza, api_fabbisogno_produzione
 
 acquisti_wood_bp = Blueprint('acquisti_wood', __name__)
@@ -30,6 +30,30 @@ SKIP_CODICI_PDF = {
     'Rif.', 'rif.', 'Destinazione', 'Destinatario', 'Valuta',
     'Sconti', 'Pagamento', 'Sconto', 'Cod.fornitore',
 }
+
+
+def _parse_prezzo_it(s):
+    """Converte un numero in formato italiano ('1.234,56' o '423,50000') in float. None se mancante/non parsabile."""
+    if not s:
+        return None
+    try:
+        return float(s.replace('.', '').replace(',', '.'))
+    except ValueError:
+        return None
+
+
+def _risolvi_codice_fornitore(fornitore, codice_grezzo):
+    """
+    Cerca in MappaCodiceFornitoreWood una riga per (fornitore, codice_grezzo)
+    e ritorna il codice interno corrispondente se trovata, altrimenti ritorna
+    codice_grezzo invariato (nessuna mappa = comportamento di prima, il
+    codice del PDF viene usato così com'è).
+    """
+    if not codice_grezzo:
+        return codice_grezzo
+    mappa = MappaCodiceFornitoreWood.query.filter_by(
+        fornitore=fornitore, codice_fornitore=codice_grezzo).first()
+    return mappa.codice_interno if mappa else codice_grezzo
 
 
 def _estrai_dati_ordine_acquisto(testo_completo):
@@ -70,9 +94,15 @@ def _estrai_dati_ordine_acquisto(testo_completo):
             dati['fornitore'] = linee[i + 2] if linee[i + 1].isdigit() else linee[i + 1]
             break
 
-    # 3. Articoli — cattura codice, descrizione, quantità e data evasione,
-    # parsando solo le righe DOPO l'intestazione colonne (banca/pagamento/
-    # fornitore vengono ignorati).
+    # 3. Articoli — cattura codice, descrizione, quantità, data evasione e
+    # prezzo unitario, parsando solo le righe DOPO l'intestazione colonne
+    # (banca/pagamento/fornitore vengono ignorati).
+    #
+    # Il prezzo unitario (es. "423,50000  847,00" = prezzo unitario + importo,
+    # formato italiano con virgola decimale) a volte compare in coda alla
+    # stessa riga articolo, a volte su una riga di continuazione a sé stante
+    # subito dopo (quando la descrizione va a capo) — vedi PREZZO_RIGA_RE più
+    # sotto per il secondo caso.
     HEADER_COLONNE = ('codice merce', 'descrizione della merce', 'codice articolo')
     idx_header = None
     for i, linea in enumerate(linee):
@@ -80,17 +110,20 @@ def _estrai_dati_ordine_acquisto(testo_completo):
             idx_header = i
             break
     linee_articoli = linee[idx_header + 1:] if idx_header is not None else linee
+    PREZZO_INLINE = r'(?:\s+([\d.]{1,12},\d{1,5})\s+([\d.]{1,12},\d{1,5}))?'
     _pending_codice = None
     _pending_desc = None
-    for linea in linee_articoli:
+    _indici_articoli = []  # indice in linee_articoli dove è stato trovato ogni articolo, per il fallback prezzo
+    for idx, linea in enumerate(linee_articoli):
         if _pending_codice:
-            m_qty = re.search(r'^([a-z]{1,3})\.\s+([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?', linea)
+            m_qty = re.search(r'^([a-z]{1,3})\.\s+([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?' + PREZZO_INLINE, linea)
             if m_qty:
                 dati['articoli'].append({
                     "codice": _pending_codice, "descrizione": _pending_desc,
                     "unita_misura": m_qty.group(1), "qta": m_qty.group(2).replace('.', ''),
-                    "data_evasione": m_qty.group(3) or '',
+                    "data_evasione": m_qty.group(3) or '', "prezzo_unitario": _parse_prezzo_it(m_qty.group(4)),
                 })
+                _indici_articoli.append(idx)
                 _pending_codice = None
                 _pending_desc = None
                 continue
@@ -106,11 +139,11 @@ def _estrai_dati_ordine_acquisto(testo_completo):
                     _pending_desc = None
 
         match_art = re.search(
-            r'([A-Za-z0-9][A-Za-z0-9./_-]+)\s+(.+?)\s+([a-z]{1,3})\.\s+([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?',
+            r'([A-Za-z0-9][A-Za-z0-9./_-]+)\s+(.+?)\s+([a-z]{1,3})\.\s+([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?' + PREZZO_INLINE,
             linea)
         if not match_art:
             match_art = re.search(
-                r'^(\d{2,})\s+(.+?)\s+([a-z]{1,3})\.\s+([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?', linea)
+                r'^(\d{2,})\s+(.+?)\s+([a-z]{1,3})\.\s+([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?' + PREZZO_INLINE, linea)
         if not match_art:
             m_split = re.match(r'^([A-Za-z0-9]{2,})\s+([A-Z].{3,})$', linea)
             if m_split and m_split.group(1) not in SKIP_CODICI_PDF:
@@ -121,8 +154,25 @@ def _estrai_dati_ordine_acquisto(testo_completo):
             dati['articoli'].append({
                 "codice": match_art.group(1), "descrizione": match_art.group(2).strip(),
                 "unita_misura": match_art.group(3), "qta": match_art.group(4).replace('.', ''),
-                "data_evasione": match_art.group(5) or '',
+                "data_evasione": match_art.group(5) or '', "prezzo_unitario": _parse_prezzo_it(match_art.group(6)),
             })
+            _indici_articoli.append(idx)
+
+    # 3bis. Fallback prezzo: per gli articoli senza prezzo trovato inline,
+    # cerca nelle 2 righe successive una riga "a sé stante" fatta solo di
+    # prezzo unitario + importo (es. quando la riga articolo va a capo prima
+    # del prezzo). Si prende SOLO il primo numero (prezzo unitario).
+    PREZZO_RIGA_RE = re.compile(r'^([\d.]{1,12},\d{1,5})\s+([\d.]{1,12},\d{1,5})$')
+    for art, idx_trovato in zip(dati['articoli'], _indici_articoli):
+        if art.get('prezzo_unitario') is not None:
+            continue
+        for offset in (1, 2):
+            j = idx_trovato + offset
+            if j < len(linee_articoli):
+                m_prezzo = PREZZO_RIGA_RE.match(linee_articoli[j])
+                if m_prezzo:
+                    art['prezzo_unitario'] = _parse_prezzo_it(m_prezzo.group(1))
+                    break
 
     # 4. Riferimento conferma d'ordine fornitore
     match_rif = re.search(r'Rif\.?\s*Des\.?\s*Fornitore[:\s]*([A-Za-z0-9./_-]+)', testo_completo, re.IGNORECASE)
@@ -152,6 +202,8 @@ def _ordine_dict(o):
         'articoli': [{
             'id': r.id, 'codice': r.codice, 'descrizione': r.descrizione, 'unita_misura': r.unita_misura,
             'qta_originale': r.qta_originale, 'qta_ricevuta': r.qta_ricevuta, 'data_evasione': r.data_evasione,
+            'prezzo_unitario': r.prezzo_unitario,
+            'codice_fornitore_originale': r.codice_fornitore_originale or '',
         } for r in o.righe],
     }
 
@@ -200,9 +252,13 @@ def api_upload_ordine_acquisto():
             qta = float(art['qta'])
         except (TypeError, ValueError):
             qta = 0
+        codice_grezzo = art['codice']
+        codice_risolto = _risolvi_codice_fornitore(dati['fornitore'], codice_grezzo)
         db.session.add(RigaOrdineAcquistoWood(
-            ordine_id=o.id, codice=art['codice'], descrizione=art['descrizione'],
+            ordine_id=o.id, codice=codice_risolto, descrizione=art['descrizione'],
+            codice_fornitore_originale=codice_grezzo if codice_risolto != codice_grezzo else '',
             unita_misura=art['unita_misura'], qta_originale=qta, data_evasione=art['data_evasione'],
+            prezzo_unitario=art.get('prezzo_unitario'),
         ))
     db.session.commit()
     return jsonify({'ok': True, 'ordine': _ordine_dict(o), 'n_articoli_trovati': len(dati['articoli'])})
@@ -251,8 +307,10 @@ def api_modifica_riga_ordine(rid):
             r.qta_ricevuta = float(d.get('qta_ricevuta') or 0)
         if 'qta_originale' in d:
             r.qta_originale = float(d.get('qta_originale') or 0)
+        if 'prezzo_unitario' in d:
+            r.prezzo_unitario = float(d['prezzo_unitario']) if d.get('prezzo_unitario') not in (None, '') else None
     except (TypeError, ValueError):
-        return jsonify({'errore': True, 'messaggio': 'Quantità non valida'}), 400
+        return jsonify({'errore': True, 'messaggio': 'Quantità o prezzo non validi'}), 400
     if 'codice' in d: r.codice = (d.get('codice') or '').strip()
     if 'descrizione' in d: r.descrizione = (d.get('descrizione') or '').strip()
     db.session.commit()
@@ -432,12 +490,13 @@ def api_upload_ddt_carico():
             qta = float(art['quantita'])
         except (TypeError, ValueError):
             qta = 0
+        codice_risolto = _risolvi_codice_fornitore(dati['fornitore'], art['codice'])
         riga_ddt = RigaDDTCaricoWood(ddt_id=ddt.id, ordine_n_riferimento=ordine_n_rif,
-                                     codice=art['codice'], descrizione=art['descrizione'], quantita=qta)
+                                     codice=codice_risolto, descrizione=art['descrizione'], quantita=qta)
 
         oa = OrdineAcquistoWood.query.filter_by(ordine_n=ordine_n_rif).first() if ordine_n_rif else None
         if oa:
-            riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=art['codice']).first()
+            riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=codice_risolto).first()
             if riga_oa:
                 riga_oa.qta_ricevuta = (riga_oa.qta_ricevuta or 0) + qta
                 riga_ddt.ordine_acquisto_id = oa.id
@@ -450,8 +509,8 @@ def api_upload_ddt_carico():
         # merce È arrivata fisicamente, va tracciata comunque. costo_unitario
         # non disponibile qui (gli Ordini di Acquisto Fase 1 non estraggono
         # ancora il prezzo dal PDF) — movimento registrato senza valorizzazione.
-        if qta > 0 and art['codice']:
-            _registra_movimento_giacenza(art['codice'], qta, 'carico_acquisto',
+        if qta > 0 and codice_risolto:
+            _registra_movimento_giacenza(codice_risolto, qta, 'carico_acquisto',
                                           riferimento=ddt.filename,
                                           note=f'DDT {dati["numero_ddt"] or ddt.filename}' +
                                                (f' — rif. OA {ordine_n_rif}' if ordine_n_rif else ''))
@@ -467,6 +526,54 @@ def api_upload_ddt_carico():
     db.session.commit()
     return jsonify({'ok': True, 'ddt': _ddt_dict(ddt), 'n_righe_totali': n_totali,
                     'n_righe_abbinate': n_abbinate, 'n_ordini_completati': n_ordini_completati})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MAPPA CODICE FORNITORE → CODICE INTERNO — risolve la codifica propria di
+#  ogni fornitore verso lo SKU interno IronProduction, usata da entrambi i
+#  parsing sopra (Ordine di Acquisto e DDT di carico). Senza una riga qui per
+#  una data coppia (fornitore, codice), si continua a usare il codice grezzo
+#  del PDF, come prima — nessuna mappa è mai obbligatoria.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@acquisti_wood_bp.route('/api/mappa_codici_fornitore_wood', methods=['GET'])
+def api_lista_mappa_codici_fornitore():
+    righe = MappaCodiceFornitoreWood.query.order_by(MappaCodiceFornitoreWood.fornitore,
+                                                     MappaCodiceFornitoreWood.codice_fornitore).all()
+    return jsonify([{
+        'id': r.id, 'fornitore': r.fornitore, 'codice_fornitore': r.codice_fornitore,
+        'codice_interno': r.codice_interno, 'note': r.note or '',
+    } for r in righe])
+
+
+@acquisti_wood_bp.route('/api/mappa_codici_fornitore_wood', methods=['POST'])
+def api_add_mappa_codice_fornitore():
+    d = request.get_json(force=True)
+    fornitore = (d.get('fornitore') or '').strip()
+    codice_fornitore = (d.get('codice_fornitore') or '').strip()
+    codice_interno = (d.get('codice_interno') or '').strip()
+    if not fornitore or not codice_fornitore or not codice_interno:
+        return jsonify({'errore': True, 'messaggio': 'Fornitore, codice fornitore e codice interno sono obbligatori.'}), 400
+
+    esistente = MappaCodiceFornitoreWood.query.filter_by(fornitore=fornitore, codice_fornitore=codice_fornitore).first()
+    if esistente:
+        esistente.codice_interno = codice_interno
+        esistente.note = (d.get('note') or '').strip()
+    else:
+        db.session.add(MappaCodiceFornitoreWood(
+            fornitore=fornitore, codice_fornitore=codice_fornitore,
+            codice_interno=codice_interno, note=(d.get('note') or '').strip(),
+        ))
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@acquisti_wood_bp.route('/api/mappa_codici_fornitore_wood/<int:mid>', methods=['DELETE'])
+def api_del_mappa_codice_fornitore(mid):
+    riga = MappaCodiceFornitoreWood.query.get_or_404(mid)
+    db.session.delete(riga)
+    db.session.commit()
+    return jsonify({'ok': True})
 
 
 @acquisti_wood_bp.route('/ddt_carico_wood/<int:did>/pdf')
