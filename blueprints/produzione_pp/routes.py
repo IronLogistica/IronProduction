@@ -3,11 +3,14 @@ from flask import Blueprint, current_app, jsonify, render_template, request
 from sqlalchemy.exc import IntegrityError
 from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     STATI_ORDINE_PP, ASA_MASTERWORK, prossimo_codice_ordine_pp,
-                    prossimo_numero_commessa, GiacenzaWood, CicloLavoroWood,
-                    CentroCostoWood, VarianzaProduzioneWood)
+                    prossimo_numero_commessa, GiacenzaWood, MovimentoGiacenzaWood, CicloLavoroWood,
+                    CentroCostoWood, VarianzaProduzioneWood, ArticoloApprovvigionamento,
+                    CostoStandardVersioneWood, LegameCostoStandardOrdineWood, DistintaBaseWood,
+                    CostoStandardVersioneDettaglioWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
-                    _netta_e_esplodi_wood, _calcola_costo_standard)
+                    _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
+                    _overhead_pct)
 
 pp_bp = Blueprint("produzione_pp", __name__)
 
@@ -133,6 +136,28 @@ def rilascia(oid):
     o = OrdineProduzione.query.get_or_404(oid)
     if o.stato != 'Creato': return jsonify(ok=False, error='Solo un OP Creato può essere rilasciato'), 409
     o.stato, o.data_rilascio = 'Rilasciato', datetime.utcnow(); _audit(o, 'RILASCIATO', 'Rilascio manuale')
+
+    # Aggancia l'OP alla versione di Costo Standard più recente disponibile per
+    # il suo codice articolo — congelata da questo momento in poi: eventuali
+    # ricalcoli successivi del costo standard NON la modificano più, per poter
+    # calcolare le varianze rispetto a uno standard stabile. Se non esiste
+    # ancora nessuna versione salvata, la calcola ora al volo (così ogni OP
+    # rilasciato ha sempre un riferimento, anche se nessuno ha mai premuto
+    # "Ricalcola e salva" a mano su quel prodotto).
+    try:
+        ultima = (CostoStandardVersioneWood.query.filter_by(codice=o.codice_articolo)
+                  .order_by(CostoStandardVersioneWood.versione.desc()).first())
+        if not ultima:
+            _, ultima = _crea_versione_costo_standard(o.codice_articolo)
+        legame = LegameCostoStandardOrdineWood.query.get(o.codice)
+        if not legame:
+            legame = LegameCostoStandardOrdineWood(op_code=o.codice)
+            db.session.add(legame)
+        legame.costo_standard_versione_id = ultima.id
+        legame.agganciato_il = datetime.utcnow()
+    except Exception:
+        pass  # l'aggancio al costo standard non deve mai bloccare il rilascio dell'OP
+
     db.session.commit(); return jsonify(ok=True, ordine=_ordine(o))
 
 @pp_bp.post('/api/ordini-produzione/<int:oid>/chiudi-co')
@@ -187,8 +212,16 @@ def api_evento():
                 _flatten_componenti(componenti, consumi)
                 for cod, qta_consumata in consumi.items():
                     if qta_consumata:
+                        # Valorizza lo scarico al costo standard CORRENTE del componente (prezzo
+                        # d'acquisto se foglia, costo standard calcolato se semilavorato) — è il
+                        # miglior dato di "costo effettivo" disponibile in assenza di fatture di
+                        # acquisto tracciate riga per riga; permette comunque di rilevare una
+                        # varianza prezzo reale se il prezzo è cambiato rispetto allo standard
+                        # congelato dell'ordine.
+                        costo_corrente = _calcola_costo_standard(cod)['costo_totale']
                         _registra_movimento_giacenza(cod, -qta_consumata, 'scarico_produzione',
-                                                      riferimento=o.codice, note=f'Consuntivo {good} pz buoni')
+                                                      riferimento=o.codice, note=f'Consuntivo {good} pz buoni',
+                                                      costo_unitario=costo_corrente)
             except Exception:
                 pass  # lo scarico giacenza non deve mai bloccare la registrazione del consuntivo
 
@@ -230,3 +263,164 @@ def api_evento():
     except ValueError as exc: return jsonify(ok=False, error=str(exc)), 400
     except IntegrityError:
         db.session.rollback(); return jsonify(ok=True, deduplicated=True), 200
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  ANALISI COSTO / VARIANZE PER ORDINE DI PRODUZIONE — confronta lo standard
+#  CONGELATO al rilascio (LegameCostoStandardOrdineWood) con l'effettivo
+#  ricavato da: movimenti di scarico materiali valorizzati (MovimentoGiacenzaWood),
+#  varianze di lavorazione già registrate ad ogni consuntivo (VarianzaProduzioneWood).
+#  Dove un dato "vero" non è disponibile con l'architettura attuale, lo
+#  dichiara esplicitamente invece di fingere un valore.
+# ══════════════════════════════════════════════════════════════════════════════
+@pp_bp.get('/ordini-produzione/<codice>/analisi-costo')
+def pagina_analisi_costo(codice):
+    return render_template('produzione_pp/analisi_costo.html', active='produzione_pp', codice=codice)
+
+
+@pp_bp.get('/api/ordini-produzione/<codice>/analisi-costo')
+def api_analisi_costo_ordine(codice):
+    o = OrdineProduzione.query.filter_by(codice=codice).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+
+    limiti = []
+
+    # ── Standard congelato al rilascio ──────────────────────────────────
+    legame = LegameCostoStandardOrdineWood.query.get(o.codice)
+    versione = legame.versione if legame else None
+    if not versione:
+        limiti.append('Nessuna versione di Costo Standard agganciata a questo OP (probabilmente non ancora rilasciato, '
+                       'o l\'aggancio non è riuscito): i confronti sotto usano 0 come standard e vanno considerati inattendibili.')
+        std_unit = {'costo_materiali': 0, 'costo_lavorazione': 0, 'costo_overhead': 0, 'costo_totale': 0}
+        versione_info = None
+    else:
+        std_unit = {'costo_materiali': versione.costo_materiali, 'costo_lavorazione': versione.costo_lavorazione,
+                    'costo_overhead': versione.costo_overhead, 'costo_totale': versione.costo_totale}
+        versione_info = {'versione': versione.versione, 'calcolato_il': versione.calcolato_il.strftime('%d/%m/%Y %H:%M') if versione.calcolato_il else None,
+                          'completo': versione.completo, 'codici_senza_costo': versione.codici_senza_costo.split(',') if versione.codici_senza_costo else []}
+        if not versione.completo:
+            limiti.append(f'Lo standard agganciato (versione {versione.versione}) era già incompleto al momento del rilascio '
+                           f'(mancava il prezzo di: {", ".join(versione.codici_senza_costo.split(","))}) — i totali standard sotto sono sottostimati.')
+
+    qta_buona = o.qta_buona or 0
+    qta_scarto = o.qta_scarto or 0
+
+    std_materiali_tot = round(std_unit['costo_materiali'] * qta_buona, 2)
+    std_lavorazione_tot = round(std_unit['costo_lavorazione'] * qta_buona, 2)
+    std_overhead_tot = round(std_unit['costo_overhead'] * qta_buona, 2)
+    std_totale_tot = round(std_unit['costo_totale'] * qta_buona, 2)
+    std_totale_pianificato = round(std_unit['costo_totale'] * (o.qta_pianificata or 0), 2)
+
+    # ── Materiali effettivi (dai movimenti di scarico valorizzati) ──────
+    movimenti = (MovimentoGiacenzaWood.query
+                 .filter_by(riferimento=o.codice, tipo='scarico_produzione').all())
+    per_componente = {}
+    materiali_senza_costo = set()
+    for m in movimenti:
+        riga = per_componente.setdefault(m.codice, {'quantita': 0.0, 'valore': 0.0, 'valore_disponibile': True})
+        riga['quantita'] += abs(m.quantita or 0)
+        if m.costo_unitario is None:
+            riga['valore_disponibile'] = False
+            materiali_senza_costo.add(m.codice)
+        else:
+            riga['valore'] += (m.valore or 0)
+
+    eff_materiali_tot = round(sum(r['valore'] for r in per_componente.values()), 2)
+    if materiali_senza_costo:
+        limiti.append(f'Movimenti di scarico senza costo registrato (dati precedenti a questa funzione) per: '
+                       f'{", ".join(sorted(materiali_senza_costo))} — il loro valore NON è incluso nel totale effettivo materiali, che quindi è sottostimato.')
+    if not movimenti:
+        limiti.append('Nessun movimento di scarico materiali trovato per questo OP: il costo effettivo materiali è 0 per mancanza di dati, non perché sia davvero zero.')
+
+    # Dettaglio quantità/prezzo per componente — usa lo snapshot CONGELATO
+    # (CostoStandardVersioneDettaglioWood) legato alla stessa versione dello
+    # standard usato sopra: quantità e prezzo sono esattamente quelli in
+    # vigore al momento del rilascio, quindi la somma delle varianze per
+    # componente riconcilia sempre col totale materiali qui sopra.
+    dettaglio_materiali = []
+    if per_componente or versione:
+        dettaglio_standard = {}
+        if versione:
+            for det in CostoStandardVersioneDettaglioWood.query.filter_by(versione_id=versione.id).all():
+                dettaglio_standard[det.codice_componente] = det
+        tutti_i_codici = set(per_componente.keys()) | set(dettaglio_standard.keys())
+        for cod in sorted(tutti_i_codici):
+            riga_eff = per_componente.get(cod)
+            det_std = dettaglio_standard.get(cod)
+            qty_standard = round(det_std.quantita_standard * qta_buona, 4) if det_std else None
+            prezzo_standard = det_std.prezzo_standard_unitario if det_std else None
+            qty_effettiva = round(riga_eff['quantita'], 4) if riga_eff else 0.0
+            prezzo_effettivo = (round(riga_eff['valore'] / riga_eff['quantita'], 4)
+                                 if riga_eff and riga_eff['valore_disponibile'] and riga_eff['quantita'] else None)
+            var_quantita = (round((qty_effettiva - qty_standard) * prezzo_standard, 2)
+                             if qty_standard is not None and prezzo_standard is not None else None)
+            var_prezzo = (round((prezzo_effettivo - prezzo_standard) * qty_effettiva, 2)
+                          if prezzo_effettivo is not None and prezzo_standard is not None else None)
+            dettaglio_materiali.append({
+                'codice': cod, 'quantita_standard': qty_standard, 'quantita_effettiva': qty_effettiva,
+                'prezzo_standard': prezzo_standard, 'prezzo_effettivo': prezzo_effettivo,
+                'valore_disponibile': bool(riga_eff and riga_eff['valore_disponibile']),
+                'standard_disponibile': det_std is not None and prezzo_standard is not None,
+                'varianza_quantita': var_quantita, 'varianza_prezzo': var_prezzo,
+            })
+    if versione is None:
+        limiti.append('Nessuno snapshot standard per componente disponibile (nessuna versione agganciata): '
+                       'il dettaglio materiali sotto mostra solo i consumi effettivi, senza confronto.')
+
+    # ── Lavorazione effettiva (da varianze già registrate ad ogni consuntivo) ──
+    varianze_lav = VarianzaProduzioneWood.query.filter_by(op_code=o.codice).all()
+    eff_lavorazione_tot = round(sum(v.costo_reale_lavorazione for v in varianze_lav), 2)
+    std_lavorazione_da_eventi = round(sum(v.costo_standard_lavorazione for v in varianze_lav), 2)
+    var_efficienza_tot = round(sum(v.varianza for v in varianze_lav), 2)
+
+    eventi = EventoConsuntivoPP.query.filter_by(op_code=o.codice).all()
+    fasi_tracciate = {v.fase for v in varianze_lav}
+    fasi_non_tracciate = sorted({e.fase for e in eventi if e.fase not in fasi_tracciate})
+    if fasi_non_tracciate:
+        limiti.append(f'Fasi consuntivate ma non abbinabili a un reparto del Ciclo di Lavoro (nome fase diverso dal nome '
+                       f'reparto): {", ".join(fasi_non_tracciate)} — il loro tempo/costo NON è incluso nella lavorazione effettiva.')
+    limiti.append('Varianza tariffa manodopera/centro di costo: NON disponibile con i dati attualmente registrati — '
+                   'il sistema non conserva la tariffa oraria del centro di costo separata per lo standard congelato '
+                   'al rilascio; la varianza di lavorazione mostrata è quindi solo di TEMPO/EFFICIENZA (tariffa identica '
+                   'usata sia per lo standard che per il reale, quella corrente del centro al momento del consuntivo).')
+
+    # ── Scarto ──────────────────────────────────────────────────────────
+    impatto_scarto = round(std_unit['costo_totale'] * qta_scarto, 2)
+
+    # ── Overhead ─────────────────────────────────────────────────────────
+    overhead_pct_corrente = _overhead_pct()
+    eff_overhead_tot = round((eff_materiali_tot + eff_lavorazione_tot) * (overhead_pct_corrente / 100.0), 2)
+    var_overhead = round(eff_overhead_tot - std_overhead_tot, 2)
+    if versione and versione.overhead_pct_usata != overhead_pct_corrente:
+        limiti.append(f'Aliquota overhead cambiata dopo il rilascio: era {versione.overhead_pct_usata}% allo standard, '
+                       f'ora è {overhead_pct_corrente}% — parte della varianza overhead deriva da questo cambio, non da un vero scostamento operativo.')
+
+    # ── Totali ───────────────────────────────────────────────────────────
+    eff_totale_tot = round(eff_materiali_tot + eff_lavorazione_tot + eff_overhead_tot, 2)
+    var_materiali_tot = round(eff_materiali_tot - std_materiali_tot, 2)
+    var_lavorazione_tot = round(eff_lavorazione_tot - std_lavorazione_tot, 2)
+    var_totale = round(eff_totale_tot - std_totale_tot, 2)
+    var_totale_pct = round((var_totale / std_totale_tot) * 100, 2) if std_totale_tot else None
+
+    return jsonify(ok=True, codice=o.codice, codice_articolo=o.codice_articolo, stato=o.stato,
+        qta_pianificata=o.qta_pianificata, qta_buona=qta_buona, qta_scarto=qta_scarto,
+        data_rilascio=o.data_rilascio.strftime('%d/%m/%Y %H:%M') if o.data_rilascio else None,
+        versione_standard=versione_info,
+        standard={'materiali': std_materiali_tot, 'lavorazione': std_lavorazione_tot, 'overhead': std_overhead_tot,
+                   'totale': std_totale_tot, 'totale_su_pianificata': std_totale_pianificato,
+                   'unitario': {'materiali': std_unit['costo_materiali'], 'lavorazione': std_unit['costo_lavorazione'],
+                                'overhead': std_unit['costo_overhead'], 'totale': std_unit['costo_totale']}},
+        effettivo={'materiali': eff_materiali_tot, 'lavorazione': eff_lavorazione_tot, 'overhead': eff_overhead_tot,
+                    'totale': eff_totale_tot},
+        varianza={'materiali': var_materiali_tot, 'lavorazione': var_lavorazione_tot, 'overhead': var_overhead,
+                   'totale': var_totale, 'totale_pct': var_totale_pct,
+                   'scarto_impatto': impatto_scarto,
+                   'lavorazione_efficienza': var_efficienza_tot, 'lavorazione_tariffa': None},
+        dettaglio_materiali=dettaglio_materiali,
+        dettaglio_lavorazione=[{
+            'fase': v.fase, 'tempo_standard_minuti': v.tempo_standard_minuti, 'tempo_reale_minuti': v.tempo_reale_minuti,
+            'costo_standard': v.costo_standard_lavorazione, 'costo_reale': v.costo_reale_lavorazione, 'varianza': v.varianza,
+        } for v in varianze_lav],
+        limiti=limiti,
+    )
