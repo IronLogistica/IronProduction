@@ -12,7 +12,9 @@
       <b>Lavorazione</b> (Routing/Ciclo di Lavoro: tempo unitario × costo orario del reparto) +
       <b>Overhead</b> (% su materiali+lavorazione, impostabile qui sotto).<br>
       Il ricalcolo <b>non è automatico</b>: cambia BOM/routing/prezzi/overhead quanto vuoi, il costo salvato resta quello
-      dell'ultimo "Ricalcola e salva" — così sai sempre quando un costo standard è aggiornato.
+      dell'ultimo "Ricalcola e salva" — così sai sempre quando un costo standard è aggiornato.<br>
+      <b>Nessun valore inventato</b>: se un componente non ha un prezzo/costo configurato, il totale è segnalato come
+      <span class="badge badge-warn">⚠️ Incompleto</span> invece di sommarlo come zero senza avviso.
     </p>
 
     <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px;display:flex;gap:10px;align-items:center">
@@ -31,6 +33,18 @@
     </div>
 
     <div id="cs-lista" style="font-size:13px;color:#666">Caricamento...</div>
+  </div>
+</div>
+
+<!-- ══ MODAL: DETTAGLIO MATERIALI (gerarchico) ══════════════════════════════ -->
+<div class="modal-overlay" id="modal-dettaglio-materiali">
+  <div class="modal-box" style="width:680px;max-width:96vw;max-height:85vh;overflow-y:auto">
+    <h3>📋 Dettaglio costo materiali — <span id="dm-codice"></span></h3>
+    <div id="dm-riepilogo" style="margin-bottom:10px"></div>
+    <div id="dm-albero" style="font-size:13px">Caricamento...</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-dettaglio-materiali')">Chiudi</button>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -67,41 +81,67 @@ async function caricaListaCostoStandard(){
     const righe = await r.json();
     if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun codice padre trovato nella Distinta Base Iron Wood.</p>'; return; }
     let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
-      '<th>Codice</th><th>Materiali</th><th>Lavorazione</th><th>Overhead</th><th>Totale</th><th>Ore manodopera std.</th><th>Calcolato il</th><th></th></tr></thead><tbody>';
+      '<th>Codice</th><th>Materiali</th><th>Lavorazione</th><th>Overhead</th><th>Totale</th><th>Ore manodopera std.</th><th>Stato</th><th>Calcolato il</th><th></th></tr></thead><tbody>';
     righe.forEach(r=>{
       const mai = r.calcolato_il === null;
+      const stato = mai ? '<span class="badge badge-warn">Mai calcolato</span>'
+                  : (r.completo ? '<span class="badge badge-ok">✓ Completo</span>' : '<span class="badge badge-warn">⚠️ Incompleto</span>');
       html += `<tr><td class="codice">${r.codice}</td>` +
         `<td class="num">${mai?'—':r.costo_materiali}</td>` +
         `<td class="num">${mai?'—':r.costo_lavorazione}</td>` +
         `<td class="num">${mai?'—':r.costo_overhead}</td>` +
         `<td class="num" style="font-weight:700">${mai?'—':'€ '+r.costo_totale}</td>` +
         `<td class="num">${mai?'—':r.ore_manodopera_standard+' h'}</td>` +
-        `<td class="lav-td">${mai?'<span class="badge badge-warn">Mai calcolato</span>':r.calcolato_il}</td>` +
-        `<td><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="ricalcola('${r.codice}')">🔄</button>` +
+        `<td>${stato}</td>` +
+        `<td class="lav-td">${mai?'—':r.calcolato_il}</td>` +
+        `<td style="white-space:nowrap"><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="ricalcola('${r.codice}')">🔄</button>` +
         `<button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="mostraDettaglioMateriali('${r.codice}')">📋 Materiali</button></td></tr>`;
     });
-    html += '</tbody></table></div><div id="cs-dettaglio" style="margin-top:14px"></div>';
+    html += '</tbody></table></div>';
     box.innerHTML = html;
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
   }
 }
 
+function renderAlberoCosto(componenti){
+  if(!componenti || !componenti.length) return '<p style="color:#aaa;font-style:italic;margin:4px 0 4px 10px">Nessun componente.</p>';
+  return '<ul style="margin:4px 0 4px 16px;padding:0;list-style:none">' + componenti.map(c => {
+    const tipoLabel = {SEMILAVORATO:'🔧 Semilavorato', ACQUISTO:'📦 Acquisto', DA_CLASSIFICARE:'❓ Da classificare',
+                        MATERIA_PRIMA_FORNITORE:'📦 Materia prima', COMPONENTE_ACQUISTO:'📦 Componente acquisto', LASERATO:'✂️ Laserato'}[c.tipo] || c.tipo;
+    const valore = c.disponibile
+      ? `<span style="font-weight:600">€ ${c.costo_esteso}</span> <span style="font-size:11px;color:#999">(€ ${c.costo_unitario}/pz × ${c.quantita_totale})</span>`
+      : `<span class="badge badge-warn">⚠️ Costo non disponibile</span> <span style="font-size:11px;color:#999">(qty ${c.quantita_totale})</span>`;
+    return `<li style="padding:5px 0;border-left:2px solid var(--border);padding-left:10px;margin-bottom:2px">
+      <span style="font-size:10px;color:#1e5fa8;font-weight:700;margin-right:6px">SOTTOGRUPPO ${c.livello_effettivo}° LIVELLO</span>
+      <span class="cod" style="font-weight:700">${c.codice}</span>
+      <span style="font-size:11px;color:var(--text-dim);margin-left:6px">${tipoLabel}</span><br>
+      ${valore}
+      ${renderAlberoCosto(c.figli)}
+    </li>`;
+  }).join('') + '</ul>';
+}
+
 async function mostraDettaglioMateriali(codice){
-  const box = document.getElementById('cs-dettaglio');
-  box.innerHTML = 'Caricamento...';
+  document.getElementById('dm-codice').textContent = codice;
+  const riep = document.getElementById('dm-riepilogo');
+  const box = document.getElementById('dm-albero');
+  riep.innerHTML = ''; box.innerHTML = 'Caricamento...';
+  openModal('modal-dettaglio-materiali');
   try{
     const r = await fetch('/api/costo_standard/' + encodeURIComponent(codice) + '/dettaglio_materiali');
     const d = await r.json();
-    if(!d.componenti.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun componente nella distinta di ' + codice + '.</p>'; return; }
-    let html = `<div style="font-weight:700;margin-bottom:6px">📋 Quantità standard materiali per 1 pz di ${codice}</div>` +
-      '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Quantità std./pz</th><th>Costo acquisto €/pz</th><th>Valore standard</th></tr></thead><tbody>';
-    d.componenti.forEach(c=>{
-      html += `<tr><td class="codice">${c.codice}</td><td class="num">${c.quantita_standard_unitaria}</td>` +
-        `<td class="num">${c.costo_acquisto_standard ?? '—'}</td><td class="num">${c.valore_standard ?? '—'}</td></tr>`;
-    });
-    html += '</tbody></table></div>';
-    box.innerHTML = html;
+    const cr = d.costo_radice;
+    const statoRadice = cr.completo ? '<span class="badge badge-ok">✓ Costo completo</span>' : '<span class="badge badge-warn">⚠️ Costo incompleto — vedi sotto quali componenti mancano</span>';
+    riep.innerHTML = `<div style="display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:13px;margin-bottom:6px">
+      <div>Materiali: <b>€ ${cr.costo_materiali}</b></div>
+      <div>Lavorazione: <b>€ ${cr.costo_lavorazione}</b></div>
+      <div>Overhead: <b>€ ${cr.costo_overhead}</b></div>
+      <div>Totale: <b>€ ${cr.costo_totale}</b></div>
+      <div>Ore std.: <b>${cr.ore_manodopera_standard} h</b></div>
+      ${statoRadice}
+    </div>` + (cr.codici_senza_costo.length ? `<div style="font-size:12px;color:#b8860b">Componenti senza prezzo configurato: <b>${cr.codici_senza_costo.join(', ')}</b> — vai su Magazzino, apri il codice col pulsante 🔧 e imposta il "Costo acquisto €/pz".</div>` : '');
+    box.innerHTML = renderAlberoCosto(d.componenti);
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
   }
@@ -124,8 +164,9 @@ async function ricalcolaSingolo(){
   try{
     const r = await fetch('/api/costo_standard/' + encodeURIComponent(codice) + '/salva', {method:'POST'});
     const d = await r.json();
-    esito.style.color = '#2a9d5c';
-    esito.textContent = `✓ ${codice}: totale € ${d.costo_totale} (materiali ${d.costo_materiali} + lavorazione ${d.costo_lavorazione} + overhead ${d.costo_overhead})`;
+    esito.style.color = d.completo ? '#2a9d5c' : '#b8860b';
+    const avviso = d.completo ? '' : ' ⚠️ INCOMPLETO — mancano prezzi per: ' + d.codici_senza_costo.join(', ');
+    esito.textContent = `✓ ${codice}: totale € ${d.costo_totale} (materiali ${d.costo_materiali} + lavorazione ${d.costo_lavorazione} + overhead ${d.costo_overhead})${avviso}`;
     caricaListaCostoStandard();
   }catch(e){
     esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
