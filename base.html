@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>MES Carpenteria — MasterProduction v2</title>
+<style>
+  :root{
+    --dark:#0d1b2e; --dark2:#0a1623; --dark3:#112240;
+    --accent:#1e6fa5; --accent2:#2589c7; --accent-glow:rgba(30,111,165,.25);
+    --steel:#3a7ebf; --steel2:#4d9fd6;
+    --orange:#e8760a; --yellow:#e6b800; --red:#c0392b;
+    --green:#1a9e5c; --green2:#16875c; --grey:#7f8c8d;
+    --bg:#0f1e35; --bg2:#0c1828; --surface:#132035; --white:#ffffff;
+    --text:#c8ddf0; --text-dim:#6b8aaa; --border:rgba(30,111,165,.25);
+    --shadow:0 2px 12px rgba(0,0,0,.4); --radius:8px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--text)}
+  .app{display:flex;height:100vh;overflow:hidden}
+  /* SIDEBAR */
+  .sidebar{width:224px;min-width:200px;background:var(--dark);display:flex;flex-direction:column;overflow-y:auto;box-shadow:3px 0 16px rgba(0,0,0,.5);border-right:1px solid var(--border)}
+  .sidebar-logo{padding:16px 14px 12px;background:var(--dark2);border-bottom:2px solid var(--accent);font-size:13px;font-weight:700}
+  .sidebar-logo .logo-icon{font-size:22px}
+  .sidebar-logo .logo-title{color:var(--steel2);font-size:11px;margin-top:2px}
+  .nav-group{padding:10px 0 4px}
+  .nav-group-header{display:flex;align-items:center;justify-content:space-between;padding:0 10px 4px 14px}
+  .nav-group-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);font-weight:700}
+  .nav-group-actions{display:flex;gap:3px;opacity:0;transition:opacity .2s}
+  .nav-group:hover .nav-group-actions{opacity:1}
+  .nav-group-btn{width:20px;height:20px;border-radius:4px;border:1px solid var(--border);background:transparent;color:var(--text-dim);cursor:pointer;font-size:12px;display:flex;align-items:center;justify-content:center;transition:all .15s;padding:0;line-height:1}
+  .nav-group-btn:hover{background:var(--accent-glow);color:var(--steel2);border-color:var(--accent)}
+  .nav-group-btn.btn-edit{color:var(--steel2)}
+  .nav-group-btn.btn-del-group{color:#c0392b88;border-color:#c0392b33}
+  .nav-group-btn.btn-del-group:hover{background:rgba(192,57,43,.15);color:var(--red);border-color:var(--red)}
+  .nav-group-btn.btn-del-group.disabled,.nav-group-btn.disabled{opacity:.2;pointer-events:none}
+  .nav-item{display:flex;align-items:center;gap:8px;padding:9px 14px;font-size:12px;transition:all .15s;color:#8ab4d0;border-left:3px solid transparent;text-decoration:none}
+  .nav-item:hover{background:rgba(30,111,165,.12);color:#cce0f5}
+  .nav-item.active{background:rgba(30,111,165,.22);color:#fff;border-left-color:var(--steel2);font-weight:600}
+  .nav-item .nav-icon{font-size:15px}
+  /* MAIN */
+  .main{flex:1;overflow-y:auto;display:flex;flex-direction:column}
+  .topbar{background:var(--dark2);color:#fff;padding:12px 24px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 12px rgba(0,0,0,.4);flex-shrink:0;position:sticky;top:0;z-index:100;border-bottom:1px solid var(--border)}
+  .topbar-title{font-size:16px;font-weight:700;color:#e0eefc}.topbar-date{font-size:11px;color:var(--text-dim)}
+  .topbar-badge{background:var(--accent);color:#fff;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600}
+  .content{padding:20px 24px;flex:1}
+  /* TABLES */
+  .mon-section{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px;border:1px solid var(--border)}
+  .section-hdr{padding:10px 16px;font-size:13px;font-weight:700;color:#fff;display:flex;align-items:center;gap:6px}
+  .lavorazione-hdr{background:linear-gradient(135deg,#b35c08,#e8760a)}
+  .da_iniziare-hdr{background:linear-gradient(135deg,#9a7a00,#c9a800)}
+  .in_attesa-hdr{background:linear-gradient(135deg,#8a2520,#c0392b)}
+  .in_saldatura-hdr{background:linear-gradient(135deg,#0a4e5c,#0e6d7d)}
+  .postazione-hdr{background:linear-gradient(135deg,#1a5085,#1e6fa5)}
+  .terminati-hdr{background:linear-gradient(135deg,#3a4a55,#5a7080)}
+  .mon-table{width:100%;border-collapse:collapse;font-size:12px}
+  .mon-table th{background:var(--dark3);color:var(--steel2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:8px 6px;border-bottom:2px solid var(--border);text-align:center}
+  .mon-table td{padding:7px 6px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
+  .mon-table tr:hover td{background:rgba(30,111,165,.07)}
+  /* KANBAN TABLE */
+  .kanban-stats{display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px}
+  .kstat{background:var(--surface);border-radius:var(--radius);padding:12px 18px;box-shadow:var(--shadow);display:flex;flex-direction:column;align-items:center;min-width:120px;flex:1;border:1px solid var(--border)}
+  .kstat-total{border-top:3px solid var(--accent)}.kstat-ok{border-top:3px solid var(--green)}.kstat-warn{border-top:3px solid var(--red)}.kstat-val{border-top:3px solid var(--steel)}
+  .kstat-num{font-size:22px;font-weight:800;color:#e0eefc}.kstat-lbl{font-size:11px;color:var(--text-dim);margin-top:2px}
+  .kanban-table{width:100%;border-collapse:collapse;font-size:12px;min-width:900px}
+  .kanban-table th{background:var(--dark2);color:var(--steel2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:9px 8px;text-align:center;position:sticky;top:0;z-index:10;border-bottom:2px solid var(--border)}
+  .kanban-table td{padding:8px 8px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
+  .kanban-table tr:hover td{background:rgba(30,111,165,.08)}
+  td.editable{cursor:pointer;transition:background .15s}
+  td.editable:hover{background:rgba(30,111,165,.18)!important}
+  td.editing{padding:0!important}
+  td.editing input{width:100%;padding:7px 8px;border:2px solid var(--accent2);border-radius:4px;font-size:12px;font-weight:600;text-align:right;font-family:monospace;outline:none;background:#0d2040;color:#fff}
+  /* BUFFER COLORS */
+  /* ── Buffer row colors ── */
+  .row-verde  td:first-child{border-left:4px solid #1a9e5c!important}
+  .row-giallo td:first-child{border-left:4px solid #e6b800!important}
+  .row-rosso  td:first-child{border-left:4px solid #c0392b!important;animation:pulseRed 2s infinite}
+  .row-grigio td:first-child{border-left:4px solid transparent}
+  @keyframes pulseRed{0%,100%{border-left-color:#c0392b}50%{border-left-color:#ff7060}}
+
+  /* ── Pulsante Takt ── */
+  .btn-takt{background:rgba(30,111,165,.15);border:1px solid var(--accent);border-radius:5px;padding:4px 9px;cursor:pointer;font-size:12px;transition:all .15s;color:var(--steel2);display:inline-flex;align-items:center;gap:4px;font-family:inherit;white-space:nowrap}
+  .btn-takt:hover{background:rgba(30,111,165,.4);border-color:var(--accent2);color:#fff}
+  .takt-cnt{font-size:10px;font-family:monospace;font-weight:700;background:rgba(255,255,255,.12);border-radius:3px;padding:1px 5px;min-width:18px;text-align:center}
+
+  /* ── WIP Monitor cards ── */
+  .wip-card{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px 14px;min-width:95px;flex:1;text-align:center}
+  .wip-verde {border-top:3px solid #1a9e5c}
+  .wip-giallo{border-top:3px solid #e6b800}
+  .wip-rosso {border-top:3px solid #c0392b;animation:pulseRed 2s infinite}
+  .wip-grigio{border-top:3px solid var(--grey)}
+  .wip-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);margin-bottom:4px}
+  .wip-num  {font-size:22px;font-weight:900;color:#e0eefc;line-height:1.1}
+  .wip-bar-wrap{height:6px;background:rgba(255,255,255,.06);border-radius:3px;margin:5px 0 3px;overflow:hidden}
+  .wip-bar-fill{height:100%;border-radius:3px;transition:width .4s}
+  .wip-verde  .wip-bar-fill{background:linear-gradient(90deg,#1a9e5c,#5debb0)}
+  .wip-giallo .wip-bar-fill{background:linear-gradient(90deg,#9a7a00,#e6b800)}
+  .wip-rosso  .wip-bar-fill{background:linear-gradient(90deg,#8a2520,#f07070)}
+  .wip-grigio .wip-bar-fill{background:var(--grey)}
+  .wip-sub{font-size:9px;color:var(--text-dim)}
+
+  /* ── Takt modal boxes ── */
+  .takt-box{background:var(--dark3);border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center}
+  .takt-lbl{font-size:10px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-dim);margin-bottom:4px}
+  .takt-val{font-size:24px;font-weight:900;color:#e0eefc}
+  .takt-sub{font-size:9px;color:var(--text-dim);margin-top:3px}
+
+  /* ── Ciclo rows ── */
+  .ciclo-row{display:flex;gap:8px;font-size:11px;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text)}
+  .ciclo-row:last-child{border-bottom:none}
+  .ciclo-row.aperto{color:#f0c040;font-style:italic}
+
+  /* ── btn-success ── */
+  .btn-success{background:var(--green);color:#fff}.btn-success:hover{background:var(--green2)}
+
+  /* ── WMS autocomplete dropdown ── */
+  .wms-item{padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;transition:background .12s}
+  .wms-item:last-child{border-bottom:none}
+  .wms-item:hover{background:rgba(30,111,165,.25)}
+  /* BADGES */
+  .badge{display:inline-block;padding:3px 8px;border-radius:12px;font-size:10px;font-weight:700;white-space:nowrap}
+  .badge-warn{background:rgba(192,57,43,.2);color:#f07070;border:1px solid rgba(192,57,43,.4)}
+  .badge-ok{background:rgba(26,158,92,.15);color:#5debb0;border:1px solid rgba(26,158,92,.35)}
+  .badge-prod{background:rgba(30,111,165,.2);color:var(--steel2);border:1px solid rgba(30,111,165,.4)}
+  /* NUMBERS */
+  .phase{display:inline-flex;align-items:center;justify-content:center;width:28px;height:22px;border-radius:4px;font-size:14px;cursor:pointer;transition:transform .1s}
+  .phase:hover{transform:scale(1.15)}.phase.done{background:rgba(26,158,92,.2)}.phase.wip{background:rgba(232,118,10,.2)}
+  .phase.todo{background:rgba(30,111,165,.2)}.phase.na,.phase.nd{background:rgba(255,255,255,.04);color:#333}
+  .prio{display:inline-flex;align-items:center;justify-content:center;width:28px;height:22px;border-radius:4px;font-weight:700;font-size:12px}
+  .prio-warn{background:rgba(230,184,0,.2);color:#f0c040}.prio-num{background:rgba(30,111,165,.2);color:var(--steel2)}
+  .pct-bar{position:relative;width:70px;height:14px;background:rgba(255,255,255,.06);border-radius:7px;overflow:hidden;display:inline-flex;align-items:center}
+  .pct-fill{position:absolute;left:0;top:0;height:100%;background:linear-gradient(90deg,var(--accent),var(--steel2));border-radius:7px}
+  .pct-bar span{position:relative;z-index:1;font-size:9px;font-weight:700;width:100%;text-align:center;color:#fff;text-shadow:0 1px 2px rgba(0,0,0,.5)}
+  .num{text-align:right;font-family:monospace;font-weight:600;font-size:12px}
+  .num-neg{color:#f07070}.num-pos{color:var(--steel2)}
+  .comm-id{font-size:10px;color:var(--text-dim);white-space:nowrap}.codice{font-weight:700;font-size:12px;white-space:nowrap}
+  .descr-td{font-size:11px;color:var(--text-dim);max-width:180px}
+  .lav-td{font-size:10px;color:var(--text-dim)}.prod-name{font-weight:700;color:#cce0f5;font-size:12px}
+  /* TOOLBAR */
+  .page-toolbar{display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap}
+  .page-title{font-size:18px;font-weight:800;color:#e0eefc;flex:1}
+  .btn{padding:7px 16px;border-radius:6px;border:none;cursor:pointer;font-size:12px;font-weight:700;transition:all .15s;display:inline-flex;align-items:center;gap:5px;text-decoration:none}
+  .btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent2)}
+  .btn-success{background:var(--green);color:#fff}.btn-success:hover{background:var(--green2)}
+  .btn-danger{background:var(--red);color:#fff}.btn-danger:hover{background:#a93226}
+  .btn-ghost{background:rgba(255,255,255,.05);color:#b0ccdd;border:1px solid var(--border)}.btn-ghost:hover{background:rgba(30,111,165,.15);color:#fff}
+  .btn-warn{background:rgba(230,184,0,.15);color:#f0c040;border:1px solid rgba(230,184,0,.3)}.btn-warn:hover{background:rgba(230,184,0,.25)}
+  .search-box{padding:7px 12px;border:1.5px solid var(--border);border-radius:6px;font-size:12px;outline:none;width:200px;transition:border .15s;background:var(--dark3);color:var(--text)}
+  .search-box:focus{border-color:var(--accent2)}.search-box::placeholder{color:var(--text-dim)}
+  /* KPI */
+  .kpi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:16px;margin-bottom:24px}
+  .kpi-card{background:var(--surface);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow);border:1px solid var(--border);border-left:4px solid var(--accent);display:flex;flex-direction:column;gap:4px}
+  .kpi-card.warn{border-left-color:var(--red)}.kpi-card.info{border-left-color:var(--steel)}.kpi-card.accent{border-left-color:var(--orange)}
+  .kpi-value{font-size:28px;font-weight:900;color:#e0eefc}.kpi-label{font-size:11px;color:var(--text-dim);text-transform:uppercase;letter-spacing:.5px}
+  /* MODAL GENERICI */
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.72);z-index:500;display:none;align-items:center;justify-content:center}
+  .modal-overlay.open{display:flex}
+  .modal-box{background:var(--dark);border:1px solid var(--border);border-radius:12px;padding:24px;width:400px;max-width:96vw;box-shadow:0 24px 70px rgba(0,0,0,.7)}
+  .modal-box h3{font-size:15px;font-weight:700;color:#e0eefc;margin-bottom:16px}
+  .modal-input{width:100%;padding:9px 12px;background:var(--dark3);border:1.5px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;outline:none;transition:border .15s}
+  .modal-input:focus{border-color:var(--accent2)}
+  .modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  .modal-label{font-size:11px;color:var(--text-dim);margin-bottom:5px;display:block;text-transform:uppercase;letter-spacing:.5px}
+  .modal-hint{font-size:11px;color:var(--text-dim);margin-top:10px;padding:8px 10px;background:rgba(30,111,165,.1);border-radius:4px;border-left:3px solid var(--accent)}
+  .modal-row{display:flex;gap:8px;margin-top:10px}
+  .modal-row .modal-input{flex:1}
+  /* PIN field */
+  .pin-field{display:flex;align-items:center;gap:8px;margin-top:12px;padding:10px 12px;background:rgba(230,184,0,.08);border:1px solid rgba(230,184,0,.2);border-radius:6px}
+  .pin-field label{font-size:11px;color:#f0c040;white-space:nowrap;font-weight:600}
+  .pin-field input{width:80px;padding:6px 10px;background:var(--dark3);border:1.5px solid rgba(230,184,0,.3);border-radius:4px;color:#f0c040;font-size:14px;font-family:monospace;letter-spacing:3px;outline:none;text-align:center}
+  .pin-field input:focus{border-color:#f0c040}
+  /* TOAST */
+  .toast{position:fixed;bottom:24px;right:24px;background:var(--dark3);color:#fff;padding:10px 20px;border-radius:8px;font-size:13px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);border:1px solid var(--border);z-index:9999;transform:translateY(60px);opacity:0;transition:all .3s}
+  .toast.show{transform:translateY(0);opacity:1}
+  /* SCROLLBAR */
+  ::-webkit-scrollbar{width:6px;height:6px}::-webkit-scrollbar-track{background:var(--bg2)}
+  ::-webkit-scrollbar-thumb{background:var(--accent);border-radius:3px}
+  .monitor-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media(max-width:1100px){.monitor-grid{grid-template-columns:1fr}}
+  @media print{.sidebar,.topbar{display:none!important}.main{overflow:visible}.content{padding:0}}
+</style>
+</head>
+<body>
+<div class="app">
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">🏗️</div>
+    <div style="font-size:13px;margin:4px 0 2px;color:#e0eefc">MES CARPENTERIA</div>
+    <div class="logo-title">MasterProduction v2.0</div>
+  </div>
+  <div class="nav-group">
+    <div class="nav-group-header"><div class="nav-group-label">Produzione</div></div>
+    <a class="nav-item {% if active=='produzione_pp' %}active{% endif %}" href="/ordini-produzione"><span class="nav-icon">🏭</span> Ordini Produzione</a>
+    <a class="nav-item {% if active=='monitor' %}active{% endif %}" href="/monitor"><span class="nav-icon">📊</span> Monitor Segatrice</a>
+    <a class="nav-item {% if active=='monitor_trapani' %}active{% endif %}" href="/monitor/trapani"><span class="nav-icon">🔩</span> Monitor Trapani</a>
+    <a class="nav-item {% if active=='kpi' %}active{% endif %}" href="/kpi"><span class="nav-icon">📈</span> Cruscotto KPI</a>
+  </div>
+  <div class="nav-group" id="nav-kanban-gruppi">
+    <div class="nav-group-header">
+      <div class="nav-group-label">Kanban Gruppi</div>
+      <div class="nav-group-actions">
+        <button class="nav-group-btn" title="Aggiungi gruppo" onclick="openModalAggiungiGruppo()">＋</button>
+        <button class="nav-group-btn btn-edit" id="btn-edit-group" title="Rinomina gruppo attivo" onclick="openModalRinominaGruppo()">✏️</button>
+        <button class="nav-group-btn btn-del-group" id="btn-del-active-group" title="Elimina gruppo attivo" onclick="eliminaGruppoAttivo()">✕</button>
+      </div>
+    </div>
+    {% for g in kanban_gruppi %}
+    <a class="nav-item {% if active=='kb-'+g.url_key %}active{% endif %}" href="/kanban/{{ g.url_key }}"
+       data-url-key="{{ g.url_key }}" data-label="{{ g.label }}" data-icona="{{ g.icona }}" data-has-prodotti="{{ g.n_prodotti }}">
+      <span class="nav-icon">{{ g.icona }}</span> {{ g.label }}
+      {% if g.n_prodotti > 0 %}<span style="margin-left:auto;font-size:9px;background:rgba(30,111,165,.3);border-radius:8px;padding:1px 5px;color:var(--steel2)">{{ g.n_prodotti }}</span>{% endif %}
+    </a>
+    {% endfor %}
+  </div>
+  <div class="nav-group">
+    <div class="nav-group-header"><div class="nav-group-label">Commesse</div></div>
+        <a class="nav-item {% if active=='terzisti' %}active{% endif %}" href="/terzisti"><span class="nav-icon">🔨</span> Terzisti</a>
+    <a class="nav-item {% if active=='magazzino' %}active{% endif %}" href="/magazzino"><span class="nav-icon">📦</span> Magazzino</a>
+    <a class="nav-item {% if active=='centri_costo' %}active{% endif %}" href="/centri-costo-wood"><span class="nav-icon">🏭</span> Centri di Costo</a>
+    <a class="nav-item {% if active=='giacenza_wood' %}active{% endif %}" href="/giacenza-wood"><span class="nav-icon">📊</span> Giacenza Iron Wood</a>
+    <a class="nav-item {% if active=='costo_standard' %}active{% endif %}" href="/costo-standard-wood"><span class="nav-icon">💰</span> Costo Standard</a>
+  </div>
+</nav>
+
+<!-- ══ MODAL: AGGIUNGI GRUPPO ══ -->
+<div class="modal-overlay" id="modalAggiungi">
+  <div class="modal-box">
+    <h3>➕ Nuovo Gruppo Kanban</h3>
+    <label class="modal-label">Nome gruppo</label>
+    <input class="modal-input" id="inputNomeGruppo" type="text" placeholder="es. Cancelli, Scale, Ringhiere..." maxlength="80">
+    <div class="modal-row">
+      <div style="flex:1">
+        <label class="modal-label" style="margin-top:0">Icona (emoji)</label>
+        <input class="modal-input" id="inputIconaGruppo" type="text" placeholder="📦" maxlength="4" value="📦">
+      </div>
+    </div>
+    <div class="modal-hint">💡 Il gruppo sarà vuoto. Potrai eliminarlo finché non contiene Kanban.</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalAggiungi')">Annulla</button>
+      <button class="btn btn-primary" onclick="creaGruppo()">✅ Crea gruppo</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: RINOMINA GRUPPO (PIN) ══ -->
+<div class="modal-overlay" id="modalRinomina">
+  <div class="modal-box">
+    <h3>✏️ Rinomina Gruppo</h3>
+    <label class="modal-label">Nuovo nome</label>
+    <input class="modal-input" id="inputRinominaNome" type="text" maxlength="80">
+    <div class="modal-row">
+      <div style="flex:1">
+        <label class="modal-label" style="margin-top:0">Icona</label>
+        <input class="modal-input" id="inputRinominaIcona" type="text" maxlength="4">
+      </div>
+    </div>
+    <div class="pin-field">
+      <label>🔐 PIN</label>
+      <input type="password" id="pinRinomina" maxlength="6" placeholder="••••">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalRinomina')">Annulla</button>
+      <button class="btn btn-primary" onclick="confermRinominaGruppo()">✅ Salva</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: ELIMINA GRUPPO ══ -->
+<div class="modal-overlay" id="modalElimina">
+  <div class="modal-box">
+    <h3>🗑️ Elimina gruppo</h3>
+    <p style="font-size:13px;color:var(--text);margin-bottom:12px">Elimina <strong id="nomeGruppoDaEliminare" style="color:#e0eefc"></strong>?</p>
+    <div class="modal-hint" style="border-left-color:var(--red);background:rgba(192,57,43,.1)">⚠️ Irreversibile. Solo se il gruppo è vuoto.</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalElimina')">Annulla</button>
+      <button class="btn btn-danger" onclick="confermEliminaGruppo()">🗑️ Elimina</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: CREA KANBAN (PIN) ══ -->
+<div class="modal-overlay" id="modalCreaKanban">
+  <div class="modal-box" style="width:460px">
+    <h3>📦 Nuovo Prodotto Kanban</h3>
+    <input type="hidden" id="creaKanbanSheetKey">
+    <label class="modal-label">Nome prodotto / codice</label>
+    <div style="position:relative">
+      <input class="modal-input" id="creaKanbanNome" type="text" placeholder="es. TTD101INOX — inizia a digitare..." maxlength="200" autocomplete="off" oninput="cercaArticoloWms(this.value)">
+      <div id="wmsDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--dark3);border:1px solid var(--accent);border-radius:0 0 6px 6px;z-index:600;max-height:200px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.5)"></div>
+    </div>
+    <div style="font-size:10px;color:var(--text-dim);margin-top:4px" id="wmsHint">💡 Suggerisce automaticamente i codici da MasterLogistic</div>
+    <div class="modal-row" style="margin-top:10px">
+      <div style="flex:1">
+        <label class="modal-label" style="margin-top:0">Lotto produzione</label>
+        <input class="modal-input" id="creaKanbanLotto" type="number" value="0" min="0" placeholder="0">
+      </div>
+      <div style="flex:1">
+        <label class="modal-label" style="margin-top:0">Riserva KANBAN</label>
+        <input class="modal-input" id="creaKanbanRiserva" type="number" value="0" min="0" placeholder="0">
+      </div>
+      <div style="flex:1">
+        <label class="modal-label" style="margin-top:0">Val. medio €</label>
+        <input class="modal-input" id="creaKanbanVal" type="number" value="0" step="0.01" min="0" placeholder="0.00">
+      </div>
+    </div>
+    <label class="modal-label">Tipo di approvvigionamento</label>
+    <select class="modal-input" id="creaKanbanTipoApprovvigionamento" onchange="aggiornaEtichettaLeadTimeFornitura()">
+      <option value="MATERIA_PRIMA_FORNITORE">Materia prima da fornitore</option>
+      <option value="COMPONENTE_ACQUISTO">Componente d'acquisto</option>
+      <option value="LASERATO">Laserato</option>
+    </select>
+    <div class="modal-hint" style="margin-top:6px">Il <strong>laserato</strong> è un acquisto da fornitore con tempo di consegna dedicato: non genera una lavorazione esterna o un rientro terzista.</div>
+    <div class="modal-row">
+      <div style="flex:1">
+        <label class="modal-label" id="creaKanbanLeadTimeLabel" style="margin-top:0">Lead time fornitore (giorni)</label>
+        <input class="modal-input" id="creaKanbanLeadTimeFornitura" type="number" value="7" step="0.5" min="0.5">
+      </div>
+      <div style="flex:1">
+        <label class="modal-label" style="margin-top:0">Scorta sicurezza %</label>
+        <input class="modal-input" id="creaKanbanSS" type="number" value="15" min="0" max="100">
+      </div>
+    </div>
+    <div class="pin-field">
+      <label>🔐 PIN</label>
+      <input type="password" id="pinCreaKanban" maxlength="6" placeholder="••••">
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalCreaKanban')">Annulla</button>
+      <button class="btn btn-success" onclick="confermCreaKanban()">✅ Crea Kanban</button>
+    </div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="topbar">
+    <div>
+      <div class="topbar-title">{{ topbar_title|default('MES Carpenteria') }}</div>
+      <div class="topbar-date">Aggiornato al {{ now }} — DB Live</div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center">
+      <span class="topbar-badge">{{ topbar_badge|default('') }}</span>
+      <button class="btn btn-ghost" onclick="window.print()">🖨️ Stampa</button>
+    </div>
+  </div>
+  <div class="content">{% block content %}{% endblock %}</div>
+</div>
+</div>
+<div class="toast" id="toast"></div>
+
+<script>
+let _tt;
+function showToast(msg,err){
+  const t=document.getElementById('toast');
+  t.textContent=msg;
+  t.style.borderColor=err?'var(--red)':'var(--border)';
+  t.classList.add('show');
+  clearTimeout(_tt);_tt=setTimeout(()=>t.classList.remove('show'),2800);
+}
+function closeModal(id){document.getElementById(id).classList.remove('open');}
+function openModal(id){document.getElementById(id).classList.add('open');}
+
+// ── Stato gruppo attivo ──────────────────────────────────────────────────────
+const activeItem        = document.querySelector('.nav-item.active[data-url-key]');
+const activeUrlKey      = activeItem ? activeItem.dataset.urlKey : null;
+const activeHasProdotti = activeItem ? parseInt(activeItem.dataset.hasProdotti||'0') : 0;
+const activeLabel       = activeItem ? activeItem.dataset.label : '';
+const activeIcona       = activeItem ? activeItem.dataset.icona : '📦';
+
+const btnDel = document.getElementById('btn-del-active-group');
+if(btnDel && (!activeUrlKey || activeHasProdotti > 0)) btnDel.classList.add('disabled');
+
+// ── MODAL: Aggiungi gruppo ───────────────────────────────────────────────────
+function openModalAggiungiGruppo(){
+  document.getElementById('inputNomeGruppo').value='';
+  document.getElementById('inputIconaGruppo').value='📦';
+  openModal('modalAggiungi');
+  setTimeout(()=>document.getElementById('inputNomeGruppo').focus(),100);
+}
+function creaGruppo(){
+  const nome  = document.getElementById('inputNomeGruppo').value.trim();
+  const icona = document.getElementById('inputIconaGruppo').value.trim() || '📦';
+  if(!nome){showToast('⚠️ Inserisci un nome',true);return;}
+  fetch('/api/kanban-gruppi',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({label:nome,icona})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){showToast('✅ Gruppo "'+nome+'" creato');setTimeout(()=>location.reload(),700);}
+    else showToast('❌ '+(d.error||'Errore'),true);
+  }).catch(()=>showToast('❌ Errore di rete',true));
+}
+document.getElementById('inputNomeGruppo')?.addEventListener('keydown',e=>{if(e.key==='Enter')creaGruppo();});
+
+// ── AUTOCOMPLETE WMS ─────────────────────────────────────────────────────────
+let _wmsArticoli = null;  // cache
+
+function _loadWmsArticoli(cb) {
+  if (_wmsArticoli !== null) { cb(_wmsArticoli); return; }
+  fetch('/api/wms-articoli')
+  .then(r => r.json())
+  .then(data => { _wmsArticoli = Array.isArray(data) ? data : []; cb(_wmsArticoli); })
+  .catch(() => { _wmsArticoli = []; cb([]); });
+}
+
+function cercaArticoloWms(q) {
+  const dd = document.getElementById('wmsDropdown');
+  const hint = document.getElementById('wmsHint');
+  if (!q || q.length < 2) { dd.style.display = 'none'; return; }
+  _loadWmsArticoli(articoli => {
+    if (!articoli.length) {
+      hint.textContent = '⚠️ MasterLogistic non connesso — inserisci manualmente';
+      hint.style.color = 'var(--text-dim)';
+      dd.style.display = 'none';
+      return;
+    }
+    const q2 = q.toLowerCase();
+    const matches = articoli.filter(a =>
+      a.sku.toLowerCase().includes(q2) || (a.desc||'').toLowerCase().includes(q2)
+    ).slice(0, 12);
+    if (!matches.length) { dd.style.display = 'none'; return; }
+    dd.innerHTML = matches.map(a => `
+      <div class="wms-item" onclick="selezionaArticolo('${a.sku.replace(/'/g,"\'")}','${(a.desc||'').replace(/'/g,"\'")}')">
+        <span style="font-family:monospace;font-weight:700;color:var(--steel2)">${a.sku}</span>
+        <span style="color:var(--text-dim);font-size:11px;margin-left:8px">${a.desc||''}</span>
+      </div>`).join('');
+    dd.style.display = 'block';
+  });
+}
+
+function selezionaArticolo(sku, desc) {
+  const nome = desc ? sku + ' — ' + desc : sku;
+  document.getElementById('creaKanbanNome').value = nome;
+  document.getElementById('wmsDropdown').style.display = 'none';
+  document.getElementById('wmsHint').textContent = '✅ ' + sku + ' selezionato da MasterLogistic';
+  document.getElementById('wmsHint').style.color = '#5debb0';
+}
+
+// Chiudi dropdown clic fuori
+document.addEventListener('click', e => {
+  if (!e.target.closest('#modalCreaKanban')) {
+    const dd = document.getElementById('wmsDropdown');
+    if (dd) dd.style.display = 'none';
+  }
+});
+
+// ── MODAL: Rinomina gruppo (PIN) ─────────────────────────────────────────────
+function openModalRinominaGruppo(){
+  if(!activeUrlKey){showToast('⚠️ Nessun gruppo selezionato',true);return;}
+  document.getElementById('inputRinominaNome').value  = activeLabel;
+  document.getElementById('inputRinominaIcona').value = activeIcona;
+  document.getElementById('pinRinomina').value = '';
+  openModal('modalRinomina');
+  setTimeout(()=>document.getElementById('inputRinominaNome').focus(),100);
+}
+function confermRinominaGruppo(){
+  const label = document.getElementById('inputRinominaNome').value.trim();
+  const icona = document.getElementById('inputRinominaIcona').value.trim() || activeIcona;
+  const pin   = document.getElementById('pinRinomina').value;
+  if(!label){showToast('⚠️ Inserisci un nome',true);return;}
+  fetch('/api/kanban-gruppi/'+encodeURIComponent(activeUrlKey),{method:'PUT',
+    headers:{'Content-Type':'application/json'},body:JSON.stringify({label,icona,pin})})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){showToast('✅ Rinominato in "'+label+'"');setTimeout(()=>location.reload(),700);}
+    else if(d.pin_error) showToast('🔐 PIN errato',true);
+    else showToast('❌ '+(d.error||'Errore'),true);
+  }).catch(()=>showToast('❌ Errore di rete',true));
+}
+
+// ── MODAL: Elimina gruppo ────────────────────────────────────────────────────
+function eliminaGruppoAttivo(){
+  if(!activeUrlKey || activeHasProdotti > 0) return;
+  document.getElementById('nomeGruppoDaEliminare').textContent = activeLabel;
+  openModal('modalElimina');
+}
+function confermEliminaGruppo(){
+  fetch('/api/kanban-gruppi/'+encodeURIComponent(activeUrlKey),{method:'DELETE'})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){showToast('🗑️ Gruppo eliminato');setTimeout(()=>window.location.href='/',900);}
+    else showToast('❌ '+(d.error||'Errore'),true);
+  }).catch(()=>showToast('❌ Errore di rete',true));
+}
+
+// ── MODAL: Crea Kanban (PIN) ─────────────────────────────────────────────────
+function openModalCreaKanban(sheetKey){
+  document.getElementById('creaKanbanSheetKey').value = sheetKey || activeUrlKey || '';
+  document.getElementById('creaKanbanNome').value    = '';
+  document.getElementById('creaKanbanLotto').value   = '0';
+  document.getElementById('creaKanbanRiserva').value = '0';
+  document.getElementById('creaKanbanVal').value     = '0';
+  document.getElementById('creaKanbanTipoApprovvigionamento').value = 'MATERIA_PRIMA_FORNITORE';
+  document.getElementById('creaKanbanLeadTimeFornitura').value = '7';
+  aggiornaEtichettaLeadTimeFornitura();
+  document.getElementById('creaKanbanSS').value      = '15';
+  document.getElementById('pinCreaKanban').value     = '';
+  openModal('modalCreaKanban');
+  setTimeout(()=>document.getElementById('creaKanbanNome').focus(),100);
+}
+function aggiornaEtichettaLeadTimeFornitura(){
+  const tipo = document.getElementById('creaKanbanTipoApprovvigionamento')?.value;
+  const label = document.getElementById('creaKanbanLeadTimeLabel');
+  if (!label) return;
+  label.textContent = tipo === 'LASERATO' ? 'Lead time laserato (giorni)' : 'Lead time fornitore (giorni)';
+}
+function confermCreaKanban(){
+  const nome    = document.getElementById('creaKanbanNome').value.trim();
+  const pin     = document.getElementById('pinCreaKanban').value;
+  const sheetKey= document.getElementById('creaKanbanSheetKey').value;
+  if(!nome){showToast('⚠️ Inserisci nome prodotto',true);return;}
+  fetch('/api/kanban',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({
+      prodotto: nome, pin,
+      sheet_key: sheetKey,
+      lotto:    parseInt(document.getElementById('creaKanbanLotto').value)||0,
+      riserva:  parseInt(document.getElementById('creaKanbanRiserva').value)||0,
+      val_medio:parseFloat(document.getElementById('creaKanbanVal').value)||0,
+      tipo_approvvigionamento: document.getElementById('creaKanbanTipoApprovvigionamento').value,
+      lead_time_fornitura_giorni: parseFloat(document.getElementById('creaKanbanLeadTimeFornitura').value)||7,
+      lead_time_giorni: parseFloat(document.getElementById('creaKanbanLeadTimeFornitura').value)||7,
+      scorta_sicurezza: (parseFloat(document.getElementById('creaKanbanSS').value)||15)/100,
+    })})
+  .then(r=>r.json()).then(d=>{
+    if(d.ok){showToast('✅ Kanban "'+nome+'" creato');closeModal('modalCreaKanban');setTimeout(()=>location.reload(),700);}
+    else if(d.pin_error) showToast('🔐 PIN errato',true);
+    else showToast('❌ '+(d.error||'Errore'),true);
+  }).catch(()=>showToast('❌ Errore di rete',true));
+}
+document.getElementById('pinCreaKanban')?.addEventListener('keydown',e=>{if(e.key==='Enter')confermCreaKanban();});
+
+// Chiudi modal overlay click / Escape
+document.querySelectorAll('.modal-overlay').forEach(ov=>{
+  ov.addEventListener('click',e=>{if(e.target===ov)ov.classList.remove('open');});
+});
+document.addEventListener('keydown',e=>{
+  if(e.key==='Escape') document.querySelectorAll('.modal-overlay.open').forEach(m=>m.classList.remove('open'));
+});
+
+{% block scripts %}{% endblock %}
+</script>
+</body>
+</html>
