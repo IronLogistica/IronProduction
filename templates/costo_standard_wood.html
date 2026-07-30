@@ -78,6 +78,24 @@ async function caricaListaCostoStandard(){
   }
 }
 
+function escHtml(v){ return String(v ?? '').replace(/[&<>"']/g, x => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[x])); }
+function urlMagazzino(parametro, codice){ return '/magazzino?' + parametro + '=' + encodeURIComponent(codice); }
+function pulsanteConfigurazione(azione, codice){
+  const cfg = {
+    articolo: ['📦 Configura acquisto', 'articolo'],
+    distinta: ['🧩 Apri distinta', 'distinta'],
+    ciclo: ['⚙️ Apri ciclo', 'ciclo'],
+    centri: ['🏭 Apri centri di costo', 'centri']
+  }[azione];
+  if(!cfg) return '';
+  const href = azione === 'centri' ? '/centri-costo-wood' : urlMagazzino(cfg[1], codice);
+  return `<a class="btn btn-ghost" style="padding:3px 7px;font-size:11px" href="${href}">${cfg[0]}</a>`;
+}
+function renderAvvisiConfigurazione(avvisi, codice){
+  if(!avvisi || !avvisi.length) return '';
+  return `<div style="margin-top:6px;padding:7px 8px;border-radius:5px;background:#fff7e6;color:#8a5a00;font-size:11px">` +
+    avvisi.map(a => `<div style="margin:3px 0;display:flex;gap:6px;align-items:center;flex-wrap:wrap">⚠️ <span>${escHtml(a.testo)}</span>${pulsanteConfigurazione(a.azione, codice)}</div>`).join('') + '</div>';
+}
 function renderAlberoCosto(componenti){
   if(!componenti || !componenti.length) return '<p style="color:#aaa;font-style:italic;margin:4px 0 4px 10px">Nessun componente.</p>';
   return '<ul style="margin:4px 0 4px 16px;padding:0;list-style:none">' + componenti.map(c => {
@@ -88,9 +106,10 @@ function renderAlberoCosto(componenti){
       : `<span class="badge badge-warn">⚠️ Costo non disponibile</span> <span style="font-size:11px;color:#999">(qty ${c.quantita_totale})</span>`;
     return `<li style="padding:5px 0;border-left:2px solid var(--border);padding-left:10px;margin-bottom:2px">
       <span style="font-size:10px;color:#1e5fa8;font-weight:700;margin-right:6px">SOTTOGRUPPO ${c.livello_effettivo}° LIVELLO</span>
-      <span class="cod" style="font-weight:700">${c.codice}</span>
+      <span class="cod" style="font-weight:700">${escHtml(c.codice)}</span>
       <span style="font-size:11px;color:var(--text-dim);margin-left:6px">${tipoLabel}</span><br>
       ${valore}
+      ${renderAvvisiConfigurazione(c.avvisi_configurazione, c.codice)}
       ${renderAlberoCosto(c.figli)}
     </li>`;
   }).join('') + '</ul>';
@@ -115,7 +134,8 @@ async function mostraDettaglioMateriali(codice){
       <div>Totale: <b>€ ${cr.costo_totale}</b></div>
       <div>Ore std.: <b>${cr.ore_manodopera_standard} h</b></div>
       ${statoRadice}
-    </div>` + (cr.codici_senza_costo.length ? `<div style="font-size:12px;color:#b8860b">Componenti senza prezzo configurato: <b>${cr.codici_senza_costo.join(', ')}</b> — vai su Magazzino, apri il codice col pulsante 🔧 e imposta il "Costo acquisto €/pz".</div>` : '');
+    </div>` + renderAvvisiConfigurazione(d.avvisi_radice, codice) +
+      (cr.codici_senza_costo.length ? `<div style="font-size:12px;color:#b8860b;margin-top:7px">Componenti senza prezzo configurato: <b>${cr.codici_senza_costo.map(escHtml).join(', ')}</b>.</div>` : '');
     box.innerHTML = renderAlberoCosto(d.componenti);
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
