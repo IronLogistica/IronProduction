@@ -85,9 +85,9 @@ async function caricaAnalisiCosto(){
       <div>🗑️ Impatto economico dello scarto (${d.qta_scarto} pz al costo standard pieno): <b style="color:#c0392b">€ ${d.varianza.scarto_impatto}</b>
         ${d.varianza.scarto_pct!==null?` — <b>${d.varianza.scarto_pct}%</b> dei pezzi lavorati`:''}</div>
       <div>⚙️ Varianza lavorazione da efficienza/tempo: <b style="color:${coloreVarianza(d.varianza.lavorazione_efficienza)}">${segno(d.varianza.lavorazione_efficienza)}€ ${fmt(d.varianza.lavorazione_efficienza)}</b>
-        — varianza tariffa: <b>${d.varianza.lavorazione_tariffa===null?'non disponibile con i dati attuali':d.varianza.lavorazione_tariffa}</b></div>
+        — da tariffa: <b style="color:${coloreVarianza(d.varianza.lavorazione_tariffa)}">${segno(d.varianza.lavorazione_tariffa)}€ ${fmt(d.varianza.lavorazione_tariffa)}</b></div>
       <div>👷 Varianza manodopera da efficienza/tempo: <b style="color:${coloreVarianza(d.varianza.manodopera_efficienza)}">${segno(d.varianza.manodopera_efficienza)}€ ${fmt(d.varianza.manodopera_efficienza)}</b>
-        — varianza tariffa: <b>${d.varianza.manodopera_tariffa===null?'non disponibile con i dati attuali':d.varianza.manodopera_tariffa}</b></div>
+        — da tariffa: <b style="color:${coloreVarianza(d.varianza.manodopera_tariffa)}">${segno(d.varianza.manodopera_tariffa)}€ ${fmt(d.varianza.manodopera_tariffa)}</b></div>
     </div>`;
     document.getElementById('ac-confronto').innerHTML = htmlConf;
 
