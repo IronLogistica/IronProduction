@@ -24,6 +24,23 @@
   </div>
 </div>
 
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">📦 DDT di Carico (arrivo merce)</div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Carica il DDT del fornitore all'arrivo della merce: se referenzia il numero dell'Ordine di Acquisto,
+      la riga corrispondente viene aggiornata automaticamente e la Giacenza caricata da sola.
+      Se non trova un abbinamento, la merce viene comunque caricata a magazzino, segnalata come "non abbinata".
+    </p>
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+      <input type="file" id="ddt-file" accept=".pdf" style="margin-bottom:8px">
+      <button class="btn btn-primary" onclick="caricaPdfDdt()">📥 Carica DDT (PDF)</button>
+      <div id="ddt-upload-esito" style="font-size:12px;margin-top:8px"></div>
+    </div>
+    <div id="ddt-lista" style="font-size:13px;color:#666">Caricamento...</div>
+  </div>
+</div>
+
 <!-- ══ MODAL: DETTAGLIO ORDINE / RICEVIMENTO RIGHE ═══════════════════════ -->
 <div class="modal-overlay" id="modal-ordine-acquisto">
   <div class="modal-box" style="width:680px;max-width:97vw;max-height:88vh;overflow-y:auto">
@@ -147,4 +164,56 @@ async function aggiornaRicevuto(rigaId, valore){
 }
 
 caricaListaOrdini();
+
+async function caricaPdfDdt(){
+  const fileInput = document.getElementById('ddt-file');
+  const esito = document.getElementById('ddt-upload-esito');
+  if(!fileInput.files.length){ esito.innerHTML = '<span style="color:#c0392b">Seleziona un file PDF prima.</span>'; return; }
+  const fd = new FormData();
+  fd.append('file_pdf', fileInput.files[0]);
+  esito.innerHTML = 'Caricamento e lettura PDF in corso...';
+  try{
+    const r = await fetch('/api/ddt_carico_wood/upload', {method:'POST', body: fd});
+    const d = await r.json();
+    if(d.errore){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.messaggio + '</span>'; return; }
+    esito.innerHTML = `<span style="color:#2a9d5c">✅ DDT caricato — ${d.n_righe_abbinate}/${d.n_righe_totali} righe abbinate a un Ordine di Acquisto` +
+      (d.n_ordini_completati ? `, ${d.n_ordini_completati} ordine/i segnato/i come ricevuto/i` : '') +
+      `. Giacenza aggiornata per tutte le righe.</span>`;
+    fileInput.value = '';
+    caricaListaDdt();
+    caricaListaOrdini();
+  }catch(e){
+    esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete durante il caricamento.</span>';
+  }
+}
+
+async function caricaListaDdt(){
+  const box = document.getElementById('ddt-lista');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/ddt_carico_wood');
+    const ddts = await r.json();
+    if(!ddts.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun DDT di carico registrato ancora.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>DDT n.</th><th>Fornitore</th><th>Data</th><th>Righe</th><th></th></tr></thead><tbody>';
+    ddts.forEach(d=>{
+      const abbinate = d.righe.filter(r=>r.abbinata).length;
+      html += `<tr><td class="codice">${d.numero_ddt||'—'}</td><td>${d.fornitore||'—'}</td><td class="lav-td">${d.data_ddt||'—'}</td>` +
+        `<td class="num">${abbinate}/${d.righe.length} abbinate</td>` +
+        `<td><a href="/ddt_carico_wood/${d.id}/pdf" target="_blank" class="btn btn-ghost" style="padding:4px 8px;font-size:11px">📄 PDF</a></td></tr>`;
+      if(d.righe.length){
+        html += `<tr><td colspan="5" style="padding:4px 4px 10px 20px">`;
+        d.righe.forEach(r=>{
+          html += `<div style="font-size:11px;color:${r.abbinata?'#2a9d5c':'#b8860b'}">${r.abbinata?'✓':'⚠️'} ${r.codice} — ${r.descrizione||''} × ${r.quantita}${r.ordine_n_riferimento?' (rif. OA '+r.ordine_n_riferimento+')':' (nessun riferimento OA)'}</div>`;
+        });
+        html += `</td></tr>`;
+      }
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+caricaListaDdt();
 {% endblock %}
