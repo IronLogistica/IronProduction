@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="refresh" content="25">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LIVE {{ centro.nome|upper }} — MES Carpenteria</title>
 <style>
   :root{
@@ -34,6 +34,33 @@
   .pct-fill{background:linear-gradient(90deg,var(--ok),#16a34a);height:100%}
   .pct-label{position:absolute;top:-1px;right:8px;font-size:.7rem;color:var(--text)}
 
+  .standard-box{display:flex;gap:18px;flex-wrap:wrap;margin-top:14px;padding-top:14px;border-top:1px solid var(--border);font-size:.85rem;color:var(--muted)}
+  .standard-box b{color:var(--text)}
+
+  .azioni-lavoro{margin-top:16px;display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+  .btn-grande{padding:16px 28px;border-radius:12px;border:none;font-size:1.1rem;font-weight:800;cursor:pointer;
+              display:flex;align-items:center;gap:10px;transition:transform .1s}
+  .btn-grande:active{transform:scale(.97)}
+  .btn-inizia{background:var(--ok);color:#04250f}
+  .btn-fine{background:var(--danger);color:#2d0a0a}
+  .cronometro{font-family:'Consolas',monospace;font-size:1.1rem;color:var(--warn)}
+
+  .form-fine{display:none;background:var(--surf2);border:1px solid var(--accent);border-radius:12px;padding:16px;margin-top:12px;gap:12px;flex-wrap:wrap;align-items:end}
+  .form-fine.aperto{display:flex}
+  .form-fine label{display:block;font-size:.75rem;color:var(--muted);text-transform:uppercase;margin-bottom:5px}
+  .form-fine input{width:110px;background:var(--bg);border:1px solid var(--border);color:var(--text);
+                    padding:10px;border-radius:8px;font-size:1.1rem;font-family:'Consolas',monospace}
+
+  .doc-foto-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+  .box-sez{background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:12px}
+  .box-sez-titolo{font-size:.78rem;font-weight:700;text-transform:uppercase;color:var(--muted);margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+  .doc-chip{display:inline-flex;align-items:center;gap:6px;background:var(--bg);border:1px solid var(--border);color:var(--accent);
+             text-decoration:none;padding:6px 10px;border-radius:7px;font-size:.78rem;margin:3px}
+  .foto-thumb{width:72px;height:72px;object-fit:cover;border-radius:8px;border:1px solid var(--border);margin:3px;cursor:pointer}
+  .btn-mini{background:var(--surf);border:1px solid var(--accent);color:var(--accent);padding:5px 10px;border-radius:7px;
+            font-size:.72rem;cursor:pointer}
+  input[type=file]{display:none}
+
   .grid-coda{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px}
   .mini-card{background:var(--surf);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:9px;padding:12px 14px}
   .mini-card .mc-op{font-size:.72rem;color:var(--muted);font-family:'Consolas',monospace}
@@ -46,7 +73,12 @@
   .tag-name{display:inline-block;background:var(--surf2);border:1px solid var(--border);padding:5px 12px;margin:3px;border-radius:6px;font-size:.8rem;font-weight:700}
 
   .empty{text-align:center;padding:50px 20px;color:var(--muted)}
-  .empty i{font-size:2.4rem;opacity:.4;display:block;margin-bottom:12px}
+
+  #toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(20px);background:#0a2e14;
+         border:1px solid rgba(34,197,94,.5);color:var(--ok);padding:10px 20px;border-radius:10px;font-size:.9rem;
+         font-weight:700;opacity:0;pointer-events:none;transition:all .3s;z-index:9999;white-space:nowrap}
+  #toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  #toast.error{background:#2d0a0a;border-color:rgba(239,68,68,.5);color:var(--danger)}
 </style>
 </head>
 <body>
@@ -62,31 +94,62 @@
   {% endfor %}
 </div>
 
-{% if righe.lavorazione %}
-<div class="sezione-titolo" style="color:var(--ok)">🚧 IN LAVORAZIONE ADESSO</div>
-{% for r in righe.lavorazione %}
-<div class="card-grande">
+{% if riga_attiva %}
+{% set r = riga_attiva %}
+<div class="sezione-titolo" style="color:{{ 'var(--ok)' if sessione else 'var(--accent)' }}">
+  {{ '🚧 IN LAVORAZIONE ADESSO' if sessione else '▶ PROSSIMO DA AVVIARE' }}
+</div>
+<div class="card-grande {{ '' if sessione else 'attesa-avvio' }}">
   <div class="cg-op">{{ r.op_codice }} · {{ r.commessa }}</div>
   <div class="cg-codice">{{ r.codice_articolo }}</div>
   <div class="cg-descrizione">{{ r.descrizione }}</div>
   <div class="cg-riga"><span>Saldo da fare: <b>{{ r.saldo }}</b></span><span>Totale: <b>{{ r.totale }}</b></span></div>
+  {% if r.pct is defined %}
   <div class="pct-bar"><div class="pct-fill" style="width:{{ [r.pct,100]|min }}%"></div><span class="pct-label">{{ r.pct }}%</span></div>
-</div>
-{% endfor %}
-{% elif righe.da_iniziare %}
-{% set primo = righe.da_iniziare[0] %}
-<div class="sezione-titolo" style="color:var(--accent)">▶ PROSSIMO DA AVVIARE</div>
-<div class="card-grande attesa-avvio">
-  <div class="cg-op">{{ primo.op_codice }} · {{ primo.commessa }}</div>
-  <div class="cg-codice">{{ primo.codice_articolo }}</div>
-  <div class="cg-descrizione">{{ primo.descrizione }}</div>
-  <div class="cg-riga"><span>Da fare: <b>{{ primo.saldo }}</b></span><span>Totale: <b>{{ primo.totale }}</b></span></div>
+  {% endif %}
+
+  <div class="standard-box">
+    {% if r.tempo_standard_min_pz %}<span>⏱ Tempo standard: <b>{{ r.tempo_standard_min_pz }} min/pz</b></span>{% endif %}
+    {% if r.scarto_max_pct %}<span>📊 Scarto max ammesso: <b>{{ r.scarto_max_pct }}%</b> (~<b>{{ r.scarto_max_pezzi }}</b> pz su {{ r.totale }})</span>{% endif %}
+    {% if not r.tempo_standard_min_pz and not r.scarto_max_pct %}<span>Nessuno standard di tempo/scarto comunicato per questa fase</span>{% endif %}
+  </div>
+
+  <div class="azioni-lavoro">
+    {% if sessione %}
+    <button class="btn-grande btn-fine" onclick="apriFormFine()">⏹ FINE LAVORO</button>
+    <span class="cronometro" id="cronometro"></span>
+    {% else %}
+    <button class="btn-grande btn-inizia" onclick="iniziaLavoro({{ r.op_id }})">▶ INIZIA LAVORO</button>
+    {% endif %}
+  </div>
+
+  <div class="form-fine {{ 'aperto' if sessione else '' }}" id="form-fine">
+    <div><label>Pezzi buoni</label><input type="number" id="inp-buoni" min="0" value="{{ r.saldo if r.saldo else 0 }}"></div>
+    <div><label>Pezzi scarto</label><input type="number" id="inp-scarto" min="0" value="0"></div>
+    <button class="btn-grande btn-fine" style="padding:12px 20px" onclick="confermaFine({{ r.op_id }})">✅ Conferma e chiudi</button>
+  </div>
+
+  <div class="doc-foto-grid">
+    <div class="box-sez">
+      <div class="box-sez-titolo"><span>📄 Documentazione tecnica</span>
+        <label class="btn-mini">+ Carica<input type="file" accept=".pdf,image/*" onchange="caricaDocumento(this,'{{ r.codice_articolo }}')"></label>
+      </div>
+      <div id="lista-documenti">Caricamento...</div>
+    </div>
+    <div class="box-sez">
+      <div class="box-sez-titolo"><span>📷 Foto lavorazione</span>
+        <label class="btn-mini">+ Scatta/carica<input type="file" accept="image/*" capture="environment" onchange="caricaFoto(this,{{ r.op_id }})"></label>
+      </div>
+      <div id="lista-foto">Caricamento...</div>
+    </div>
+  </div>
 </div>
 {% else %}
 <div class="empty">✓<br>Nessun lavoro pronto per questa macchina in questo momento.</div>
 {% endif %}
 
-{% set resto_coda = righe.da_iniziare if righe.lavorazione else righe.da_iniziare[1:] %}
+{% set esclusi = [riga_attiva.op_id] if riga_attiva else [] %}
+{% set resto_coda = righe.da_iniziare | rejectattr('op_id', 'in', esclusi) | list %}
 {% if resto_coda %}
 <div class="sezione-titolo" style="color:var(--muted)">📋 IN CODA (prossimi)</div>
 <div class="grid-coda">
@@ -119,12 +182,145 @@
   </div>
 </div>
 
+<div id="toast"></div>
+
 <script>
+const CENTRO_ID = {{ centro.id }};
+const SESSIONE_INIZIATA_IL = {{ ('"' + sessione.iniziata_il + '"') if sessione else 'null' }};
+const CODICE_ARTICOLO_ATTIVO = {{ ('"' + riga_attiva.codice_articolo + '"') if riga_attiva else 'null' }};
+const OP_ID_ATTIVO = {{ riga_attiva.op_id if riga_attiva else 'null' }};
+
 function clock(){
   const now = new Date();
   document.getElementById('clock').textContent = now.toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit', second:'2-digit'});
 }
 setInterval(clock, 1000); clock();
+
+function cronometro(){
+  const el = document.getElementById('cronometro');
+  if (!el || !SESSIONE_INIZIATA_IL) return;
+  const inizio = new Date(SESSIONE_INIZIATA_IL + 'Z');
+  const diffMin = Math.floor((Date.now() - inizio.getTime()) / 60000);
+  const h = Math.floor(diffMin / 60), m = diffMin % 60;
+  el.textContent = '⏱ in lavorazione da ' + (h > 0 ? h + 'h ' : '') + m + ' min';
+}
+setInterval(cronometro, 1000); cronometro();
+
+let toastTimer = null;
+function toast(msg, isErr){
+  const el = document.getElementById('toast');
+  el.textContent = msg; el.className = 'show' + (isErr ? ' error' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.className = '', 3000);
+}
+
+async function iniziaLavoro(opId){
+  try{
+    const r = await fetch(`/api/totem/${CENTRO_ID}/inizia`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ordine_produzione_id: opId})
+    });
+    const d = await r.json();
+    if(d.errore){ toast('❌ ' + d.messaggio, true); return; }
+    toast('✅ Lavoro iniziato'); setTimeout(() => location.reload(), 600);
+  }catch(e){ toast('❌ Errore di rete', true); }
+}
+
+function apriFormFine(){ document.getElementById('form-fine').classList.add('aperto'); }
+
+async function confermaFine(opId){
+  const buoni = parseInt(document.getElementById('inp-buoni').value) || 0;
+  const scarto = parseInt(document.getElementById('inp-scarto').value) || 0;
+  try{
+    const r = await fetch(`/api/totem/${CENTRO_ID}/termina`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ordine_produzione_id: opId, pezzi_buoni: buoni, pezzi_scarto: scarto})
+    });
+    const d = await r.json();
+    if(d.errore){ toast('❌ ' + d.messaggio, true); return; }
+    toast('✅ Lavoro chiuso — consuntivo registrato'); setTimeout(() => location.reload(), 800);
+  }catch(e){ toast('❌ Errore di rete', true); }
+}
+
+function leggiFileBase64(file){
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = () => resolve(rd.result.split(',')[1]);
+    rd.onerror = () => reject(new Error('Lettura file fallita'));
+    rd.readAsDataURL(file);
+  });
+}
+
+async function caricaDocumento(input, codiceArticolo){
+  const file = input.files[0];
+  if (!file) return;
+  try{
+    const b64 = await leggiFileBase64(file);
+    const r = await fetch('/api/totem/documenti', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice_articolo: codiceArticolo, nome_file: file.name, tipo_mime: file.type, contenuto_base64: b64})
+    });
+    const d = await r.json();
+    if(d.errore){ toast('❌ ' + d.messaggio, true); return; }
+    toast('✅ Documento caricato'); caricaListaDocumenti();
+  }catch(e){ toast('❌ Errore caricamento documento', true); }
+  input.value = '';
+}
+
+async function caricaListaDocumenti(){
+  const box = document.getElementById('lista-documenti');
+  if (!box || !CODICE_ARTICOLO_ATTIVO) return;
+  try{
+    const r = await fetch('/api/totem/documenti/' + encodeURIComponent(CODICE_ARTICOLO_ATTIVO));
+    const lista = await r.json();
+    box.innerHTML = lista.length ? lista.map(d =>
+      `<a class="doc-chip" href="/api/totem/documenti/file/${d.id}" target="_blank">📄 ${d.nome_file}</a>`
+    ).join('') : '<span style="color:var(--muted);font-size:.8rem">Nessun documento</span>';
+  }catch(e){ box.innerHTML = '<span style="color:var(--danger);font-size:.8rem">Errore caricamento</span>'; }
+}
+
+async function caricaFoto(input, opId){
+  const file = input.files[0];
+  if (!file) return;
+  try{
+    const b64 = await leggiFileBase64(file);
+    const r = await fetch(`/api/totem/${CENTRO_ID}/foto`, {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ordine_produzione_id: opId, nome_file: file.name, contenuto_base64: b64})
+    });
+    const d = await r.json();
+    if(d.errore){ toast('❌ ' + d.messaggio, true); return; }
+    toast('✅ Foto caricata'); caricaListaFoto();
+  }catch(e){ toast('❌ Errore caricamento foto', true); }
+  input.value = '';
+}
+
+async function caricaListaFoto(){
+  const box = document.getElementById('lista-foto');
+  if (!box || !OP_ID_ATTIVO) return;
+  try{
+    const r = await fetch(`/api/totem/${CENTRO_ID}/foto/${OP_ID_ATTIVO}`);
+    const lista = await r.json();
+    box.innerHTML = lista.length ? lista.map(f =>
+      `<img class="foto-thumb" src="/api/totem/foto/file/${f.id}" onclick="window.open(this.src,'_blank')">`
+    ).join('') : '<span style="color:var(--muted);font-size:.8rem">Nessuna foto</span>';
+  }catch(e){ box.innerHTML = '<span style="color:var(--danger);font-size:.8rem">Errore caricamento</span>'; }
+}
+
+caricaListaDocumenti();
+caricaListaFoto();
+
+// ── Auto-reload ogni 25s, MA MAI se un form è aperto (evita di perdere dati inseriti) ──
+let sec = 25;
+function tick(){
+  sec--;
+  if (sec <= 0){
+    const formAperto = document.querySelector('.form-fine.aperto');
+    if (!formAperto) location.reload();
+    else sec = 25;
+  }
+}
+setInterval(tick, 1000);
 </script>
 </body>
 </html>
