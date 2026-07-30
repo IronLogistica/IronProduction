@@ -191,8 +191,10 @@
   <div class="nav-group">
     <div class="nav-group-header"><div class="nav-group-label">Produzione</div></div>
     <a class="nav-item {% if active=='produzione_pp' %}active{% endif %}" href="/ordini-produzione"><span class="nav-icon">🏭</span> Ordini Produzione</a>
-    <a class="nav-item {% if active=='monitor' %}active{% endif %}" href="/monitor"><span class="nav-icon">📊</span> Monitor Segatrice</a>
-    <a class="nav-item {% if active=='monitor_trapani' %}active{% endif %}" href="/monitor/trapani"><span class="nav-icon">🔩</span> Monitor Trapani</a>
+    {% for m in macchine_monitor %}
+    <a class="nav-item {% if active_page=='monitor' and request.view_args and request.view_args.get('cid')|string == m.id|string %}active{% endif %}"
+       href="/monitor/macchina/{{ m.id }}"><span class="nav-icon">⚙️</span> Monitor {{ m.nome }}</a>
+    {% endfor %}
     <a class="nav-item {% if active=='kpi' %}active{% endif %}" href="/kpi"><span class="nav-icon">📈</span> Cruscotto KPI</a>
   </div>
   <div class="nav-group" id="nav-kanban-gruppi">
