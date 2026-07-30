@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">📊 Giacenza Iron Wood</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Magazzino fisico locale (materie prime, componenti d'acquisto, laserati, semilavorati) — non più una lettura di MasterLogistic:
+      è la fonte di verità per governare impegni e fabbisogno delle produzioni Iron Wood.
+    </p>
+
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+      <div style="font-weight:600;margin-bottom:6px">📥 Caricamento massivo / aggiornamento giacenza</div>
+      <p style="font-size:11px;color:var(--text-dim);margin-bottom:8px">
+        File Excel/CSV con colonne "codice" e "quantita" (nomi anche simili: sku/articolo, giacenza/qta).
+        Il valore nel file <b>sostituisce</b> la giacenza attuale del codice (non la somma) — usalo sia per il primo carico che per aggiornamenti successivi.
+      </p>
+      <input type="file" id="giac-file" accept=".xlsx,.xls,.csv" style="margin-bottom:8px">
+      <button class="btn btn-primary" onclick="importaGiacenza()">📥 Importa</button>
+      <div id="giac-import-esito" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+      <div style="font-weight:600;margin-bottom:6px">✍️ Rettifica manuale (singolo codice)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="rett-codice" type="text" placeholder="Codice" style="width:160px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="rett-quantita" type="number" step="0.01" placeholder="+carico / -scarico" style="width:140px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="rett-note" type="text" placeholder="Note (facoltative)" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="rettificaGiacenza()">💾 Applica</button>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <input id="giac-ricerca" type="text" placeholder="Cerca per codice..."
+             style="width:260px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)"
+             oninput="caricaGiacenza()">
+    </div>
+    <div id="giac-avviso" style="font-size:12px;color:#b8860b;margin-bottom:8px"></div>
+    <div id="giac-lista" style="font-size:13px;color:#666">Caricamento...</div>
+  </div>
+</div>
+
+<!-- ══ MODAL: STORICO MOVIMENTI ═══════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-movimenti">
+  <div class="modal-box" style="width:520px;max-width:96vw">
+    <h3>📜 Movimenti — <span id="mov-modal-codice"></span></h3>
+    <div id="mov-modal-lista" style="font-size:13px;color:#666;max-height:400px;overflow-y:auto">Caricamento...</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-movimenti')">Chiudi</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+async function importaGiacenza(){
+  const fileInput = document.getElementById('giac-file');
+  const esito = document.getElementById('giac-import-esito');
+  if(!fileInput.files.length){ esito.innerHTML = '<span style="color:#c0392b">Seleziona un file prima.</span>'; return; }
+  const fd = new FormData();
+  fd.append('file_excel', fileInput.files[0]);
+  esito.innerHTML = 'Importazione in corso...';
+  try{
+    const r = await fetch('/api/giacenza_wood/importa', {method:'POST', body: fd});
+    const d = await r.json();
+    if(d.errore){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.messaggio + '</span>'; return; }
+    esito.innerHTML = `<span style="color:#2a9d5c">✅ Importate ${d.totale_righe_file} righe — ${d.nuovi} nuovi codici, ${d.aggiornati} aggiornati, ${d.scartate} scartate.</span>`;
+    fileInput.value = '';
+    caricaGiacenza();
+  }catch(e){
+    esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete durante l\'import.</span>';
+  }
+}
+
+async function rettificaGiacenza(){
+  const payload = {
+    codice: document.getElementById('rett-codice').value.trim(),
+    quantita: document.getElementById('rett-quantita').value,
+    note: document.getElementById('rett-note').value.trim(),
+  };
+  try{
+    const r = await fetch('/api/giacenza_wood/rettifica', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    document.getElementById('rett-codice').value = '';
+    document.getElementById('rett-quantita').value = '';
+    document.getElementById('rett-note').value = '';
+    caricaGiacenza();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function caricaGiacenza(){
+  const box = document.getElementById('giac-lista');
+  const avviso = document.getElementById('giac-avviso');
+  const q = document.getElementById('giac-ricerca').value.trim();
+  box.innerHTML = 'Caricamento...';
+  avviso.innerHTML = '';
+  try{
+    const url = q ? '/api/giacenza_wood?q=' + encodeURIComponent(q) : '/api/giacenza_wood';
+    const r = await fetch(url);
+    const d = await r.json();
+    const righe = d.righe || [];
+    if(d.totale > d.mostrate){
+      avviso.innerHTML = q
+        ? `⚠️ Mostrate ${d.mostrate} righe su ${d.totale} totali che corrispondono alla ricerca.`
+        : `ℹ️ Mostrate le ${d.mostrate} righe aggiornate più di recente su ${d.totale} totali — usa la ricerca per trovarne altre.`;
+    }
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna giacenza registrata.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
+      '<th>Codice</th><th>Quantità</th><th>Aggiornato il</th><th></th></tr></thead><tbody>';
+    righe.forEach(g=>{
+      html += `<tr><td class="codice">${g.codice}</td><td class="num ${g.quantita<=0?'num-neg':'num-pos'}">${g.quantita}</td>` +
+        `<td class="lav-td">${g.aggiornato_il}</td>` +
+        `<td><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="apriMovimenti('${g.codice}')">📜 Movimenti</button></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function apriMovimenti(codice){
+  document.getElementById('mov-modal-codice').textContent = codice;
+  const box = document.getElementById('mov-modal-lista');
+  box.innerHTML = 'Caricamento...';
+  openModal('modal-movimenti');
+  try{
+    const r = await fetch('/api/giacenza_wood/' + encodeURIComponent(codice) + '/movimenti');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun movimento registrato.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Data</th><th>Tipo</th><th>Quantità</th><th>Riferimento</th><th>Note</th></tr></thead><tbody>';
+    righe.forEach(m=>{
+      html += `<tr><td class="lav-td">${m.creato_il}</td><td>${m.tipo}</td><td class="num ${m.quantita<0?'num-neg':'num-pos'}">${m.quantita>0?'+':''}${m.quantita}</td><td class="lav-td">${m.riferimento||'—'}</td><td class="lav-td">${m.note||'—'}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+caricaGiacenza();
+{% endblock %}

@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">💰 Costo Standard Iron Wood</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Logica SAP: <b>Materiali</b> (BOM ricorsiva — ogni componente usa il proprio costo standard, i codici foglia
+      classificati materia prima/componente acquisto/laserato usano il prezzo d'acquisto registrato) +
+      <b>Lavorazione</b> (Routing/Ciclo di Lavoro: tempo unitario × costo orario del reparto) +
+      <b>Overhead</b> (% su materiali+lavorazione, impostabile qui sotto).<br>
+      Il ricalcolo <b>non è automatico</b>: cambia BOM/routing/prezzi/overhead quanto vuoi, il costo salvato resta quello
+      dell'ultimo "Ricalcola e salva" — così sai sempre quando un costo standard è aggiornato.
+    </p>
+
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px;display:flex;gap:10px;align-items:center">
+      <label style="font-weight:600;font-size:13px">Aliquota Overhead (spese generali)</label>
+      <input id="oh-pct" type="number" step="0.1" min="0" placeholder="es. 10" style="width:100px;padding:7px 9px;border-radius:6px;border:1px solid var(--border)">
+      <span>%</span>
+      <button class="btn btn-primary" style="padding:7px 14px;font-size:13px" onclick="salvaOverhead()">💾 Salva</button>
+      <span id="oh-esito" style="font-size:12px;color:var(--text-dim)"></span>
+    </div>
+
+    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
+      <input id="cs-codice" type="text" placeholder="Ricalcola un codice specifico..."
+             style="width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <button class="btn btn-primary" onclick="ricalcolaSingolo()">🔄 Ricalcola e salva</button>
+      <span id="cs-singolo-esito" style="font-size:12px"></span>
+    </div>
+
+    <div id="cs-lista" style="font-size:13px;color:#666">Caricamento...</div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+async function caricaOverhead(){
+  try{
+    const r = await fetch('/api/impostazioni_costo');
+    const d = await r.json();
+    document.getElementById('oh-pct').value = d.aliquota_overhead_pct || 0;
+  }catch(e){}
+}
+
+async function salvaOverhead(){
+  const esito = document.getElementById('oh-esito');
+  try{
+    const r = await fetch('/api/impostazioni_costo', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({aliquota_overhead_pct: document.getElementById('oh-pct').value})
+    });
+    const d = await r.json();
+    if(d.errore){ esito.style.color='#c0392b'; esito.textContent='⚠️ '+d.messaggio; return; }
+    esito.style.color = '#2a9d5c';
+    esito.textContent = '✓ Salvato — ricorda di premere "Ricalcola" sui prodotti per applicare la nuova aliquota.';
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
+async function caricaListaCostoStandard(){
+  const box = document.getElementById('cs-lista');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/costo_standard');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun codice padre trovato nella Distinta Base Iron Wood.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
+      '<th>Codice</th><th>Materiali</th><th>Lavorazione</th><th>Overhead</th><th>Totale</th><th>Ore manodopera std.</th><th>Calcolato il</th><th></th></tr></thead><tbody>';
+    righe.forEach(r=>{
+      const mai = r.calcolato_il === null;
+      html += `<tr><td class="codice">${r.codice}</td>` +
+        `<td class="num">${mai?'—':r.costo_materiali}</td>` +
+        `<td class="num">${mai?'—':r.costo_lavorazione}</td>` +
+        `<td class="num">${mai?'—':r.costo_overhead}</td>` +
+        `<td class="num" style="font-weight:700">${mai?'—':'€ '+r.costo_totale}</td>` +
+        `<td class="num">${mai?'—':r.ore_manodopera_standard+' h'}</td>` +
+        `<td class="lav-td">${mai?'<span class="badge badge-warn">Mai calcolato</span>':r.calcolato_il}</td>` +
+        `<td><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="ricalcola('${r.codice}')">🔄</button>` +
+        `<button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="mostraDettaglioMateriali('${r.codice}')">📋 Materiali</button></td></tr>`;
+    });
+    html += '</tbody></table></div><div id="cs-dettaglio" style="margin-top:14px"></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function mostraDettaglioMateriali(codice){
+  const box = document.getElementById('cs-dettaglio');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/costo_standard/' + encodeURIComponent(codice) + '/dettaglio_materiali');
+    const d = await r.json();
+    if(!d.componenti.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun componente nella distinta di ' + codice + '.</p>'; return; }
+    let html = `<div style="font-weight:700;margin-bottom:6px">📋 Quantità standard materiali per 1 pz di ${codice}</div>` +
+      '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Quantità std./pz</th><th>Costo acquisto €/pz</th><th>Valore standard</th></tr></thead><tbody>';
+    d.componenti.forEach(c=>{
+      html += `<tr><td class="codice">${c.codice}</td><td class="num">${c.quantita_standard_unitaria}</td>` +
+        `<td class="num">${c.costo_acquisto_standard ?? '—'}</td><td class="num">${c.valore_standard ?? '—'}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function ricalcola(codice){
+  try{
+    await fetch('/api/costo_standard/' + encodeURIComponent(codice) + '/salva', {method:'POST'});
+    caricaListaCostoStandard();
+  }catch(e){
+    alert('❌ Errore di rete durante il ricalcolo.');
+  }
+}
+
+async function ricalcolaSingolo(){
+  const codice = document.getElementById('cs-codice').value.trim();
+  const esito = document.getElementById('cs-singolo-esito');
+  if(!codice){ esito.style.color='#c0392b'; esito.textContent='Inserisci un codice.'; return; }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Calcolo in corso...';
+  try{
+    const r = await fetch('/api/costo_standard/' + encodeURIComponent(codice) + '/salva', {method:'POST'});
+    const d = await r.json();
+    esito.style.color = '#2a9d5c';
+    esito.textContent = `✓ ${codice}: totale € ${d.costo_totale} (materiali ${d.costo_materiali} + lavorazione ${d.costo_lavorazione} + overhead ${d.costo_overhead})`;
+    caricaListaCostoStandard();
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
+caricaOverhead();
+caricaListaCostoStandard();
+{% endblock %}
