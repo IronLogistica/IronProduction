@@ -1263,6 +1263,40 @@ class RigaOrdineAcquistoWood(db.Model):
     ordine = db.relationship('OrdineAcquistoWood', backref='righe')
 
 
+class DDTCaricoWood(db.Model):
+    """
+    DDT di carico (arrivo merce) da fornitore per materiali Iron Wood —
+    caricato da PDF e parsato automaticamente. Ogni riga viene abbinata, se
+    possibile, alla riga corrispondente di un OrdineAcquistoWood (tramite il
+    numero d'ordine di riferimento presente nel DDT), aggiornando la
+    quantità ricevuta e caricando la Giacenza Iron Wood in automatico.
+    """
+    __tablename__ = 'ddt_carico_wood'
+    id               = db.Column(db.Integer, primary_key=True)
+    filename         = db.Column(db.String(300), nullable=False, unique=True)
+    pdf_bytes        = db.Column(db.LargeBinary, nullable=True)
+    fornitore        = db.Column(db.String(200), default='')
+    numero_ddt       = db.Column(db.String(50), default='')
+    data_ddt         = db.Column(db.String(20), default='')   # gg/mm/aaaa come estratta dal PDF
+    testo_grezzo_pdf = db.Column(db.Text, default='')
+    caricato_il      = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class RigaDDTCaricoWood(db.Model):
+    """Riga articolo di un DDT di carico — collegata (se trovata) a una riga di Ordine di Acquisto."""
+    __tablename__ = 'righe_ddt_carico_wood'
+    id                    = db.Column(db.Integer, primary_key=True)
+    ddt_id                = db.Column(db.Integer, db.ForeignKey('ddt_carico_wood.id'), nullable=False, index=True)
+    ordine_n_riferimento  = db.Column(db.String(50), default='')   # da "Ns. doc.(ORDFO) n.:" nel PDF
+    ordine_acquisto_id    = db.Column(db.Integer, db.ForeignKey('ordini_acquisto_wood.id'), nullable=True)
+    codice                = db.Column(db.String(100), nullable=False)
+    descrizione           = db.Column(db.String(300), default='')
+    quantita              = db.Column(db.Float, default=0)
+    abbinata              = db.Column(db.Boolean, default=False)   # True = trovata una riga OA corrispondente, aggiornata
+    ddt = db.relationship('DDTCaricoWood', backref='righe')
+    ordine_acquisto = db.relationship('OrdineAcquistoWood')
+
+
 class SequenzaCommessa(db.Model):
     """Contatore separato da SequenzaOrdineProduzione: numera la COMMESSA
     (non il codice OP interno), formato YYMMNNNN — vedi prossimo_numero_commessa()."""
