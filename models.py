@@ -136,6 +136,10 @@ class CicloLavoroWood(db.Model):
     sequenza            = db.Column(db.Integer, nullable=False)      # ordine del reparto nel ciclo (1,2,3...)
     centro_costo_id     = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
     produttivita_oraria = db.Column(db.Float, default=0)             # pezzi/ora per QUESTO codice in QUESTO reparto
+    # % massima di scarto fisiologicamente ammessa per QUESTO codice in QUESTO
+    # reparto (es. 2.0 = 2%) — standard comunicato all'operatore sul totem,
+    # non un vincolo bloccante: None = nessuno standard comunicato.
+    scarto_max_pct      = db.Column(db.Float, nullable=True)
     note                = db.Column(db.String(300), default='')
     creato_il           = db.Column(db.DateTime, default=datetime.utcnow)
     centro_costo        = db.relationship('CentroCostoWood')
@@ -889,6 +893,59 @@ def get_macchine_monitor():
              .distinct().order_by(CentroCostoWood.nome).all())
     return [{'id': r.id, 'nome': r.nome} for r in righe]
 
+
+class SessioneLavoroMacchina(db.Model):
+    """
+    Sessione di lavoro INIZIO/FINE avviata dall'operatore dal totem a bordo
+    macchina. Una sola sessione APERTA (terminata_il IS NULL) per centro di
+    costo alla volta: una macchina fisica lavora un OP alla volta. Alla
+    chiusura genera l'EventoConsuntivoPP corrispondente (stesso motore usato
+    dall'integrazione MasterWork in /api/pp/events, via _registra_evento_consuntivo).
+    """
+    __tablename__ = 'sessioni_lavoro_macchina'
+    id                    = db.Column(db.Integer, primary_key=True)
+    ordine_produzione_id  = db.Column(db.Integer, db.ForeignKey('ordini_produzione_pp.id'), nullable=False)
+    centro_costo_id       = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
+    iniziata_il           = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
+    terminata_il          = db.Column(db.DateTime, nullable=True)
+    pezzi_buoni           = db.Column(db.Integer, nullable=True)
+    pezzi_scarto          = db.Column(db.Integer, nullable=True)
+    event_id_generato     = db.Column(db.String(100), nullable=True)   # collega all'EventoConsuntivoPP creato alla chiusura
+    ordine_produzione     = db.relationship('OrdineProduzione')
+    centro_costo          = db.relationship('CentroCostoWood')
+
+
+class DocumentoTecnicoArticolo(db.Model):
+    """
+    Documentazione tecnica (disegno, istruzione di lavoro, PDF) legata a un
+    codice articolo — mostrata sul totem quando quell'articolo è in
+    lavorazione. Il file è salvato come base64 direttamente nel DB (niente
+    filesystem separato da gestire/perdere ai redeploy).
+    """
+    __tablename__ = 'documenti_tecnici_articolo'
+    id                = db.Column(db.Integer, primary_key=True)
+    codice_articolo   = db.Column(db.String(100), nullable=False, index=True)
+    nome_file         = db.Column(db.String(255), nullable=False)
+    tipo_mime         = db.Column(db.String(100), default='application/octet-stream')
+    contenuto_base64  = db.Column(db.Text, nullable=False)
+    note              = db.Column(db.String(300), default='')
+    caricato_il       = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class FotoLavorazioneMacchina(db.Model):
+    """
+    Foto scattate dall'operatore dal totem durante la lavorazione (come da
+    cellulare) — legate a un OP + centro di costo specifico. Salvate come
+    base64 nel DB per lo stesso motivo di DocumentoTecnicoArticolo sopra.
+    """
+    __tablename__ = 'foto_lavorazione_macchina'
+    id                    = db.Column(db.Integer, primary_key=True)
+    ordine_produzione_id  = db.Column(db.Integer, db.ForeignKey('ordini_produzione_pp.id'), nullable=False, index=True)
+    centro_costo_id       = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
+    nome_file             = db.Column(db.String(255), nullable=False)
+    contenuto_base64      = db.Column(db.Text, nullable=False)
+    caricato_il           = db.Column(db.DateTime, default=datetime.utcnow)
+
 class LogOperazione(db.Model):
     __tablename__ = "log_operazioni"
     id        = db.Column(db.Integer, primary_key=True)
@@ -1210,6 +1267,7 @@ def init_db():
         # ── Ordini di Acquisto Wood: prezzo estratto dal PDF + codice fornitore originale (prima della mappa) ──
         "ALTER TABLE righe_ordine_acquisto_wood ADD COLUMN IF NOT EXISTS prezzo_unitario DOUBLE PRECISION",
         "ALTER TABLE righe_ordine_acquisto_wood ADD COLUMN IF NOT EXISTS codice_fornitore_originale VARCHAR(100) DEFAULT ''",
+        "ALTER TABLE ciclo_lavoro_wood ADD COLUMN IF NOT EXISTS scarto_max_pct DOUBLE PRECISION",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
