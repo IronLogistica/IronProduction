@@ -4,7 +4,7 @@ from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina)
-from blueprints.magazzino.routes import _giacenza_residua_dopo_impegni, _netta_e_esplodi_wood
+from blueprints.magazzino.routes import _giacenza_residua_dopo_impegni, _netta_e_esplodi_wood, _righe_bom_attive_wood
 from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria
 
 monitor_bp = Blueprint('monitor', __name__)
@@ -81,6 +81,12 @@ def _righe_macchina(centro):
         fase_ciclo = fasi_ciclo[idx]
         tempo_standard_min_pz = (60 / fase_ciclo.produttivita_oraria) if fase_ciclo.produttivita_oraria else None
 
+        # Standard fisico di consumo materiale per 1 pezzo: componenti diretti
+        # nella distinta base di QUESTO codice (solo l'alternativa attiva, se
+        # ce ne sono — es. barra 7m vs 6m, vedi _righe_bom_attive_wood).
+        consumi_standard = [{'codice': rb.codice_figlio, 'quantita': rb.quantita}
+                            for rb in _righe_bom_attive_wood(o.codice_articolo)]
+
         posizione_manuale = sequenze_manuali.get((o.id, centro.id))
         chiave_ordine = (0, posizione_manuale) if posizione_manuale is not None else (
             1, o.priorita, o.data_prevista or datetime.max.date(), o.id)
@@ -96,6 +102,7 @@ def _righe_macchina(centro):
             'scarto_max_pct': fase_ciclo.scarto_max_pct,
             'scarto_max_pezzi': (round((o.qta_pianificata or 0) * fase_ciclo.scarto_max_pct / 100))
                                  if fase_ciclo.scarto_max_pct else None,
+            'consumi_standard': consumi_standard,
             '_chiave_ordine': chiave_ordine,
         })
 
@@ -166,7 +173,9 @@ def totem_macchina(cid):
                            'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
                            'totale': o.qta_pianificata, 'saldo': max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0),
                            'pct': round((o.qta_buona or 0) / o.qta_pianificata * 100) if o.qta_pianificata else 0,
-                           'tempo_standard_min_pz': None, 'scarto_max_pct': None, 'scarto_max_pezzi': None}
+                           'tempo_standard_min_pz': None, 'scarto_max_pct': None, 'scarto_max_pezzi': None,
+                           'consumi_standard': [{'codice': rb.codice_figlio, 'quantita': rb.quantita}
+                                                for rb in _righe_bom_attive_wood(o.codice_articolo)]}
     elif righe['lavorazione']:
         riga_attiva = righe['lavorazione'][0]
     elif righe['da_iniziare']:
