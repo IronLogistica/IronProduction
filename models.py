@@ -178,6 +178,70 @@ class ImpostazioneCostoWood(db.Model):
     aggiornato_il          = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class CostoStandardVersioneWood(db.Model):
+    """
+    Snapshot storico e VERSIONATO del costo standard di un codice — a
+    differenza di CostoStandardWood (che tiene solo l'ultimo calcolo, per la
+    vista rapida), qui ogni "Ricalcola e salva" crea una NUOVA riga con
+    versione incrementale per quel codice, mai sovrascritta. Un Ordine di
+    Produzione, al rilascio, si aggancia alla versione più recente disponibile
+    in quel momento (vedi LegameCostoStandardOrdineWood) — così un ricalcolo
+    successivo del costo standard non altera retroattivamente cosa "era" lo
+    standard quando l'ordine è partito (indispensabile per calcolare le
+    varianze in modo onesto).
+    """
+    __tablename__ = 'costo_standard_versioni_wood'
+    id                       = db.Column(db.Integer, primary_key=True)
+    codice                   = db.Column(db.String(50), nullable=False, index=True)
+    versione                 = db.Column(db.Integer, nullable=False)   # 1, 2, 3... incrementale per codice
+    costo_materiali          = db.Column(db.Float, default=0)
+    costo_lavorazione        = db.Column(db.Float, default=0)
+    costo_overhead           = db.Column(db.Float, default=0)
+    costo_totale             = db.Column(db.Float, default=0)
+    ore_manodopera_standard  = db.Column(db.Float, default=0)
+    overhead_pct_usata       = db.Column(db.Float, default=0)   # aliquota overhead applicata in QUESTO calcolo
+    completo                 = db.Column(db.Boolean, default=True)
+    codici_senza_costo       = db.Column(db.Text, default='')
+    calcolato_il             = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('codice', 'versione', name='_costo_std_codice_versione_uc'),)
+
+
+class LegameCostoStandardOrdineWood(db.Model):
+    """
+    Aggancia un Ordine di Produzione (per codice OP, non per id — coerente
+    con come il resto del programma referenzia gli OP nei movimenti/eventi)
+    alla versione di Costo Standard valida al momento del suo RILASCIO.
+    L'analisi varianze usa sempre questa versione congelata, mai l'ultima
+    disponibile — altrimenti un ricalcolo successivo falserebbe le varianze
+    di ordini già in corso.
+    """
+    __tablename__ = 'legame_costo_standard_ordine_wood'
+    op_code                     = db.Column(db.String(20), primary_key=True)
+    costo_standard_versione_id  = db.Column(db.Integer, db.ForeignKey('costo_standard_versioni_wood.id'), nullable=True)
+    agganciato_il                = db.Column(db.DateTime, default=datetime.utcnow)
+    versione = db.relationship('CostoStandardVersioneWood')
+
+
+class CostoStandardVersioneDettaglioWood(db.Model):
+    """
+    Dettaglio PER COMPONENTE di una versione di Costo Standard — quantità e
+    prezzo unitario congelati al momento di QUEL calcolo, per ogni codice
+    toccato dall'esplosione della BOM. Senza questo dettaglio, l'analisi
+    varianze per componente dovrebbe usare prezzi/quantità CORRENTI come
+    proxy dello standard, disallineandosi dal totale congelato (incoerenza
+    seria per un controllo di gestione serio) — con questo dettaglio la
+    varianza prezzo/quantità per componente riconcilia esattamente col totale.
+    """
+    __tablename__ = 'costo_standard_versione_dettaglio_wood'
+    id                       = db.Column(db.Integer, primary_key=True)
+    versione_id              = db.Column(db.Integer, db.ForeignKey('costo_standard_versioni_wood.id'), nullable=False, index=True)
+    codice_componente        = db.Column(db.String(50), nullable=False)
+    quantita_standard        = db.Column(db.Float, default=0)   # per 1 pz del codice padre di quella versione
+    prezzo_standard_unitario = db.Column(db.Float, nullable=True)  # None = componente senza prezzo al momento del calcolo
+    tipo                     = db.Column(db.String(20), default='')  # ACQUISTO / SEMILAVORATO / DA_CLASSIFICARE
+    versione = db.relationship('CostoStandardVersioneWood', backref='dettagli')
+
+
 class CostoStandardWood(db.Model):
     """
     Costo standard calcolato (e salvato) per un codice Iron Wood, secondo la
