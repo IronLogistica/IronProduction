@@ -980,6 +980,7 @@ def api_centri_costo_lista():
         'costo_orario': c.costo_orario or 0, 'note': c.note,
         'attivo': c.attivo if c.attivo is not None else True,
         'reparto_gruppo': c.reparto_gruppo or '',
+        'escluso_da_monitor_produzione': c.escluso_da_monitor_produzione or False,
         'tariffa_manodopera_diretta_oraria': c.tariffa_manodopera_diretta_oraria or 0,
     } for c in righe])
 
@@ -1072,6 +1073,7 @@ def api_centro_costo_configurazione(cid):
     return jsonify({
         'id': c.id, 'nome': c.nome, 'esterno': c.esterno, 'note': c.note,
         'reparto_gruppo': c.reparto_gruppo, 'attivo': c.attivo,
+        'escluso_da_monitor_produzione': c.escluso_da_monitor_produzione,
         'fornitore_esterno': c.fornitore_esterno, 'tariffa_esterna': c.tariffa_esterna,
         'driver_attivita': c.driver_attivita, 'n_risorse_equivalenti': c.n_risorse_equivalenti,
         'ore_teoriche_periodo': c.ore_teoriche_periodo, 'pct_efficienza': c.pct_efficienza,
@@ -1104,6 +1106,7 @@ def api_centro_costo_configurazione_salva(cid):
     try:
         if 'esterno' in d: c.esterno = bool(d['esterno'])
         if 'attivo' in d: c.attivo = bool(d['attivo'])
+        if 'escluso_da_monitor_produzione' in d: c.escluso_da_monitor_produzione = bool(d['escluso_da_monitor_produzione'])
         if 'reparto_gruppo' in d: c.reparto_gruppo = (d.get('reparto_gruppo') or '').strip()
         if 'note' in d: c.note = (d.get('note') or '').strip()
         if 'fornitore_esterno' in d: c.fornitore_esterno = (d.get('fornitore_esterno') or '').strip()
