@@ -194,8 +194,13 @@ def api_evento():
 
             try:
                 costo = _calcola_costo_standard(o.codice_articolo)
+                if costo['codici_senza_costo']:
+                    nota_costo = (f'Consuntivo {good} pz buoni — ⚠️ COSTO INCOMPLETO: mancano prezzi per '
+                                   f'{", ".join(sorted(costo["codici_senza_costo"]))} — totale sottostimato')
+                else:
+                    nota_costo = f'Consuntivo {good} pz buoni'
                 _registra_movimento_giacenza(o.codice_articolo, good, 'carico_produzione',
-                                              riferimento=o.codice, note=f'Consuntivo {good} pz buoni',
+                                              riferimento=o.codice, note=nota_costo,
                                               costo_unitario=costo['costo_totale'])
             except Exception:
                 pass  # il carico a magazzino non deve mai bloccare la registrazione del consuntivo
