@@ -191,6 +191,7 @@
   <div class="nav-group">
     <div class="nav-group-header"><div class="nav-group-label">Produzione</div></div>
     <a class="nav-item {% if active=='produzione_pp' %}active{% endif %}" href="/ordini-produzione"><span class="nav-icon">🏭</span> Ordini Produzione</a>
+    <a class="nav-item {% if active=='documentazione_articolo' %}active{% endif %}" href="/documentazione-articolo"><span class="nav-icon">📚</span> Documentazione Articolo</a>
     {% for m in macchine_monitor %}
     <a class="nav-item {% if active_page=='monitor' and request.view_args and request.view_args.get('cid')|string == m.id|string %}active{% endif %}"
        href="/monitor/macchina/{{ m.id }}"><span class="nav-icon">⚙️</span> Monitor {{ m.nome }}</a>
