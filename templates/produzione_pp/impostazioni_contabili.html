@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">⚙️ Soglie di Allarme e Mappa Conti Contabili</div>
+</div>
+
+<div class="mon-section">
+  <div class="section-hdr postazione-hdr">🚨 Soglie di allarme varianza (%)</div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+      Se una varianza (in valore assoluto) supera questa percentuale rispetto allo standard, il report di commessa
+      la segnala automaticamente in rosso/verde in cima alla pagina — non blocca nulla, è solo per l'evidenza.
+    </p>
+    <div id="soglie-form" style="display:grid;grid-template-columns:repeat(5,1fr);gap:12px;max-width:800px">Caricamento...</div>
+    <button class="btn btn-primary" style="margin-top:12px" onclick="salvaSoglie()">💾 Salva soglie</button>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🧾 Mappa Conti Contabili (predisposizione MasterLedger)</div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+      Assegna un conto a ogni voce: viene usato per generare i movimenti contabili di ogni commessa
+      (vedi Analisi Costo → Predisposizione contabile). Lascia vuoto se non hai ancora deciso: i movimenti
+      verranno comunque generati con il conto vuoto, da compilare più avanti.
+    </p>
+    <div id="conti-lista">Caricamento...</div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+async function caricaSoglie(){
+  const box = document.getElementById('soglie-form');
+  try{
+    const r = await fetch('/api/impostazioni/soglie_varianza');
+    const s = await r.json();
+    const campi = [['materiali_pct','Materiali'],['lavorazione_pct','Lavorazione'],['manodopera_pct','Manodopera'],['totale_pct','Totale commessa'],['scarto_pct','Scarto']];
+    box.innerHTML = campi.map(([k,label]) => `
+      <div><label style="font-size:12px;color:var(--text-dim);display:block;margin-bottom:4px">${label} %</label>
+      <input type="number" step="0.1" id="soglia-${k}" value="${s[k]}" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"></div>
+    `).join('');
+  }catch(e){ box.innerHTML = 'Errore caricamento'; }
+}
+
+async function salvaSoglie(){
+  const campi = ['materiali_pct','lavorazione_pct','manodopera_pct','totale_pct','scarto_pct'];
+  const payload = {};
+  campi.forEach(k => payload[k] = parseFloat(document.getElementById('soglia-'+k).value) || 0);
+  try{
+    const r = await fetch('/api/impostazioni/soglie_varianza', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    showToast('✅ Soglie salvate');
+  }catch(e){ alert('❌ Errore di rete'); }
+}
+
+async function caricaContiContabili(){
+  const box = document.getElementById('conti-lista');
+  try{
+    const r = await fetch('/api/impostazioni/conti_contabili');
+    const righe = await r.json();
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Voce</th><th>Descrizione</th><th>Conto</th></tr></thead><tbody>';
+    righe.forEach(c=>{
+      html += `<tr><td class="codice">${c.voce}</td><td>${c.descrizione_conto}</td>` +
+        `<td><input type="text" value="${c.conto}" placeholder="es. 610010" style="width:140px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)" onchange="salvaConto(${c.id}, this.value)"></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){ box.innerHTML = 'Errore caricamento'; }
+}
+
+async function salvaConto(id, valore){
+  try{
+    const r = await fetch('/api/impostazioni/conti_contabili/' + id, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({conto: valore.trim()})});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    showToast('✅ Conto salvato');
+  }catch(e){ alert('❌ Errore di rete'); }
+}
+
+caricaSoglie();
+caricaContiContabili();
+{% endblock %}

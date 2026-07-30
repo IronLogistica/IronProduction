@@ -3,9 +3,20 @@
 <div class="page-toolbar">
   <div class="page-title">📊 Analisi Costo — {{ codice }}</div>
   <a class="btn btn-ghost" href="/ordini-produzione" style="margin-left:auto">← Torna agli Ordini</a>
+  <a class="btn btn-ghost" href="/impostazioni-contabili">⚙️ Soglie / Conti contabili</a>
 </div>
 
 <div id="ac-testata" class="mon-section" style="padding:14px">Caricamento...</div>
+
+<div id="ac-segnalazioni" class="mon-section" style="margin-top:14px;display:none">
+  <div class="section-hdr postazione-hdr" style="background:#7a1f1f">🚨 Segnalazioni (oltre soglia configurata)</div>
+  <div id="ac-segnalazioni-lista" style="padding:14px;font-size:12px"></div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div class="section-hdr postazione-hdr" style="background:#1e5fa8">🧭 Riepilogo manageriale</div>
+  <div id="ac-riepilogo" style="padding:14px;font-size:13px">Caricamento...</div>
+</div>
 
 <div id="ac-limiti" class="mon-section" style="margin-top:14px;display:none">
   <div class="section-hdr postazione-hdr" style="background:#7a5c00">⚠️ Limiti e avvertenze sui dati sottostanti</div>
@@ -25,6 +36,19 @@
 <div class="mon-section" style="margin-top:14px">
   <div class="section-hdr postazione-hdr">🔧 Dettaglio varianza lavorazione per fase</div>
   <div id="ac-lavorazione" style="padding:14px">Caricamento...</div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div class="section-hdr postazione-hdr">🧾 Predisposizione contabile (MasterLedger — non ancora integrato)</div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Genera i movimenti in partita doppia per questa commessa a partire dai numeri sopra — non trasmette nulla
+      automaticamente: resta qui finché non lo esporti in CSV (o finché MasterLedger non sarà collegato davvero).
+    </p>
+    <button class="btn btn-primary" onclick="generaMovimentiContabili()">🧮 Genera / aggiorna movimenti</button>
+    <a class="btn btn-ghost" href="/api/movimenti-contabili/export.csv" target="_blank">⬇️ Esporta CSV (non ancora esportati)</a>
+    <div id="ac-movimenti" style="margin-top:12px">Nessun movimento generato ancora per questo OP.</div>
+  </div>
 </div>
 {% endblock %}
 {% block scripts %}
@@ -54,6 +78,17 @@ async function caricaAnalisiCosto(){
         <div><b>Scarto:</b> ${d.qta_scarto}</div>
         <div><b>Standard versione:</b> ${d.versione_standard ? '#'+d.versione_standard.versione+' del '+d.versione_standard.calcolato_il + (d.versione_standard.completo?'':' ⚠️ incompleto') : '⚠️ nessuna'}</div>
       </div>`;
+
+    // ── Segnalazioni oltre soglia ──
+    if(d.segnalazioni && d.segnalazioni.length){
+      document.getElementById('ac-segnalazioni').style.display = '';
+      document.getElementById('ac-segnalazioni-lista').innerHTML = '<ul style="margin:0;padding-left:18px">' +
+        d.segnalazioni.map(s => `<li style="margin-bottom:6px;color:${s.livello==='sfavorevole'?'#e74c3c':'#2a9d5c'}">${s.messaggio}</li>`).join('') + '</ul>';
+    }
+
+    // ── Riepilogo manageriale ──
+    document.getElementById('ac-riepilogo').innerHTML = '<ul style="margin:0;padding-left:18px">' +
+      d.riepilogo_manageriale.map(m => `<li style="margin-bottom:6px">${m}</li>`).join('') + '</ul>';
 
     // ── Limiti ──
     if(d.limiti && d.limiti.length){
@@ -131,5 +166,35 @@ async function caricaAnalisiCosto(){
   }
 }
 
+async function generaMovimentiContabili(){
+  try{
+    const r = await fetch('/api/ordini-produzione/' + encodeURIComponent(CODICE_OP) + '/genera-movimenti-contabili', {method:'POST'});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    if(d.avvisi && d.avvisi.length) alert('⚠️ ' + d.avvisi.join('\n'));
+    caricaMovimentiContabili();
+  }catch(e){ alert('❌ Errore di rete'); }
+}
+
+async function caricaMovimentiContabili(){
+  const box = document.getElementById('ac-movimenti');
+  try{
+    const r = await fetch('/api/ordini-produzione/' + encodeURIComponent(CODICE_OP) + '/movimenti-contabili');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = 'Nessun movimento generato ancora per questo OP.'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
+      '<th>Data</th><th>Causale</th><th>Conto</th><th>Centro di costo</th><th>Dare</th><th>Avere</th><th>Esportato</th></tr></thead><tbody>';
+    righe.forEach(m=>{
+      html += `<tr><td>${m.data}</td><td style="font-size:11px">${m.causale}</td><td class="codice">${m.conto||'⚠️ non mappato'}</td>` +
+        `<td>${m.centro_costo||'—'}</td><td class="num">${m.dare_avere==='DARE'?'€ '+m.importo.toFixed(2):''}</td>` +
+        `<td class="num">${m.dare_avere==='AVERE'?'€ '+m.importo.toFixed(2):''}</td>` +
+        `<td>${m.esportato?'✅':'—'}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){ box.innerHTML = '<p style="color:#c0392b">Errore caricamento movimenti</p>'; }
+}
+
+caricaMovimentiContabili();
 caricaAnalisiCosto();
 {% endblock %}
