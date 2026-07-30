@@ -97,7 +97,6 @@ class CentroCostoWood(db.Model):
     pct_efficienza                      = db.Column(db.Float, default=100)        # % di utilizzo pianificato (assenze, setup, manutenzione...)
     periodo_riferimento                 = db.Column(db.String(10), default='mensile')  # 'mensile' o 'annuale' — unità delle ore teoriche sopra
     tariffa_manodopera_diretta_oraria   = db.Column(db.Float, default=0)          # €/h manodopera diretta, calcolata separatamente da costo_orario
-    aliquota_overhead_conversione_pct   = db.Column(db.Float, default=0)          # % applicata a macchina + manodopera della fase, mai ai materiali
 
 
 class CostoPianificatoCentroWood(db.Model):
@@ -172,11 +171,20 @@ class MovimentoGiacenzaWood(db.Model):
 
 
 class ImpostazioneCostoWood(db.Model):
-    """Impostazioni globali per il calcolo del costo standard Iron Wood (riga singola)."""
+    """
+    Impostazioni globali per il calcolo del costo standard Iron Wood (riga
+    singola) — logica SAP a due basi separate, non una percentuale unica:
+    'Overhead materiali' si applica SOLO ai materiali, 'Overhead di
+    produzione' si applica SOLO a lavorazione + manodopera diretta. Il vecchio
+    campo aliquota_overhead_pct resta per compatibilità di lettura di
+    versioni salvate prima di questa modifica, ma non è più scritto.
+    """
     __tablename__ = 'impostazioni_costo_wood'
-    id                     = db.Column(db.Integer, primary_key=True)
-    aliquota_overhead_pct  = db.Column(db.Float, default=0)   # % spese generali applicata su (materiali + lavorazione)
-    aggiornato_il          = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    id                              = db.Column(db.Integer, primary_key=True)
+    aliquota_overhead_pct           = db.Column(db.Float, default=0)   # LEGACY, non più usato per nuovi calcoli
+    aliquota_overhead_materiali_pct = db.Column(db.Float, default=0)   # % su costo_materiali
+    aliquota_overhead_produzione_pct = db.Column(db.Float, default=0)  # % su (costo_lavorazione + costo_manodopera)
+    aggiornato_il                   = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class CostoStandardVersioneWood(db.Model):
@@ -196,13 +204,16 @@ class CostoStandardVersioneWood(db.Model):
     codice                   = db.Column(db.String(50), nullable=False, index=True)
     versione                 = db.Column(db.Integer, nullable=False)   # 1, 2, 3... incrementale per codice
     costo_materiali          = db.Column(db.Float, default=0)
-    costo_lavorazione        = db.Column(db.Float, default=0)  # subtotale: macchina + manodopera diretta
-    costo_macchina            = db.Column(db.Float, default=0)
-    costo_manodopera_diretta  = db.Column(db.Float, default=0)
-    costo_overhead           = db.Column(db.Float, default=0)
+    costo_lavorazione        = db.Column(db.Float, default=0)   # SOLO macchina/reparto (costo_orario, no manodopera)
+    costo_manodopera         = db.Column(db.Float, default=0)   # manodopera diretta, tariffa separata (tariffa_manodopera_diretta_oraria)
+    costo_overhead           = db.Column(db.Float, default=0)   # overhead_materiali + overhead_produzione, totale
+    costo_overhead_materiali = db.Column(db.Float, default=0)
+    costo_overhead_produzione = db.Column(db.Float, default=0)
     costo_totale             = db.Column(db.Float, default=0)
     ore_manodopera_standard  = db.Column(db.Float, default=0)
-    overhead_pct_usata       = db.Column(db.Float, default=0)   # aliquota overhead applicata in QUESTO calcolo
+    overhead_pct_usata       = db.Column(db.Float, default=0)   # LEGACY
+    overhead_materiali_pct_usata  = db.Column(db.Float, default=0)  # aliquota materiali applicata in QUESTO calcolo
+    overhead_produzione_pct_usata = db.Column(db.Float, default=0)  # aliquota produzione applicata in QUESTO calcolo
     completo                 = db.Column(db.Boolean, default=True)
     codici_senza_costo       = db.Column(db.Text, default='')
     calcolato_il             = db.Column(db.DateTime, default=datetime.utcnow)
@@ -255,10 +266,11 @@ class CostoStandardWood(db.Model):
     __tablename__ = 'costo_standard_wood'
     codice                    = db.Column(db.String(50), primary_key=True)
     costo_materiali           = db.Column(db.Float, default=0)
-    costo_lavorazione         = db.Column(db.Float, default=0)  # subtotale: macchina + manodopera diretta
-    costo_macchina             = db.Column(db.Float, default=0)
-    costo_manodopera_diretta   = db.Column(db.Float, default=0)
-    costo_overhead            = db.Column(db.Float, default=0)
+    costo_lavorazione         = db.Column(db.Float, default=0)   # SOLO macchina/reparto
+    costo_manodopera          = db.Column(db.Float, default=0)   # manodopera diretta, tariffa separata
+    costo_overhead            = db.Column(db.Float, default=0)   # totale (materiali + produzione)
+    costo_overhead_materiali  = db.Column(db.Float, default=0)
+    costo_overhead_produzione = db.Column(db.Float, default=0)
     costo_totale              = db.Column(db.Float, default=0)
     ore_manodopera_standard   = db.Column(db.Float, default=0)  # ore totali standard per pezzo (dirette + di ogni sottocomponente)
     completo                  = db.Column(db.Boolean, default=True)   # False = almeno un componente foglia nell'albero non ha un prezzo configurato: il totale è sottostimato, non affidabile
@@ -1092,6 +1104,17 @@ def init_db():
         "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS ore_manodopera_standard DOUBLE PRECISION DEFAULT 0",
         "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS completo BOOLEAN DEFAULT TRUE",
         "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS codici_senza_costo TEXT DEFAULT ''",
+        # ── Costo Standard: manodopera diretta separata + overhead a due basi (stile SAP) ──
+        "ALTER TABLE impostazioni_costo_wood ADD COLUMN IF NOT EXISTS aliquota_overhead_materiali_pct DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE impostazioni_costo_wood ADD COLUMN IF NOT EXISTS aliquota_overhead_produzione_pct DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS costo_manodopera DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS costo_overhead_materiali DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS costo_overhead_produzione DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS costo_manodopera DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS costo_overhead_materiali DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS costo_overhead_produzione DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS overhead_materiali_pct_usata DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS overhead_produzione_pct_usata DOUBLE PRECISION DEFAULT 0",
         # ── Centro di Costo: anagrafica estesa e capacità/driver (Configura) ──
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS reparto_gruppo VARCHAR(100) DEFAULT ''",
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS attivo BOOLEAN DEFAULT TRUE",
@@ -1103,11 +1126,6 @@ def init_db():
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS pct_efficienza DOUBLE PRECISION DEFAULT 100",
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS periodo_riferimento VARCHAR(10) DEFAULT 'mensile'",
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS tariffa_manodopera_diretta_oraria DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS aliquota_overhead_conversione_pct DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS costo_macchina DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS costo_manodopera_diretta DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS costo_macchina DOUBLE PRECISION DEFAULT 0",
-        "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS costo_manodopera_diretta DOUBLE PRECISION DEFAULT 0",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
@@ -1201,6 +1219,48 @@ def prossimo_codice_ordine_pp():
     seq.ultimo_numero += 1
     db.session.flush()
     return f"OP-{anno}-{seq.ultimo_numero:06d}"
+
+
+class OrdineAcquistoWood(db.Model):
+    """
+    Ordine di acquisto a un fornitore per materiali Iron Wood (materia
+    prima, componenti d'acquisto, laserati...) — caricato da PDF fornitore
+    e parsato automaticamente (clone del sistema di MasterLogistic-WMS,
+    adattato). Vive nel DB locale (Postgres): il PDF stesso è salvato come
+    blob in 'pdf_bytes', NON su file — su Railway i file locali vengono
+    cancellati ad ogni redeploy, un DB no.
+    """
+    __tablename__ = 'ordini_acquisto_wood'
+    id                = db.Column(db.Integer, primary_key=True)
+    filename          = db.Column(db.String(300), nullable=False, unique=True)  # nome originale del PDF caricato
+    pdf_bytes         = db.Column(db.LargeBinary, nullable=True)   # contenuto del PDF, per riaprirlo/riscaricarlo
+    fornitore         = db.Column(db.String(200), default='Sconosciuto')
+    ordine_n          = db.Column(db.String(50), default='N/D')
+    rif_fornitore     = db.Column(db.String(100), default='')
+    data_ordine       = db.Column(db.Date, nullable=True)
+    data_consegna     = db.Column(db.Date, nullable=True)    # data comune di evasione prevista (modificabile a mano)
+    ritiro_proprio    = db.Column(db.Boolean, default=False)  # True = ritiriamo noi, False = consegnano loro
+    confermato        = db.Column(db.Boolean, default=False)
+    stato_label       = db.Column(db.String(30), default='DA_CONFERMARE')
+    # DA_CONFERMARE / ORDINE_CONFERMATO / ORDINE_IN_ARRIVO / ORDINE_DA_RITIRARE / ORDINE_RICEVUTO
+    nota_interna      = db.Column(db.String(500), default='')
+    testo_grezzo_pdf  = db.Column(db.Text, default='')   # testo estratto da PyPDF2, per debug/riparsing futuro
+    caricato_il       = db.Column(db.DateTime, default=datetime.utcnow)
+    aggiornato_il     = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class RigaOrdineAcquistoWood(db.Model):
+    """Riga articolo di un Ordine di Acquisto Iron Wood, con quantità ordinata e ricevuta."""
+    __tablename__ = 'righe_ordine_acquisto_wood'
+    id             = db.Column(db.Integer, primary_key=True)
+    ordine_id      = db.Column(db.Integer, db.ForeignKey('ordini_acquisto_wood.id'), nullable=False, index=True)
+    codice         = db.Column(db.String(100), nullable=False)
+    descrizione    = db.Column(db.String(300), default='')
+    unita_misura   = db.Column(db.String(10), default='')
+    qta_originale  = db.Column(db.Float, default=0)
+    qta_ricevuta   = db.Column(db.Float, default=0)
+    data_evasione  = db.Column(db.String(20), default='')   # come estratta dal PDF, stringa gg/mm/aaaa
+    ordine = db.relationship('OrdineAcquistoWood', backref='righe')
 
 
 class SequenzaCommessa(db.Model):

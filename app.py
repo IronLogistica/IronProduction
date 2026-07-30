@@ -15,6 +15,7 @@ def create_app():
     from blueprints.terzisti.routes import terzisti_bp
     from blueprints.magazzino.routes import magazzino_bp
     from blueprints.produzione_pp.routes import pp_bp
+    from blueprints.acquisti_wood.routes import acquisti_wood_bp
 
     app.register_blueprint(monitor_bp)
     app.register_blueprint(kanban_bp)
@@ -22,6 +23,7 @@ def create_app():
     app.register_blueprint(terzisti_bp)
     app.register_blueprint(magazzino_bp)
     app.register_blueprint(pp_bp)
+    app.register_blueprint(acquisti_wood_bp)
 
     @app.context_processor
     def inject_globals():
