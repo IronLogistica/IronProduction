@@ -870,13 +870,17 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
 def _giacenza_residua_dopo_impegni(escludi_op_id=None):
     """
     Parte dalla giacenza fisica attuale e simula il consumo di TUTTI gli OP
-    aperti (stato in STATI_CHE_IMPEGNANO), in ordine di creazione (i più
-    vecchi vengono serviti prima) — ritorna il dict {codice: qta rimasta}
-    DOPO aver tolto quanto già impegnato da quegli OP.
+    aperti (stato in STATI_CHE_IMPEGNANO), servendo PRIMA gli OP con priorità
+    più alta (numero più basso), e a parità di priorità i più vecchi — così
+    quando il materiale non basta per tutti, a decidere chi lo riceve per
+    primo è la priorità che il capo ha impostato sull'OP (colonna PRIO in
+    Ordini di Produzione), non semplicemente chi è stato creato prima.
+    Ritorna il dict {codice: qta rimasta} DOPO aver tolto quanto già
+    impegnato da quegli OP.
     """
     giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
     op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
-                 .order_by(OrdineProduzione.id.asc()).all())
+                 .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
     for op in op_aperti:
         if escludi_op_id and op.id == escludi_op_id:
             continue
