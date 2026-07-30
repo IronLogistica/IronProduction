@@ -341,14 +341,20 @@ def api_evento():
                 if riga_ciclo and riga_ciclo.produttivita_oraria:
                     tempo_standard_min = (good / riga_ciclo.produttivita_oraria) * 60
                     costo_orario = riga_ciclo.centro_costo.costo_orario or 0
+                    tariffa_manodopera = riga_ciclo.centro_costo.tariffa_manodopera_diretta_oraria or 0
                     costo_standard_lav = (tempo_standard_min / 60) * costo_orario
                     costo_reale_lav = (tempo / 60) * costo_orario
+                    costo_standard_mdo = (tempo_standard_min / 60) * tariffa_manodopera
+                    costo_reale_mdo = (tempo / 60) * tariffa_manodopera
                     db.session.add(VarianzaProduzioneWood(
                         op_code=o.codice, codice_articolo=o.codice_articolo, fase=fase_nome, quantita=good,
                         tempo_standard_minuti=round(tempo_standard_min, 2), tempo_reale_minuti=tempo,
                         costo_standard_lavorazione=round(costo_standard_lav, 4),
                         costo_reale_lavorazione=round(costo_reale_lav, 4),
+                        costo_standard_manodopera=round(costo_standard_mdo, 4),
+                        costo_reale_manodopera=round(costo_reale_mdo, 4),
                         varianza=round(costo_reale_lav - costo_standard_lav, 4),
+                        varianza_manodopera=round(costo_reale_mdo - costo_standard_mdo, 4),
                     ))
             except Exception:
                 pass  # nessuna varianza registrabile (fase non abbinabile) non deve bloccare il consuntivo
@@ -469,17 +475,19 @@ def api_analisi_costo_ordine(codice):
     eff_lavorazione_tot = round(sum(v.costo_reale_lavorazione for v in varianze_lav), 2)
     std_lavorazione_da_eventi = round(sum(v.costo_standard_lavorazione for v in varianze_lav), 2)
     var_efficienza_tot = round(sum(v.varianza for v in varianze_lav), 2)
+    eff_manodopera_tot = round(sum(v.costo_reale_manodopera for v in varianze_lav), 2)
+    var_efficienza_manodopera_tot = round(sum(v.varianza_manodopera for v in varianze_lav), 2)
 
     eventi = EventoConsuntivoPP.query.filter_by(op_code=o.codice).all()
     fasi_tracciate = {v.fase for v in varianze_lav}
     fasi_non_tracciate = sorted({e.fase for e in eventi if e.fase not in fasi_tracciate})
     if fasi_non_tracciate:
         limiti.append(f'Fasi consuntivate ma non abbinabili a un reparto del Ciclo di Lavoro (nome fase diverso dal nome '
-                       f'reparto): {", ".join(fasi_non_tracciate)} — il loro tempo/costo NON è incluso nella lavorazione effettiva.')
+                       f'reparto): {", ".join(fasi_non_tracciate)} — il loro tempo/costo NON è incluso nella lavorazione/manodopera effettiva.')
     limiti.append('Varianza tariffa manodopera/centro di costo: NON disponibile con i dati attualmente registrati — '
                    'il sistema non conserva la tariffa oraria del centro di costo separata per lo standard congelato '
-                   'al rilascio; la varianza di lavorazione mostrata è quindi solo di TEMPO/EFFICIENZA (tariffa identica '
-                   'usata sia per lo standard che per il reale, quella corrente del centro al momento del consuntivo).')
+                   'al rilascio; le varianze di lavorazione e manodopera mostrate sono quindi solo di TEMPO/EFFICIENZA '
+                   '(tariffa identica usata sia per lo standard che per il reale, quella corrente del centro al momento del consuntivo).')
 
     # ── Scarto ──────────────────────────────────────────────────────────
     impatto_scarto = round(std_unit['costo_totale'] * qta_scarto, 2)
@@ -493,30 +501,36 @@ def api_analisi_costo_ordine(codice):
                        f'ora è {overhead_pct_corrente}% — parte della varianza overhead deriva da questo cambio, non da un vero scostamento operativo.')
 
     # ── Totali ───────────────────────────────────────────────────────────
-    eff_totale_tot = round(eff_materiali_tot + eff_lavorazione_tot + eff_overhead_tot, 2)
+    eff_totale_tot = round(eff_materiali_tot + eff_lavorazione_tot + eff_manodopera_tot + eff_overhead_tot, 2)
     var_materiali_tot = round(eff_materiali_tot - std_materiali_tot, 2)
     var_lavorazione_tot = round(eff_lavorazione_tot - std_lavorazione_tot, 2)
+    var_manodopera_tot = round(eff_manodopera_tot - std_manodopera_tot, 2)
     var_totale = round(eff_totale_tot - std_totale_tot, 2)
     var_totale_pct = round((var_totale / std_totale_tot) * 100, 2) if std_totale_tot else None
+    var_scarto_pct = round((qta_scarto / (qta_buona + qta_scarto)) * 100, 2) if (qta_buona + qta_scarto) else None
 
     return jsonify(ok=True, codice=o.codice, codice_articolo=o.codice_articolo, stato=o.stato,
         qta_pianificata=o.qta_pianificata, qta_buona=qta_buona, qta_scarto=qta_scarto,
         data_rilascio=o.data_rilascio.strftime('%d/%m/%Y %H:%M') if o.data_rilascio else None,
         versione_standard=versione_info,
-        standard={'materiali': std_materiali_tot, 'lavorazione': std_lavorazione_tot, 'overhead': std_overhead_tot,
-                   'totale': std_totale_tot, 'totale_su_pianificata': std_totale_pianificato,
+        standard={'materiali': std_materiali_tot, 'lavorazione': std_lavorazione_tot, 'manodopera': std_manodopera_tot,
+                   'overhead': std_overhead_tot, 'totale': std_totale_tot, 'totale_su_pianificata': std_totale_pianificato,
                    'unitario': {'materiali': std_unit['costo_materiali'], 'lavorazione': std_unit['costo_lavorazione'],
+                                'manodopera': std_unit['costo_manodopera'],
                                 'overhead': std_unit['costo_overhead'], 'totale': std_unit['costo_totale']}},
-        effettivo={'materiali': eff_materiali_tot, 'lavorazione': eff_lavorazione_tot, 'overhead': eff_overhead_tot,
-                    'totale': eff_totale_tot},
-        varianza={'materiali': var_materiali_tot, 'lavorazione': var_lavorazione_tot, 'overhead': var_overhead,
-                   'totale': var_totale, 'totale_pct': var_totale_pct,
-                   'scarto_impatto': impatto_scarto,
-                   'lavorazione_efficienza': var_efficienza_tot, 'lavorazione_tariffa': None},
+        effettivo={'materiali': eff_materiali_tot, 'lavorazione': eff_lavorazione_tot, 'manodopera': eff_manodopera_tot,
+                    'overhead': eff_overhead_tot, 'totale': eff_totale_tot},
+        varianza={'materiali': var_materiali_tot, 'lavorazione': var_lavorazione_tot, 'manodopera': var_manodopera_tot,
+                   'overhead': var_overhead, 'totale': var_totale, 'totale_pct': var_totale_pct,
+                   'scarto_impatto': impatto_scarto, 'scarto_pct': var_scarto_pct,
+                   'lavorazione_efficienza': var_efficienza_tot, 'manodopera_efficienza': var_efficienza_manodopera_tot,
+                   'lavorazione_tariffa': None, 'manodopera_tariffa': None},
         dettaglio_materiali=dettaglio_materiali,
         dettaglio_lavorazione=[{
             'fase': v.fase, 'tempo_standard_minuti': v.tempo_standard_minuti, 'tempo_reale_minuti': v.tempo_reale_minuti,
             'costo_standard': v.costo_standard_lavorazione, 'costo_reale': v.costo_reale_lavorazione, 'varianza': v.varianza,
+            'costo_standard_manodopera': v.costo_standard_manodopera, 'costo_reale_manodopera': v.costo_reale_manodopera,
+            'varianza_manodopera': v.varianza_manodopera,
         } for v in varianze_lav],
         limiti=limiti,
     )
