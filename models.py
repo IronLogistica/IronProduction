@@ -97,6 +97,7 @@ class CentroCostoWood(db.Model):
     pct_efficienza                      = db.Column(db.Float, default=100)        # % di utilizzo pianificato (assenze, setup, manutenzione...)
     periodo_riferimento                 = db.Column(db.String(10), default='mensile')  # 'mensile' o 'annuale' — unità delle ore teoriche sopra
     tariffa_manodopera_diretta_oraria   = db.Column(db.Float, default=0)          # €/h manodopera diretta, calcolata separatamente da costo_orario
+    aliquota_overhead_conversione_pct   = db.Column(db.Float, default=0)          # % applicata a macchina + manodopera della fase, mai ai materiali
 
 
 class CostoPianificatoCentroWood(db.Model):
@@ -195,7 +196,9 @@ class CostoStandardVersioneWood(db.Model):
     codice                   = db.Column(db.String(50), nullable=False, index=True)
     versione                 = db.Column(db.Integer, nullable=False)   # 1, 2, 3... incrementale per codice
     costo_materiali          = db.Column(db.Float, default=0)
-    costo_lavorazione        = db.Column(db.Float, default=0)
+    costo_lavorazione        = db.Column(db.Float, default=0)  # subtotale: macchina + manodopera diretta
+    costo_macchina            = db.Column(db.Float, default=0)
+    costo_manodopera_diretta  = db.Column(db.Float, default=0)
     costo_overhead           = db.Column(db.Float, default=0)
     costo_totale             = db.Column(db.Float, default=0)
     ore_manodopera_standard  = db.Column(db.Float, default=0)
@@ -252,7 +255,9 @@ class CostoStandardWood(db.Model):
     __tablename__ = 'costo_standard_wood'
     codice                    = db.Column(db.String(50), primary_key=True)
     costo_materiali           = db.Column(db.Float, default=0)
-    costo_lavorazione         = db.Column(db.Float, default=0)
+    costo_lavorazione         = db.Column(db.Float, default=0)  # subtotale: macchina + manodopera diretta
+    costo_macchina             = db.Column(db.Float, default=0)
+    costo_manodopera_diretta   = db.Column(db.Float, default=0)
     costo_overhead            = db.Column(db.Float, default=0)
     costo_totale              = db.Column(db.Float, default=0)
     ore_manodopera_standard   = db.Column(db.Float, default=0)  # ore totali standard per pezzo (dirette + di ogni sottocomponente)
@@ -1098,6 +1103,11 @@ def init_db():
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS pct_efficienza DOUBLE PRECISION DEFAULT 100",
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS periodo_riferimento VARCHAR(10) DEFAULT 'mensile'",
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS tariffa_manodopera_diretta_oraria DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS aliquota_overhead_conversione_pct DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS costo_macchina DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_wood ADD COLUMN IF NOT EXISTS costo_manodopera_diretta DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS costo_macchina DOUBLE PRECISION DEFAULT 0",
+        "ALTER TABLE costo_standard_versioni_wood ADD COLUMN IF NOT EXISTS costo_manodopera_diretta DOUBLE PRECISION DEFAULT 0",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
