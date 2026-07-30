@@ -113,6 +113,13 @@
     {% if r.scarto_max_pct %}<span>📊 Scarto max ammesso: <b>{{ r.scarto_max_pct }}%</b> (~<b>{{ r.scarto_max_pezzi }}</b> pz su {{ r.totale }})</span>{% endif %}
     {% if not r.tempo_standard_min_pz and not r.scarto_max_pct %}<span>Nessuno standard di tempo/scarto comunicato per questa fase</span>{% endif %}
   </div>
+  {% if r.consumi_standard %}
+  <div class="standard-box" style="border-top:none;padding-top:0;margin-top:8px">
+    <span>📦 Materiale standard per pezzo:
+      {% for c in r.consumi_standard %}<b>{{ c.quantita }}&times;{{ c.codice }}</b>{{ ', ' if not loop.last else '' }}{% endfor %}
+    </span>
+  </div>
+  {% endif %}
 
   <div class="azioni-lavoro">
     {% if sessione %}
@@ -158,6 +165,11 @@
     <div class="mc-op">{{ r.op_codice }} · {{ r.commessa }}</div>
     <div class="mc-codice">{{ r.codice_articolo }}</div>
     <div class="mc-descrizione">{{ r.descrizione }} — saldo {{ r.saldo }}/{{ r.totale }}</div>
+    {% if sessione %}
+      <button class="btn-mini" disabled style="opacity:.4;margin-top:8px">Macchina occupata</button>
+    {% else %}
+      <button class="btn-mini" style="margin-top:8px" onclick="iniziaLavoro({{ r.op_id }})">▶ Inizia questo</button>
+    {% endif %}
   </div>
   {% endfor %}
 </div>
