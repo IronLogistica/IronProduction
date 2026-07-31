@@ -1218,16 +1218,20 @@ def _ciclo_riga(r):
         'centro_costo_id': r.centro_costo_id,
         'centro_costo_nome': r.centro_costo.nome if r.centro_costo else '',
         'centro_costo_esterno': r.centro_costo.esterno if r.centro_costo else False,
-        'produttivita_oraria': r.produttivita_oraria, 'note': r.note,
+        'produttivita_oraria': r.produttivita_oraria, 'scarto_max_pct': r.scarto_max_pct, 'note': r.note,
     }
 
 
 @magazzino_bp.route('/api/ciclo_lavoro_wood')
 def api_ciclo_lavoro_lista():
     codice_filtro = request.args.get('codice', '').strip()
+    codici_filtro = request.args.get('codici', '').strip()
     q = CicloLavoroWood.query
     if codice_filtro:
         q = q.filter_by(codice=codice_filtro)
+    elif codici_filtro:
+        lista = [c.strip() for c in codici_filtro.split(',') if c.strip()]
+        q = q.filter(CicloLavoroWood.codice.in_(lista))
     righe = q.order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()
     return jsonify([_ciclo_riga(r) for r in righe])
 
@@ -1252,18 +1256,23 @@ def api_ciclo_lavoro_crea():
         produttivita = float(d.get('produttivita_oraria') or 0)
     except (TypeError, ValueError):
         return jsonify({'errore': True, 'messaggio': 'La produttività oraria deve essere un numero'}), 400
+    try:
+        scarto_max_pct = float(d['scarto_max_pct']) if d.get('scarto_max_pct') not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Lo scarto massimo deve essere un numero'}), 400
 
     esistente = CicloLavoroWood.query.filter_by(codice=codice, sequenza=sequenza).first()
     if esistente:
         # aggiorna la fase esistente invece di duplicarla (stesso codice+sequenza)
         esistente.centro_costo_id = centro_costo_id
         esistente.produttivita_oraria = produttivita
+        esistente.scarto_max_pct = scarto_max_pct
         esistente.note = (d.get('note') or '').strip()
         db.session.commit()
         return jsonify({'ok': True, 'id': esistente.id, 'aggiornata': True})
 
     r = CicloLavoroWood(codice=codice, sequenza=sequenza, centro_costo_id=centro_costo_id,
-                         produttivita_oraria=produttivita, note=(d.get('note') or '').strip())
+                         produttivita_oraria=produttivita, scarto_max_pct=scarto_max_pct, note=(d.get('note') or '').strip())
     db.session.add(r)
     db.session.commit()
     return jsonify({'ok': True, 'id': r.id, 'aggiornata': False})
@@ -1749,11 +1758,22 @@ def api_albero_schede_lavorazione(codice_radice):
     schede = {(s.codice_padre, s.codice_figlio): s for s in
               SchedaLavorazioneWood.query.filter(
                   SchedaLavorazioneWood.codice_padre.in_({p for p, _ in coppie_uniche})).all()}
+
+    # Quante fasi di Ciclo di Lavoro esistono per ogni codice_padre di questo albero — una sola query,
+    # non una per riga: alimenta la nuova colonna "Ciclo di Lavoro" e il riepilogo sopra la tabella.
+    codici_padre = {p for p, _ in coppie_uniche}
+    conteggio_fasi = dict(
+        db.session.query(CicloLavoroWood.codice, db.func.count(CicloLavoroWood.id))
+        .filter(CicloLavoroWood.codice.in_(codici_padre))
+        .group_by(CicloLavoroWood.codice).all()
+    )
+
     righe = []
     for padre, figlio in sorted(coppie_uniche, key=lambda x: x[0]):
         s = schede.get((padre, figlio))
         righe.append({
             'id': s.id if s else None, 'codice_padre': padre, 'codice_figlio': figlio,
+            'n_fasi_ciclo_lavoro': conteggio_fasi.get(padre, 0),
             'lunghezza_barra_mm': s.lunghezza_barra_mm if s else None,
             'pezzi_per_barra': s.pezzi_per_barra if s else None,
             'sviluppo': s.sviluppo if s else '',
