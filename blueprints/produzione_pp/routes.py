@@ -84,31 +84,43 @@ def crea():
         # Controllo scorta: giacenza/impegnato/disponibile/mancante per questo OP
         # appena creato, rispetto agli OP già aperti (l'OP appena creato è in
         # stato "Creato", quindi NON impegna ancora nulla — è solo un'anteprima).
-        controllo_scorta = None
-        try:
-            giacenza_iniziale = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
-            giacenza_residua = _giacenza_residua_dopo_impegni()
-            disponibile_prima = dict(giacenza_residua)
-            righe_netting = {}
-            _netta_e_esplodi_wood(article, qty, giacenza_residua, righe_netting)
-            controllo_scorta = []
-            for cod, r in righe_netting.items():
-                giacenza_tot = giacenza_iniziale.get(cod, 0.0)
-                disponibile = disponibile_prima.get(cod, 0.0)
-                controllo_scorta.append({
-                    'codice': cod, 'giacenza': round(giacenza_tot, 3),
-                    'gia_impegnato': round(max(giacenza_tot - disponibile, 0), 3),
-                    'disponibile': round(max(disponibile, 0), 3),
-                    'fabbisogno_nuovo_op': round(r['fabbisogno'], 3),
-                    'mancante': round(r['mancante'], 3),
-                })
-            controllo_scorta.sort(key=lambda x: (-x['mancante'], x['codice']))
-        except Exception:
-            controllo_scorta = None  # non deve mai bloccare la creazione dell'OP
+        controllo_scorta = _calcola_controllo_scorta(article, qty)
 
         return jsonify(ok=True, ordine=_ordine(o), controllo_scorta=controllo_scorta), 201
     except (ValueError, IntegrityError) as exc:
         db.session.rollback(); return jsonify(ok=False, error=str(exc)), 400
+
+def _calcola_controllo_scorta(codice_articolo, qta, escludi_op_id=None):
+    """
+    Giacenza/impegnato/disponibile/mancante per un codice+quantità, rispetto
+    agli altri OP già aperti — usata sia alla creazione (escludi_op_id=None,
+    l'OP non esiste ancora) sia alla modifica (escludi_op_id=l'OP stesso, per
+    non farlo contare come "già impegnato" verso se stesso).
+    Non solleva mai eccezioni: ritorna None se il calcolo fallisce, per non
+    bloccare mai la creazione/modifica dell'OP.
+    """
+    try:
+        giacenza_iniziale = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
+        giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=escludi_op_id)
+        disponibile_prima = dict(giacenza_residua)
+        righe_netting = {}
+        _netta_e_esplodi_wood(codice_articolo, qta, giacenza_residua, righe_netting)
+        controllo_scorta = []
+        for cod, r in righe_netting.items():
+            giacenza_tot = giacenza_iniziale.get(cod, 0.0)
+            disponibile = disponibile_prima.get(cod, 0.0)
+            controllo_scorta.append({
+                'codice': cod, 'giacenza': round(giacenza_tot, 3),
+                'gia_impegnato': round(max(giacenza_tot - disponibile, 0), 3),
+                'disponibile': round(max(disponibile, 0), 3),
+                'fabbisogno_nuovo_op': round(r['fabbisogno'], 3),
+                'mancante': round(r['mancante'], 3),
+            })
+        controllo_scorta.sort(key=lambda x: (-x['mancante'], x['codice']))
+        return controllo_scorta
+    except Exception:
+        return None  # non deve mai bloccare la creazione/modifica dell'OP
+
 
 @pp_bp.put('/api/ordini-produzione/<int:oid>')
 def modifica(oid):
@@ -123,16 +135,23 @@ def modifica(oid):
             if k in d: setattr(o, k, _date(d[k]))
         o.cliente_commessa_esterna = ' / '.join(x for x in (o.cliente, o.commessa) if x)
         _audit(o, 'MODIFICATO', 'Aggiornamento OP'); db.session.commit()
-        return jsonify(ok=True, ordine=_ordine(o))
+        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        controllo_scorta = _calcola_controllo_scorta(o.codice_articolo, saldo, escludi_op_id=o.id) if saldo > 0 else []
+        return jsonify(ok=True, ordine=_ordine(o), controllo_scorta=controllo_scorta)
     except ValueError as exc: db.session.rollback(); return jsonify(ok=False, error=str(exc)), 400
 
 @pp_bp.delete('/api/ordini-produzione/<int:oid>')
 def elimina(oid):
     o = OrdineProduzione.query.get_or_404(oid)
-    if o.stato != 'Creato':
-        return jsonify(ok=False, error='Solo un OP ancora "Creato" (non rilasciato) può essere eliminato'), 409
+    if o.stato not in ('Creato', 'Rilasciato'):
+        return jsonify(ok=False, error='OP non eliminabile in questo stato (produzione già avviata/completata)'), 409
+    if o.stato == 'Rilasciato' and (o.qta_buona or 0) > 0:
+        return jsonify(ok=False, error='Impossibile eliminare: risultano già pezzi buoni consuntivati su questo OP'), 409
     codice = o.codice
     _audit(o, 'ELIMINATO', 'Eliminazione manuale da pagina Ordini Produzione')
+    legame = LegameCostoStandardOrdineWood.query.get(codice)
+    if legame:
+        db.session.delete(legame)
     db.session.delete(o); db.session.commit()
     return jsonify(ok=True, codice=codice)
 
