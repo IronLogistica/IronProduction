@@ -1,5 +1,35 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  .giac-table{width:100%;border-collapse:collapse;font-size:13px}
+  .giac-table thead th{padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.3px;
+                        border-bottom:2px solid var(--border);white-space:nowrap}
+  .giac-table tbody td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
+  .giac-table tbody tr:hover{background:rgba(255,255,255,.02)}
+  .th-stock{color:var(--green,#2a9d5c)}
+  .th-impegnato{color:var(--orange,#e8760a)}
+  .th-ordinato{color:var(--steel2,#4d9fd6)}
+  .th-disp{color:var(--accent2,#2589c7)}
+  .th-scorta{color:var(--text-dim)}
+  .th-fabb{color:#e74c3c}
+  .val-stock{color:#e0eefc;font-weight:700}
+  .val-impegnato{color:var(--orange,#e8760a);font-weight:600}
+  .val-ordinato{color:var(--steel2,#4d9fd6);font-weight:600}
+  .val-disp{color:var(--accent2,#2589c7);font-weight:800;font-size:14px}
+  .val-zero{color:var(--text-dim);opacity:.6}
+  .fabb-badge{color:#ff6b6b;font-weight:800;display:inline-flex;align-items:center;gap:3px}
+  .fabb-ok{color:var(--text-dim);opacity:.5}
+  .scorta-input{width:70px;background:var(--dark3);border:1px solid var(--border);color:var(--text);
+                border-radius:6px;padding:6px 8px;text-align:center;font-size:13px}
+  .scorta-input:focus{border-color:var(--accent2);outline:none}
+  .btn-salva-mini{background:var(--green,#1a9e5c);color:#fff;border:none;border-radius:6px;
+                  padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;margin-left:6px}
+  .btn-salva-mini:active{transform:scale(.95)}
+  .giac-descrizione{color:var(--text-dim);font-size:12px}
+  .giac-search-bar{display:flex;gap:10px;align-items:center;margin-bottom:14px}
+  .giac-search-bar input{flex:1;padding:10px 14px;border-radius:8px;border:1px solid var(--border);
+                          background:var(--dark3);color:var(--text);font-size:13px}
+</style>
 <div class="page-toolbar">
   <div class="page-title">📊 Giacenza Iron Wood</div>
 </div>
@@ -32,10 +62,8 @@
       </div>
     </div>
 
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-      <input id="giac-ricerca" type="text" placeholder="Cerca per codice..."
-             style="width:260px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)"
-             oninput="caricaGiacenza()">
+    <div class="giac-search-bar">
+      <input id="giac-ricerca" type="text" placeholder="🔍 Cerca codice o descrizione..." oninput="caricaGiacenza()">
     </div>
     <div id="giac-avviso" style="font-size:12px;color:#b8860b;margin-bottom:8px"></div>
     <div id="giac-lista" style="font-size:13px;color:#666">Caricamento...</div>
@@ -109,17 +137,48 @@ async function caricaGiacenza(){
         : `ℹ️ Mostrate le ${d.mostrate} righe aggiornate più di recente su ${d.totale} totali — usa la ricerca per trovarne altre.`;
     }
     if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna giacenza registrata.</p>'; return; }
-    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
-      '<th>Codice</th><th>Quantità</th><th>Aggiornato il</th><th></th></tr></thead><tbody>';
+
+    let html = '<div style="overflow-x:auto"><table class="giac-table"><thead><tr>' +
+      '<th>Codice</th><th>Descrizione</th>' +
+      '<th class="th-stock">+ Stock</th>' +
+      '<th class="th-impegnato">− Impegnato OP</th>' +
+      '<th class="th-ordinato">+ Ordinato Fornitori</th>' +
+      '<th class="th-disp">(=) Disp. Contabile</th>' +
+      '<th class="th-scorta">− Scorta Min. (modificabile)</th>' +
+      '<th class="th-fabb">(=) Fabbisogno</th>' +
+      '<th></th></tr></thead><tbody>';
     righe.forEach(g=>{
-      html += `<tr><td class="codice">${g.codice}</td><td class="num ${g.quantita<=0?'num-neg':'num-pos'}">${g.quantita}</td>` +
-        `<td class="lav-td">${g.aggiornato_il}</td>` +
-        `<td><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="apriMovimenti('${g.codice}')">📜 Movimenti</button></td></tr>`;
+      html += `<tr>
+        <td class="codice">${g.codice}</td>
+        <td class="giac-descrizione">${g.descrizione || '—'}</td>
+        <td class="${g.quantita>0?'val-stock':'val-zero'}">${g.quantita}</td>
+        <td class="${g.impegnato>0?'val-impegnato':'val-zero'}">${g.impegnato>0?g.impegnato:0}</td>
+        <td class="${g.ordinato>0?'val-ordinato':'val-zero'}">${g.ordinato>0?g.ordinato:0}</td>
+        <td class="val-disp">${g.disponibile_contabile}</td>
+        <td><input class="scorta-input" type="number" step="1" min="0" value="${g.scorta_minima}" id="scorta-${g.codice}">
+            <button class="btn-salva-mini" onclick="salvaScortaMinima('${g.codice}')">Salva</button></td>
+        <td>${g.fabbisogno > 0 ? `<span class="fabb-badge">▲ ${g.fabbisogno}</span>` : `<span class="fabb-ok">0</span>`}</td>
+        <td><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="apriMovimenti('${g.codice}')">📜</button></td>
+      </tr>`;
     });
     html += '</tbody></table></div>';
     box.innerHTML = html;
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function salvaScortaMinima(codice){
+  const valore = document.getElementById('scorta-' + codice).value;
+  try{
+    const r = await fetch('/api/giacenza_wood/' + encodeURIComponent(codice) + '/scorta_minima', {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({scorta_minima: valore})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    caricaGiacenza();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
   }
 }
 
