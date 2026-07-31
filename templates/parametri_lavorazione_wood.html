@@ -115,6 +115,7 @@
             <option value="LASERATO">Laserato</option>
           </select>
         </div>
+        <div style="width:90px"><label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Unità di misura</label><input id="cl-unita-misura" type="text" maxlength="20" placeholder="PZ, KG…" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border)"></div>
         <div style="width:145px"><label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Lead time fornitore</label>
           <input id="cl-lead-time-fornitura" type="number" min="0" step="0.5" placeholder="Giorni" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border)">
         </div>
@@ -343,7 +344,7 @@ async function renderRiepilogoCicli(codice){
 
 function popolaSelectCodiciCiclo(righe){
   const sel = document.getElementById('cl-select-codice');
-  const codici = [...new Set(righe.map(x => x.codice_padre))].sort();
+  const codici = [...new Set(righe.flatMap(x => [x.codice_padre, x.codice_figlio]))].sort();
   sel.innerHTML = '<option value="">— seleziona un codice dell\'albero —</option>' +
     codici.map(c => `<option value="${c}">${c}</option>`).join('');
 }
@@ -362,16 +363,20 @@ function evidenziaRiga(indice, padre, figlio){
 
 function renderTabellaAlbero(righe){
   let html = '<table class="kanban-table"><thead><tr>' +
-    '<th>Padre</th><th>Figlio</th><th>Ciclo di<br>Lavoro</th><th>Lunghezza<br>Barra</th><th>pz/Barra</th><th>Sviluppo</th>' +
+    '<th>Padre</th><th>Figlio</th><th>Tipo / U.M.<br>(figlio)</th><th>Ciclo di<br>Lavoro (figlio)</th><th>Lunghezza<br>Barra</th><th>pz/Barra</th><th>Sviluppo</th>' +
     '<th>Matrice</th><th>Punto 0</th><th>Indice<br>assorbimento</th><th>Rullo<br>Sgolatrice</th>' +
     '<th>Impostazione<br>Satinatrice</th><th>Note</th></tr></thead><tbody>';
   righe.forEach((x, i) => {
-    const badgeCiclo = x.n_fasi_ciclo_lavoro > 0
-      ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#2a9d5c" onclick="selezionaCodiceCicloTabella('${x.codice_padre}')">✅ ${x.n_fasi_ciclo_lavoro} fasi</button>`
-      : `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#c0392b" onclick="selezionaCodiceCicloTabella('${x.codice_padre}')">⚠️ Nessuno</button>`;
+    const nFasiFiglio = x.n_fasi_ciclo_lavoro_figlio || 0;
+    const badgeCiclo = nFasiFiglio > 0
+      ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#2a9d5c" onclick="selezionaCodiceCicloTabella('${x.codice_figlio}')">✅ ${nFasiFiglio} fasi</button>`
+      : `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#c0392b" onclick="selezionaCodiceCicloTabella('${x.codice_figlio}')">⚠️ Nessuno</button>`;
+    const a = x.approvvigionamento_figlio || {};
+    const tipoInline = `<select style="width:150px;font-size:10px" onchange="salvaApprovvigionamentoRiga('${x.codice_figlio}',this.value,null)"><option value="DA_CLASSIFICARE" ${a.tipo_approvvigionamento==='DA_CLASSIFICARE'?'selected':''}>Da classificare</option><option value="MATERIA_PRIMA_FORNITORE" ${a.tipo_approvvigionamento==='MATERIA_PRIMA_FORNITORE'?'selected':''}>Materia prima</option><option value="COMPONENTE_ACQUISTO" ${a.tipo_approvvigionamento==='COMPONENTE_ACQUISTO'?'selected':''}>Componente acquisto</option><option value="LASERATO" ${a.tipo_approvvigionamento==='LASERATO'?'selected':''}>Laserato</option></select><input style="width:55px;margin-top:3px" placeholder="U.M." value="${a.unita_misura||''}" onchange="salvaApprovvigionamentoRiga('${x.codice_figlio}',null,this.value)">`; 
     const f = `onfocus="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')"`;
     html += `<tr id="riga-${i}" onclick="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')">      <td class="codice">${x.codice_padre}</td>
       <td class="codice">${x.codice_figlio}</td>
+      <td>${tipoInline}</td>
       <td>${badgeCiclo}</td>
       <td><select style="width:80px" ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
       <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
@@ -417,6 +422,16 @@ async function salvaCella(indice, campo, valore){
   }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
 }
 
+async function salvaApprovvigionamentoRiga(codice, tipo, unita){
+  try{
+    const corrente = await (await fetch('/api/articoli/' + encodeURIComponent(codice) + '/approvvigionamento')).json();
+    const payload = {tipo_approvvigionamento: tipo || corrente.tipo_approvvigionamento, lead_time_fornitura_giorni: corrente.lead_time_fornitura_giorni, costo_acquisto_standard: corrente.costo_acquisto_standard, unita_misura: unita === null ? (corrente.unita_misura || '') : unita};
+    const r = await fetch('/api/articoli/' + encodeURIComponent(codice) + '/approvvigionamento', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!(await r.json()).ok) throw new Error();
+    if(RADICE_ATTIVA) caricaAlbero();
+  }catch(e){ alert('❌ Impossibile salvare tipo/unità di misura.'); }
+}
+
 // ── EDITOR CICLO DI LAVORO (sotto la tabella) ───────────────────────────
 let CODICE_CICLO_ATTIVO = null;
 
@@ -442,6 +457,7 @@ async function caricaApprovvigionamento(){
     document.getElementById('cl-tipo-approvvigionamento').value = d.tipo_approvvigionamento || 'DA_CLASSIFICARE';
     document.getElementById('cl-lead-time-fornitura').value = d.lead_time_fornitura_giorni ?? '';
     document.getElementById('cl-costo-acquisto').value = d.costo_acquisto_standard || '';
+    document.getElementById('cl-unita-misura').value = d.unita_misura || '';
     esito.textContent = 'La classificazione è indipendente dal ciclo di lavoro.';
   }catch(e){ esito.textContent = 'Impossibile caricare la classificazione.'; }
 }
@@ -452,6 +468,7 @@ async function salvaApprovvigionamento(){
     tipo_approvvigionamento: document.getElementById('cl-tipo-approvvigionamento').value,
     lead_time_fornitura_giorni: document.getElementById('cl-lead-time-fornitura').value,
     costo_acquisto_standard: document.getElementById('cl-costo-acquisto').value,
+    unita_misura: document.getElementById('cl-unita-misura').value.trim(),
   };
   try{
     const r = await fetch('/api/articoli/' + encodeURIComponent(CODICE_CICLO_ATTIVO) + '/approvvigionamento', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});

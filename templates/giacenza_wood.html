@@ -44,7 +44,7 @@
     <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
       <div style="font-weight:600;margin-bottom:6px">📥 Caricamento massivo / aggiornamento giacenza</div>
       <p style="font-size:11px;color:var(--text-dim);margin-bottom:8px">
-        File Excel/CSV con colonne "codice" e "quantita" (nomi anche simili: sku/articolo, giacenza/qta).
+        File Excel/CSV con colonne "codice", "quantita" e facoltativamente "unita_misura" (nomi anche simili: sku/articolo, giacenza/qta).
         Il valore nel file <b>sostituisce</b> la giacenza attuale del codice (non la somma) — usalo sia per il primo carico che per aggiornamenti successivi.
       </p>
       <input type="file" id="giac-file" accept=".xlsx,.xls,.csv" style="margin-bottom:8px">
@@ -57,6 +57,7 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
         <input id="rett-codice" type="text" placeholder="Codice" style="width:160px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
         <input id="rett-quantita" type="number" step="0.01" placeholder="+carico / -scarico" style="width:140px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="rett-unita" type="text" placeholder="U.M. (es. PZ)" style="width:110px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
         <input id="rett-note" type="text" placeholder="Note (facoltative)" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
         <button class="btn btn-primary" onclick="rettificaGiacenza()">💾 Applica</button>
       </div>
@@ -106,6 +107,7 @@ async function rettificaGiacenza(){
     codice: document.getElementById('rett-codice').value.trim(),
     quantita: document.getElementById('rett-quantita').value,
     note: document.getElementById('rett-note').value.trim(),
+    unita_misura: document.getElementById('rett-unita').value.trim(),
   };
   try{
     const r = await fetch('/api/giacenza_wood/rettifica', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
@@ -114,6 +116,7 @@ async function rettificaGiacenza(){
     document.getElementById('rett-codice').value = '';
     document.getElementById('rett-quantita').value = '';
     document.getElementById('rett-note').value = '';
+    document.getElementById('rett-unita').value = '';
     caricaGiacenza();
   }catch(e){
     alert('❌ Errore di rete durante il salvataggio.');
@@ -127,7 +130,7 @@ async function caricaGiacenza(){
   box.innerHTML = 'Caricamento...';
   avviso.innerHTML = '';
   try{
-    const url = q ? '/api/giacenza_wood?q=' + encodeURIComponent(q) : '/api/giacenza_wood';
+    const url = '/api/giacenza_wood?solo_bom=1' + (q ? '&q=' + encodeURIComponent(q) : '');
     const r = await fetch(url);
     const d = await r.json();
     const righe = d.righe || [];
@@ -139,7 +142,7 @@ async function caricaGiacenza(){
     if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna giacenza registrata.</p>'; return; }
 
     let html = '<div style="overflow-x:auto"><table class="giac-table"><thead><tr>' +
-      '<th>Codice</th><th>Descrizione</th>' +
+      '<th>Codice</th><th>Descrizione</th><th>U.M.</th>' +
       '<th class="th-stock">+ Stock</th>' +
       '<th class="th-impegnato">− Impegnato OP</th>' +
       '<th class="th-ordinato">+ Ordinato Fornitori</th>' +
@@ -151,6 +154,7 @@ async function caricaGiacenza(){
       html += `<tr>
         <td class="codice">${g.codice}</td>
         <td class="giac-descrizione">${g.descrizione || '—'}</td>
+        <td style="font-weight:700;color:var(--text-dim)">${g.unita_misura || '—'}</td>
         <td class="${g.quantita>0?'val-stock':'val-zero'}">${g.quantita}</td>
         <td class="${g.impegnato>0?'val-impegnato':'val-zero'}">${g.impegnato>0?g.impegnato:0}</td>
         <td class="${g.ordinato>0?'val-ordinato':'val-zero'}">${g.ordinato>0?g.ordinato:0}</td>
