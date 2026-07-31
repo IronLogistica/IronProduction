@@ -718,10 +718,18 @@ def api_giacenza_lista():
     già usato per distinta_base_wood, per non appesantire la pagina con import enormi.
     Arricchito con la metodologia MasterLogistic-WMS: Impegnato (da OP aperti),
     Ordinato (da OA ancora da ricevere), Disponibile Contabile e Fabbisogno
-    rispetto alla Scorta Minima configurabile."""
+    rispetto alla Scorta Minima configurabile.
+    ?solo_bom=1 restringe ai codici che compaiono davvero nella Distinta Base
+    Iron Wood (come padre o come figlio) — usato dalla pagina Magazzino per
+    escludere qualunque codice estraneo (es. rimasto da un vecchio import)."""
     LIMITE_DEFAULT = 200
     q = (request.args.get('q') or '').strip()
+    solo_bom = request.args.get('solo_bom') == '1'
     query = GiacenzaWood.query
+    if solo_bom:
+        codici_bom = {r[0] for r in db.session.query(DistintaBaseWood.codice_padre).distinct().all()} | \
+                     {r[0] for r in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
+        query = query.filter(GiacenzaWood.codice.in_(codici_bom))
     totale = query.count()
     if q:
         codici_per_descrizione = {c for c, in db.session.query(RigaOrdineAcquistoWood.codice)
