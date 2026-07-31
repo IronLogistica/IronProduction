@@ -211,16 +211,22 @@ async function apriSituazione(codice){
   }
 }
 
-function renderTabellaCategoria(righe, mostraReparti){
+function renderTabellaCategoria(righe, mostraMonitor){
   if(!righe.length) return '<p style="color:#aaa;font-style:italic">Nessuna riga in questa categoria.</p>';
-  let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Mancante</th>' +
-    (mostraReparti?'<th>Reparto/i</th>':'') + '<th>Fornitore / arrivo</th></tr></thead><tbody>';
+  let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Mancante</th><th>U.M.</th>' +
+    (mostraMonitor?'<th>Monitor (centro di costo)</th>':'') + '<th>Fornitore / arrivo</th></tr></thead><tbody>';
   righe.forEach(r=>{
     const arrivo = r.ordini_acquisto.length
       ? r.ordini_acquisto.map(oa => `🛒 OA n° ${oa.ordine_n} — ${oa.fornitore} — ${oa.qta_in_arrivo} in arrivo${oa.data_consegna?' per '+oa.data_consegna:''} (${oa.stato_label})`).join('<br>')
       : '<span style="color:#c0392b">⚠️ Non ancora ordinato</span>';
+    let monitorCell = '';
+    if(mostraMonitor){
+      monitorCell = r.ciclo_configurato
+        ? `<td>${(r.reparti||[]).map(f => `${f.sequenza}) ${f.nome}`).join(' → ')}</td>`
+        : `<td><span style="color:#b8860b">⚠️ Ciclo di lavoro non configurato</span></td>`;
+    }
     html += `<tr><td class="codice">${r.codice}</td><td class="num" style="font-weight:700">${r.mancante}</td>` +
-      (mostraReparti?`<td>${(r.reparti||[]).join(', ')||'—'}</td>`:'') +
+      `<td class="num">${r.unita_misura||'—'}</td>` + monitorCell +
       `<td style="font-size:12px">${arrivo}</td></tr>`;
   });
   html += '</tbody></table></div>';
@@ -236,16 +242,19 @@ async function apriDettaglioCategorie(){
     const r = await fetch('/api/ordini-produzione/' + encodeURIComponent(_sitCodiceCorrente) + '/dettaglio_per_categoria');
     const d = await r.json();
     if(!d.ok){ box.innerHTML = '<p style="color:#c0392b">❌ ' + (d.error||'Errore') + '</p>'; return; }
-    box.innerHTML = `
-      <div style="font-weight:700;font-size:13px;margin:10px 0 6px">🏭 1) Ordini ai Reparti (liste taglio/piega/ecc.)</div>
-      ${renderTabellaCategoria(d.ordini_reparti, true)}
-      <div style="font-weight:700;font-size:13px;margin:16px 0 6px">✂️ 2) Laserati</div>
-      ${renderTabellaCategoria(d.laserati, false)}
-      <div style="font-weight:700;font-size:13px;margin:16px 0 6px">🔩 3) Componenti di Acquisto (rosette, componenti esterni...)</div>
-      ${renderTabellaCategoria(d.componenti_acquisto, false)}
-      <div style="font-weight:700;font-size:13px;margin:16px 0 6px">📦 4) Materie Prime (tubi, barre, ferro...)</div>
-      ${renderTabellaCategoria(d.materie_prime, false)}
-    `;
+    const box_reparti = '<div style="border:1px solid #1e5fa855;background:#1e5fa811;border-radius:8px;padding:12px;margin-bottom:14px">' +
+      '<div style="font-weight:700;font-size:13px;margin-bottom:8px;color:#4a9eff">🏭 1) Ordini ai Monitor (centri di costo — liste taglio/piega/ecc.)</div>' +
+      renderTabellaCategoria(d.ordini_reparti, true) + '</div>';
+    const box_laserati = '<div style="border:1px solid #b8860b55;background:#b8860b11;border-radius:8px;padding:12px;margin-bottom:14px">' +
+      '<div style="font-weight:700;font-size:13px;margin-bottom:8px;color:#d4a017">✂️ 2) Laserati</div>' +
+      renderTabellaCategoria(d.laserati, false) + '</div>';
+    const box_acquisto = '<div style="border:1px solid #2a9d5c55;background:#2a9d5c11;border-radius:8px;padding:12px;margin-bottom:14px">' +
+      '<div style="font-weight:700;font-size:13px;margin-bottom:8px;color:#2a9d5c">🔩 3) Componenti di Acquisto (rosette, componenti esterni...)</div>' +
+      renderTabellaCategoria(d.componenti_acquisto, false) + '</div>';
+    const box_mp = '<div style="border:1px solid #9b59b655;background:#9b59b611;border-radius:8px;padding:12px">' +
+      '<div style="font-weight:700;font-size:13px;margin-bottom:8px;color:#9b59b6">📦 4) Materie Prime (tubi, barre, ferro...)</div>' +
+      renderTabellaCategoria(d.materie_prime, false) + '</div>';
+    box.innerHTML = box_reparti + box_laserati + box_acquisto + box_mp;
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
   }
