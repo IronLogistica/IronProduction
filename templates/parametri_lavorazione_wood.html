@@ -1,5 +1,13 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  #alb-tabella tr.riga-attiva{background:rgba(37,137,199,.16) !important}
+  #alb-tabella tr.riga-attiva td{border-top:2px solid var(--accent2,#2589c7);border-bottom:2px solid var(--accent2,#2589c7)}
+  #alb-tabella tr.riga-attiva td:first-child{border-left:3px solid var(--accent2,#2589c7)}
+  #alb-tabella tr.riga-attiva td.codice{color:#fff;font-weight:800}
+  #alb-tabella input:focus, #alb-tabella select:focus{border-color:var(--accent2,#2589c7) !important;outline:none;
+    box-shadow:0 0 0 2px rgba(37,137,199,.3)}
+</style>
 <div class="page-toolbar">
   <div class="page-title">⚙️ Parametri di Lavorazione</div>
 </div>
@@ -77,7 +85,10 @@
 </div>
 
 <div class="mon-section" style="margin-top:14px">
-  <div class="section-hdr postazione-hdr">📋 Tabella di lavorazione — <span id="titolo-radice">—</span></div>
+  <div class="section-hdr postazione-hdr" style="display:flex;justify-content:space-between;align-items:center">
+    <span>📋 Tabella di lavorazione — <span id="titolo-radice">—</span></span>
+    <span id="riga-in-modifica" style="font-size:11px;background:rgba(0,0,0,.25);padding:4px 10px;border-radius:6px;display:none">Riga in modifica: <b></b></span>
+  </div>
   <div style="padding:14px;overflow-x:auto">
     <div id="alb-tabella" style="font-size:13px;color:#666">Cerca un codice padre generale per iniziare.</div>
   </div>
@@ -251,6 +262,7 @@ async function caricaAlbero(){
   const box = document.getElementById('alb-tabella');
   const stato = document.getElementById('alb-stato');
   box.innerHTML = 'Caricamento...'; stato.textContent = '';
+  document.getElementById('riga-in-modifica').style.display = 'none';
   try{
     const r = await fetch('/api/schede_lavorazione_wood/albero/' + encodeURIComponent(codice));
     const d = await r.json();
@@ -336,6 +348,18 @@ function popolaSelectCodiciCiclo(righe){
     codici.map(c => `<option value="${c}">${c}</option>`).join('');
 }
 
+function evidenziaRiga(indice, padre, figlio){
+  document.querySelectorAll('.riga-attiva').forEach(tr => tr.classList.remove('riga-attiva'));
+  const tr = document.getElementById('riga-' + indice);
+  if(tr){
+    tr.classList.add('riga-attiva');
+    tr.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+  const etichetta = document.getElementById('riga-in-modifica');
+  etichetta.style.display = '';
+  etichetta.querySelector('b').textContent = `${padre} → ${figlio}`;
+}
+
 function renderTabellaAlbero(righe){
   let html = '<table class="kanban-table"><thead><tr>' +
     '<th>Padre</th><th>Figlio</th><th>Ciclo di<br>Lavoro</th><th>Lunghezza<br>Barra</th><th>pz/Barra</th><th>Sviluppo</th>' +
@@ -345,19 +369,20 @@ function renderTabellaAlbero(righe){
     const badgeCiclo = x.n_fasi_ciclo_lavoro > 0
       ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#2a9d5c" onclick="selezionaCodiceCicloTabella('${x.codice_padre}')">✅ ${x.n_fasi_ciclo_lavoro} fasi</button>`
       : `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#c0392b" onclick="selezionaCodiceCicloTabella('${x.codice_padre}')">⚠️ Nessuno</button>`;
+    const f = `onfocus="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')"`;
     html += `<tr id="riga-${i}">
       <td class="codice">${x.codice_padre}</td>
       <td class="codice">${x.codice_figlio}</td>
       <td>${badgeCiclo}</td>
-      <td><select style="width:80px" onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
-      <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
-      <td><input type="text" value="${x.sviluppo||''}" style="width:100px" onchange="salvaCella(${i},'sviluppo',this.value)"></td>
-      <td><select style="width:90px" onchange="salvaCella(${i},'matrice_id',this.value)">${optionsMatrici(x.matrice_id)}</select></td>
-      <td><input type="text" value="${x.punto_zero||''}" style="width:70px" onchange="salvaCella(${i},'punto_zero',this.value)"></td>
-      <td><input type="text" value="${x.indice_assorbimento||''}" style="width:80px" onchange="salvaCella(${i},'indice_assorbimento',this.value)"></td>
-      <td><select style="width:90px" onchange="salvaCella(${i},'rullo_id',this.value)">${optionsRulli(x.rullo_id)}</select></td>
-      <td><input type="text" value="${x.impostazione_satinatrice||''}" style="width:110px" onchange="salvaCella(${i},'impostazione_satinatrice',this.value)"></td>
-      <td><input type="text" value="${x.note||''}" style="width:140px" onchange="salvaCella(${i},'note',this.value)"></td>
+      <td><select style="width:80px" ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
+      <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
+      <td><input type="text" value="${x.sviluppo||''}" style="width:100px" ${f} onchange="salvaCella(${i},'sviluppo',this.value)"></td>
+      <td><select style="width:90px" ${f} onchange="salvaCella(${i},'matrice_id',this.value)">${optionsMatrici(x.matrice_id)}</select></td>
+      <td><input type="text" value="${x.punto_zero||''}" style="width:70px" ${f} onchange="salvaCella(${i},'punto_zero',this.value)"></td>
+      <td><input type="text" value="${x.indice_assorbimento||''}" style="width:80px" ${f} onchange="salvaCella(${i},'indice_assorbimento',this.value)"></td>
+      <td><select style="width:90px" ${f} onchange="salvaCella(${i},'rullo_id',this.value)">${optionsRulli(x.rullo_id)}</select></td>
+      <td><input type="text" value="${x.impostazione_satinatrice||''}" style="width:110px" ${f} onchange="salvaCella(${i},'impostazione_satinatrice',this.value)"></td>
+      <td><input type="text" value="${x.note||''}" style="width:140px" ${f} onchange="salvaCella(${i},'note',this.value)"></td>
     </tr>`;
   });
   html += '</tbody></table>';
