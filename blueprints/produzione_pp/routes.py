@@ -304,6 +304,68 @@ def api_ordine_situazione_completa(codice):
                    tutto_disponibile=(mancanti_totali == 0), componenti=albero)
 
 
+@pp_bp.route('/api/ordini-produzione/<codice>/dettaglio_per_categoria')
+def api_ordine_dettaglio_per_categoria(codice):
+    """
+    Spacca i componenti MANCANTI di un OP nelle 4 categorie operative:
+    1) Ordini ai Reparti — semilavorati interni (non classificati come
+       acquisto/materia prima/laserato), con il/i reparto/i del loro Ciclo
+       di Lavoro, per le liste taglio/piega/ecc.
+    2) Laserati
+    3) Componenti di Acquisto — "componenti esterni" (rosette, minuteria...)
+    4) Materie Prime — tubi, barre di ferro, ecc.
+    Quantità già aggregate per codice (stesso codice in più punti della
+    distinta conta una volta sola, sommato) — stessa base dati di
+    situazione_completa, così i due popup restano sempre coerenti tra loro.
+    """
+    o = OrdineProduzione.query.filter_by(codice=codice).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+
+    saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+    righe_disponibilita = {}
+    if saldo > 0:
+        giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
+        _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe_disponibilita)
+
+    mancanti = {cod: r for cod, r in righe_disponibilita.items() if r['mancante'] > 0}
+
+    reparti, laserati, acquisto, materie_prime = [], [], [], []
+    for cod, r in mancanti.items():
+        approvv = ArticoloApprovvigionamento.query.filter_by(codice=cod).first()
+        tipo = approvv.tipo_approvvigionamento if approvv else 'DA_CLASSIFICARE'
+
+        righe_oa = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
+                    .filter(RigaOrdineAcquistoWood.codice == cod,
+                            OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all())
+        ordini_acquisto = [{
+            'ordine_n': r_oa.ordine.ordine_n, 'fornitore': r_oa.ordine.fornitore,
+            'stato_label': r_oa.ordine.stato_label,
+            'data_consegna': r_oa.ordine.data_consegna.isoformat() if r_oa.ordine.data_consegna else None,
+            'qta_in_arrivo': round((r_oa.qta_originale or 0) - (r_oa.qta_ricevuta or 0), 3),
+        } for r_oa in righe_oa if (r_oa.qta_originale or 0) > (r_oa.qta_ricevuta or 0)]
+
+        base = {'codice': cod, 'mancante': round(r['mancante'], 3), 'ordini_acquisto': ordini_acquisto}
+
+        if tipo == 'LASERATO':
+            laserati.append(base)
+        elif tipo == 'COMPONENTE_ACQUISTO':
+            acquisto.append(base)
+        elif tipo == 'MATERIA_PRIMA_FORNITORE':
+            materie_prime.append(base)
+        else:
+            fasi = (CicloLavoroWood.query.filter_by(codice=cod)
+                    .order_by(CicloLavoroWood.sequenza).all())
+            base['reparti'] = [f.centro_costo.nome for f in fasi if f.centro_costo]
+            reparti.append(base)
+
+    for lista in (reparti, laserati, acquisto, materie_prime):
+        lista.sort(key=lambda x: x['codice'])
+
+    return jsonify(ok=True, codice=o.codice, ordini_reparti=reparti, laserati=laserati,
+                   componenti_acquisto=acquisto, materie_prime=materie_prime)
+
+
 @pp_bp.post('/api/ordini-produzione/<int:oid>/chiudi-co')
 def chiudi_co(oid):
     o = OrdineProduzione.query.get_or_404(oid)
