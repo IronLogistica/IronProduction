@@ -335,6 +335,14 @@ def api_ordine_dettaglio_per_categoria(codice):
         approvv = ArticoloApprovvigionamento.query.filter_by(codice=cod).first()
         tipo = approvv.tipo_approvvigionamento if approvv else 'DA_CLASSIFICARE'
 
+        # Unità di misura: nessun campo dedicato nella distinta base — recupero
+        # quella dell'ultimo Ordine di Acquisto registrato per questo codice
+        # (se non è mai stato ordinato, resta sconosciuta: mai inventata).
+        ultima_riga_oa_um = (RigaOrdineAcquistoWood.query.filter_by(codice=cod)
+                             .join(OrdineAcquistoWood)
+                             .order_by(OrdineAcquistoWood.caricato_il.desc()).first())
+        unita_misura = (ultima_riga_oa_um.unita_misura or '') if ultima_riga_oa_um else ''
+
         righe_oa = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
                     .filter(RigaOrdineAcquistoWood.codice == cod,
                             OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all())
@@ -345,7 +353,8 @@ def api_ordine_dettaglio_per_categoria(codice):
             'qta_in_arrivo': round((r_oa.qta_originale or 0) - (r_oa.qta_ricevuta or 0), 3),
         } for r_oa in righe_oa if (r_oa.qta_originale or 0) > (r_oa.qta_ricevuta or 0)]
 
-        base = {'codice': cod, 'mancante': round(r['mancante'], 3), 'ordini_acquisto': ordini_acquisto}
+        base = {'codice': cod, 'mancante': round(r['mancante'], 3), 'unita_misura': unita_misura,
+                'ordini_acquisto': ordini_acquisto}
 
         if tipo == 'LASERATO':
             laserati.append(base)
@@ -356,7 +365,9 @@ def api_ordine_dettaglio_per_categoria(codice):
         else:
             fasi = (CicloLavoroWood.query.filter_by(codice=cod)
                     .order_by(CicloLavoroWood.sequenza).all())
-            base['reparti'] = [f.centro_costo.nome for f in fasi if f.centro_costo]
+            base['reparti'] = [{'sequenza': f.sequenza, 'nome': f.centro_costo.nome}
+                               for f in fasi if f.centro_costo]
+            base['ciclo_configurato'] = len(base['reparti']) > 0
             reparti.append(base)
 
     for lista in (reparti, laserati, acquisto, materie_prime):
