@@ -1,6 +1,7 @@
 import os, json
 from datetime import datetime, date, timedelta
 from flask_sqlalchemy import SQLAlchemy
+from sqlalchemy import inspect, text
 
 db = SQLAlchemy()
 
@@ -820,7 +821,17 @@ class ArticoloApprovvigionamento(db.Model):
     tipo_approvvigionamento = db.Column(db.String(40), default='DA_CLASSIFICARE', nullable=False)
     lead_time_fornitura_giorni = db.Column(db.Float, default=None)
     costo_acquisto_standard = db.Column(db.Float, default=None)  # €/pz — NULL = non configurato (non 0!). Base del costo standard per i codici foglia (materia prima/componente acquisto/laserato): niente BOM/routing sotto, il costo standard è questo prezzo
+    # UoM canonica locale per SKU: la stessa usata da distinta, parametri e giacenza.
+    unita_misura = db.Column(db.String(20), default='', nullable=False)
     aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+def assicura_unita_misura_articoli():
+    """Migrazione compatibile con DB già esistenti: aggiunge la UoM senza ricreare tabelle."""
+    colonne = {c['name'] for c in inspect(db.engine).get_columns('articoli_approvvigionamento')}
+    if 'unita_misura' not in colonne:
+        db.session.execute(text("ALTER TABLE articoli_approvvigionamento ADD COLUMN unita_misura VARCHAR(20) NOT NULL DEFAULT ''"))
+        db.session.commit()
 
 class KanbanProdotto(db.Model):
     __tablename__ = "kanban_prodotti"
