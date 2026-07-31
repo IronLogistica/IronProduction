@@ -496,6 +496,20 @@ class RulloWood(db.Model):
     creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class LunghezzaBarraWood(db.Model):
+    """
+    Anagrafica lunghezze barra disponibili (es. 6 mt, 7 mt) — PARAMETRO DI
+    IMPOSTAZIONE INIZIALE configurabile, prima era una lista fissa scritta
+    nel codice. Alimenta il menu a tendina "Lunghezza Barra" nei Parametri
+    di Lavorazione.
+    """
+    __tablename__ = 'lunghezze_barra_wood'
+    id          = db.Column(db.Integer, primary_key=True)
+    valore_mm   = db.Column(db.Float, nullable=False, unique=True)
+    etichetta   = db.Column(db.String(50), default='')   # es. "6 mt" — se vuota, si mostra calcolata da valore_mm
+    creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class SchedaLavorazioneWood(db.Model):
     """
     Scheda di lavorazione Iron Wood UNIFICATA — una riga per coppia
@@ -523,6 +537,17 @@ class SchedaLavorazioneWood(db.Model):
     matrice = db.relationship('MatriceWood')
     rullo   = db.relationship('RulloWood')
     __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_lavorazione_padre_figlio_uc'),)
+
+
+def assicura_lunghezze_barra_default():
+    """UNA TANTUM: se la tabella è vuota, precrea 6 mt e 7 mt (i due valori che prima erano fissi nel codice)."""
+    if LunghezzaBarraWood.query.count() > 0:
+        return
+    db.session.add_all([
+        LunghezzaBarraWood(valore_mm=6000, etichetta='6 mt'),
+        LunghezzaBarraWood(valore_mm=7000, etichetta='7 mt'),
+    ])
+    db.session.commit()
 
 
 def migra_schede_lavorazione_unificate():

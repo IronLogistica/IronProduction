@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from flask import Flask, redirect, url_for
 from config import Config
-from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate
+from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate, assicura_lunghezze_barra_default
 
 def create_app():
     app = Flask(__name__)
@@ -46,6 +46,7 @@ def create_app():
         init_db()
         inizializza_schema_pp()
         migra_schede_lavorazione_unificate()
+        assicura_lunghezze_barra_default()
 
     return app
 
