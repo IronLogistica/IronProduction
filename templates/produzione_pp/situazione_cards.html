@@ -24,7 +24,23 @@
     <div id="sit-testata" style="margin-bottom:12px"></div>
     <div id="sit-albero">Caricamento...</div>
     <div class="modal-footer">
+      <button class="btn btn-primary" onclick="apriDettaglioCategorie()">📋 Dettaglio per Reparto/Fornitore</button>
       <button class="btn btn-ghost" onclick="closeModal('modal-situazione-op')">Chiudi</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: DETTAGLIO PER CATEGORIA (reparti / laserati / acquisto / materie prime) ══ -->
+<div class="modal-overlay" id="modal-dettaglio-categorie">
+  <div class="modal-box" style="width:900px;max-width:97vw;max-height:88vh;overflow-y:auto">
+    <h3>📋 Dettaglio per categoria — <span id="cat-titolo"></span></h3>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+      Solo i componenti MANCANTI, raggruppati per come vanno gestiti — stessa base dati della situazione qui sopra.
+      Da qui, in futuro, si genereranno le card degli acquisti.
+    </p>
+    <div id="cat-corpo">Caricamento...</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-dettaglio-categorie')">Chiudi</button>
     </div>
   </div>
 </div>
@@ -170,7 +186,9 @@ function renderAlberoSituazione(componenti, livello){
   }).join('');
 }
 
+let _sitCodiceCorrente = null;
 async function apriSituazione(codice){
+  _sitCodiceCorrente = codice;
   document.getElementById('sit-titolo').textContent = codice;
   const testata = document.getElementById('sit-testata');
   const box = document.getElementById('sit-albero');
@@ -188,6 +206,46 @@ async function apriSituazione(codice){
     box.innerHTML = `<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>
         <th style="text-align:left">Codice</th><th style="text-align:left">Descrizione</th><th>Fabbisogno</th><th>Disponibile</th><th>Mancante</th><th>Stato</th><th style="text-align:left">Fornitore</th><th style="text-align:left">Ordine / arrivo</th>
       </tr></thead><tbody>${renderAlberoSituazione(d.componenti)}</tbody></table></div>`;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+function renderTabellaCategoria(righe, mostraReparti){
+  if(!righe.length) return '<p style="color:#aaa;font-style:italic">Nessuna riga in questa categoria.</p>';
+  let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Mancante</th>' +
+    (mostraReparti?'<th>Reparto/i</th>':'') + '<th>Fornitore / arrivo</th></tr></thead><tbody>';
+  righe.forEach(r=>{
+    const arrivo = r.ordini_acquisto.length
+      ? r.ordini_acquisto.map(oa => `🛒 OA n° ${oa.ordine_n} — ${oa.fornitore} — ${oa.qta_in_arrivo} in arrivo${oa.data_consegna?' per '+oa.data_consegna:''} (${oa.stato_label})`).join('<br>')
+      : '<span style="color:#c0392b">⚠️ Non ancora ordinato</span>';
+    html += `<tr><td class="codice">${r.codice}</td><td class="num" style="font-weight:700">${r.mancante}</td>` +
+      (mostraReparti?`<td>${(r.reparti||[]).join(', ')||'—'}</td>`:'') +
+      `<td style="font-size:12px">${arrivo}</td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  return html;
+}
+
+async function apriDettaglioCategorie(){
+  document.getElementById('cat-titolo').textContent = _sitCodiceCorrente;
+  const box = document.getElementById('cat-corpo');
+  box.innerHTML = 'Caricamento...';
+  openModal('modal-dettaglio-categorie');
+  try{
+    const r = await fetch('/api/ordini-produzione/' + encodeURIComponent(_sitCodiceCorrente) + '/dettaglio_per_categoria');
+    const d = await r.json();
+    if(!d.ok){ box.innerHTML = '<p style="color:#c0392b">❌ ' + (d.error||'Errore') + '</p>'; return; }
+    box.innerHTML = `
+      <div style="font-weight:700;font-size:13px;margin:10px 0 6px">🏭 1) Ordini ai Reparti (liste taglio/piega/ecc.)</div>
+      ${renderTabellaCategoria(d.ordini_reparti, true)}
+      <div style="font-weight:700;font-size:13px;margin:16px 0 6px">✂️ 2) Laserati</div>
+      ${renderTabellaCategoria(d.laserati, false)}
+      <div style="font-weight:700;font-size:13px;margin:16px 0 6px">🔩 3) Componenti di Acquisto (rosette, componenti esterni...)</div>
+      ${renderTabellaCategoria(d.componenti_acquisto, false)}
+      <div style="font-weight:700;font-size:13px;margin:16px 0 6px">📦 4) Materie Prime (tubi, barre, ferro...)</div>
+      ${renderTabellaCategoria(d.materie_prime, false)}
+    `;
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
   }
