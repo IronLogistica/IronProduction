@@ -7,7 +7,8 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     CostoPianificatoCentroWood, DRIVER_ATTIVITA_WOOD, VOCI_COSTO_PIANIFICATO_WOOD,
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood,
                     CostoStandardVersioneDettaglioWood, CostoStandardVersioneFaseWood,
-                    MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood)
+                    MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood,
+                    ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -714,19 +715,86 @@ def _registra_movimento_giacenza(codice, delta, tipo, riferimento='', note='', c
 @magazzino_bp.route('/api/giacenza_wood', methods=['GET'])
 def api_giacenza_lista():
     """Elenco giacenze, con limite di default (200) + ricerca — stesso principio
-    già usato per distinta_base_wood, per non appesantire la pagina con import enormi."""
+    già usato per distinta_base_wood, per non appesantire la pagina con import enormi.
+    Arricchito con la metodologia MasterLogistic-WMS: Impegnato (da OP aperti),
+    Ordinato (da OA ancora da ricevere), Disponibile Contabile e Fabbisogno
+    rispetto alla Scorta Minima configurabile."""
     LIMITE_DEFAULT = 200
     q = (request.args.get('q') or '').strip()
     query = GiacenzaWood.query
     totale = query.count()
     if q:
-        query = query.filter(GiacenzaWood.codice.ilike(f'%{q}%'))
+        codici_per_descrizione = {c for c, in db.session.query(RigaOrdineAcquistoWood.codice)
+                                   .filter(RigaOrdineAcquistoWood.descrizione.ilike(f'%{q}%')).distinct().all()}
+        query = query.filter(db.or_(GiacenzaWood.codice.ilike(f'%{q}%'),
+                                     GiacenzaWood.codice.in_(codici_per_descrizione)))
     righe = query.order_by(GiacenzaWood.aggiornato_il.desc()).limit(LIMITE_DEFAULT).all()
+    codici = [g.codice for g in righe]
+
+    # Impegnato: quanto di ogni codice è già "preso" dagli OP aperti (stessa
+    # simulazione priorità-based usata ovunque nell'app per il fabbisogno).
+    giacenza_residua = _giacenza_residua_dopo_impegni()
+    impegnato = {g.codice: round((g.quantita or 0) - giacenza_residua.get(g.codice, g.quantita or 0), 4) for g in righe}
+
+    # Ordinato: quanto è ancora da ricevere sugli Ordini di Acquisto aperti per questi codici.
+    ordinato = {}
+    if codici:
+        for cod, qta_orig, qta_ric in (db.session.query(RigaOrdineAcquistoWood.codice,
+                                                          RigaOrdineAcquistoWood.qta_originale,
+                                                          RigaOrdineAcquistoWood.qta_ricevuta)
+                                        .join(OrdineAcquistoWood)
+                                        .filter(RigaOrdineAcquistoWood.codice.in_(codici),
+                                                OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all()):
+            residuo = (qta_orig or 0) - (qta_ric or 0)
+            if residuo > 0:
+                ordinato[cod] = ordinato.get(cod, 0) + residuo
+
+    scorte_minime = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.filter(ScortaMinimaWood.codice.in_(codici)).all()} if codici else {}
+
+    # Descrizione: best-effort dall'ultima riga di Ordine di Acquisto vista per quel codice (nessuna anagrafica descrittiva propria per Iron Wood).
+    descrizioni = {}
+    if codici:
+        for cod, descr in (db.session.query(RigaOrdineAcquistoWood.codice, RigaOrdineAcquistoWood.descrizione)
+                            .filter(RigaOrdineAcquistoWood.codice.in_(codici))
+                            .order_by(RigaOrdineAcquistoWood.id.desc()).all()):
+            descrizioni.setdefault(cod, descr)
+
+    righe_out = []
+    for g in righe:
+        imp = impegnato.get(g.codice, 0)
+        ord_ = ordinato.get(g.codice, 0)
+        scorta_min = scorte_minime.get(g.codice, 0)
+        disp_contabile = round((g.quantita or 0) - imp + ord_, 4)
+        fabbisogno = round(max(scorta_min - disp_contabile, 0), 4)
+        righe_out.append({
+            'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
+            'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
+            'scorta_minima': scorta_min, 'fabbisogno': fabbisogno,
+            'aggiornato_il': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if g.aggiornato_il else '',
+        })
+
     return jsonify({
-        'righe': [{'codice': g.codice, 'quantita': g.quantita,
-                   'aggiornato_il': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if g.aggiornato_il else ''} for g in righe],
+        'righe': righe_out,
         'totale': totale, 'mostrate': len(righe), 'filtrato': bool(q), 'limite': LIMITE_DEFAULT,
     })
+
+
+@magazzino_bp.route('/api/giacenza_wood/<codice>/scorta_minima', methods=['PUT'])
+def api_giacenza_scorta_minima(codice):
+    d = request.get_json(force=True)
+    try:
+        valore = float(d.get('scorta_minima'))
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'La scorta minima deve essere un numero'}), 400
+    if valore < 0:
+        return jsonify({'errore': True, 'messaggio': 'La scorta minima non può essere negativa'}), 400
+    r = ScortaMinimaWood.query.get(codice)
+    if r:
+        r.scorta_minima = valore
+    else:
+        db.session.add(ScortaMinimaWood(codice=codice, scorta_minima=valore))
+    db.session.commit()
+    return jsonify({'ok': True})
 
 
 @magazzino_bp.route('/api/giacenza_wood/<codice>/movimenti')
