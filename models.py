@@ -165,6 +165,18 @@ class GiacenzaWood(db.Model):
     aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class ScortaMinimaWood(db.Model):
+    """
+    Scorta minima configurabile per codice Iron Wood — soglia sotto la quale
+    scatta il fabbisogno (metodologia MasterLogistic-WMS: Disponibile
+    Contabile confrontato con questa soglia). Riga assente = soglia 0.
+    """
+    __tablename__ = 'scorte_minime_wood'
+    codice         = db.Column(db.String(50), primary_key=True)
+    scorta_minima  = db.Column(db.Float, default=0)
+    aggiornato_il  = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class MovimentoGiacenzaWood(db.Model):
     """Storico di ogni variazione della giacenza Iron Wood (carico/scarico), per audit."""
     __tablename__ = 'movimenti_giacenza_wood'
