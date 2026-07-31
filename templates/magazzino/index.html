@@ -65,53 +65,6 @@
   <div id="bom-result" style="padding:0 14px 14px;font-size:13px"></div>
 </div>
 
-<!-- ══ MODAL: CICLO DI LAVORO PER SINGOLO CODICE ═══════════════════════════ -->
-<div class="modal-overlay" id="modal-ciclo-lavoro">
-  <div class="modal-box" style="width:540px;max-width:96vw">
-    <h3>📦 Scheda articolo — <span id="cl-modal-codice"></span></h3>
-    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
-      Prima classifica l'articolo; aggiungi un ciclo solo se il codice viene effettivamente lavorato.
-    </p>
-    <div id="cl-modal-approvvigionamento" style="padding:10px;margin-bottom:12px;border:1px solid var(--border);border-radius:7px;background:var(--bg)">
-      <div style="font-size:12px;font-weight:700;margin-bottom:7px">📦 Classificazione approvvigionamento</div>
-      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
-        <div style="flex:1;min-width:210px"><label class="modal-label" style="margin:0 0 4px">Tipo articolo</label>
-          <select id="cl-modal-tipo-approvvigionamento" class="modal-input" style="width:100%">
-            <option value="DA_CLASSIFICARE">Da classificare</option>
-            <option value="MATERIA_PRIMA_FORNITORE">Materia prima da fornitore</option>
-            <option value="COMPONENTE_ACQUISTO">Componente d’acquisto</option>
-            <option value="LASERATO">Laserato</option>
-          </select>
-        </div>
-        <div style="width:145px"><label class="modal-label" style="margin:0 0 4px">Lead time fornitore</label>
-          <input id="cl-modal-lead-time-fornitura" class="modal-input" type="number" min="0" step="0.5" placeholder="Giorni" style="width:100%">
-        </div>
-        <div style="width:150px"><label class="modal-label" style="margin:0 0 4px">Costo acquisto €/pz</label>
-          <input id="cl-modal-costo-acquisto" class="modal-input" type="number" min="0" step="0.01" placeholder="0.00" style="width:100%">
-        </div>
-        <button class="btn btn-primary" onclick="salvaApprovvigionamentoModal()">💾 Salva</button>
-      </div>
-      <div id="cl-modal-approvvigionamento-esito" style="font-size:11px;margin-top:6px;color:var(--text-dim)"></div>
-    </div>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
-      <input id="cl-modal-sequenza" type="number" step="1" min="1" value="1" placeholder="Sequenza"
-             style="width:90px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
-      <select id="cl-modal-reparto" style="min-width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
-        <option value="">Reparto...</option>
-      </select>
-      <input id="cl-modal-produttivita" type="number" step="0.01" min="0" placeholder="Pezzi/ora"
-             style="width:110px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
-      <input id="cl-modal-note" type="text" placeholder="Note"
-             style="flex:1;min-width:120px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
-      <button class="btn btn-primary" onclick="aggiungiFaseCicloModal()">➕ Aggiungi fase</button>
-    </div>
-    <div id="cl-modal-lista" style="font-size:13px;color:#666">Caricamento...</div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-ciclo-lavoro')">Chiudi</button>
-    </div>
-  </div>
-</div>
-
 {% endblock %}
 {% block scripts %}
 fetch('/api/materiali').then(r=>r.json()).then(data=>{
@@ -232,8 +185,8 @@ async function caricaListaWood(){
           ? `<span style="color:#2a9d5c;font-weight:700">★ ATTIVA</span> <span style="color:#999">(${r.gruppo_alternativa})</span>`
           : `<button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" onclick="selezionaAlternativaWood(${r.id})" title="Rendi questa la componente attiva del gruppo">☆ rendi attiva</button> <span style="color:#999">(${r.gruppo_alternativa})</span>`;
       }
-      html += `<tr><td class="codice">${r.codice_padre} <button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" onclick="apriCicloLavoro('${r.codice_padre}')" title="Scheda articolo e ciclo">⚙️</button></td>` +
-        `<td class="codice">${r.codice_figlio} <button class="btn btn-ghost" style="padding:2px 6px;font-size:10px" onclick="apriCicloLavoro('${r.codice_figlio}')" title="Scheda articolo e ciclo">⚙️</button></td>` +
+      html += `<tr><td class="codice">${r.codice_padre} <a class="btn btn-ghost" style="padding:2px 6px;font-size:10px" href="/parametri-lavorazione-wood?radice=${encodeURIComponent(r.codice_padre)}" title="Parametri di Lavorazione">⚙️</a></td>` +
+        `<td class="codice">${r.codice_figlio} <a class="btn btn-ghost" style="padding:2px 6px;font-size:10px" href="/parametri-lavorazione-wood?radice=${encodeURIComponent(r.codice_figlio)}" title="Parametri di Lavorazione">⚙️</a></td>` +
         `<td class="num">${r.quantita}</td><td class="num">${r.livello}</td><td style="font-size:11px">${gruppoCell}</td><td class="lav-td">${r.note||'—'}</td>` +
         `<td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="cancellaRigaWood(${r.id})">🗑️</button></td></tr>`;
     });
@@ -342,137 +295,19 @@ async function importaExcelWood(){
 
 caricaListaWood();
 
-// ── CENTRI DI COSTO / REPARTI ────────────────────────────────────────────
-// ── CICLO DI LAVORO PER SINGOLO CODICE (popup, aperto dal pulsante 🔧) ────
-let _clModalCodice = '';
-
-async function apriCicloLavoro(codice){
-  _clModalCodice = codice;
-  document.getElementById('cl-modal-codice').textContent = codice;
-  document.getElementById('cl-modal-sequenza').value = '1';
-  document.getElementById('cl-modal-produttivita').value = '';
-  document.getElementById('cl-modal-note').value = '';
-  await popolaRepartiModal();
-  await caricaFasiCicloModal();
-  await caricaApprovvigionamentoModal();
-  openModal('modal-ciclo-lavoro');
-}
-
-async function caricaApprovvigionamentoModal(){
-  const box = document.getElementById('cl-modal-approvvigionamento');
-  const esito = document.getElementById('cl-modal-approvvigionamento-esito');
-  box.style.display = '';
-  esito.style.color = 'var(--text-dim)';
-  esito.textContent = 'Caricamento classificazione…';
-  try{
-    const r = await fetch('/api/articoli/' + encodeURIComponent(_clModalCodice) + '/approvvigionamento');
-    const d = await r.json();
-    if(!r.ok || !d.ok) throw new Error(d.error || 'Caricamento non riuscito');
-    document.getElementById('cl-modal-tipo-approvvigionamento').value = d.tipo_approvvigionamento || 'DA_CLASSIFICARE';
-    document.getElementById('cl-modal-lead-time-fornitura').value = d.lead_time_fornitura_giorni ?? '';
-    document.getElementById('cl-modal-costo-acquisto').value = d.costo_acquisto_standard || '';
-    esito.textContent = 'La classificazione è indipendente dal ciclo di lavoro.';
-  }catch(e){ esito.textContent = 'Impossibile caricare la classificazione.'; }
-}
-
-async function salvaApprovvigionamentoModal(){
-  const esito = document.getElementById('cl-modal-approvvigionamento-esito');
-  const payload = {
-    tipo_approvvigionamento: document.getElementById('cl-modal-tipo-approvvigionamento').value,
-    lead_time_fornitura_giorni: document.getElementById('cl-modal-lead-time-fornitura').value,
-    costo_acquisto_standard: document.getElementById('cl-modal-costo-acquisto').value,
-  };
-  try{
-    const r = await fetch('/api/articoli/' + encodeURIComponent(_clModalCodice) + '/approvvigionamento', {method:'PUT', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)});
-    const d = await r.json();
-    if(!r.ok || !d.ok) throw new Error(d.error || 'Salvataggio non riuscito');
-    esito.style.color = '#2a9d5c';
-    esito.textContent = '✓ Classificazione salvata. Nessun ciclo di lavoro è stato creato.';
-  }catch(e){
-    esito.style.color = '#c0392b';
-    esito.textContent = '⚠️ ' + e.message;
-  }
-}
-
-async function popolaRepartiModal(){
-  const sel = document.getElementById('cl-modal-reparto');
-  try{
-    const r = await fetch('/api/centri_costo_wood');
-    const righe = await r.json();
-    sel.innerHTML = '<option value="">Reparto...</option>' +
-      righe.map(c => `<option value="${c.id}">${c.nome}${c.esterno?' (esterno)':''}</option>`).join('');
-    if(!righe.length){
-      sel.innerHTML = '<option value="">Nessun reparto — vai su "Centri di Costo" per crearne uno</option>';
-    }
-  }catch(e){
-    sel.innerHTML = '<option value="">Errore caricamento reparti</option>';
-  }
-}
-
-async function caricaFasiCicloModal(){
-  const box = document.getElementById('cl-modal-lista');
-  box.innerHTML = 'Caricamento...';
-  try{
-    const r = await fetch('/api/ciclo_lavoro_wood?codice=' + encodeURIComponent(_clModalCodice));
-    const righe = await r.json();
-    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna fase inserita ancora per questo codice.</p>'; return; }
-    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Seq.</th><th>Reparto</th><th>Pezzi/ora</th><th>Note</th><th></th></tr></thead><tbody>';
-    righe.forEach(f=>{
-      html += `<tr><td class="num">${f.sequenza}</td><td>${f.centro_costo_nome}${f.centro_costo_esterno?' <span class="badge badge-warn" style="font-size:10px">esterno</span>':''}</td>` +
-        `<td class="num">${f.produttivita_oraria}</td><td class="lav-td">${f.note||'—'}</td>` +
-        `<td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaFaseCicloModal(${f.id})">🗑️</button></td></tr>`;
-    });
-    html += '</tbody></table></div>';
-    box.innerHTML = html;
-  }catch(e){
-    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
-  }
-}
-
-async function aggiungiFaseCicloModal(){
-  const payload = {
-    codice:              _clModalCodice,
-    sequenza:            document.getElementById('cl-modal-sequenza').value,
-    centro_costo_id:     document.getElementById('cl-modal-reparto').value,
-    produttivita_oraria: document.getElementById('cl-modal-produttivita').value,
-    note:                document.getElementById('cl-modal-note').value.trim(),
-  };
-  try{
-    const r = await fetch('/api/ciclo_lavoro_wood', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-    const d = await r.json();
-    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
-    document.getElementById('cl-modal-produttivita').value = '';
-    document.getElementById('cl-modal-note').value = '';
-    caricaFasiCicloModal();
-  }catch(e){
-    alert('❌ Errore di rete durante il salvataggio.');
-  }
-}
-
-async function eliminaFaseCicloModal(id){
-  if(!confirm('Eliminare questa fase del ciclo di lavoro?')) return;
-  try{
-    await fetch('/api/ciclo_lavoro_wood/' + id, {method:'DELETE'});
-    caricaFasiCicloModal();
-  }catch(e){
-    alert('❌ Errore di rete durante la cancellazione.');
-  }
-}
-
 // Apertura guidata dai collegamenti del dettaglio Costo Standard.
-// ?articolo=CODICE / ?ciclo=CODICE aprono la scheda; ?distinta=CODICE porta
-// direttamente alla distinta locale e alla sua esplosione.
+// ?articolo=CODICE / ?ciclo=CODICE portano ora alla pagina Parametri di
+// Lavorazione (gestione ciclo di lavoro spostata lì); ?distinta=CODICE porta
+// direttamente alla distinta locale e alla sua esplosione, qui.
 (function apriConfigurazioneDaCostoStandard(){
   const q = new URLSearchParams(window.location.search);
   const articolo = q.get('articolo') || q.get('ciclo');
   const distinta = q.get('distinta');
-  if(articolo) setTimeout(() => apriCicloLavoro(articolo), 0);
+  if(articolo){ window.location.href = '/parametri-lavorazione-wood?radice=' + encodeURIComponent(articolo); return; }
   if(distinta){
     document.getElementById('wood-ricerca').value = distinta;
     document.getElementById('bom-wood-codice').value = distinta;
     setTimeout(() => { caricaListaWood(); esplodiBOMWood(); }, 0);
   }
 })();
-caricaListaWood();
 {% endblock %}
-
