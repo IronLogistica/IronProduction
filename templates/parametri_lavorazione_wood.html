@@ -1,9 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
 <style>
-  #alb-tabella tr.riga-attiva{background:rgba(37,137,199,.16) !important}
-  #alb-tabella tr.riga-attiva td{border-top:2px solid var(--accent2,#2589c7);border-bottom:2px solid var(--accent2,#2589c7)}
-  #alb-tabella tr.riga-attiva td:first-child{border-left:3px solid var(--accent2,#2589c7)}
+  #alb-tabella tr.riga-attiva td{background:rgba(37,137,199,.22) !important;
+    border-top:2px solid var(--accent2,#2589c7) !important;border-bottom:2px solid var(--accent2,#2589c7) !important}
+  #alb-tabella tr.riga-attiva td:first-child{border-left:4px solid var(--accent2,#2589c7) !important}
   #alb-tabella tr.riga-attiva td.codice{color:#fff;font-weight:800}
   #alb-tabella input:focus, #alb-tabella select:focus{border-color:var(--accent2,#2589c7) !important;outline:none;
     box-shadow:0 0 0 2px rgba(37,137,199,.3)}
@@ -370,8 +370,7 @@ function renderTabellaAlbero(righe){
       ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#2a9d5c" onclick="selezionaCodiceCicloTabella('${x.codice_padre}')">✅ ${x.n_fasi_ciclo_lavoro} fasi</button>`
       : `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#c0392b" onclick="selezionaCodiceCicloTabella('${x.codice_padre}')">⚠️ Nessuno</button>`;
     const f = `onfocus="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')"`;
-    html += `<tr id="riga-${i}">
-      <td class="codice">${x.codice_padre}</td>
+    html += `<tr id="riga-${i}" onclick="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')">      <td class="codice">${x.codice_padre}</td>
       <td class="codice">${x.codice_figlio}</td>
       <td>${badgeCiclo}</td>
       <td><select style="width:80px" ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
