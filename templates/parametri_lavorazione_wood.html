@@ -70,9 +70,67 @@
 </div>
 
 <div class="mon-section" style="margin-top:14px">
+  <div class="section-hdr postazione-hdr" style="background:#1e5fa8">🧭 Cicli di Lavoro di quest'albero</div>
+  <div style="padding:14px">
+    <p style="font-size:11px;color:var(--text-dim);margin-bottom:10px">
+      Un ciclo di lavoro (sequenza di reparti/macchine) va impostato per ogni codice che compare come "Padre" —
+      è lui che viene effettivamente prodotto passando da quelle fasi. Clicca un codice per impostarlo/modificarlo
+      nell'editor qui sotto la tabella.
+    </p>
+    <div id="riepilogo-cicli" style="display:flex;flex-wrap:wrap;gap:8px">Cerca un codice padre generale per vedere il riepilogo.</div>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
   <div class="section-hdr postazione-hdr">📋 Tabella di lavorazione — <span id="titolo-radice">—</span></div>
   <div style="padding:14px;overflow-x:auto">
     <div id="alb-tabella" style="font-size:13px;color:#666">Cerca un codice padre generale per iniziare.</div>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div class="section-hdr postazione-hdr" style="background:#1e5fa8">🛠️ Imposta Ciclo di Lavoro — <span id="cl-codice-corrente">—</span></div>
+  <div style="padding:14px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <label style="font-size:12px;color:var(--text-dim)">Codice:</label>
+      <select id="cl-select-codice" style="min-width:200px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)" onchange="selezionaCodiceCiclo(this.value)">
+        <option value="">— seleziona un codice dell'albero —</option>
+      </select>
+    </div>
+
+    <div id="cl-box-approvvigionamento" style="display:none;padding:10px;margin-bottom:14px;border:1px solid var(--border);border-radius:7px;background:var(--dark3)">
+      <div style="font-size:12px;font-weight:700;margin-bottom:7px">📦 Classificazione approvvigionamento</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+        <div style="flex:1;min-width:210px"><label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Tipo articolo</label>
+          <select id="cl-tipo-approvvigionamento" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border)">
+            <option value="DA_CLASSIFICARE">Da classificare</option>
+            <option value="MATERIA_PRIMA_FORNITORE">Materia prima da fornitore</option>
+            <option value="COMPONENTE_ACQUISTO">Componente d'acquisto</option>
+            <option value="LASERATO">Laserato</option>
+          </select>
+        </div>
+        <div style="width:145px"><label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Lead time fornitore</label>
+          <input id="cl-lead-time-fornitura" type="number" min="0" step="0.5" placeholder="Giorni" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <div style="width:150px"><label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Costo acquisto €/pz</label>
+          <input id="cl-costo-acquisto" type="number" min="0" step="0.01" placeholder="0.00" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <button class="btn btn-primary" onclick="salvaApprovvigionamento()">💾 Salva</button>
+      </div>
+      <div id="cl-approvvigionamento-esito" style="font-size:11px;margin-top:6px;color:var(--text-dim)"></div>
+    </div>
+
+    <div id="cl-box-fasi" style="display:none">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input id="cl-sequenza" type="number" step="1" min="1" value="1" placeholder="Sequenza" style="width:85px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <select id="cl-reparto" style="min-width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)"><option value="">Reparto...</option></select>
+        <input id="cl-produttivita" type="number" step="0.01" min="0" placeholder="Pezzi/ora" style="width:100px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="cl-scarto-max" type="number" step="0.1" min="0" max="100" placeholder="Scarto max %" style="width:110px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="cl-note" type="text" placeholder="Note" style="flex:1;min-width:120px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="aggiungiFaseCiclo()">➕ Aggiungi fase</button>
+      </div>
+      <div id="cl-lista-fasi" style="font-size:13px;color:#666">—</div>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -207,20 +265,46 @@ async function caricaAlbero(){
     }
     stato.textContent = `${d.righe.length} righe (padre/figlio) trovate nell'albero di ${codice}.`;
     box.innerHTML = renderTabellaAlbero(d.righe);
+    renderRiepilogoCicli(d.righe);
+    popolaSelectCodiciCiclo(d.righe);
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
   }
 }
 
+function renderRiepilogoCicli(righe){
+  const box = document.getElementById('riepilogo-cicli');
+  const perCodice = {};
+  righe.forEach(x => { if(!(x.codice_padre in perCodice)) perCodice[x.codice_padre] = x.n_fasi_ciclo_lavoro; });
+  const codici = Object.keys(perCodice).sort();
+  box.innerHTML = codici.map(c => {
+    const n = perCodice[c];
+    const colore = n > 0 ? '#2a9d5c' : '#c0392b';
+    const testo = n > 0 ? `✅ ${c} — ${n} fasi` : `⚠️ ${c} — nessun ciclo`;
+    return `<button class="btn btn-ghost" style="padding:5px 10px;font-size:11px;color:${colore};border-color:${colore}" onclick="selezionaCodiceCicloTabella('${c}')">${testo}</button>`;
+  }).join('');
+}
+
+function popolaSelectCodiciCiclo(righe){
+  const sel = document.getElementById('cl-select-codice');
+  const codici = [...new Set(righe.map(x => x.codice_padre))].sort();
+  sel.innerHTML = '<option value="">— seleziona un codice dell\'albero —</option>' +
+    codici.map(c => `<option value="${c}">${c}</option>`).join('');
+}
+
 function renderTabellaAlbero(righe){
   let html = '<table class="kanban-table"><thead><tr>' +
-    '<th>Padre</th><th>Figlio</th><th>Lunghezza<br>Barra</th><th>pz/Barra</th><th>Sviluppo</th>' +
+    '<th>Padre</th><th>Figlio</th><th>Ciclo di<br>Lavoro</th><th>Lunghezza<br>Barra</th><th>pz/Barra</th><th>Sviluppo</th>' +
     '<th>Matrice</th><th>Punto 0</th><th>Indice<br>assorbimento</th><th>Rullo<br>Sgolatrice</th>' +
     '<th>Impostazione<br>Satinatrice</th><th>Note</th></tr></thead><tbody>';
   righe.forEach((x, i) => {
+    const badgeCiclo = x.n_fasi_ciclo_lavoro > 0
+      ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#2a9d5c" onclick="selezionaCodiceCicloTabella('${x.codice_padre}')">✅ ${x.n_fasi_ciclo_lavoro} fasi</button>`
+      : `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#c0392b" onclick="selezionaCodiceCicloTabella('${x.codice_padre}')">⚠️ Nessuno</button>`;
     html += `<tr id="riga-${i}">
       <td class="codice">${x.codice_padre}</td>
       <td class="codice">${x.codice_figlio}</td>
+      <td>${badgeCiclo}</td>
       <td><select style="width:80px" onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
       <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
       <td><input type="text" value="${x.sviluppo||''}" style="width:100px" onchange="salvaCella(${i},'sviluppo',this.value)"></td>
@@ -235,6 +319,12 @@ function renderTabellaAlbero(righe){
   html += '</tbody></table>';
   window._RIGHE_ALBERO = righe;
   return html;
+}
+
+function selezionaCodiceCicloTabella(codice){
+  document.getElementById('cl-select-codice').value = codice;
+  selezionaCodiceCiclo(codice);
+  document.getElementById('cl-select-codice').scrollIntoView({behavior:'smooth', block:'center'});
 }
 
 async function salvaCella(indice, campo, valore){
@@ -259,8 +349,119 @@ async function salvaCella(indice, campo, valore){
   }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
 }
 
+// ── EDITOR CICLO DI LAVORO (sotto la tabella) ───────────────────────────
+let CODICE_CICLO_ATTIVO = null;
+
+async function selezionaCodiceCiclo(codice){
+  CODICE_CICLO_ATTIVO = codice || null;
+  document.getElementById('cl-codice-corrente').textContent = codice || '—';
+  const boxApp = document.getElementById('cl-box-approvvigionamento');
+  const boxFasi = document.getElementById('cl-box-fasi');
+  if(!codice){ boxApp.style.display = 'none'; boxFasi.style.display = 'none'; return; }
+  boxApp.style.display = ''; boxFasi.style.display = '';
+  await popolaRepartiCiclo();
+  await caricaApprovvigionamento();
+  await caricaFasiCiclo();
+}
+
+async function caricaApprovvigionamento(){
+  const esito = document.getElementById('cl-approvvigionamento-esito');
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Caricamento classificazione…';
+  try{
+    const r = await fetch('/api/articoli/' + encodeURIComponent(CODICE_CICLO_ATTIVO) + '/approvvigionamento');
+    const d = await r.json();
+    if(!r.ok || !d.ok) throw new Error(d.error || 'Caricamento non riuscito');
+    document.getElementById('cl-tipo-approvvigionamento').value = d.tipo_approvvigionamento || 'DA_CLASSIFICARE';
+    document.getElementById('cl-lead-time-fornitura').value = d.lead_time_fornitura_giorni ?? '';
+    document.getElementById('cl-costo-acquisto').value = d.costo_acquisto_standard || '';
+    esito.textContent = 'La classificazione è indipendente dal ciclo di lavoro.';
+  }catch(e){ esito.textContent = 'Impossibile caricare la classificazione.'; }
+}
+
+async function salvaApprovvigionamento(){
+  const esito = document.getElementById('cl-approvvigionamento-esito');
+  const payload = {
+    tipo_approvvigionamento: document.getElementById('cl-tipo-approvvigionamento').value,
+    lead_time_fornitura_giorni: document.getElementById('cl-lead-time-fornitura').value,
+    costo_acquisto_standard: document.getElementById('cl-costo-acquisto').value,
+  };
+  try{
+    const r = await fetch('/api/articoli/' + encodeURIComponent(CODICE_CICLO_ATTIVO) + '/approvvigionamento', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!r.ok || !d.ok) throw new Error(d.error || 'Salvataggio non riuscito');
+    esito.style.color = '#2a9d5c'; esito.textContent = '✓ Classificazione salvata.';
+  }catch(e){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ ' + e.message; }
+}
+
+async function popolaRepartiCiclo(){
+  const sel = document.getElementById('cl-reparto');
+  try{
+    const r = await fetch('/api/centri_costo_wood'); const righe = await r.json();
+    sel.innerHTML = '<option value="">Reparto...</option>' +
+      righe.map(c => `<option value="${c.id}">${c.nome}${c.esterno?' (esterno)':''}</option>`).join('');
+    if(!righe.length) sel.innerHTML = '<option value="">Nessun reparto — crealo in Centri di Costo</option>';
+  }catch(e){ sel.innerHTML = '<option value="">Errore caricamento reparti</option>'; }
+}
+
+async function caricaFasiCiclo(){
+  const box = document.getElementById('cl-lista-fasi');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/ciclo_lavoro_wood?codice=' + encodeURIComponent(CODICE_CICLO_ATTIVO));
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna fase inserita ancora per questo codice.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Seq.</th><th>Reparto</th><th>Pezzi/ora</th><th>Scarto max %</th><th>Note</th><th></th></tr></thead><tbody>';
+    righe.forEach(f=>{
+      html += `<tr><td class="num">${f.sequenza}</td><td>${f.centro_costo_nome}${f.centro_costo_esterno?' <span class="badge badge-warn" style="font-size:10px">esterno</span>':''}</td>` +
+        `<td class="num">${f.produttivita_oraria}</td><td class="num">${f.scarto_max_pct??'—'}</td><td class="lav-td">${f.note||'—'}</td>` +
+        `<td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaFaseCiclo(${f.id})">🗑️</button></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){ box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>'; }
+}
+
+async function aggiungiFaseCiclo(){
+  const payload = {
+    codice: CODICE_CICLO_ATTIVO,
+    sequenza: document.getElementById('cl-sequenza').value,
+    centro_costo_id: document.getElementById('cl-reparto').value,
+    produttivita_oraria: document.getElementById('cl-produttivita').value,
+    scarto_max_pct: document.getElementById('cl-scarto-max').value,
+    note: document.getElementById('cl-note').value.trim(),
+  };
+  try{
+    const r = await fetch('/api/ciclo_lavoro_wood', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    document.getElementById('cl-produttivita').value = '';
+    document.getElementById('cl-scarto-max').value = '';
+    document.getElementById('cl-note').value = '';
+    caricaFasiCiclo();
+    if(RADICE_ATTIVA) caricaAlbero();  // aggiorna anche il badge/conteggio nella tabella e nel riepilogo
+  }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
+}
+
+async function eliminaFaseCiclo(id){
+  if(!confirm('Eliminare questa fase del ciclo di lavoro?')) return;
+  try{
+    await fetch('/api/ciclo_lavoro_wood/' + id, {method:'DELETE'});
+    caricaFasiCiclo();
+    if(RADICE_ATTIVA) caricaAlbero();
+  }catch(e){ alert('❌ Errore di rete durante la cancellazione.'); }
+}
+
 caricaLunghezzeBarra();
 caricaMatrici();
 caricaRulli();
 caricaRadici();
+
+// Arrivo da un link incrociato (es. da Magazzino/Distinta Base): ?radice=CODICE apre subito l'albero.
+(function apriDaQueryString(){
+  const radice = new URLSearchParams(window.location.search).get('radice');
+  if(radice){
+    document.getElementById('inp-radice').value = radice.toUpperCase();
+    setTimeout(() => caricaAlbero(), 0);
+  }
+})();
 {% endblock %}
