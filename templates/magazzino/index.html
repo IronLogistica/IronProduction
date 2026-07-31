@@ -21,143 +21,81 @@
   .mt-fabb-ok{color:var(--text-dim);opacity:.5}
 </style>
 <div class="page-toolbar">
-  <div class="page-title">📦 Magazzino Materie Prime</div>
-  <span style="font-size:11px;color:var(--text-dim);margin-left:auto">🔗 Dati in tempo reale da MasterLogistic</span>
+  <div class="page-title">📦 Magazzino Iron Wood</div>
+  <span style="font-size:11px;color:var(--text-dim);margin-left:auto">Solo codici della Distinta Base Iron Wood — prodotti finiti, semilavorati, materia prima</span>
 </div>
 
 <div class="mon-section" style="border:1px dashed var(--border)">
   <div style="padding:12px;font-size:12px;color:var(--text-dim)">
-    🌲 La gestione della Distinta Base Iron Wood e del Ciclo di Lavoro si fa ora in
+    🌲 La gestione della Distinta Base Iron Wood e del Ciclo di Lavoro si fa in
     <a href="/parametri-lavorazione-wood" style="color:var(--accent2)">⚙️ Parametri di Lavorazione</a> — qui resta solo il magazzino.
   </div>
 </div>
 
 <div class="mon-section" style="margin-top:16px">
-  <div class="section-hdr postazione-hdr">📦 Materiali (MasterLogistic)</div>
-  <div id="mag-app" style="font-size:13px;padding:14px">Caricamento...</div>
-</div>
-
-<div class="mon-section" style="margin-top:16px">
-  <div class="section-hdr postazione-hdr">🧩 Distinta Base (BOM) — esplosione componenti</div>
-  <div style="padding:14px;display:flex;gap:8px;align-items:center">
-    <input id="bom-codice" type="text" placeholder="Codice articolo (es. BC60)"
-           style="flex:1;max-width:280px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
-    <button class="btn btn-primary" onclick="esplodiBOM()">🔍 Esplodi BOM</button>
+  <div class="section-hdr postazione-hdr">📊 Giacenza — prodotti finiti, semilavorati, materia prima</div>
+  <div style="padding:14px">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
+      <input id="mag-ricerca" type="text" placeholder="🔍 Cerca codice o descrizione..." oninput="caricaMagazzinoWood()"
+             style="flex:1;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text);font-size:13px">
+    </div>
+    <div id="mag-avviso" style="font-size:12px;color:#b8860b;margin-bottom:8px"></div>
+    <div id="mag-lista" style="font-size:13px;color:#666">Caricamento...</div>
   </div>
-  <div id="bom-result" style="padding:0 14px 14px;font-size:13px"></div>
 </div>
-
 {% endblock %}
 {% block scripts %}
-fetch('/api/materiali').then(r=>r.json()).then(data=>{
-  const app=document.getElementById('mag-app');
-  if(data && data.errore){
-    app.innerHTML='<p style="color:#c0392b">⚠️ '+data.messaggio+'<br><span style="font-size:11px;color:#999">Verifica la variabile MASTERLOGISTIC_DATABASE_URL su Railway.</span></p>';
-    return;
-  }
-  if(!data.length){app.innerHTML='<p style="color:#aaa;font-style:italic">Nessun articolo trovato in MasterLogistic.</p>';return;}
-  // Stessa metodologia della Giacenza Iron Wood: qui "ordinati" (ArticoloML) = impegnato verso i
-  // clienti, "incoming" = ordinato ai fornitori — solo i nomi campo differiscono per storia del modello.
-  let html=`<div style="overflow-x:auto"><table class="mat-table"><thead><tr>
-    <th>Codice (SKU)</th><th>Cod. esterno</th><th>Descrizione</th>
-    <th class="mt-th-stock">+ Stock</th>
-    <th class="mt-th-impegnato">− Impegnato Clienti</th>
-    <th class="mt-th-ordinato">+ Ordinato Fornitori</th>
-    <th class="mt-th-disp">(=) Disp. Contabile</th>
-    <th class="mt-th-scorta">− Scorta Min</th>
-    <th class="mt-th-fabb">(=) Fabbisogno</th>
-    <th>Fornitore</th></tr></thead><tbody>`;
-  data.forEach(m=>{
-    const stock = m.stock || 0, impegnato = m.ordinati || 0, ordinato = m.incoming || 0, scortaMin = m.scorta_min || 0;
-    const dispContabile = stock - impegnato + ordinato;
-    const fabbisogno = Math.max(scortaMin - dispContabile, 0);
-    html+=`<tr style="cursor:pointer" onclick="document.getElementById('bom-codice').value='${m.codice}';esplodiBOM();">
-      <td class="codice">${m.codice}</td><td class="lav-td">${m.codice_esterno||'—'}</td><td class="prod-name">${m.descrizione||'—'}</td>
-      <td class="${stock>0?'mt-val-stock':'mt-val-zero'}">${stock}</td>
-      <td class="${impegnato>0?'mt-val-impegnato':'mt-val-zero'}">${impegnato>0?impegnato:0}</td>
-      <td class="${ordinato>0?'mt-val-ordinato':'mt-val-zero'}">${ordinato>0?ordinato:0}</td>
-      <td class="mt-val-disp">${dispContabile}</td>
-      <td class="mt-val-zero">${scortaMin}</td>
-      <td>${fabbisogno>0?`<span class="mt-fabb-badge">▲ ${fabbisogno}</span>`:`<span class="mt-fabb-ok">0</span>`}</td>
-      <td class="lav-td">${m.fornitore||'—'}</td></tr>`;
-  });
-  html+='</tbody></table></div>';
-  app.innerHTML=html;
-}).catch(()=>{
-  document.getElementById('mag-app').innerHTML='<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
-});
-
-function renderApprovvigionamentoInline(approvvigionamento){
-  const a = approvvigionamento || {};
-  const etichette = {
-    MATERIA_PRIMA_FORNITORE: 'Materia prima da fornitore',
-    COMPONENTE_ACQUISTO: 'Componente d’acquisto',
-    LASERATO: 'Laserato'
-  };
-  const testo = etichette[a.tipo_approvvigionamento];
-  if(!testo) return '';
-  const lead = a.lead_time_fornitura_giorni !== null && a.lead_time_fornitura_giorni !== undefined
-    ? ` · Lead time: ${a.lead_time_fornitura_giorni} gg` : '';
-  return `<div style="margin:3px 0 3px 10px;font-size:11px;color:#1e5fa8;font-weight:700">📦 ${testo}${lead}</div>`;
-}
-
-function renderCicloLavoroInline(cicli, approvvigionamento){
-  if(cicli === undefined) return '';
-  if(!cicli || !cicli.length){
-    // Un articolo acquistato/laserato non ha ciclo per definizione: la sua etichetta
-    // di approvvigionamento viene mostrata sopra, senza falso avviso.
-    if(approvvigionamento && approvvigionamento.tipo_approvvigionamento !== 'DA_CLASSIFICARE') return '';
-    return '<div style="margin:3px 0 3px 10px;font-size:11px;color:#b8860b">⚠️ Nessun ciclo di lavoro registrato per questo codice</div>';
-  }
-  const fasi = cicli.map(f => `${f.sequenza}) ${f.centro_costo_nome}${f.centro_costo_esterno?' 🚚':''} — ${f.produttivita_oraria} pz/h`).join('&nbsp;&nbsp;→&nbsp;&nbsp;');
-  return `<div style="margin:3px 0 3px 10px;font-size:11px;color:#2a9d5c">🔧 Ciclo di lavoro: ${fasi}</div>`;
-}
-
-function renderBOMLista(componenti){
-  if(!componenti || !componenti.length) return '';
-  return '<ul style="margin:4px 0 4px 18px;padding:0;list-style:none">' + componenti.map(c => `
-    <li style="padding:4px 0;border-left:2px solid var(--border);padding-left:10px;margin-bottom:2px">
-      ${c.livello_effettivo!==undefined ? `<span style="font-size:10px;color:#1e5fa8;font-weight:700;margin-right:6px">SOTTOGRUPPO ${c.livello_effettivo}° LIVELLO</span>` : ''}
-      <span class="cod" style="font-weight:700">${c.codice}</span>
-      <span style="color:var(--text-dim)"> — ${c.descrizione||'(senza descrizione)'}</span>
-      <span style="margin-left:8px;font-weight:600">× ${c.quantita_totale}</span>
-      ${c.stock!==null && c.stock!==undefined ? `<span style="margin-left:8px;font-size:11px;color:${c.stock<=0?'#c0392b':'#2a9d5c'}">(stock ${c.stock})</span>` : ''}
-      ${c.note ? `<span style="margin-left:8px;font-size:11px;color:#999">${c.note}</span>` : ''}
-      ${renderApprovvigionamentoInline(c.approvvigionamento)}
-      ${renderCicloLavoroInline(c.cicli_lavoro, c.approvvigionamento)}
-      ${renderBOMLista(c.figli)}
-    </li>`).join('') + '</ul>';
-}
-
-async function esplodiBOM(){
-  const codice = document.getElementById('bom-codice').value.trim();
-  const box = document.getElementById('bom-result');
-  if(!codice){ box.innerHTML=''; return; }
-  box.innerHTML = '<p style="color:#999">Caricamento…</p>';
+async function caricaMagazzinoWood(){
+  const box = document.getElementById('mag-lista');
+  const avviso = document.getElementById('mag-avviso');
+  const q = document.getElementById('mag-ricerca').value.trim();
+  box.innerHTML = 'Caricamento...';
+  avviso.innerHTML = '';
   try{
-    const r = await fetch('/api/distinta_base/' + encodeURIComponent(codice));
+    const url = '/api/giacenza_wood?solo_bom=1' + (q ? '&q=' + encodeURIComponent(q) : '');
+    const r = await fetch(url);
     const d = await r.json();
-    if(d.errore){
-      box.innerHTML = '<p style="color:#c0392b">⚠️ '+d.messaggio+'</p>';
+    const righe = d.righe || [];
+    if(d.totale > d.mostrate){
+      avviso.innerHTML = q
+        ? `⚠️ Mostrate ${d.mostrate} righe su ${d.totale} totali che corrispondono alla ricerca.`
+        : `ℹ️ Mostrate le ${d.mostrate} righe più recenti su ${d.totale} totali — usa la ricerca per trovarne altre.`;
+    }
+    if(!righe.length){
+      box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun codice trovato — verifica che la Distinta Base Iron Wood sia compilata e che il codice abbia una giacenza registrata.</p>';
       return;
     }
-    if(!d.trovato){
-      box.innerHTML = `<p style="color:#999">Articolo <b>${codice}</b> non trovato in MasterLogistic.</p>`;
-    }
-    if(!d.ha_bom){
-      box.innerHTML += `<p style="color:#999">Nessuna distinta base definita per <b>${codice}</b> (${d.descrizione||'—'}).</p>`;
-      return;
-    }
-    box.innerHTML = `<p style="margin-bottom:6px"><b>${codice}</b> — ${d.descrizione||'—'} <span style="font-size:10px;color:#1e5fa8;font-weight:700">CODICE PADRE</span></p>` + renderBOMLista(d.componenti);
+    let html = `<div style="overflow-x:auto"><table class="mat-table"><thead><tr>
+      <th>Codice</th><th>Descrizione</th>
+      <th class="mt-th-stock">+ Stock</th>
+      <th class="mt-th-impegnato">− Impegnato OP</th>
+      <th class="mt-th-ordinato">+ Ordinato Fornitori</th>
+      <th class="mt-th-disp">(=) Disp. Contabile</th>
+      <th class="mt-th-scorta">− Scorta Min.</th>
+      <th class="mt-th-fabb">(=) Fabbisogno</th></tr></thead><tbody>`;
+    righe.forEach(g=>{
+      html += `<tr>
+        <td class="codice">${g.codice}</td>
+        <td class="prod-name">${g.descrizione || '—'}</td>
+        <td class="${g.quantita>0?'mt-val-stock':'mt-val-zero'}">${g.quantita}</td>
+        <td class="${g.impegnato>0?'mt-val-impegnato':'mt-val-zero'}">${g.impegnato>0?g.impegnato:0}</td>
+        <td class="${g.ordinato>0?'mt-val-ordinato':'mt-val-zero'}">${g.ordinato>0?g.ordinato:0}</td>
+        <td class="mt-val-disp">${g.disponibile_contabile}</td>
+        <td class="mt-val-zero">${g.scorta_minima}</td>
+        <td>${g.fabbisogno>0?`<span class="mt-fabb-badge">▲ ${g.fabbisogno}</span>`:`<span class="mt-fabb-ok">0</span>`}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
   }catch(e){
-    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento della BOM.</p>';
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
   }
 }
 
-// Apertura guidata dai collegamenti del dettaglio Costo Standard e dalla
-// Distinta Base: la gestione Distinta Base/Ciclo di Lavoro Iron Wood vive
-// ora in Parametri di Lavorazione — qui restano solo Materiali e l'esplosione
-// BOM di MasterLogistic.
+caricaMagazzinoWood();
+
+// Arrivo da un link incrociato (es. da un altro report): ?articolo=/?ciclo=/?distinta=
+// portano tutti alla pagina Parametri di Lavorazione, che gestisce ormai anche la BOM.
 (function apriConfigurazioneDaCostoStandard(){
   const q = new URLSearchParams(window.location.search);
   const articolo = q.get('articolo') || q.get('ciclo') || q.get('distinta');
