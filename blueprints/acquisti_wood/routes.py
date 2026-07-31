@@ -159,17 +159,19 @@ def _estrai_dati_ordine_acquisto(testo_completo):
             _indici_articoli.append(idx)
 
     # 3bis. Fallback prezzo: per gli articoli senza prezzo trovato inline,
-    # cerca nelle 2 righe successive una riga "a sé stante" fatta solo di
-    # prezzo unitario + importo (es. quando la riga articolo va a capo prima
-    # del prezzo). Si prende SOLO il primo numero (prezzo unitario).
-    PREZZO_RIGA_RE = re.compile(r'^([\d.]{1,12},\d{1,5})\s+([\d.]{1,12},\d{1,5})$')
+    # cerca nelle 2 righe successive il pattern "prezzo_unitario importo"
+    # OVUNQUE nella riga (non l'intera riga: capita che la descrizione a capo
+    # resti incollata al numero, es. "...DIREZIONALE423,50000 847,00 22" —
+    # PyPDF2 unisce colonne senza spazio). Si prende SOLO il primo numero
+    # (prezzo unitario); l'eventuale testo prima/dopo viene ignorato.
+    PREZZO_RIGA_RE = re.compile(r'(\d{1,3}(?:\.\d{3})*,\d{1,5})\s+(\d{1,3}(?:\.\d{3})*,\d{2})')
     for art, idx_trovato in zip(dati['articoli'], _indici_articoli):
         if art.get('prezzo_unitario') is not None:
             continue
         for offset in (1, 2):
             j = idx_trovato + offset
             if j < len(linee_articoli):
-                m_prezzo = PREZZO_RIGA_RE.match(linee_articoli[j])
+                m_prezzo = PREZZO_RIGA_RE.search(linee_articoli[j])
                 if m_prezzo:
                     art['prezzo_unitario'] = _parse_prezzo_it(m_prezzo.group(1))
                     break
