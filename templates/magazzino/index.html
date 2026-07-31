@@ -1,5 +1,25 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+  .mat-table{width:100%;border-collapse:collapse;font-size:13px}
+  .mat-table thead th{padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.3px;
+                       border-bottom:2px solid var(--border);white-space:nowrap}
+  .mat-table tbody td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
+  .mat-table tbody tr:hover{background:rgba(255,255,255,.03)}
+  .mt-th-stock{color:#2a9d5c}
+  .mt-th-impegnato{color:#e8760a}
+  .mt-th-ordinato{color:#4d9fd6}
+  .mt-th-disp{color:#2589c7}
+  .mt-th-scorta{color:var(--text-dim)}
+  .mt-th-fabb{color:#e74c3c}
+  .mt-val-stock{color:#e0eefc;font-weight:700;font-size:14px}
+  .mt-val-impegnato{color:#e8760a;font-weight:600}
+  .mt-val-ordinato{color:#4d9fd6;font-weight:600}
+  .mt-val-disp{color:#2589c7;font-weight:800;font-size:14px}
+  .mt-val-zero{color:var(--text-dim);opacity:.55}
+  .mt-fabb-badge{color:#ff6b6b;font-weight:800;display:inline-flex;align-items:center;gap:3px}
+  .mt-fabb-ok{color:var(--text-dim);opacity:.5}
+</style>
 <div class="page-toolbar">
   <div class="page-title">📦 Magazzino Materie Prime</div>
   <span style="font-size:11px;color:var(--text-dim);margin-left:auto">🔗 Dati in tempo reale da MasterLogistic</span>
@@ -53,7 +73,10 @@
   </div>
 </div>
 
-<div id="mag-app" style="font-size:13px;color:#666;padding:20px;background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);margin-top:16px">Caricamento...</div>
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">📦 Materiali (MasterLogistic)</div>
+  <div id="mag-app" style="font-size:13px;padding:14px">Caricamento...</div>
+</div>
 
 <div class="mon-section" style="margin-top:16px">
   <div class="section-hdr postazione-hdr">🧩 Distinta Base (BOM) — esplosione componenti</div>
@@ -74,16 +97,30 @@ fetch('/api/materiali').then(r=>r.json()).then(data=>{
     return;
   }
   if(!data.length){app.innerHTML='<p style="color:#aaa;font-style:italic">Nessun articolo trovato in MasterLogistic.</p>';return;}
-  let html=`<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>
+  // Stessa metodologia della Giacenza Iron Wood: qui "ordinati" (ArticoloML) = impegnato verso i
+  // clienti, "incoming" = ordinato ai fornitori — solo i nomi campo differiscono per storia del modello.
+  let html=`<div style="overflow-x:auto"><table class="mat-table"><thead><tr>
     <th>Codice (SKU)</th><th>Cod. esterno</th><th>Descrizione</th>
-    <th>Stock</th><th>Ordinati</th><th>In arrivo</th><th>Scorta Min</th><th>Stato</th><th>Fornitore</th></tr></thead><tbody>`;
+    <th class="mt-th-stock">+ Stock</th>
+    <th class="mt-th-impegnato">− Impegnato Clienti</th>
+    <th class="mt-th-ordinato">+ Ordinato Fornitori</th>
+    <th class="mt-th-disp">(=) Disp. Contabile</th>
+    <th class="mt-th-scorta">− Scorta Min</th>
+    <th class="mt-th-fabb">(=) Fabbisogno</th>
+    <th>Fornitore</th></tr></thead><tbody>`;
   data.forEach(m=>{
-    const sc=m.stato==='ok'?'<span class="badge badge-ok">✅ OK</span>':m.stato==='sottoscorta'?'<span class="badge badge-warn">⚠️ Sottoscorta</span>':'<span class="badge badge-warn">❌ Esaurito</span>';
+    const stock = m.stock || 0, impegnato = m.ordinati || 0, ordinato = m.incoming || 0, scortaMin = m.scorta_min || 0;
+    const dispContabile = stock - impegnato + ordinato;
+    const fabbisogno = Math.max(scortaMin - dispContabile, 0);
     html+=`<tr style="cursor:pointer" onclick="document.getElementById('bom-codice').value='${m.codice}';esplodiBOM();">
       <td class="codice">${m.codice}</td><td class="lav-td">${m.codice_esterno||'—'}</td><td class="prod-name">${m.descrizione||'—'}</td>
-      <td class="num ${m.stock<=0?'num-neg':'num-pos'}">${m.stock}</td>
-      <td class="num">${m.ordinati}</td><td class="num">${m.incoming}</td>
-      <td class="num">${m.scorta_min}</td><td>${sc}</td><td class="lav-td">${m.fornitore||'—'}</td></tr>`;
+      <td class="${stock>0?'mt-val-stock':'mt-val-zero'}">${stock}</td>
+      <td class="${impegnato>0?'mt-val-impegnato':'mt-val-zero'}">${impegnato>0?impegnato:0}</td>
+      <td class="${ordinato>0?'mt-val-ordinato':'mt-val-zero'}">${ordinato>0?ordinato:0}</td>
+      <td class="mt-val-disp">${dispContabile}</td>
+      <td class="mt-val-zero">${scortaMin}</td>
+      <td>${fabbisogno>0?`<span class="mt-fabb-badge">▲ ${fabbisogno}</span>`:`<span class="mt-fabb-ok">0</span>`}</td>
+      <td class="lav-td">${m.fornitore||'—'}</td></tr>`;
   });
   html+='</tbody></table></div>';
   app.innerHTML=html;
