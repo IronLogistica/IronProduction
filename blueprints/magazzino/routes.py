@@ -6,7 +6,8 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     ImpostazioneCostoWood, CostoStandardWood, VarianzaProduzioneWood,
                     CostoPianificatoCentroWood, DRIVER_ATTIVITA_WOOD, VOCI_COSTO_PIANIFICATO_WOOD,
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood,
-                    CostoStandardVersioneDettaglioWood, CostoStandardVersioneFaseWood)
+                    CostoStandardVersioneDettaglioWood, CostoStandardVersioneFaseWood,
+                    MatriceWood, RulloWood, SchedaLavorazioneWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -1610,3 +1611,173 @@ def api_impostazioni_costo():
     db.session.commit()
     return jsonify({'ok': True, 'aliquota_overhead_materiali_pct': imp.aliquota_overhead_materiali_pct,
                     'aliquota_overhead_produzione_pct': imp.aliquota_overhead_produzione_pct})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SCHEDE DI LAVORAZIONE IRON WOOD — Taglio / Piega / Satinatura, inserite a
+#  mano da Angelo (le sue schede erano sparse in Excel diversi tra loro).
+#  Matrici e Rulli sono anagrafiche di supporto per i menu a tendina della
+#  Scheda Piega, identificate dal proprio codice (come qualsiasi altro codice).
+# ══════════════════════════════════════════════════════════════════════════════
+@magazzino_bp.route('/schede-lavorazione-wood')
+def pagina_schede_lavorazione():
+    return render_template('schede_lavorazione_wood.html', active='schede_lavorazione')
+
+
+def _crud_anagrafica_semplice(Model, nome_singolare):
+    """Fabbrica per le due anagrafiche identiche Matrici/Rulli (lista + crea + elimina)."""
+    def lista():
+        righe = Model.query.order_by(Model.codice).all()
+        return jsonify([{'id': r.id, 'codice': r.codice, 'descrizione': r.descrizione} for r in righe])
+
+    def crea():
+        d = request.get_json(force=True)
+        codice = (d.get('codice') or '').strip().upper()
+        if not codice:
+            return jsonify({'errore': True, 'messaggio': f'Il codice {nome_singolare} è obbligatorio'}), 400
+        if Model.query.filter_by(codice=codice).first():
+            return jsonify({'errore': True, 'messaggio': f'Esiste già un/a {nome_singolare} con codice "{codice}"'}), 409
+        r = Model(codice=codice, descrizione=(d.get('descrizione') or '').strip())
+        db.session.add(r); db.session.commit()
+        return jsonify({'ok': True, 'id': r.id})
+
+    def elimina(rid):
+        r = Model.query.get_or_404(rid)
+        db.session.delete(r); db.session.commit()
+        return jsonify({'ok': True})
+
+    return lista, crea, elimina
+
+
+_lista_matrici, _crea_matrice, _elimina_matrice = _crud_anagrafica_semplice(MatriceWood, 'matrice')
+magazzino_bp.add_url_rule('/api/matrici_wood', 'lista_matrici', _lista_matrici, methods=['GET'])
+magazzino_bp.add_url_rule('/api/matrici_wood', 'crea_matrice', _crea_matrice, methods=['POST'])
+magazzino_bp.add_url_rule('/api/matrici_wood/<int:rid>', 'elimina_matrice', _elimina_matrice, methods=['DELETE'])
+
+_lista_rulli, _crea_rullo, _elimina_rullo = _crud_anagrafica_semplice(RulloWood, 'rullo')
+magazzino_bp.add_url_rule('/api/rulli_wood', 'lista_rulli', _lista_rulli, methods=['GET'])
+magazzino_bp.add_url_rule('/api/rulli_wood', 'crea_rullo', _crea_rullo, methods=['POST'])
+magazzino_bp.add_url_rule('/api/rulli_wood/<int:rid>', 'elimina_rullo', _elimina_rullo, methods=['DELETE'])
+
+
+def _flatten_albero_lavorazione(codice_radice, _visitati=None, _profondita=0, _max_profondita=15):
+    """
+    Percorre tutta la Distinta Base a partire da codice_radice e ritorna la
+    lista di TUTTE le coppie (codice_padre, codice_figlio) raggiungibili, a
+    qualunque livello — usa _righe_bom_attive_wood, quindi se un componente
+    ha alternative (es. barra 7m/6m) considera solo quella attiva. Un guard
+    su _visitati evita loop infiniti in caso di cicli accidentali nella BOM.
+    """
+    if _visitati is None:
+        _visitati = set()
+    if codice_radice in _visitati or _profondita > _max_profondita:
+        return []
+    _visitati.add(codice_radice)
+    coppie = []
+    figli = _righe_bom_attive_wood(codice_radice)
+    for f in figli:
+        coppie.append((codice_radice, f.codice_figlio))
+    for f in figli:
+        coppie.extend(_flatten_albero_lavorazione(f.codice_figlio, _visitati, _profondita + 1, _max_profondita))
+    return coppie
+
+
+@magazzino_bp.route('/api/schede_lavorazione_wood/radici')
+def api_radici_schede_lavorazione():
+    """
+    Codici 'di vertice': compaiono come codice_padre in Distinta Base ma MAI
+    come codice_figlio di nessun altro — usati per il prev/next della
+    pagina (ogni 'Codice padre generale' è una di queste radici).
+    """
+    tutti_padri = {r[0] for r in db.session.query(DistintaBaseWood.codice_padre).distinct().all()}
+    tutti_figli = {r[0] for r in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
+    return jsonify(sorted(tutti_padri - tutti_figli))
+
+
+@magazzino_bp.route('/api/schede_lavorazione_wood/albero/<codice_radice>')
+def api_albero_schede_lavorazione(codice_radice):
+    """
+    Tabella UNICA (non tre separate) per un 'Codice padre generale': ogni
+    riga è una coppia padre/figlio della Distinta Base sotto quella radice,
+    con tutte le specifiche macchina già compilate (o vuote se non ancora
+    inserite) — esattamente come la tabella dello screenshot di riferimento.
+    """
+    codice_radice = codice_radice.strip().upper()
+    coppie = _flatten_albero_lavorazione(codice_radice)
+    viste, coppie_uniche = set(), []
+    for p in coppie:
+        if p not in viste:
+            viste.add(p); coppie_uniche.append(p)
+    if not coppie_uniche:
+        return jsonify({'trovato': False, 'righe': []})
+
+    schede = {(s.codice_padre, s.codice_figlio): s for s in
+              SchedaLavorazioneWood.query.filter(
+                  SchedaLavorazioneWood.codice_padre.in_({p for p, _ in coppie_uniche})).all()}
+    righe = []
+    for padre, figlio in sorted(coppie_uniche, key=lambda x: x[0]):
+        s = schede.get((padre, figlio))
+        righe.append({
+            'id': s.id if s else None, 'codice_padre': padre, 'codice_figlio': figlio,
+            'lunghezza_barra_mm': s.lunghezza_barra_mm if s else None,
+            'pezzi_per_barra': s.pezzi_per_barra if s else None,
+            'sviluppo': s.sviluppo if s else '',
+            'matrice_id': s.matrice_id if s else None,
+            'matrice_codice': (s.matrice.codice if s and s.matrice else None),
+            'punto_zero': s.punto_zero if s else '',
+            'indice_assorbimento': s.indice_assorbimento if s else '',
+            'rullo_id': s.rullo_id if s else None,
+            'rullo_codice': (s.rullo.codice if s and s.rullo else None),
+            'impostazione_satinatrice': s.impostazione_satinatrice if s else '',
+            'note': s.note if s else '',
+        })
+    return jsonify({'trovato': True, 'righe': righe})
+
+
+@magazzino_bp.route('/api/schede_lavorazione_wood', methods=['POST'])
+def api_upsert_scheda_lavorazione():
+    d = request.get_json(force=True)
+    padre = (d.get('codice_padre') or '').strip().upper()
+    figlio = (d.get('codice_figlio') or '').strip().upper()
+    if not padre or not figlio:
+        return jsonify({'errore': True, 'messaggio': 'Codice padre e figlio sono obbligatori'}), 400
+    try:
+        lunghezza_barra_mm = float(d['lunghezza_barra_mm']) if d.get('lunghezza_barra_mm') not in (None, '') else None
+        pezzi_per_barra = float(d['pezzi_per_barra']) if d.get('pezzi_per_barra') not in (None, '') else None
+        matrice_id = int(d['matrice_id']) if d.get('matrice_id') not in (None, '') else None
+        rullo_id = int(d['rullo_id']) if d.get('rullo_id') not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Valori numerici non validi'}), 400
+    if matrice_id and not MatriceWood.query.get(matrice_id):
+        return jsonify({'errore': True, 'messaggio': 'Matrice non trovata'}), 404
+    if rullo_id and not RulloWood.query.get(rullo_id):
+        return jsonify({'errore': True, 'messaggio': 'Rullo non trovato'}), 404
+
+    valori = dict(
+        lunghezza_barra_mm=lunghezza_barra_mm, pezzi_per_barra=pezzi_per_barra,
+        sviluppo=(d.get('sviluppo') or '').strip(), matrice_id=matrice_id,
+        punto_zero=(d.get('punto_zero') or '').strip(),
+        indice_assorbimento=(d.get('indice_assorbimento') or '').strip(),
+        rullo_id=rullo_id, impostazione_satinatrice=(d.get('impostazione_satinatrice') or '').strip(),
+        note=(d.get('note') or '').strip(),
+    )
+    esistente = SchedaLavorazioneWood.query.filter_by(codice_padre=padre, codice_figlio=figlio).first()
+    if esistente:
+        for k, v in valori.items():
+            setattr(esistente, k, v)
+        rid = esistente.id
+    else:
+        r = SchedaLavorazioneWood(codice_padre=padre, codice_figlio=figlio, **valori)
+        db.session.add(r); db.session.flush()
+        rid = r.id
+    db.session.commit()
+    return jsonify({'ok': True, 'id': rid})
+
+
+@magazzino_bp.route('/api/schede_lavorazione_wood/<int:rid>', methods=['DELETE'])
+def api_elimina_scheda_lavorazione(rid):
+    r = SchedaLavorazioneWood.query.get_or_404(rid)
+    db.session.delete(r); db.session.commit()
+    return jsonify({'ok': True})
+
+
