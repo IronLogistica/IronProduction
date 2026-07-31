@@ -80,6 +80,7 @@ def api_approvvigionamento_articolo(codice):
             'tipo_approvvigionamento': record.tipo_approvvigionamento if record else 'DA_CLASSIFICARE',
             'lead_time_fornitura_giorni': record.lead_time_fornitura_giorni if record else None,
             'costo_acquisto_standard': record.costo_acquisto_standard if record else 0,
+            'unita_misura': record.unita_misura if record else '',
         })
     try:
         d = request.get_json(force=True)
@@ -95,12 +96,15 @@ def api_approvvigionamento_articolo(codice):
         if 'costo_acquisto_standard' in d:
             costo = d.get('costo_acquisto_standard')
             record.costo_acquisto_standard = float(costo) if costo not in (None, '') else 0
+        if 'unita_misura' in d:
+            record.unita_misura = (d.get('unita_misura') or '').strip().upper()[:20]
         record.aggiornato_il = datetime.utcnow()
         db.session.commit()
         return jsonify({'ok': True, 'codice': codice,
                         'tipo_approvvigionamento': record.tipo_approvvigionamento,
                         'lead_time_fornitura_giorni': record.lead_time_fornitura_giorni,
-                        'costo_acquisto_standard': record.costo_acquisto_standard})
+                        'costo_acquisto_standard': record.costo_acquisto_standard,
+                        'unita_misura': record.unita_misura})
     except (TypeError, ValueError):
         db.session.rollback()
         return jsonify({'ok': False, 'error': 'Lead time non valido'}), 400
@@ -737,6 +741,15 @@ def api_giacenza_lista():
         query = query.filter(db.or_(GiacenzaWood.codice.ilike(f'%{q}%'),
                                      GiacenzaWood.codice.in_(codici_per_descrizione)))
     righe = query.order_by(GiacenzaWood.aggiornato_il.desc()).limit(LIMITE_DEFAULT).all()
+    # Giacenza Iron Wood è guidata dalla distinta impostata in Parametri: anche
+    # un componente senza movimento/stock registrato deve comparire a zero, per
+    # rendere visibile il fabbisogno invece di nasconderlo.
+    if solo_bom and not q:
+        presenti = {g.codice for g in righe}
+        mancanti = sorted(codici_bom - presenti)
+        spazio = max(LIMITE_DEFAULT - len(righe), 0)
+        righe.extend(GiacenzaWood(codice=codice, quantita=0) for codice in mancanti[:spazio])
+        totale = len(codici_bom)
     codici = [g.codice for g in righe]
 
     # Impegnato: quanto di ogni codice è già "preso" dagli OP aperti (stessa
@@ -767,6 +780,8 @@ def api_giacenza_lista():
                             .order_by(RigaOrdineAcquistoWood.id.desc()).all()):
             descrizioni.setdefault(cod, descr)
 
+    approvvigionamenti = {a.codice: a for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()} if codici else {}
+
     righe_out = []
     for g in righe:
         imp = impegnato.get(g.codice, 0)
@@ -776,6 +791,7 @@ def api_giacenza_lista():
         fabbisogno = round(max(scorta_min - disp_contabile, 0), 4)
         righe_out.append({
             'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
+            'unita_misura': approvvigionamenti.get(g.codice).unita_misura if approvvigionamenti.get(g.codice) else '',
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
             'scorta_minima': scorta_min, 'fabbisogno': fabbisogno,
             'aggiornato_il': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if g.aggiornato_il else '',
@@ -830,6 +846,13 @@ def api_giacenza_rettifica():
         return jsonify({'errore': True, 'messaggio': 'La quantità non può essere zero'}), 400
     tipo = 'carico_manuale' if delta > 0 else 'scarico_manuale'
     _registra_movimento_giacenza(codice, delta, tipo, note=(d.get('note') or '').strip())
+    unita = (d.get('unita_misura') or '').strip().upper()[:20]
+    if unita:
+        articolo = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
+        if articolo is None:
+            articolo = ArticoloApprovvigionamento(codice=codice)
+            db.session.add(articolo)
+        articolo.unita_misura = unita
     db.session.commit()
     g = GiacenzaWood.query.get(codice)
     return jsonify({'ok': True, 'codice': codice, 'quantita': g.quantita})
@@ -874,6 +897,7 @@ def api_importa_giacenza():
         df.columns = [str(c).strip().lower() for c in df.columns]
         col_codice = next((c for c in ('codice', 'sku', 'articolo', 'codart') if c in df.columns), None)
         col_qta    = next((c for c in ('quantita', 'quantità', 'giacenza', 'qta') if c in df.columns), None)
+        col_unita  = next((c for c in ('unita_misura', 'unità di misura', 'unita', 'u.m.', 'um') if c in df.columns), None)
         if not col_codice or not col_qta:
             return jsonify({'errore': True,
                              'messaggio': f'Colonne non trovate. Attese "codice" e "quantita", trovate: {", ".join(df.columns)}'}), 400
@@ -889,6 +913,16 @@ def api_importa_giacenza():
             except (TypeError, ValueError):
                 scartate += 1
                 continue
+            # L'unità è anagrafica del codice, non del singolo movimento: se presente
+            # nell'import la aggiorniamo nella stessa tabella usata da Parametri.
+            if col_unita and str(row[col_unita]).lower() != 'nan':
+                unita = str(row[col_unita]).strip().upper()[:20]
+                if unita:
+                    articolo = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
+                    if articolo is None:
+                        articolo = ArticoloApprovvigionamento(codice=codice)
+                        db.session.add(articolo)
+                    articolo.unita_misura = unita
             g = GiacenzaWood.query.get(codice)
             if g is None:
                 _registra_movimento_giacenza(codice, nuova_qta, 'carico_iniziale', note='Import massivo')
@@ -1837,19 +1871,24 @@ def api_albero_schede_lavorazione(codice_radice):
 
     # Quante fasi di Ciclo di Lavoro esistono per ogni codice_padre di questo albero — una sola query,
     # non una per riga: alimenta la nuova colonna "Ciclo di Lavoro" e il riepilogo sopra la tabella.
+    # Padre e figlio sono entrambi articoli lavorabili/classificabili.
     codici_padre = {p for p, _ in coppie_uniche}
+    codici_albero = codici_padre | {f for _, f in coppie_uniche}
     conteggio_fasi = dict(
         db.session.query(CicloLavoroWood.codice, db.func.count(CicloLavoroWood.id))
-        .filter(CicloLavoroWood.codice.in_(codici_padre))
+        .filter(CicloLavoroWood.codice.in_(codici_albero))
         .group_by(CicloLavoroWood.codice).all()
     )
 
+    approvvigionamenti = {a.codice: a for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici_albero)).all()}
     righe = []
     for padre, figlio in sorted(coppie_uniche, key=lambda x: x[0]):
         s = schede.get((padre, figlio))
         righe.append({
             'id': s.id if s else None, 'codice_padre': padre, 'codice_figlio': figlio,
-            'n_fasi_ciclo_lavoro': conteggio_fasi.get(padre, 0),
+            'n_fasi_ciclo_lavoro_padre': conteggio_fasi.get(padre, 0),
+            'n_fasi_ciclo_lavoro_figlio': conteggio_fasi.get(figlio, 0),
+            'approvvigionamento_figlio': {'tipo_approvvigionamento': approvvigionamenti.get(figlio).tipo_approvvigionamento if approvvigionamenti.get(figlio) else 'DA_CLASSIFICARE', 'unita_misura': approvvigionamenti.get(figlio).unita_misura if approvvigionamenti.get(figlio) else ''},
             'lunghezza_barra_mm': s.lunghezza_barra_mm if s else None,
             'pezzi_per_barra': s.pezzi_per_barra if s else None,
             'sviluppo': s.sviluppo if s else '',
