@@ -7,7 +7,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     CostoPianificatoCentroWood, DRIVER_ATTIVITA_WOOD, VOCI_COSTO_PIANIFICATO_WOOD,
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood,
                     CostoStandardVersioneDettaglioWood, CostoStandardVersioneFaseWood,
-                    MatriceWood, RulloWood, SchedaLavorazioneWood)
+                    MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -1619,9 +1619,16 @@ def api_impostazioni_costo():
 #  Matrici e Rulli sono anagrafiche di supporto per i menu a tendina della
 #  Scheda Piega, identificate dal proprio codice (come qualsiasi altro codice).
 # ══════════════════════════════════════════════════════════════════════════════
+@magazzino_bp.route('/parametri-lavorazione-wood')
+def pagina_parametri_lavorazione():
+    return render_template('parametri_lavorazione_wood.html', active='parametri_lavorazione')
+
+
 @magazzino_bp.route('/schede-lavorazione-wood')
 def pagina_schede_lavorazione():
-    return render_template('schede_lavorazione_wood.html', active='schede_lavorazione')
+    """Vecchio indirizzo — redirect di cortesia verso la pagina rinominata."""
+    from flask import redirect, url_for
+    return redirect(url_for('magazzino.pagina_parametri_lavorazione'))
 
 
 def _crud_anagrafica_semplice(Model, nome_singolare):
@@ -1658,6 +1665,34 @@ _lista_rulli, _crea_rullo, _elimina_rullo = _crud_anagrafica_semplice(RulloWood,
 magazzino_bp.add_url_rule('/api/rulli_wood', 'lista_rulli', _lista_rulli, methods=['GET'])
 magazzino_bp.add_url_rule('/api/rulli_wood', 'crea_rullo', _crea_rullo, methods=['POST'])
 magazzino_bp.add_url_rule('/api/rulli_wood/<int:rid>', 'elimina_rullo', _elimina_rullo, methods=['DELETE'])
+
+
+@magazzino_bp.route('/api/lunghezze_barra_wood', methods=['GET'])
+def api_lista_lunghezze_barra():
+    righe = LunghezzaBarraWood.query.order_by(LunghezzaBarraWood.valore_mm).all()
+    return jsonify([{'id': r.id, 'valore_mm': r.valore_mm,
+                      'etichetta': r.etichetta or f'{r.valore_mm/1000:g} mt'} for r in righe])
+
+
+@magazzino_bp.route('/api/lunghezze_barra_wood', methods=['POST'])
+def api_crea_lunghezza_barra():
+    d = request.get_json(force=True)
+    try:
+        valore_mm = float(d.get('valore_mm'))
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Il valore in mm è obbligatorio e numerico'}), 400
+    if LunghezzaBarraWood.query.filter_by(valore_mm=valore_mm).first():
+        return jsonify({'errore': True, 'messaggio': 'Esiste già una lunghezza barra con questo valore'}), 409
+    r = LunghezzaBarraWood(valore_mm=valore_mm, etichetta=(d.get('etichetta') or '').strip())
+    db.session.add(r); db.session.commit()
+    return jsonify({'ok': True, 'id': r.id})
+
+
+@magazzino_bp.route('/api/lunghezze_barra_wood/<int:rid>', methods=['DELETE'])
+def api_elimina_lunghezza_barra(rid):
+    r = LunghezzaBarraWood.query.get_or_404(rid)
+    db.session.delete(r); db.session.commit()
+    return jsonify({'ok': True})
 
 
 def _flatten_albero_lavorazione(codice_radice, _visitati=None, _profondita=0, _max_profondita=15):
