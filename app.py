@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from flask import Flask, redirect, url_for
 from config import Config
-from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor
+from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate
 
 def create_app():
     app = Flask(__name__)
@@ -45,6 +45,7 @@ def create_app():
         db.create_all(bind_key=None)   # solo il DB locale — mai il bind 'masterlogistic'
         init_db()
         inizializza_schema_pp()
+        migra_schede_lavorazione_unificate()
 
     return app
 

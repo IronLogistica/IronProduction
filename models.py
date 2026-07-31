@@ -465,8 +465,115 @@ class DistintaBaseWood(db.Model):
     # gruppo_alternativa = None → riga normale, nessuna alternativa, sempre inclusa.
     gruppo_alternativa = db.Column(db.String(50), nullable=True)
     preferita          = db.Column(db.Boolean, default=True)
+    # ── Schede di taglio (es. "Padre / Figlio / pz per Barra / Sviluppo / Note"
+    # raccolte da Angelo in Excel sparsi): quando il figlio è una barra/profilo
+    # grezzo da tagliare, questi due campi conservano il dato ORIGINALE della
+    # scheda (quanti pezzi finiti escono da una barra, e la lunghezza di
+    # sviluppo del pezzo) — 'quantita' resta comunque calcolata come
+    # 1/pezzi_per_barra, per restare compatibile col motore BOM/costo standard
+    # esistente, che non cambia e non deve sapere di questi due campi.
+    pezzi_per_barra    = db.Column(db.Float, nullable=True)
+    sviluppo           = db.Column(db.String(50), nullable=True)   # es. "L. 1.932" — testo libero, alcune schede hanno note tipo "D.V." attaccate
     creato_il     = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_padre_figlio_wood_uc'),)
+
+
+class MatriceWood(db.Model):
+    """Anagrafica matrici (piegatrice) — lista da cui pesca il menu a tendina della Scheda Piega."""
+    __tablename__ = 'matrici_wood'
+    id          = db.Column(db.Integer, primary_key=True)
+    codice      = db.Column(db.String(50), nullable=False, unique=True)
+    descrizione = db.Column(db.String(200), default='')
+    creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class RulloWood(db.Model):
+    """Anagrafica rulli (piegatrice) — lista da cui pesca il menu a tendina della Scheda Piega."""
+    __tablename__ = 'rulli_wood'
+    id          = db.Column(db.Integer, primary_key=True)
+    codice      = db.Column(db.String(50), nullable=False, unique=True)
+    descrizione = db.Column(db.String(200), default='')
+    creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class SchedaLavorazioneWood(db.Model):
+    """
+    Scheda di lavorazione Iron Wood UNIFICATA — una riga per coppia
+    codice_padre/codice_figlio con TUTTE le specifiche macchina (taglio,
+    piega, satinatura insieme), invece di tre tabelle separate. Sostituisce
+    le vecchie SchedaTaglioWood/SchedaPiegaWood/SchedaSatinaturaWood — i dati
+    già inseriti lì vengono migrati una tantum da
+    migra_schede_lavorazione_unificate() al primo avvio dopo l'aggiornamento;
+    le vecchie tabelle restano nel DB (non cancellate) ma non più usate.
+    """
+    __tablename__ = 'schede_lavorazione_wood'
+    id                        = db.Column(db.Integer, primary_key=True)
+    codice_padre              = db.Column(db.String(50), nullable=False)
+    codice_figlio             = db.Column(db.String(50), nullable=False)
+    lunghezza_barra_mm        = db.Column(db.Float, nullable=True)          # es. 6000 o 7000
+    pezzi_per_barra           = db.Column(db.Float, nullable=True)
+    sviluppo                  = db.Column(db.String(50), default='')        # es. "L. 1.932"
+    matrice_id                = db.Column(db.Integer, db.ForeignKey('matrici_wood.id', ondelete='SET NULL'), nullable=True)
+    punto_zero                = db.Column(db.String(50), default='')
+    indice_assorbimento       = db.Column(db.String(50), default='')
+    rullo_id                  = db.Column(db.Integer, db.ForeignKey('rulli_wood.id', ondelete='SET NULL'), nullable=True)
+    impostazione_satinatrice  = db.Column(db.String(100), default='')
+    note                      = db.Column(db.String(300), default='')
+    creato_il                 = db.Column(db.DateTime, default=datetime.utcnow)
+    matrice = db.relationship('MatriceWood')
+    rullo   = db.relationship('RulloWood')
+    __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_lavorazione_padre_figlio_uc'),)
+
+
+def migra_schede_lavorazione_unificate():
+    """
+    UNA TANTUM: se schede_lavorazione_wood è ancora vuota, importa (unendo per
+    codice_padre+codice_figlio) i dati dalle vecchie tabelle
+    schede_taglio_wood / schede_piega_wood / schede_satinatura_wood, se
+    esistono ancora nel DB. Non cancella né modifica le vecchie tabelle.
+    Si ferma da sola appena la tabella unificata ha almeno una riga (anche
+    inserita a mano) — non sovrascrive mai dati già presenti lì.
+    """
+    from sqlalchemy import inspect, text
+    if SchedaLavorazioneWood.query.count() > 0:
+        return
+    insp = inspect(db.engine)
+    unite = {}
+    if insp.has_table('schede_taglio_wood'):
+        for r in db.session.execute(text(
+                "SELECT codice_padre, codice_figlio, pezzi_per_barra, sviluppo, lunghezza_barra_mm, note "
+                "FROM schede_taglio_wood")):
+            unite.setdefault((r.codice_padre, r.codice_figlio), {}).update({
+                'pezzi_per_barra': r.pezzi_per_barra, 'sviluppo': r.sviluppo,
+                'lunghezza_barra_mm': r.lunghezza_barra_mm, 'note': r.note,
+            })
+    if insp.has_table('schede_piega_wood'):
+        for r in db.session.execute(text(
+                "SELECT codice_padre, codice_figlio, sviluppo, matrice_id, punto_zero, indice_assorbimento, rullo_id, note "
+                "FROM schede_piega_wood")):
+            d = unite.setdefault((r.codice_padre, r.codice_figlio), {})
+            if r.sviluppo:
+                d['sviluppo'] = r.sviluppo
+            d['matrice_id'] = r.matrice_id
+            d['punto_zero'] = r.punto_zero
+            d['indice_assorbimento'] = r.indice_assorbimento
+            d['rullo_id'] = r.rullo_id
+            if r.note:
+                d['note'] = ((d.get('note') or '') + ' ' + r.note).strip()
+    if insp.has_table('schede_satinatura_wood'):
+        for r in db.session.execute(text(
+                "SELECT codice_padre, codice_figlio, impostazione_satinatrice, note "
+                "FROM schede_satinatura_wood")):
+            d = unite.setdefault((r.codice_padre, r.codice_figlio), {})
+            d['impostazione_satinatrice'] = r.impostazione_satinatrice
+            if r.note:
+                d['note'] = ((d.get('note') or '') + ' ' + r.note).strip()
+
+    for (padre, figlio), campi in unite.items():
+        db.session.add(SchedaLavorazioneWood(codice_padre=padre, codice_figlio=figlio, **campi))
+    if unite:
+        db.session.commit()
+        log(f"Migrazione schede lavorazione: unificate {len(unite)} righe da taglio/piega/satinatura in una sola tabella")
 
 
 class Cliente(db.Model):
@@ -1379,6 +1486,8 @@ def init_db():
         # ── Distinta Base Wood: componenti alternativi (es. barra 7m/6m) ──
         "ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS gruppo_alternativa VARCHAR(50)",
         "ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS preferita BOOLEAN DEFAULT TRUE",
+        "ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS pezzi_per_barra DOUBLE PRECISION",
+        "ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS sviluppo VARCHAR(50)",
         # ── Ordini di Acquisto Wood: prezzo estratto dal PDF + codice fornitore originale (prima della mappa) ──
         "ALTER TABLE righe_ordine_acquisto_wood ADD COLUMN IF NOT EXISTS prezzo_unitario DOUBLE PRECISION",
         "ALTER TABLE righe_ordine_acquisto_wood ADD COLUMN IF NOT EXISTS codice_fornitore_originale VARCHAR(100) DEFAULT ''",
