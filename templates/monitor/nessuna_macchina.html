@@ -5,11 +5,15 @@
 </div>
 <div class="mon-section">
   <div style="padding:20px">
+    {% if messaggio %}
+    <p style="font-size:13px;color:#e6b800">⚠️ {{ messaggio }}</p>
+    {% else %}
     <p style="font-size:13px;color:var(--text-dim)">
       Nessuna macchina da mostrare: il Monitor elenca solo i Centri di Costo (macchine) che compaiono in almeno
       un Ciclo di Lavoro. Vai in <b>Magazzino → Centri di Costo</b> per crearne uno (assicurati che
       <code>esterno</code> sia disattivato) e assegnalo come reparto in un Ciclo di Lavoro (<b>Magazzino → Ciclo di Lavoro</b>).
     </p>
+    {% endif %}
   </div>
 </div>
 {% endblock %}

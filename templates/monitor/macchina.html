@@ -42,18 +42,19 @@
   </div>
   <table class="mon-table">
     <thead><tr>
-      <th>Prio</th><th>Commessa</th><th>OP</th><th>Codice</th><th>Saldo</th><th>Descrizione</th><th>%</th><th>Tot.</th>
+      <th>Prio</th><th>Commessa</th><th>OP</th><th>Prodotto finito</th><th>Componente lavorato</th><th>Saldo</th><th>Descrizione</th><th>%</th><th>Tot.</th>
     </tr></thead>
     <tbody id="tbody-{{ sezione }}">
     {% set righe = righe_per_sezione[sezione] %}
     {% if righe %}
       {% for r in righe %}
-      <tr id="row-{{ r.op_id }}">
+      <tr id="row-{{ r.op_id }}-{{ loop.index }}">
         <td><input class="prio-input" type="number" value="{{ r.posizione_manuale if r.posizione_manuale is not none else '' }}"
                    placeholder="{{ r.priorita }}" onchange="impostaPosizione({{ r.op_id }}, this.value)"></td>
         <td class="comm-id">{{ r.commessa }}</td>
         <td class="codice" style="cursor:pointer" onclick="apriSituazioneOP('{{ r.op_codice }}')">{{ r.op_codice }}</td>
         <td class="codice">{{ r.codice_articolo }}</td>
+        <td class="codice">{% if r.componente_finale %}<span style="color:var(--text-dim);font-style:italic">assieme finale</span>{% else %}{{ r.componente }} <span class="badge" style="font-size:9px;background:rgba(37,137,199,.18);color:#2589c7">componente</span>{% endif %}</td>
         <td class="num {% if r.saldo > 0 %}num-pos{% endif %}">{{ r.saldo }}</td>
         <td class="descr-td">{{ r.descrizione }}</td>
         <td><div class="pct-bar"><div class="pct-fill" style="width:{{ [r.pct,100]|min }}%"></div><span>{{ r.pct }}%</span></div></td>
@@ -61,7 +62,7 @@
       </tr>
       {% endfor %}
     {% else %}
-      <tr><td colspan="8" style="text-align:center;color:#5a7090;padding:10px;font-style:italic">Nessun OP in questa sezione</td></tr>
+      <tr><td colspan="9" style="text-align:center;color:#5a7090;padding:10px;font-style:italic">Nessun OP in questa sezione</td></tr>
     {% endif %}
     </tbody>
   </table>

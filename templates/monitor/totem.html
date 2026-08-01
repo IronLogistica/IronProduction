@@ -100,8 +100,9 @@
   {{ '🚧 IN LAVORAZIONE ADESSO' if sessione else '▶ PROSSIMO DA AVVIARE' }}
 </div>
 <div class="card-grande {{ '' if sessione else 'attesa-avvio' }}">
-  <div class="cg-op">{{ r.op_codice }} · {{ r.commessa }}</div>
-  <div class="cg-codice">{{ r.codice_articolo }}</div>
+  <div class="cg-op">{{ r.op_codice }} · {{ r.commessa }}{% if not r.componente_finale %} · per {{ r.codice_articolo }}{% endif %}</div>
+  <div class="cg-codice">{{ r.codice_lavorato if r.codice_lavorato else r.codice_articolo }}</div>
+  {% if not r.componente_finale %}<div style="font-size:.85rem;color:var(--accent);font-weight:700;margin-bottom:4px">🧩 COMPONENTE — non è ancora il prodotto finito</div>{% endif %}
   <div class="cg-descrizione">{{ r.descrizione }}</div>
   <div class="cg-riga"><span>Saldo da fare: <b>{{ r.saldo }}</b></span><span>Totale: <b>{{ r.totale }}</b></span></div>
   {% if r.pct is defined %}
@@ -126,20 +127,20 @@
     <button class="btn-grande btn-fine" onclick="apriFormFine()">⏹ FINE LAVORO</button>
     <span class="cronometro" id="cronometro"></span>
     {% else %}
-    <button class="btn-grande btn-inizia" onclick="iniziaLavoro({{ r.op_id }})">▶ INIZIA LAVORO</button>
+    <button class="btn-grande btn-inizia" onclick="iniziaLavoro({{ r.op_id }}, {{ ('\'' + r.componente + '\'') if r.componente else 'null' }})">▶ INIZIA LAVORO</button>
     {% endif %}
   </div>
 
   <div class="form-fine {{ 'aperto' if sessione else '' }}" id="form-fine">
     <div><label>Pezzi buoni</label><input type="number" id="inp-buoni" min="0" value="{{ r.saldo if r.saldo else 0 }}"></div>
     <div><label>Pezzi scarto</label><input type="number" id="inp-scarto" min="0" value="0"></div>
-    <button class="btn-grande btn-fine" style="padding:12px 20px" onclick="confermaFine({{ r.op_id }})">✅ Conferma e chiudi</button>
+    <button class="btn-grande btn-fine" style="padding:12px 20px" onclick="confermaFine({{ r.op_id }}, {{ ('\'' + r.componente + '\'') if r.componente else 'null' }})">✅ Conferma e chiudi</button>
   </div>
 
   <div class="doc-foto-grid">
     <div class="box-sez">
       <div class="box-sez-titolo"><span>📄 Documentazione tecnica</span>
-        <label class="btn-mini">+ Carica<input type="file" accept=".pdf,image/*" onchange="caricaDocumento(this,'{{ r.codice_articolo }}')"></label>
+        <label class="btn-mini">+ Carica<input type="file" accept=".pdf,image/*" onchange="caricaDocumento(this,'{{ r.codice_lavorato if r.codice_lavorato else r.codice_articolo }}')"></label>
       </div>
       <div id="lista-documenti">Caricamento...</div>
     </div>
@@ -155,20 +156,26 @@
 <div class="empty">✓<br>Nessun lavoro pronto per questa macchina in questo momento.</div>
 {% endif %}
 
-{% set esclusi = [riga_attiva.op_id] if riga_attiva else [] %}
-{% set resto_coda = righe.da_iniziare | rejectattr('op_id', 'in', esclusi) | list %}
+{% set componente_attivo = riga_attiva.componente if riga_attiva else '__nessuno__' %}
+{% set op_attivo = riga_attiva.op_id if riga_attiva else -1 %}
+{% set resto_coda = [] %}
+{% for r in righe.da_iniziare %}
+  {% if not (r.op_id == op_attivo and r.componente == componente_attivo) %}
+    {% set _ = resto_coda.append(r) %}
+  {% endif %}
+{% endfor %}
 {% if resto_coda %}
 <div class="sezione-titolo" style="color:var(--muted)">📋 IN CODA (prossimi)</div>
 <div class="grid-coda">
   {% for r in resto_coda %}
   <div class="mini-card">
     <div class="mc-op">{{ r.op_codice }} · {{ r.commessa }}</div>
-    <div class="mc-codice">{{ r.codice_articolo }}</div>
+    <div class="mc-codice">{{ r.codice_lavorato if r.codice_lavorato else r.codice_articolo }}{% if not r.componente_finale %} <span style="font-size:.65em;color:var(--accent)">🧩 comp. di {{ r.codice_articolo }}</span>{% endif %}</div>
     <div class="mc-descrizione">{{ r.descrizione }} — saldo {{ r.saldo }}/{{ r.totale }}</div>
     {% if sessione %}
       <button class="btn-mini" disabled style="opacity:.4;margin-top:8px">Macchina occupata</button>
     {% else %}
-      <button class="btn-mini" style="margin-top:8px" onclick="iniziaLavoro({{ r.op_id }})">▶ Inizia questo</button>
+      <button class="btn-mini" style="margin-top:8px" onclick="iniziaLavoro({{ r.op_id }}, {{ ('\'' + r.componente + '\'') if r.componente else 'null' }})">▶ Inizia questo</button>
     {% endif %}
   </div>
   {% endfor %}
@@ -226,11 +233,11 @@ function toast(msg, isErr){
   toastTimer = setTimeout(() => el.className = '', 3000);
 }
 
-async function iniziaLavoro(opId){
+async function iniziaLavoro(opId, componente){
   try{
     const r = await fetch(`/api/totem/${CENTRO_ID}/inizia`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ordine_produzione_id: opId})
+      body: JSON.stringify({ordine_produzione_id: opId, componente: componente || null})
     });
     const d = await r.json();
     if(d.errore){ toast('❌ ' + d.messaggio, true); return; }
@@ -240,13 +247,13 @@ async function iniziaLavoro(opId){
 
 function apriFormFine(){ document.getElementById('form-fine').classList.add('aperto'); }
 
-async function confermaFine(opId){
+async function confermaFine(opId, componente){
   const buoni = parseInt(document.getElementById('inp-buoni').value) || 0;
   const scarto = parseInt(document.getElementById('inp-scarto').value) || 0;
   try{
     const r = await fetch(`/api/totem/${CENTRO_ID}/termina`, {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ordine_produzione_id: opId, pezzi_buoni: buoni, pezzi_scarto: scarto})
+      body: JSON.stringify({ordine_produzione_id: opId, pezzi_buoni: buoni, pezzi_scarto: scarto, componente: componente || null})
     });
     const d = await r.json();
     if(d.errore){ toast('❌ ' + d.messaggio, true); return; }
