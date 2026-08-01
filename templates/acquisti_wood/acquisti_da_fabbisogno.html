@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🧮 Acquisti da Fabbisogno</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+      Fabbisogno di Componenti d'Acquisto e Materie Prime, aggregato su <b>tutti</b> gli Ordini di Produzione
+      aperti (la stessa scorta scarsa contesa da più ordini è contata una volta sola, per priorità).
+      Seleziona le righe, correggi la quantità se serve, indica il fornitore e genera l'Ordine di Acquisto.
+    </p>
+    <div id="fabbisogno-lista">Caricamento...</div>
+
+    <div id="crea-box" style="display:none;margin-top:18px;border:1px solid var(--accent2);border-radius:8px;padding:14px">
+      <div style="font-weight:700;margin-bottom:10px">🛒 Crea Ordine di Acquisto — <span id="crea-conteggio"></span> righe selezionate</div>
+      <input id="crea-fornitore" type="text" placeholder="Fornitore *" style="width:280px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);margin-bottom:10px">
+      <br>
+      <button class="btn btn-primary" onclick="creaOrdineDaFabbisogno()">💾 Genera Ordine di Acquisto</button>
+      <span id="crea-esito" style="font-size:12px;margin-left:8px"></span>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+let RIGHE = [];
+const SELEZIONATE = new Set();
+
+async function carica(){
+  const box = document.getElementById('fabbisogno-lista');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/fabbisogno_acquisti_globale');
+    RIGHE = await r.json();
+    if(!RIGHE.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun fabbisogno di acquisto al momento — tutto coperto da scorta o già ordinato.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th></th><th>Codice</th><th>Tipo</th><th>Mancante</th><th>Già ordinato</th><th>Da ordinare</th><th>Ultimo fornitore</th><th>Ultimo prezzo</th></tr></thead><tbody>';
+    RIGHE.forEach((r,i)=>{
+      const tipoLabel = r.tipo === 'MATERIA_PRIMA_FORNITORE' ? '📦 Materia Prima' : '🔩 Componente Acquisto';
+      html += `<tr><td><input type="checkbox" onchange="toggleRiga(${i}, this.checked)"></td>` +
+        `<td class="codice">${r.codice}</td><td style="font-size:11px">${tipoLabel}</td>` +
+        `<td class="num">${r.mancante}</td><td class="num">${r.gia_ordinato}</td>` +
+        `<td class="num" id="qta-${i}" style="font-weight:700">` +
+        `<input type="number" step="0.01" min="0" value="${r.da_ordinare_suggerito}" style="width:80px" onchange="RIGHE[${i}].da_ordinare_suggerito=parseFloat(this.value)||0; aggiornaConteggio()"></td>` +
+        `<td>${r.ultimo_fornitore||'—'}</td><td>${r.ultimo_prezzo!=null?'€ '+r.ultimo_prezzo:'—'}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+function toggleRiga(i, checked){
+  if(checked) SELEZIONATE.add(i); else SELEZIONATE.delete(i);
+  aggiornaConteggio();
+}
+
+function aggiornaConteggio(){
+  const box = document.getElementById('crea-box');
+  const n = SELEZIONATE.size;
+  document.getElementById('crea-conteggio').textContent = n;
+  box.style.display = n > 0 ? 'block' : 'none';
+}
+
+async function creaOrdineDaFabbisogno(){
+  const esito = document.getElementById('crea-esito');
+  const fornitore = document.getElementById('crea-fornitore').value.trim();
+  if(!fornitore){ esito.style.color='#c0392b'; esito.textContent='⚠️ Indica il fornitore.'; return; }
+  const righe = Array.from(SELEZIONATE).map(i => ({
+    codice: RIGHE[i].codice, descrizione: RIGHE[i].descrizione, unita_misura: RIGHE[i].unita_misura,
+    qta: RIGHE[i].da_ordinare_suggerito, prezzo_unitario: RIGHE[i].ultimo_prezzo,
+  })).filter(r => r.qta > 0);
+  if(!righe.length){ esito.style.color='#c0392b'; esito.textContent='⚠️ Nessuna riga con quantità valida.'; return; }
+  try{
+    const r = await fetch('/api/ordini_acquisto_wood/manuale', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fornitore, righe})});
+    const d = await r.json();
+    if(d.errore){ esito.style.color='#c0392b'; esito.textContent='⚠️ '+d.messaggio; return; }
+    esito.style.color = '#2a9d5c';
+    esito.innerHTML = `✅ Ordine creato — <a href="/ordini-acquisto-wood" style="color:#00d2ff">vai a Ordini di Acquisto</a>`;
+    SELEZIONATE.clear();
+    setTimeout(carica, 1200);
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
+carica();
+{% endblock %}
