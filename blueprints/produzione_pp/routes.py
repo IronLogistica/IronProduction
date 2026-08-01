@@ -307,7 +307,10 @@ def api_ordine_situazione_completa(codice):
 @pp_bp.route('/api/ordini-produzione/<codice>/dettaglio_per_categoria')
 def api_ordine_dettaglio_per_categoria(codice):
     """
-    Spacca i componenti MANCANTI di un OP nelle 4 categorie operative:
+    Spacca TUTTI i componenti di un OP (mancanti o già coperti a scorta) nelle
+    4 categorie operative, col quadro completo di ognuno — non solo quelli
+    mancanti: anche un componente pienamente disponibile va mostrato, con
+    quanto serve/quanto c'è/quanto è impegnato da altri OP, non solo "manca 0".
     1) Ordini ai Reparti — semilavorati interni (non classificati come
        acquisto/materia prima/laserato), con il/i reparto/i del loro Ciclo
        di Lavoro, per le liste taglio/piega/ecc.
@@ -325,13 +328,15 @@ def api_ordine_dettaglio_per_categoria(codice):
     saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
     righe_disponibilita = {}
     if saldo > 0:
+        giacenza_iniziale = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
         giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
+        disponibile_prima = dict(giacenza_residua)
         _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe_disponibilita)
-
-    mancanti = {cod: r for cod, r in righe_disponibilita.items() if r['mancante'] > 0}
+    else:
+        giacenza_iniziale, disponibile_prima = {}, {}
 
     reparti, laserati, acquisto, materie_prime = [], [], [], []
-    for cod, r in mancanti.items():
+    for cod, r in righe_disponibilita.items():
         approvv = ArticoloApprovvigionamento.query.filter_by(codice=cod).first()
         tipo = approvv.tipo_approvvigionamento if approvv else 'DA_CLASSIFICARE'
 
@@ -353,8 +358,16 @@ def api_ordine_dettaglio_per_categoria(codice):
             'qta_in_arrivo': round((r_oa.qta_originale or 0) - (r_oa.qta_ricevuta or 0), 3),
         } for r_oa in righe_oa if (r_oa.qta_originale or 0) > (r_oa.qta_ricevuta or 0)]
 
-        base = {'codice': cod, 'mancante': round(r['mancante'], 3), 'unita_misura': unita_misura,
-                'ordini_acquisto': ordini_acquisto}
+        giacenza_tot = giacenza_iniziale.get(cod, 0.0)
+        disponibile = disponibile_prima.get(cod, 0.0)
+        base = {
+            'codice': cod, 'unita_misura': unita_misura, 'ordini_acquisto': ordini_acquisto,
+            'giacenza': round(giacenza_tot, 3),
+            'gia_impegnato': round(max(giacenza_tot - disponibile, 0), 3),
+            'disponibile': round(max(disponibile, 0), 3),
+            'fabbisogno': round(r['fabbisogno'], 3),
+            'mancante': round(r['mancante'], 3),
+        }
 
         if tipo == 'LASERATO':
             laserati.append(base)
