@@ -5,7 +5,7 @@ from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo)
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
-                    _righe_bom_attive_wood, _esplodi_componenti_op, STATI_CHE_IMPEGNANO)
+                    _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo, STATI_CHE_IMPEGNANO)
 from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria
 
 monitor_bp = Blueprint('monitor', __name__)
@@ -29,13 +29,22 @@ def _pezzi_fase(op_code, nome_centro, componente=None):
     return q.scalar() or 0
 
 
-def _materiale_disponibile(o):
-    """Stessa logica usata in 'Situazione Ordini di Produzione': True se non manca nessun componente."""
+def _materiale_disponibile(o, giacenza_residua=None):
+    """
+    Stessa logica usata in 'Situazione Ordini di Produzione': True se non
+    manca nessun componente. 'giacenza_residua' opzionale: se il chiamante
+    ha già il residuo di QUESTO OP pronto (vedi _residuo_giacenza_progressivo,
+    calcolato UNA volta per tutti gli OP invece che uno alla volta), lo passa
+    qui — altrimenti lo calcola da solo (più lento, va bene per un solo OP).
+    """
     saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
     if saldo <= 0:
         return True
     righe = {}
-    giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
+    if giacenza_residua is None:
+        giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
+    else:
+        giacenza_residua = dict(giacenza_residua)  # copia: la netting consuma in-place
     _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe)
     return all(r['mancante'] <= 0 for r in righe.values())
 
@@ -50,6 +59,14 @@ def _righe_macchina(centro):
     una riga per ogni coppia (OP, componente) il cui Ciclo di Lavoro include
     questa macchina — smistate nelle 4 sezioni in base all'avanzamento REALE
     (consuntivi, tracciati per componente — vedi EventoConsuntivoPP.componente).
+
+    Ottimizzata per evitare due trappole N+1 che rendevano questa funzione
+    sempre più lenta al crescere del numero di OP aperti:
+    1) il Ciclo di Lavoro di ogni componente veniva riletto con una query
+       separata per OGNI (OP, componente) — ora è UNA query sola per tutti;
+    2) _materiale_disponibile(o) (che a sua volta simula TUTTI gli OP aperti)
+       veniva richiamata da zero per ogni componente in prima fase dello
+       stesso OP — ora si calcola una volta sola per OP e si tiene in cache.
     """
     ordini = (OrdineProduzione.query
               .filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
@@ -60,15 +77,34 @@ def _righe_macchina(centro):
         for s in SequenzaMonitorMacchina.query.filter_by(centro_costo_id=centro.id).all()
     }
 
+    # Esplode la distinta di OGNI OP una sola volta e raccoglie tutti i codici
+    # coinvolti, per poter leggere il Ciclo di Lavoro di TUTTI in una sola query
+    # invece di una per (OP, componente) — la vera causa dei tempi di risposta
+    # esplosi al crescere del numero di OP aperti.
+    componenti_per_op = {o.id: _esplodi_componenti_op(o) for o in ordini}
+    tutti_i_codici = {c['codice'] for lista in componenti_per_op.values() for c in lista}
+    fasi_per_codice = {}
+    if tutti_i_codici:
+        for f in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_i_codici))
+                  .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()):
+            fasi_per_codice.setdefault(f.codice, []).append(f)
+
+    cache_materiale_disponibile = {}
+    residuo_per_op, residuo_finale = _residuo_giacenza_progressivo(ordini)
+
+    def _materiale_disponibile_cached(o):
+        if o.id not in cache_materiale_disponibile:
+            cache_materiale_disponibile[o.id] = _materiale_disponibile(o, residuo_per_op.get(o.id, residuo_finale))
+        return cache_materiale_disponibile[o.id]
+
     righe = {k: [] for k in SEZIONI}
     for o in ordini:
-        for comp in _esplodi_componenti_op(o):
+        for comp in componenti_per_op[o.id]:
             codice_comp = comp['codice']
             componente_finale = (codice_comp == o.codice_articolo)
             componente_param = None if componente_finale else codice_comp
 
-            fasi_ciclo = (CicloLavoroWood.query.filter_by(codice=codice_comp)
-                          .order_by(CicloLavoroWood.sequenza).all())
+            fasi_ciclo = fasi_per_codice.get(codice_comp, [])
             idx = next((i for i, f in enumerate(fasi_ciclo) if f.centro_costo_id == centro.id), None)
             if idx is None:
                 continue  # questo componente non passa da questa macchina
@@ -87,8 +123,8 @@ def _righe_macchina(centro):
                     # Prima fase del SUO ciclo: pronto se il materiale grezzo
                     # dell'intero OP è disponibile (controllo approssimato a
                     # livello OP finché non affiniamo la disponibilità per
-                    # singolo componente).
-                    pronto = _materiale_disponibile(o)
+                    # singolo componente) — calcolato una volta sola per OP.
+                    pronto = _materiale_disponibile_cached(o)
                 else:
                     fase_prec = fasi_ciclo[idx - 1]
                     pronto = _pezzi_fase(o.codice, fase_prec.centro_costo.nome, componente=componente_param) >= qta_necessaria
