@@ -1159,6 +1159,11 @@ class SessioneLavoroMacchina(db.Model):
     id                    = db.Column(db.Integer, primary_key=True)
     ordine_produzione_id  = db.Column(db.Integer, db.ForeignKey('ordini_produzione_pp.id'), nullable=False)
     centro_costo_id       = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
+    # Codice del componente specifico lavorato in questa sessione — NULL =
+    # prodotto finito/assieme finale dell'OP (comportamento storico). Serve
+    # perché lo stesso OP può avere PIÙ componenti diversi che passano dalla
+    # STESSA macchina prima dell'assemblaggio finale (vedi EventoConsuntivoPP.componente).
+    componente            = db.Column(db.String(50), nullable=True)
     iniziata_il           = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     terminata_il          = db.Column(db.DateTime, nullable=True)
     pezzi_buoni           = db.Column(db.Integer, nullable=True)
@@ -1541,6 +1546,9 @@ def init_db():
         "ALTER TABLE righe_ordine_acquisto_wood ADD COLUMN IF NOT EXISTS codice_fornitore_originale VARCHAR(100) DEFAULT ''",
         "ALTER TABLE ciclo_lavoro_wood ADD COLUMN IF NOT EXISTS scarto_max_pct DOUBLE PRECISION",
         "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS escluso_da_monitor_produzione BOOLEAN DEFAULT FALSE",
+        # ── Consuntivi per singolo componente della distinta base (non solo per l'assieme finale dell'OP) ──
+        "ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS componente VARCHAR(50)",
+        "ALTER TABLE sessioni_lavoro_macchina ADD COLUMN IF NOT EXISTS componente VARCHAR(50)",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
@@ -1605,6 +1613,14 @@ class EventoConsuntivoPP(db.Model):
     event_id = db.Column(db.String(100), nullable=False, unique=True, index=True)
     op_code = db.Column(db.String(20), nullable=False, index=True)
     fase = db.Column(db.String(100), nullable=False)
+    # Codice del componente REALMENTE lavorato in questa fase — NULL (o uguale
+    # al codice_articolo dell'OP) = si tratta del prodotto finito/assieme
+    # finale dell'OP, comportamento storico invariato. Se l'OP passa da più
+    # macchine PRIMA dell'assemblaggio finale (es. 3 componenti diversi
+    # lavorati alla segatrice prima di diventare T200), qui c'è il codice di
+    # quel componente — permette al Monitor di distinguere l'avanzamento
+    # dei singoli componenti dello stesso OP sulla stessa macchina.
+    componente = db.Column(db.String(50), nullable=True)
     timestamp_evento = db.Column(db.DateTime, nullable=False)
     pezzi_buoni = db.Column(db.Integer, nullable=False, default=0)
     pezzi_scarto = db.Column(db.Integer, nullable=False, default=0)
