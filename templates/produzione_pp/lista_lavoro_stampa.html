@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lista {{ centro.nome }} — {{ codice }}</title>
+<style>
+  :root{ --blue:#1e5fa8; --yellow:#ffe066; --grey:#5a6472; --border:#c6ccd3; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:#e7ebef;display:flex;justify-content:center;padding:24px 12px}
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px;z-index:10}
+  .toolbar button, .toolbar a{border:none;padding:10px 18px;border-radius:7px;font-weight:700;font-size:13px;cursor:pointer;
+                               box-shadow:0 3px 10px rgba(0,0,0,.25);text-decoration:none;display:inline-block}
+  .btn-print{background:var(--blue);color:#fff}
+  .btn-torna{background:#fff;color:var(--blue);border:1px solid var(--blue) !important}
+
+  .sheet{width:850px;max-width:96vw;background:#fff;border:2px solid #222;border-radius:6px;padding:28px}
+  h1{text-align:center;font-size:22px;font-weight:900;letter-spacing:1px;margin-bottom:20px;text-transform:uppercase}
+
+  .hdr-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
+  .hdr-box{border:1px solid #222}
+  .hdr-box .lbl{background:#f0f3f7;padding:5px 10px;font-size:11px;font-weight:700;border-bottom:1px solid #222}
+  .hdr-box .val{padding:10px;font-size:15px;font-weight:800}
+  .hdr-box .val.big{font-size:26px}
+  .hdr-box .val.giallo{background:var(--yellow)}
+  .hdr-row{display:flex}
+  .hdr-row > div{flex:1;border-right:1px solid #222}
+  .hdr-row > div:last-child{border-right:none}
+
+  table.lavoro{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:4px}
+  table.lavoro th{background:#e3e7eb;text-align:center;padding:6px 4px;font-size:10px;font-weight:800;border:1px solid #222}
+  table.lavoro td{padding:6px 4px;text-align:center;border:1px solid #222}
+  table.lavoro td.check{width:26px}
+  table.lavoro td.codice-cell{font-weight:700;text-align:left;padding-left:8px}
+  table.lavoro td.nota-cell{text-align:left;padding-left:8px;color:#b8860b;font-size:10px}
+  table.lavoro tfoot td{font-weight:800;background:#f0f3f7}
+
+  .gruppo-titolo{font-weight:800;font-size:13px;margin:18px 0 6px}
+
+  table.materiale-info{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:6px}
+  table.materiale-info th{background:#f0f3f7;padding:5px;border:1px solid var(--border);font-size:10px}
+  table.materiale-info td{padding:5px;border:1px solid var(--border);text-align:center}
+  .stato-ok{color:#1a7a3c;font-weight:700}
+  .stato-ordinato{color:#b8860b;font-weight:700}
+  .stato-mancante{color:#c0392b;font-weight:700}
+
+  .totali-finali{display:flex;gap:0;margin-top:24px;border:1px solid #222}
+  .totali-finali > div{flex:1;text-align:center;padding:10px;border-right:1px solid #222}
+  .totali-finali > div:last-child{border-right:none}
+  .totali-finali .lbl{font-size:10px;font-weight:700;color:var(--grey)}
+  .totali-finali .val{font-size:20px;font-weight:900;margin-top:2px}
+
+  .foto-placeholder{margin-top:20px;padding:14px;border:1px dashed var(--border);font-size:11px;color:#999;text-align:center}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .toolbar{display:none}
+    .sheet{border-width:1px;box-shadow:none}
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <a class="btn-torna" href="/liste-lavoro/{{ centro.id }}">← Torna a Lista {{ centro.nome }}</a>
+  <button class="btn-print" onclick="window.print()">🖨️ Stampa</button>
+</div>
+
+{% if not dati %}
+<div class="sheet"><h1>Ordine di Produzione non trovato</h1><p style="text-align:center">Codice cercato: {{ codice }}</p></div>
+{% else %}
+<div class="sheet">
+  <h1>Lista {{ centro.nome }}</h1>
+
+  <div class="hdr-grid">
+    <div class="hdr-box">
+      <div class="hdr-row" style="border-bottom:1px solid #222">
+        <div><div class="lbl">Prodotto</div></div>
+        <div><div class="lbl">Da Produrre</div></div>
+      </div>
+      <div class="hdr-row">
+        <div><div class="val big">{{ dati.descrizione or dati.codice_articolo }}</div></div>
+        <div><div class="val big giallo">{{ dati.qta_pianificata }}</div></div>
+      </div>
+      <div class="hdr-row" style="border-top:1px solid #222">
+        <div><div class="lbl">Codice</div><div class="val">{{ dati.codice_articolo }}</div></div>
+      </div>
+    </div>
+    <div class="hdr-box">
+      <div class="lbl">Titolo Commessa / Lavoro</div>
+      <div class="hdr-row">
+        <div><div class="lbl">Nr Commessa</div><div class="val giallo">{{ dati.commessa or '—' }}</div></div>
+        <div><div class="lbl">Data</div><div class="val">{{ dati.data_inizio or '—' }}</div></div>
+      </div>
+      <div class="hdr-row" style="border-top:1px solid #222">
+        <div><div class="lbl">Ordine Produzione</div><div class="val">{{ dati.op_codice }}</div></div>
+        <div><div class="lbl">Stato</div><div class="val">{{ dati.stato }}</div></div>
+      </div>
+    </div>
+  </div>
+
+  {% for g in dati.gruppi %}
+  <div class="gruppo-titolo">Lista {{ centro.nome }}: <b>{{ g.materiale }}</b>{% if g.ha_barra and g.righe[0].lunghezza_barra_mm %} — barra da {{ (g.righe[0].lunghezza_barra_mm/1000)|round(2) }} METRI{% endif %}</div>
+  <table class="lavoro">
+    <thead><tr>
+      <th class="check">Check</th><th>Codice</th><th>Materiale</th>
+      {% if g.ha_barra %}<th>Misura (mm)</th>{% endif %}
+      {% if dati.ha_piega %}<th>Matrice</th><th>Punto 0</th><th>Indice ass.</th><th>Rullo</th>{% endif %}
+      {% if dati.ha_satinatura %}<th>Satinatura</th>{% endif %}
+      <th>Pz da fare</th><th>Fatti</th><th>Saldo</th>
+      {% if g.ha_barra %}<th>Pz x Barra</th><th>Nr Barre</th>{% endif %}
+    </tr></thead>
+    <tbody>
+      {% for r in g.righe %}
+      <tr>
+        <td class="check">☐</td>
+        <td class="codice-cell">{{ r.codice }}</td>
+        <td>{{ r.materiale }}</td>
+        {% if g.ha_barra %}<td>{{ r.misura }}</td>{% endif %}
+        {% if dati.ha_piega %}<td>{{ r.matrice }}</td><td>{{ r.punto_zero }}</td><td>{{ r.indice_assorbimento }}</td><td>{{ r.rullo }}</td>{% endif %}
+        {% if dati.ha_satinatura %}<td>{{ r.impostazione_satinatrice }}</td>{% endif %}
+        <td>{{ r.nr_pz_da_fare }}</td>
+        <td>{{ r.pezzi_fatti }}</td>
+        <td>{{ r.saldo }}</td>
+        {% if g.ha_barra %}<td>{{ r.pz_per_barra or '—' }}</td><td>{{ r.nr_barre if r.nr_barre is not none else '—' }}</td>{% endif %}
+      </tr>
+      {% if r.nota %}<tr><td></td><td colspan="99" class="nota-cell">{{ r.nota }}</td></tr>{% endif %}
+      {% endfor %}
+    </tbody>
+    <tfoot>
+      <tr>
+        <td colspan="{{ 3 + (1 if g.ha_barra else 0) + (4 if dati.ha_piega else 0) + (1 if dati.ha_satinatura else 0) }}">Totale</td>
+        <td>{{ g.righe|sum(attribute='nr_pz_da_fare') }}</td>
+        <td>{{ g.righe|sum(attribute='pezzi_fatti') }}</td>
+        <td>{{ g.righe|sum(attribute='saldo') }}</td>
+        {% if g.ha_barra %}<td></td><td>Tot. Barre: {{ g.nr_barre_totale }}</td>{% endif %}
+      </tr>
+    </tfoot>
+  </table>
+
+  <table class="materiale-info">
+    <thead><tr><th>Materiale</th>{% if g.ha_barra %}<th>Nr Barre</th>{% endif %}<th>Quantità necessaria</th><th>Controllo Materiale</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>{{ g.materiale }}</td>
+        {% if g.ha_barra %}<td>{{ g.nr_barre_totale }}</td>{% endif %}
+        <td>{{ g.quantita_necessaria }} {{ g.unita_misura }}</td>
+        <td class="stato-{{ 'ok' if g.stato_materiale.stato=='disponibile' else ('ordinato' if g.stato_materiale.stato=='ordinato' else 'mancante') }}">{{ g.stato_materiale.label }}</td>
+        <td>-</td>
+      </tr>
+    </tbody>
+  </table>
+  {% endfor %}
+
+  {% if not dati.gruppi %}
+  <p style="text-align:center;color:#999;margin-top:30px">Nessuna operazione su {{ centro.nome }} per questo articolo secondo il Ciclo di Lavoro.</p>
+  {% endif %}
+
+  <div class="totali-finali">
+    <div><div class="lbl">Totale Pezzi</div><div class="val">{{ dati.totale_pz }}</div></div>
+    <div><div class="lbl">Effettuati</div><div class="val" style="color:#1a7a3c">{{ dati.pz_effettuati }}</div></div>
+    <div><div class="lbl">Residuo</div><div class="val" style="color:{{ '#c0392b' if dati.residuo_pz>0 else '#1a7a3c' }}">{{ dati.residuo_pz }}</div></div>
+  </div>
+
+  <div class="foto-placeholder">📷 Documentazione tecnica e foto di riferimento — consultabili in "Documentazione Articolo" per il codice {{ dati.codice_articolo }}</div>
+</div>
+{% endif %}
+</body>
+</html>

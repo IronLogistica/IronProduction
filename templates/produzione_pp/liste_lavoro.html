@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">📋 Lista {{ centro.nome }}</div>
+  <div style="display:flex;gap:8px;flex-wrap:wrap">
+    {% for m in macchine %}
+    <a href="/liste-lavoro/{{ m.id }}" class="btn {% if m.id == centro.id %}btn-primary{% else %}btn-ghost{% endif %}" style="font-size:11px">{{ m.nome }}</a>
+    {% endfor %}
+  </div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim)">
+      Una card per ogni commessa con almeno un'operazione su <b>{{ centro.nome }}</b>: quanti pezzi sono da fare in
+      totale su questa macchina, quanti sono già stati fatti, e il saldo. Apri la card per vedere/stampare
+      l'ordine di lavoro cartaceo — "Lista {{ centro.nome }}".
+    </p>
+  </div>
+</div>
+
+<div id="lavoro-cards" style="display:flex;flex-wrap:wrap;gap:14px;margin-top:14px">Caricamento...</div>
+{% endblock %}
+{% block scripts %}
+const CENTRO_ID = {{ centro.id }};
+
+async function caricaListeLavoro(){
+  const box = document.getElementById('lavoro-cards');
+  try{
+    const r = await fetch('/api/liste-lavoro/' + CENTRO_ID);
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna commessa con operazioni su questa macchina in corso.</p>'; return; }
+    box.innerHTML = righe.map(o => {
+      const pct = o.totale_pz > 0 ? Math.round((o.pz_effettuati / o.totale_pz) * 100) : 0;
+      const bordo = o.residuo_pz === 0 ? '#1a9e5c' : (pct > 0 ? '#2589c7' : 'var(--accent)');
+      return `<div style="width:280px;background:var(--dark3);border:1px solid var(--border);border-left:4px solid ${bordo};border-radius:10px;padding:16px;cursor:pointer;box-shadow:var(--shadow);transition:transform .12s"
+             onmouseover="this.style.transform='translateY(-2px)'" onmouseout="this.style.transform='none'"
+             onclick="window.open('/ordini-produzione/${o.op_codice}/lista-lavoro/${CENTRO_ID}','_blank')">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:2px">${o.op_codice} · ${o.commessa||'—'} · ${o.stato}</div>
+        <div style="font-size:22px;font-weight:800;color:#e0eefc;margin-bottom:8px">${o.codice_articolo}</div>
+        <div style="display:flex;justify-content:space-between;text-align:center;margin-bottom:10px">
+          <div><div style="font-size:20px;font-weight:800">${o.totale_pz}</div><div style="font-size:10px;color:var(--text-dim)">PEZZI TOTALI</div></div>
+          <div><div style="font-size:20px;font-weight:800;color:#2a9d5c">${o.pz_effettuati}</div><div style="font-size:10px;color:var(--text-dim)">EFFETTUATI</div></div>
+          <div><div style="font-size:20px;font-weight:800;color:${o.residuo_pz>0?'#e8760a':'#2a9d5c'}">${o.residuo_pz}</div><div style="font-size:10px;color:var(--text-dim)">SALDO</div></div>
+        </div>
+        <div class="pct-bar" style="background:rgba(255,255,255,.08);border-radius:8px;height:10px;overflow:hidden">
+          <div style="background:linear-gradient(90deg,#2589c7,#1a9e5c);height:100%;width:${pct}%"></div>
+        </div>
+        <div style="text-align:right;font-size:11px;color:var(--accent2);margin-top:8px">📄 Apri ordine di lavoro →</div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+caricaListeLavoro();
+{% endblock %}
