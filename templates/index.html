@@ -1,0 +1,245 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .giac-table{width:100%;border-collapse:collapse;font-size:13px}
+  .giac-table thead th{padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.3px;
+                        border-bottom:2px solid var(--border);white-space:nowrap}
+  .giac-table tbody td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
+  .giac-table tbody tr:hover{background:rgba(255,255,255,.02)}
+  .th-stock{color:var(--green,#2a9d5c)}
+  .th-impegnato{color:var(--orange,#e8760a)}
+  .th-ordinato{color:var(--steel2,#4d9fd6)}
+  .th-disp{color:var(--accent2,#2589c7)}
+  .th-scorta{color:var(--text-dim)}
+  .th-fabb{color:#e74c3c}
+  .val-stock{color:#e0eefc;font-weight:700}
+  .val-impegnato{color:var(--orange,#e8760a);font-weight:600}
+  .val-ordinato{color:var(--steel2,#4d9fd6);font-weight:600}
+  .val-disp{color:var(--accent2,#2589c7);font-weight:800;font-size:14px}
+  .val-zero{color:var(--text-dim);opacity:.6}
+  .fabb-badge{color:#ff6b6b;font-weight:800;display:inline-flex;align-items:center;gap:3px}
+  .fabb-ok{color:var(--text-dim);opacity:.5}
+  .scorta-input{width:70px;background:var(--dark3);border:1px solid var(--border);color:var(--text);
+                border-radius:6px;padding:6px 8px;text-align:center;font-size:13px}
+  .scorta-input:focus{border-color:var(--accent2);outline:none}
+  .btn-salva-mini{background:var(--green,#1a9e5c);color:#fff;border:none;border-radius:6px;
+                  padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer;margin-left:6px}
+  .btn-salva-mini:active{transform:scale(.95)}
+  .giac-descrizione{color:var(--text-dim);font-size:12px}
+  .giac-search-bar{display:flex;gap:10px;align-items:center;margin-bottom:14px}
+  .giac-search-bar input{flex:1;padding:10px 14px;border-radius:8px;border:1px solid var(--border);
+                          background:var(--dark3);color:var(--text);font-size:13px}
+</style>
+<div class="page-toolbar">
+  <div class="page-title">📦 Magazzino Iron Wood</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Unica area per la <b>giacenza fisica</b> e la <b>distinta base</b> Iron Wood. La giacenza governa impegni e fabbisogno; la distinta definisce padri, figli e quantità.
+    </p>
+
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+      <div style="font-weight:600;margin-bottom:6px">📥 Caricamento massivo / aggiornamento giacenza</div>
+      <p style="font-size:11px;color:var(--text-dim);margin-bottom:8px">
+        File Excel/CSV con colonne "codice", "quantita" e facoltativamente "unita_misura" (nomi anche simili: sku/articolo, giacenza/qta).
+        Il valore nel file <b>sostituisce</b> la giacenza attuale del codice (non la somma) — usalo sia per il primo carico che per aggiornamenti successivi.
+      </p>
+      <input type="file" id="giac-file" accept=".xlsx,.xls,.csv" style="margin-bottom:8px">
+      <button class="btn btn-primary" onclick="importaGiacenza()">📥 Importa</button>
+      <div id="giac-import-esito" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+      <div style="font-weight:600;margin-bottom:6px">✍️ Rettifica manuale (singolo codice)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="rett-codice" type="text" placeholder="Codice" style="width:160px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="rett-quantita" type="number" step="0.01" placeholder="+carico / -scarico" style="width:140px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="rett-unita" type="text" placeholder="U.M. (es. PZ)" style="width:110px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="rett-note" type="text" placeholder="Note (facoltative)" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="rettificaGiacenza()">💾 Applica</button>
+      </div>
+    </div>
+
+    <div class="giac-search-bar">
+      <input id="giac-ricerca" type="text" placeholder="🔍 Cerca codice o descrizione..." oninput="caricaGiacenza()">
+    </div>
+    <div id="giac-avviso" style="font-size:12px;color:#b8860b;margin-bottom:8px"></div>
+    <div id="giac-lista" style="font-size:13px;color:#666">Caricamento...</div>
+  </div>
+</div>
+
+
+<div class="mon-section" style="margin-top:18px">
+  <div class="section-hdr postazione-hdr">🧩 Gestione Distinta Base</div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim)">Aggiungi, modifica o elimina le righe della distinta. Le modifiche sono usate subito da parametri di lavorazione, fabbisogni e costi.</p>
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin:12px 0">
+      <b>📥 Importa distinta</b><br><span style="font-size:11px;color:var(--text-dim)">Excel/CSV con colonne <code>codice_padre</code>, <code>codice_figlio</code>, <code>quantita</code>, <code>livello</code>, <code>note</code>. L'import aggiorna o aggiunge le righe, senza cancellare le altre.</span><br>
+      <input type="file" id="bom-file" accept=".xlsx,.xls,.csv" style="margin-top:8px"><button class="btn btn-primary" onclick="importaBom()">Importa distinta</button><span id="bom-import-esito" style="font-size:12px;margin-left:8px"></span>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;background:rgba(255,255,255,.02);padding:12px;border-radius:8px">
+      <label>Padre<br><input id="bom-padre" placeholder="Codice padre"></label><label>Figlio<br><input id="bom-figlio" placeholder="Codice figlio"></label><label>Quantità<br><input id="bom-qta" type="number" step="0.001" min="0.001" value="1" style="width:90px"></label><label>Livello<br><input id="bom-livello" type="number" min="1" value="1" style="width:65px"></label><label>Alternativa<br><input id="bom-gruppo" placeholder="Opzionale"></label><label>Note<br><input id="bom-note" placeholder="Note"></label><button class="btn btn-primary" onclick="salvaBom()">➕ Aggiungi riga</button>
+    </div>
+    <div style="display:flex;gap:10px;align-items:center;margin:14px 0"><input id="bom-ricerca" placeholder="🔍 Cerca padre o figlio" oninput="caricaBom()" style="flex:1;padding:9px"><button class="btn btn-ghost" onclick="resetBomForm()">Annulla modifica</button></div>
+    <div id="bom-avviso" style="font-size:12px;color:#b8860b"></div><div id="bom-lista">Caricamento distinta...</div>
+  </div>
+</div>
+
+<!-- ══ MODAL: STORICO MOVIMENTI ═══════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-movimenti">
+  <div class="modal-box" style="width:520px;max-width:96vw">
+    <h3>📜 Movimenti — <span id="mov-modal-codice"></span></h3>
+    <div id="mov-modal-lista" style="font-size:13px;color:#666;max-height:400px;overflow-y:auto">Caricamento...</div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-movimenti')">Chiudi</button>
+    </div>
+  </div>
+</div>{% endblock %}
+{% block scripts %}
+async function importaGiacenza(){
+  const fileInput = document.getElementById('giac-file');
+  const esito = document.getElementById('giac-import-esito');
+  if(!fileInput.files.length){ esito.innerHTML = '<span style="color:#c0392b">Seleziona un file prima.</span>'; return; }
+  const fd = new FormData();
+  fd.append('file_excel', fileInput.files[0]);
+  esito.innerHTML = 'Importazione in corso...';
+  try{
+    const r = await fetch('/api/giacenza_wood/importa', {method:'POST', body: fd});
+    const d = await r.json();
+    if(d.errore){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.messaggio + '</span>'; return; }
+    esito.innerHTML = `<span style="color:#2a9d5c">✅ Importate ${d.totale_righe_file} righe — ${d.nuovi} nuovi codici, ${d.aggiornati} aggiornati, ${d.scartate} scartate.</span>`;
+    fileInput.value = '';
+    caricaGiacenza();
+  }catch(e){
+    esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete durante l\'import.</span>';
+  }
+}
+
+async function rettificaGiacenza(){
+  const payload = {
+    codice: document.getElementById('rett-codice').value.trim(),
+    quantita: document.getElementById('rett-quantita').value,
+    note: document.getElementById('rett-note').value.trim(),
+    unita_misura: document.getElementById('rett-unita').value.trim(),
+  };
+  try{
+    const r = await fetch('/api/giacenza_wood/rettifica', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    document.getElementById('rett-codice').value = '';
+    document.getElementById('rett-quantita').value = '';
+    document.getElementById('rett-note').value = '';
+    document.getElementById('rett-unita').value = '';
+    caricaGiacenza();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function caricaGiacenza(){
+  const box = document.getElementById('giac-lista');
+  const avviso = document.getElementById('giac-avviso');
+  const q = document.getElementById('giac-ricerca').value.trim();
+  box.innerHTML = 'Caricamento...';
+  avviso.innerHTML = '';
+  try{
+    const url = '/api/giacenza_wood?solo_bom=1' + (q ? '&q=' + encodeURIComponent(q) : '');
+    const r = await fetch(url);
+    const d = await r.json();
+    const righe = d.righe || [];
+    if(d.totale > d.mostrate){
+      avviso.innerHTML = q
+        ? `⚠️ Mostrate ${d.mostrate} righe su ${d.totale} totali che corrispondono alla ricerca.`
+        : `ℹ️ Mostrate le ${d.mostrate} righe aggiornate più di recente su ${d.totale} totali — usa la ricerca per trovarne altre.`;
+    }
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna giacenza registrata.</p>'; return; }
+
+    let html = '<div style="overflow-x:auto"><table class="giac-table"><thead><tr>' +
+      '<th>Codice</th><th>Descrizione</th><th>U.M.</th>' +
+      '<th class="th-stock">+ Stock</th>' +
+      '<th class="th-impegnato">− Impegnato OP</th>' +
+      '<th class="th-ordinato">+ Ordinato Fornitori</th>' +
+      '<th class="th-disp">(=) Disp. Contabile</th>' +
+      '<th class="th-scorta">− Scorta Min. (modificabile)</th>' +
+      '<th class="th-fabb">(=) Fabbisogno</th>' +
+      '<th></th></tr></thead><tbody>';
+    righe.forEach(g=>{
+      html += `<tr>
+        <td class="codice">${g.codice}</td>
+        <td class="giac-descrizione">${g.descrizione || '—'}</td>
+        <td style="font-weight:700;color:var(--text-dim)">${g.unita_misura || '—'}</td>
+        <td class="${g.quantita>0?'val-stock':'val-zero'}">${g.quantita}</td>
+        <td class="${g.impegnato>0?'val-impegnato':'val-zero'}">${g.impegnato>0?g.impegnato:0}</td>
+        <td class="${g.ordinato>0?'val-ordinato':'val-zero'}">${g.ordinato>0?g.ordinato:0}</td>
+        <td class="val-disp">${g.disponibile_contabile}</td>
+        <td><input class="scorta-input" type="number" step="1" min="0" value="${g.scorta_minima}" id="scorta-${g.codice}">
+            <button class="btn-salva-mini" onclick="salvaScortaMinima('${g.codice}')">Salva</button></td>
+        <td>${g.fabbisogno > 0 ? `<span class="fabb-badge">▲ ${g.fabbisogno}</span>` : `<span class="fabb-ok">0</span>`}</td>
+        <td><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="apriMovimenti('${g.codice}')">📜</button></td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function salvaScortaMinima(codice){
+  const valore = document.getElementById('scorta-' + codice).value;
+  try{
+    const r = await fetch('/api/giacenza_wood/' + encodeURIComponent(codice) + '/scorta_minima', {
+      method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({scorta_minima: valore})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    caricaGiacenza();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function apriMovimenti(codice){
+  document.getElementById('mov-modal-codice').textContent = codice;
+  const box = document.getElementById('mov-modal-lista');
+  box.innerHTML = 'Caricamento...';
+  openModal('modal-movimenti');
+  try{
+    const r = await fetch('/api/giacenza_wood/' + encodeURIComponent(codice) + '/movimenti');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun movimento registrato.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Data</th><th>Tipo</th><th>Quantità</th><th>Riferimento</th><th>Note</th></tr></thead><tbody>';
+    righe.forEach(m=>{
+      html += `<tr><td class="lav-td">${m.creato_il}</td><td>${m.tipo}</td><td class="num ${m.quantita<0?'num-neg':'num-pos'}">${m.quantita>0?'+':''}${m.quantita}</td><td class="lav-td">${m.riferimento||'—'}</td><td class="lav-td">${m.note||'—'}</td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+caricaGiacenza();
+
+let rigaBomInModifica = null;
+function val(id){ return document.getElementById(id).value.trim(); }
+function resetBomForm(){ rigaBomInModifica=null; ['bom-padre','bom-figlio','bom-gruppo','bom-note'].forEach(id=>document.getElementById(id).value=''); document.getElementById('bom-qta').value=1;document.getElementById('bom-livello').value=1; }
+function payloadBom(){ return {codice_padre:val('bom-padre'),codice_figlio:val('bom-figlio'),quantita:document.getElementById('bom-qta').value,livello:document.getElementById('bom-livello').value,gruppo_alternativa:val('bom-gruppo'),note:val('bom-note'),preferita:true}; }
+async function caricaBom(){
+ const box=document.getElementById('bom-lista'), q=val('bom-ricerca'); box.innerHTML='Caricamento...';
+ try{const r=await fetch('/api/distinta_base_wood'+(q?'?q='+encodeURIComponent(q):''));const d=await r.json();document.getElementById('bom-avviso').textContent=d.totale>d.mostrate?`Mostrate ${d.mostrate} righe su ${d.totale}: usa la ricerca per restringere.`:'';
+ if(!d.righe.length){box.innerHTML='<p style="color:#aaa">Nessuna riga trovata.</p>';return;} let h='<div style="overflow-x:auto"><table class="giac-table"><thead><tr><th>Padre</th><th>Figlio</th><th>Q.tà</th><th>Livello</th><th>Alternativa</th><th>Stato</th><th>Note</th><th>Azioni</th></tr></thead><tbody>';
+ window._RIGHE_BOM=d.righe; d.righe.forEach(x=>h+=`<tr><td class="codice">${x.codice_padre}</td><td class="codice">${x.codice_figlio}</td><td>${x.quantita}</td><td>${x.livello}</td><td>${x.gruppo_alternativa||'—'}</td><td>${x.gruppo_alternativa?(x.preferita?'✅ Attiva':'○ Alternativa'):'—'}</td><td>${x.note||'—'}</td><td><button class="btn btn-ghost" onclick="modificaBomDaId(${x.id})">✏️</button> <button class="btn btn-ghost" onclick="eliminaBom(${x.id})" style="color:#e74c3c">🗑</button>${x.gruppo_alternativa&&!x.preferita?` <button class="btn btn-ghost" onclick="attivaAlternativa(${x.id})">Attiva</button>`:''}</td></tr>`); h+='</tbody></table></div>';box.innerHTML=h;
+ }catch(e){box.innerHTML='<p style="color:#c0392b">Errore nel caricamento della distinta.</p>';}
+}
+function modificaBomDaId(id){ const x=(window._RIGHE_BOM||[]).find(r=>r.id===id); if(x) modificaBom(x); }
+function modificaBom(x){rigaBomInModifica=x.id;document.getElementById('bom-padre').value=x.codice_padre;document.getElementById('bom-figlio').value=x.codice_figlio;document.getElementById('bom-qta').value=x.quantita;document.getElementById('bom-livello').value=x.livello;document.getElementById('bom-gruppo').value=x.gruppo_alternativa||'';document.getElementById('bom-note').value=x.note||'';window.scrollTo({top:document.getElementById('bom-padre').getBoundingClientRect().top+window.scrollY-120,behavior:'smooth'});}
+async function salvaBom(){const p=payloadBom();if(!p.codice_padre||!p.codice_figlio){alert('Inserisci codice padre e figlio.');return;}const url=rigaBomInModifica?'/api/distinta_base_wood/'+rigaBomInModifica:'/api/distinta_base_wood',method=rigaBomInModifica?'PUT':'POST';try{const r=await fetch(url,{method,headers:{'Content-Type':'application/json'},body:JSON.stringify(p)}),d=await r.json();if(d.errore){alert('⚠️ '+d.messaggio);return;}resetBomForm();caricaBom();caricaGiacenza();}catch(e){alert('Errore durante il salvataggio.');}}
+async function eliminaBom(id){if(!confirm('Eliminare definitivamente questa riga della distinta?'))return;const r=await fetch('/api/distinta_base_wood/'+id,{method:'DELETE'}),d=await r.json();if(d.errore)alert(d.messaggio);else{caricaBom();caricaGiacenza();}}
+async function attivaAlternativa(id){const r=await fetch('/api/distinta_base_wood/'+id+'/seleziona_alternativa',{method:'POST'}),d=await r.json();if(d.errore)alert(d.messaggio);else caricaBom();}
+async function importaBom(){const f=document.getElementById('bom-file'),e=document.getElementById('bom-import-esito');if(!f.files.length){e.textContent='Seleziona un file.';return;}const fd=new FormData();fd.append('file_excel',f.files[0]);e.textContent='Importazione...';try{const r=await fetch('/api/distinta_base_wood/importa',{method:'POST',body:fd}),d=await r.json();e.innerHTML=d.errore?`<span style="color:#c0392b">${d.messaggio}</span>`:`<span style="color:#2a9d5c">✅ ${d.nuovi} nuove, ${d.aggiornati} aggiornate, ${d.scartate} scartate.</span>`;if(!d.errore){f.value='';caricaBom();caricaGiacenza();}}catch(x){e.textContent='Errore di rete.';}}
+caricaBom();
+
+{% endblock %}
