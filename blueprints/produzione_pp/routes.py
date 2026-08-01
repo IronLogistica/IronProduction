@@ -14,7 +14,7 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
-                    _residuo_giacenza_progressivo)
+                    _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 
@@ -230,13 +230,14 @@ def api_ordini_riepilogo_disponibilita():
     risultato = []
     mancanti_per_ordine = []
     tutti_codici_mancanti = set()
-    residuo_per_op, residuo_finale = _residuo_giacenza_progressivo()
+    mappa_distinta = _carica_mappa_distinta_base_wood()
+    residuo_per_op, residuo_finale = _residuo_giacenza_progressivo(mappa=mappa_distinta)
     for o in ordini:
         saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
         righe = {}
         if saldo > 0:
             giacenza_residua = dict(residuo_per_op.get(o.id, residuo_finale))
-            _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe)
+            _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe, mappa=mappa_distinta)
         mancanti = [codice for codice, r in righe.items() if r['mancante'] > 0]
         mancanti_per_ordine.append(mancanti)
         tutti_codici_mancanti.update(mancanti)
