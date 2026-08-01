@@ -9,11 +9,11 @@ from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     CostoStandardVersioneDettaglioWood, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     CostoStandardVersioneFaseWood, ManodoperaRealeWood,
                     SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
-                    VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood)
+                    VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
-                    _overhead_pct)
+                    _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 
@@ -1111,3 +1111,214 @@ def api_set_conto_contabile(cid):
     r.conto = (d.get('conto') or '').strip()
     db.session.commit()
     return jsonify({'ok': True})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  LISTE DI LAVORO — ordini cartacei generati dal programma, uno per OGNI
+#  centro di costo ("Lista Tagli", "Lista Piega", "Lista Punzonatrice", "Lista
+#  Trapani", ecc. — il nome è sempre "Lista " + nome del centro di costo,
+#  niente di scritto a mano nel codice). Stessa impostazione del foglio Excel
+#  di Angelo:
+#    - MATERIALE = codice_figlio, CODICE = codice_padre, MISURA = sviluppo
+#    - lunghezza barra da Lunghezza Barra, pezzi per barra dai Parametri di
+#      Lavorazione, Nr Barre = pezzi da tagliare / pezzi per barra
+#    - raggruppato per codice_figlio (materiale), perché si lavora un
+#      materiale alla volta (es. prima le barre da ø32, poi quelle da ø25)
+#  Le colonne mostrate si adattano al TIPO di parametri compilati per quel
+#  centro (barra per il taglio, matrice/punto zero/rullo per la piega,
+#  impostazione per la satinatura) — se per un centro non è stato ancora
+#  compilato nulla in Parametri di Lavorazione, la lista resta comunque
+#  utilizzabile con le sole quantità, in attesa che vengano aggiunti.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _lista_lavoro_op(o, centro):
+    """
+    Costruisce la Lista di Lavoro per l'OP o SU QUESTO centro di costo: una
+    riga per ogni componente della sua distinta base il cui Ciclo di Lavoro
+    passa da questo centro, raggruppate per materiale (codice_figlio) — con
+    le specifiche macchina di Parametri di Lavorazione già compilate (o vuote
+    se non ancora inserite per quel tipo di lavorazione).
+    """
+    nodi = _esplodi_componenti_op(o)
+    moltiplicatore_per_codice = {n['codice']: n['moltiplicatore'] for n in nodi}
+
+    # Solo i componenti il cui Ciclo di Lavoro passa DAVVERO da questo centro.
+    componenti_di_centro = [c for c in moltiplicatore_per_codice
+                            if CicloLavoroWood.query.filter_by(codice=c, centro_costo_id=centro.id).first()]
+
+    schede = (SchedaLavorazioneWood.query
+              .filter(SchedaLavorazioneWood.codice_padre.in_(componenti_di_centro)).all()) if componenti_di_centro else []
+    schede_per_padre = {}
+    for s in schede:
+        schede_per_padre.setdefault(s.codice_padre, []).append(s)
+
+    ha_barra = any(s.lunghezza_barra_mm is not None for s in schede)
+    ha_piega = any(s.matrice_id or s.punto_zero or s.indice_assorbimento or s.rullo_id for s in schede)
+    ha_satinatura = any(s.impostazione_satinatrice for s in schede)
+
+    righe_per_materiale = {}
+    for codice_comp in componenti_di_centro:
+        moltiplicatore = moltiplicatore_per_codice[codice_comp]
+        nr_pz_da_fare = round((o.qta_pianificata or 0) * moltiplicatore)
+        componente_param = None if codice_comp == o.codice_articolo else codice_comp
+        pezzi_fatti = int((db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+                          .filter(EventoConsuntivoPP.op_code == o.codice,
+                                  EventoConsuntivoPP.componente == componente_param if componente_param
+                                  else EventoConsuntivoPP.componente.is_(None))
+                          .scalar()) or 0)
+        saldo = max(nr_pz_da_fare - pezzi_fatti, 0)
+
+        schede_padre = schede_per_padre.get(codice_comp)
+        if schede_padre:
+            for s in schede_padre:
+                pz_per_barra = s.pezzi_per_barra
+                nr_barre = int((saldo + pz_per_barra - 1) // pz_per_barra) if pz_per_barra else None
+                riga = {
+                    'codice': codice_comp, 'materiale': s.codice_figlio, 'misura': s.sviluppo or '',
+                    'lunghezza_barra_mm': s.lunghezza_barra_mm,
+                    'matrice': s.matrice.codice if s.matrice else '',
+                    'punto_zero': s.punto_zero or '', 'indice_assorbimento': s.indice_assorbimento or '',
+                    'rullo': s.rullo.codice if s.rullo else '',
+                    'impostazione_satinatrice': s.impostazione_satinatrice or '',
+                    'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti, 'saldo': saldo,
+                    'pz_per_barra': pz_per_barra, 'nr_barre': nr_barre, 'nota': '',
+                }
+                righe_per_materiale.setdefault(s.codice_figlio, []).append(riga)
+        else:
+            # Nessun parametro compilato ancora per questo componente in Parametri
+            # di Lavorazione — materiale di riserva preso dal primo figlio diretto
+            # in Distinta Base, così la riga compare comunque nella lista.
+            figli = _righe_bom_attive_wood(codice_comp)
+            materiale = figli[0].codice_figlio if figli else '—'
+            riga = {
+                'codice': codice_comp, 'materiale': materiale, 'misura': '', 'lunghezza_barra_mm': None,
+                'matrice': '', 'punto_zero': '', 'indice_assorbimento': '', 'rullo': '',
+                'impostazione_satinatrice': '', 'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti,
+                'saldo': saldo, 'pz_per_barra': None, 'nr_barre': None,
+                'nota': '⚠️ Parametri non ancora compilati in Parametri di Lavorazione',
+            }
+            righe_per_materiale.setdefault(materiale, []).append(riga)
+
+    codici_materiale = list(righe_per_materiale.keys())
+    giacenze = {g.codice: g.quantita for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici_materiale)).all()} if codici_materiale else {}
+    unita_misura = {a.codice: a.unita_misura for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici_materiale)).all()} if codici_materiale else {}
+    ordinato = {}
+    if codici_materiale:
+        for cod, qta_orig, qta_ric in (db.session.query(RigaOrdineAcquistoWood.codice,
+                                                          RigaOrdineAcquistoWood.qta_originale,
+                                                          RigaOrdineAcquistoWood.qta_ricevuta)
+                                        .join(OrdineAcquistoWood)
+                                        .filter(RigaOrdineAcquistoWood.codice.in_(codici_materiale),
+                                                OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all()):
+            residuo = (qta_orig or 0) - (qta_ric or 0)
+            if residuo > 0:
+                ordinato[cod] = ordinato.get(cod, 0) + residuo
+
+    gruppi = []
+    totale_pz = totale_fatti = 0
+    for materiale, righe in sorted(righe_per_materiale.items()):
+        ha_barra_gruppo = any(r['lunghezza_barra_mm'] for r in righe)
+        if ha_barra_gruppo:
+            nr_barre_tot = sum(r['nr_barre'] or 0 for r in righe)
+            lunghezza_m = (next((r['lunghezza_barra_mm'] for r in righe if r['lunghezza_barra_mm']), 0) or 0) / 1000
+            necessario_qta = round(nr_barre_tot * lunghezza_m, 3)
+            um_default = 'mt'
+        else:
+            nr_barre_tot = None
+            necessario_qta = sum(r['saldo'] for r in righe)  # senza distinta barra: quantità pezzi come proxy generico
+            um_default = 'pz'
+        um = unita_misura.get(materiale, um_default)
+        disponibile_qta = giacenze.get(materiale, 0)
+        if disponibile_qta >= necessario_qta:
+            stato_materiale = {'stato': 'disponibile', 'label': '✅ OK Disponibile'}
+        elif ordinato.get(materiale, 0) > 0:
+            stato_materiale = {'stato': 'ordinato', 'label': '🟠 Ordinato'}
+        else:
+            stato_materiale = {'stato': 'da_ordinare', 'label': '🔴 Non disponibile / da ordinare'}
+        gruppi.append({
+            'materiale': materiale, 'righe': righe, 'nr_barre_totale': nr_barre_tot,
+            'quantita_necessaria': necessario_qta, 'unita_misura': um, 'disponibile': disponibile_qta,
+            'stato_materiale': stato_materiale, 'ha_barra': ha_barra_gruppo,
+        })
+        totale_pz += sum(r['nr_pz_da_fare'] for r in righe)
+        totale_fatti += sum(r['pezzi_fatti'] for r in righe)
+
+    return {
+        'centro_id': centro.id, 'centro_nome': centro.nome,
+        'op_codice': o.codice, 'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
+        'commessa': o.commessa or '', 'cliente': o.cliente or '', 'stato': o.stato,
+        'qta_pianificata': o.qta_pianificata,
+        'data_inizio': o.data_inizio.strftime('%d/%m/%Y') if o.data_inizio else '',
+        'gruppi': gruppi, 'ha_barra': ha_barra, 'ha_piega': ha_piega, 'ha_satinatura': ha_satinatura,
+        'totale_pz': totale_pz, 'pz_effettuati': totale_fatti,
+        'residuo_pz': max(totale_pz - totale_fatti, 0),
+    }
+
+
+@pp_bp.get('/liste-lavoro')
+def pagina_liste_lavoro_index():
+    """Se non specificato un centro, va sul primo disponibile (stesso principio del Monitor Macchina)."""
+    from flask import redirect, url_for
+    from models import get_macchine_monitor
+    macchine = get_macchine_monitor()
+    if not macchine:
+        return render_template('monitor/nessuna_macchina.html', active='liste_lavoro',
+            messaggio='Nessun centro di costo disponibile: configuralo prima in Centri di Costo e Ciclo di Lavoro.')
+    return redirect(url_for('produzione_pp.pagina_liste_lavoro', cid=macchine[0]['id']))
+
+
+@pp_bp.get('/liste-tagli')
+def pagina_liste_tagli_legacy():
+    """Vecchio indirizzo — redirect di cortesia verso la Lista Lavoro generalizzata (stesso centro se è una segatrice, altrimenti la prima disponibile)."""
+    from flask import redirect, url_for
+    from models import get_macchine_monitor
+    macchine = get_macchine_monitor()
+    sega = next((m for m in macchine if 'sega' in m['nome'].lower() or 'tagli' in m['nome'].lower()), None)
+    if sega:
+        return redirect(url_for('produzione_pp.pagina_liste_lavoro', cid=sega['id']))
+    return redirect(url_for('produzione_pp.pagina_liste_lavoro_index'))
+
+
+@pp_bp.get('/liste-lavoro/<int:cid>')
+def pagina_liste_lavoro(cid):
+    from models import get_macchine_monitor
+    centro = CentroCostoWood.query.get_or_404(cid)
+    return render_template('produzione_pp/liste_lavoro.html', active='liste_lavoro',
+        centro=centro, macchine=get_macchine_monitor())
+
+
+@pp_bp.get('/api/liste-lavoro/<int:cid>')
+def api_liste_lavoro(cid):
+    """Riepilogo per commessa su QUESTO centro: totale / effettuati / saldo — solo per gli OP con almeno una riga in questo centro."""
+    centro = CentroCostoWood.query.get_or_404(cid)
+    ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato != 'Chiuso CO')
+              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+    risultato = []
+    for o in ordini:
+        dati = _lista_lavoro_op(o, centro)
+        if not dati['gruppi']:
+            continue
+        risultato.append({
+            'op_codice': dati['op_codice'], 'codice_articolo': dati['codice_articolo'],
+            'descrizione': dati['descrizione'], 'commessa': dati['commessa'], 'stato': dati['stato'],
+            'qta_pianificata': dati['qta_pianificata'],
+            'totale_pz': dati['totale_pz'], 'pz_effettuati': dati['pz_effettuati'], 'residuo_pz': dati['residuo_pz'],
+        })
+    return jsonify(risultato)
+
+
+@pp_bp.get('/ordini-produzione/<codice>/lista-lavoro/<int:cid>')
+def pagina_lista_lavoro_op(codice, cid):
+    centro = CentroCostoWood.query.get_or_404(cid)
+    o = OrdineProduzione.query.filter_by(codice=codice).first()
+    return render_template('produzione_pp/lista_lavoro_stampa.html',
+        dati=(_lista_lavoro_op(o, centro) if o else None), codice=codice, centro=centro)
+
+
+@pp_bp.get('/api/ordini-produzione/<codice>/lista-lavoro/<int:cid>')
+def api_lista_lavoro_op(codice, cid):
+    centro = CentroCostoWood.query.get_or_404(cid)
+    o = OrdineProduzione.query.filter_by(codice=codice).first()
+    if not o:
+        return jsonify({'errore': True, 'messaggio': 'Ordine di produzione non trovato'}), 404
+    return jsonify(_lista_lavoro_op(o, centro))
