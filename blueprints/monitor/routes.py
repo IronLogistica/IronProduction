@@ -4,7 +4,8 @@ from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo)
-from blueprints.magazzino.routes import _giacenza_residua_dopo_impegni, _netta_e_esplodi_wood, _righe_bom_attive_wood
+from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
+                    _righe_bom_attive_wood, STATI_CHE_IMPEGNANO)
 from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria
 
 monitor_bp = Blueprint('monitor', __name__)
@@ -46,7 +47,7 @@ def _righe_macchina(centro):
     OrdineProduzione + CicloLavoroWood + EventoConsuntivoPP.
     """
     ordini = (OrdineProduzione.query
-              .filter(OrdineProduzione.stato != 'Chiuso CO')
+              .filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
               .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
 
     sequenze_manuali = {
