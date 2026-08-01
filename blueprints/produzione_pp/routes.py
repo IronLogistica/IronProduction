@@ -1373,6 +1373,17 @@ def pagina_dichiarazione_produzione():
     return render_template('produzione_pp/dichiarazione_produzione.html', active='dichiarazione_produzione')
 
 
+@pp_bp.get('/dichiarazione-produzione/app')
+def pagina_dichiarazione_produzione_app():
+    """
+    Pagina AUTONOMA (nessuna sidebar/menu del programma) per il capo reparto
+    — pensata per essere aperta su un tablet/PC in reparto a fine giornata,
+    stesso stile visivo del Totem live a bordo macchina. Nessun accesso allo
+    storico/correzioni da qui: solo dichiarare, come nella pagina completa.
+    """
+    return render_template('produzione_pp/dichiarazione_produzione_app.html')
+
+
 @pp_bp.get('/api/dichiarazione-produzione/centri')
 def api_dichiarazione_centri():
     return jsonify(get_macchine_monitor())
