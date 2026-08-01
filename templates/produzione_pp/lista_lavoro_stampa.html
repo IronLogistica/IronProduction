@@ -14,7 +14,8 @@
   .btn-print{background:var(--blue);color:#fff}
   .btn-torna{background:#fff;color:var(--blue);border:1px solid var(--blue) !important}
 
-  .sheet{width:850px;max-width:96vw;background:#fff;border:2px solid #222;border-radius:6px;padding:28px}
+  .sheet{width:850px;max-width:96vw;background:#fff;border:2px solid #222;border-radius:6px;padding:28px;position:relative}
+  .numero-lista{position:absolute;top:14px;right:18px;font-weight:900;font-size:16px;letter-spacing:1px;border:2px solid #222;border-radius:5px;padding:5px 12px}
   h1{text-align:center;font-size:22px;font-weight:900;letter-spacing:1px;margin-bottom:20px;text-transform:uppercase}
 
   .hdr-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
@@ -69,6 +70,7 @@
 <div class="sheet"><h1>Ordine di Produzione non trovato</h1><p style="text-align:center">Codice cercato: {{ codice }}</p></div>
 {% else %}
 <div class="sheet">
+  <div class="numero-lista">N° {{ dati.numero_lista }}</div>
   <h1>Lista {{ centro.nome }}</h1>
 
   <div class="hdr-grid">
@@ -103,8 +105,9 @@
   <table class="lavoro">
     <thead><tr>
       <th class="check">Check</th><th>Codice</th><th>Materiale</th>
-      {% if g.ha_barra %}<th>Misura (mm)</th>{% endif %}
-      {% if dati.ha_piega %}<th>Matrice</th><th>Punto 0</th><th>Indice ass.</th><th>Rullo</th>{% endif %}
+      {% if g.ha_barra %}<th>Misura (mm)</th><th>Spessore (mm)</th>{% endif %}
+      {% if dati.ha_piega %}<th>Matrice</th><th>Punto 0</th><th>Indice ass.</th>{% endif %}
+      {% if dati.ha_rullo %}<th>Rullo</th>{% endif %}
       {% if dati.ha_satinatura %}<th>Satinatura</th>{% endif %}
       <th>Pz da fare</th><th>Fatti</th><th>Saldo</th>
       {% if g.ha_barra %}<th>Pz x Barra</th><th>Nr Barre</th>{% endif %}
@@ -115,8 +118,9 @@
         <td class="check">☐</td>
         <td class="codice-cell">{{ r.codice }}</td>
         <td>{{ r.materiale }}</td>
-        {% if g.ha_barra %}<td>{{ r.misura }}</td>{% endif %}
-        {% if dati.ha_piega %}<td>{{ r.matrice }}</td><td>{{ r.punto_zero }}</td><td>{{ r.indice_assorbimento }}</td><td>{{ r.rullo }}</td>{% endif %}
+        {% if g.ha_barra %}<td>{{ r.misura }}</td><td>{{ r.spessore_mm or '—' }}</td>{% endif %}
+        {% if dati.ha_piega %}<td>{{ r.matrice }}</td><td>{{ r.punto_zero }}</td><td>{{ r.indice_assorbimento }}</td>{% endif %}
+        {% if dati.ha_rullo %}<td>{{ r.rullo }}</td>{% endif %}
         {% if dati.ha_satinatura %}<td>{{ r.impostazione_satinatrice }}</td>{% endif %}
         <td>{{ r.nr_pz_da_fare }}</td>
         <td>{{ r.pezzi_fatti }}</td>
@@ -128,7 +132,7 @@
     </tbody>
     <tfoot>
       <tr>
-        <td colspan="{{ 3 + (1 if g.ha_barra else 0) + (4 if dati.ha_piega else 0) + (1 if dati.ha_satinatura else 0) }}">Totale</td>
+        <td colspan="{{ 3 + (2 if g.ha_barra else 0) + (3 if dati.ha_piega else 0) + (1 if dati.ha_rullo else 0) + (1 if dati.ha_satinatura else 0) }}">Totale</td>
         <td>{{ g.righe|sum(attribute='nr_pz_da_fare') }}</td>
         <td>{{ g.righe|sum(attribute='pezzi_fatti') }}</td>
         <td>{{ g.righe|sum(attribute='saldo') }}</td>
