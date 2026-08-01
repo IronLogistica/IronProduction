@@ -18,13 +18,43 @@ SEZIONI = {
 }
 
 
-def _pezzi_fase(op_code, nome_centro):
-    """Pezzi buoni già consuntivati per questo OP in QUESTA fase (per nome centro di costo, case-insensitive)."""
-    tot = (db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-           .filter(EventoConsuntivoPP.op_code == op_code,
-                   db.func.lower(EventoConsuntivoPP.fase) == nome_centro.lower())
-           .scalar())
-    return tot or 0
+def _pezzi_fase(op_code, nome_centro, componente=None):
+    """Pezzi buoni già consuntivati per questo OP in QUESTA fase (per nome centro di costo, case-insensitive).
+    'componente'=None cerca i consuntivi del PRODOTTO FINITO dell'OP (componente IS NULL nel DB);
+    valorizzato cerca i consuntivi di QUEL componente intermedio specifico — non li mescola mai."""
+    q = db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni)).filter(
+        EventoConsuntivoPP.op_code == op_code,
+        db.func.lower(EventoConsuntivoPP.fase) == nome_centro.lower())
+    q = q.filter(EventoConsuntivoPP.componente.is_(None)) if not componente else q.filter(EventoConsuntivoPP.componente == componente)
+    return q.scalar() or 0
+
+
+def _esplodi_componenti_op(o, _max_profondita=15):
+    """
+    Ritorna un nodo per OGNI codice della distinta base di o.codice_articolo
+    — l'articolo stesso (moltiplicatore 1) più TUTTI i suoi componenti a
+    qualunque livello, ciascuno con il moltiplicatore di quantità cumulato
+    dalla radice — usando solo l'alternativa attiva per gruppo (vedi
+    _righe_bom_attive_wood). Un codice riusato in più punti dell'albero
+    compare una sola volta (al moltiplicatore del primo punto in cui viene
+    incontrato) — protezione anti-ciclo/doppio conteggio.
+    """
+    risultato = [{'codice': o.codice_articolo, 'moltiplicatore': 1.0}]
+    visitati = {o.codice_articolo}
+
+    def walk(codice, moltiplicatore, profondita):
+        if profondita > _max_profondita:
+            return
+        for r in _righe_bom_attive_wood(codice):
+            if r.codice_figlio in visitati:
+                continue
+            visitati.add(r.codice_figlio)
+            m = moltiplicatore * (r.quantita or 1.0)
+            risultato.append({'codice': r.codice_figlio, 'moltiplicatore': m})
+            walk(r.codice_figlio, m, profondita + 1)
+
+    walk(o.codice_articolo, 1.0, 0)
+    return risultato
 
 
 def _materiale_disponibile(o):
@@ -40,11 +70,14 @@ def _materiale_disponibile(o):
 
 def _righe_macchina(centro):
     """
-    Estrae, per la macchina (centro di costo) data, tutti gli Ordini di
-    Produzione ancora aperti il cui articolo passa da questa macchina nel suo
-    Ciclo di Lavoro, e li smista nelle 4 sezioni in base all'avanzamento
-    REALE (consuntivi) — nessuna riga inserita a mano: i dati vengono da
-    OrdineProduzione + CicloLavoroWood + EventoConsuntivoPP.
+    Estrae, per la macchina (centro di costo) data, tutte le LAVORAZIONI
+    ancora aperte che passano da questa macchina — non solo quelle
+    dell'articolo finito dell'OP, ma anche quelle di OGNI COMPONENTE della
+    sua distinta base che ha un proprio Ciclo di Lavoro (es. 3 pezzi diversi
+    che vanno tutti alla segatrice prima di diventare il prodotto finito):
+    una riga per ogni coppia (OP, componente) il cui Ciclo di Lavoro include
+    questa macchina — smistate nelle 4 sezioni in base all'avanzamento REALE
+    (consuntivi, tracciati per componente — vedi EventoConsuntivoPP.componente).
     """
     ordini = (OrdineProduzione.query
               .filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
@@ -57,55 +90,67 @@ def _righe_macchina(centro):
 
     righe = {k: [] for k in SEZIONI}
     for o in ordini:
-        fasi_ciclo = (CicloLavoroWood.query.filter_by(codice=o.codice_articolo)
-                      .order_by(CicloLavoroWood.sequenza).all())
-        idx = next((i for i, f in enumerate(fasi_ciclo) if f.centro_costo_id == centro.id), None)
-        if idx is None:
-            continue  # questo articolo non passa da questa macchina
+        for comp in _esplodi_componenti_op(o):
+            codice_comp = comp['codice']
+            componente_finale = (codice_comp == o.codice_articolo)
+            componente_param = None if componente_finale else codice_comp
 
-        pezzi_fase = _pezzi_fase(o.codice, centro.nome)
-        saldo_fase = max((o.qta_pianificata or 0) - pezzi_fase, 0)
-        pct_fase = round(pezzi_fase / o.qta_pianificata * 100) if o.qta_pianificata else 0
+            fasi_ciclo = (CicloLavoroWood.query.filter_by(codice=codice_comp)
+                          .order_by(CicloLavoroWood.sequenza).all())
+            idx = next((i for i, f in enumerate(fasi_ciclo) if f.centro_costo_id == centro.id), None)
+            if idx is None:
+                continue  # questo componente non passa da questa macchina
 
-        if saldo_fase <= 0:
-            sezione = 'terminati'
-        elif pezzi_fase > 0:
-            sezione = 'lavorazione'
-        else:
-            if idx == 0:
-                pronto = _materiale_disponibile(o)
+            qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+            pezzi_fase = _pezzi_fase(o.codice, centro.nome, componente=componente_param)
+            saldo_fase = max(qta_necessaria - pezzi_fase, 0)
+            pct_fase = round(pezzi_fase / qta_necessaria * 100) if qta_necessaria else 0
+
+            if saldo_fase <= 0:
+                sezione = 'terminati'
+            elif pezzi_fase > 0:
+                sezione = 'lavorazione'
             else:
-                fase_prec = fasi_ciclo[idx - 1]
-                pronto = _pezzi_fase(o.codice, fase_prec.centro_costo.nome) >= (o.qta_pianificata or 0)
-            sezione = 'da_iniziare' if pronto else 'in_attesa'
+                if idx == 0:
+                    # Prima fase del SUO ciclo: pronto se il materiale grezzo
+                    # dell'intero OP è disponibile (controllo approssimato a
+                    # livello OP finché non affiniamo la disponibilità per
+                    # singolo componente).
+                    pronto = _materiale_disponibile(o)
+                else:
+                    fase_prec = fasi_ciclo[idx - 1]
+                    pronto = _pezzi_fase(o.codice, fase_prec.centro_costo.nome, componente=componente_param) >= qta_necessaria
+                sezione = 'da_iniziare' if pronto else 'in_attesa'
 
-        fase_ciclo = fasi_ciclo[idx]
-        tempo_standard_min_pz = (60 / fase_ciclo.produttivita_oraria) if fase_ciclo.produttivita_oraria else None
+            fase_ciclo = fasi_ciclo[idx]
+            tempo_standard_min_pz = (60 / fase_ciclo.produttivita_oraria) if fase_ciclo.produttivita_oraria else None
 
-        # Standard fisico di consumo materiale per 1 pezzo: componenti diretti
-        # nella distinta base di QUESTO codice (solo l'alternativa attiva, se
-        # ce ne sono — es. barra 7m vs 6m, vedi _righe_bom_attive_wood).
-        consumi_standard = [{'codice': rb.codice_figlio, 'quantita': rb.quantita}
-                            for rb in _righe_bom_attive_wood(o.codice_articolo)]
+            # Standard fisico di consumo materiale per 1 pezzo di QUESTO componente
+            # (non dell'intero OP) — solo l'alternativa attiva per gruppo.
+            consumi_standard = [{'codice': rb.codice_figlio, 'quantita': rb.quantita}
+                                for rb in _righe_bom_attive_wood(codice_comp)]
 
-        posizione_manuale = sequenze_manuali.get((o.id, centro.id))
-        chiave_ordine = (0, posizione_manuale) if posizione_manuale is not None else (
-            1, o.priorita, o.data_prevista or datetime.max.date(), o.id)
+            posizione_manuale = sequenze_manuali.get((o.id, centro.id))
+            chiave_ordine = (0, posizione_manuale) if posizione_manuale is not None else (
+                1, o.priorita, o.data_prevista or datetime.max.date(), o.id, codice_comp)
 
-        righe[sezione].append({
-            'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
-            'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
-            'priorita': o.priorita, 'stato_op': o.stato,
-            'totale': o.qta_pianificata, 'saldo': saldo_fase, 'pct': pct_fase,
-            'posizione_manuale': posizione_manuale,
-            'data_prevista': o.data_prevista.isoformat() if o.data_prevista else None,
-            'tempo_standard_min_pz': round(tempo_standard_min_pz, 2) if tempo_standard_min_pz else None,
-            'scarto_max_pct': fase_ciclo.scarto_max_pct,
-            'scarto_max_pezzi': (round((o.qta_pianificata or 0) * fase_ciclo.scarto_max_pct / 100))
-                                 if fase_ciclo.scarto_max_pct else None,
-            'consumi_standard': consumi_standard,
-            '_chiave_ordine': chiave_ordine,
-        })
+            righe[sezione].append({
+                'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
+                'codice_articolo': o.codice_articolo,
+                'componente': componente_param, 'componente_finale': componente_finale,
+                'codice_lavorato': codice_comp,
+                'descrizione': o.descrizione or '',
+                'priorita': o.priorita, 'stato_op': o.stato,
+                'totale': qta_necessaria, 'saldo': saldo_fase, 'pct': pct_fase,
+                'posizione_manuale': posizione_manuale,
+                'data_prevista': o.data_prevista.isoformat() if o.data_prevista else None,
+                'tempo_standard_min_pz': round(tempo_standard_min_pz, 2) if tempo_standard_min_pz else None,
+                'scarto_max_pct': fase_ciclo.scarto_max_pct,
+                'scarto_max_pezzi': (round(qta_necessaria * fase_ciclo.scarto_max_pct / 100))
+                                     if fase_ciclo.scarto_max_pct else None,
+                'consumi_standard': consumi_standard,
+                '_chiave_ordine': chiave_ordine,
+            })
 
     for sezione in righe:
         righe[sezione].sort(key=lambda r: r['_chiave_ordine'])
@@ -139,6 +184,10 @@ def index_trapani_legacy():
 @monitor_bp.route('/monitor/macchina/<int:cid>')
 def macchina(cid):
     centro = CentroCostoWood.query.get_or_404(cid)
+    if centro.esterno or centro.escluso_da_monitor_produzione:
+        return render_template('monitor/nessuna_macchina.html', active='monitor',
+            messaggio=f'"{centro.nome}" è marcato come {"esterno" if centro.esterno else "escluso dal Monitor Produzione"} — '
+                      f'non genera una coda qui. Se pensi sia un errore, vai su Centri di Costo e correggi la configurazione.')
     righe_per_sezione = _righe_macchina(centro)
     return render_template('monitor/macchina.html',
         active='monitor', active_page='monitor',
@@ -154,6 +203,9 @@ def macchina(cid):
 @monitor_bp.route('/totem/macchina/<int:cid>')
 def totem_macchina(cid):
     centro = CentroCostoWood.query.get_or_404(cid)
+    if centro.esterno or centro.escluso_da_monitor_produzione:
+        return render_template('monitor/nessuna_macchina.html', active='monitor',
+            messaggio=f'"{centro.nome}" è marcato come {"esterno" if centro.esterno else "escluso dal Monitor Produzione"} — nessun totem qui.')
     righe = _righe_macchina(centro)
 
     sessione = SessioneLavoroMacchina.query.filter_by(centro_costo_id=cid, terminata_il=None).first()
@@ -162,22 +214,28 @@ def totem_macchina(cid):
     if sessione:
         minuti = round((datetime.utcnow() - sessione.iniziata_il).total_seconds() / 60)
         sessione_info = {'sessione_id': sessione.id, 'op_id': sessione.ordine_produzione_id,
+                          'componente': sessione.componente,
                           'iniziata_il': sessione.iniziata_il.isoformat(), 'minuti_trascorsi': minuti}
         for lista in (righe['lavorazione'], righe['da_iniziare'], righe['in_attesa'], righe['terminati']):
-            riga_attiva = next((r for r in lista if r['op_id'] == sessione.ordine_produzione_id), None)
+            riga_attiva = next((r for r in lista if r['op_id'] == sessione.ordine_produzione_id
+                                and r['componente'] == sessione.componente), None)
             if riga_attiva:
                 break
         if riga_attiva is None:
-            # L'OP con sessione aperta non compare in nessun bucket (es. completato
-            # nel frattempo): ricostruisco comunque i dati minimi per mostrarlo.
+            # L'OP (o il suo componente) con sessione aperta non compare in
+            # nessun bucket (es. completato nel frattempo): ricostruisco
+            # comunque i dati minimi per mostrarlo.
             o = sessione.ordine_produzione
+            codice_lavorato = sessione.componente or o.codice_articolo
             riga_attiva = {'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
-                           'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
+                           'codice_articolo': o.codice_articolo,
+                           'componente': sessione.componente, 'componente_finale': not sessione.componente,
+                           'codice_lavorato': codice_lavorato, 'descrizione': o.descrizione or '',
                            'totale': o.qta_pianificata, 'saldo': max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0),
                            'pct': round((o.qta_buona or 0) / o.qta_pianificata * 100) if o.qta_pianificata else 0,
                            'tempo_standard_min_pz': None, 'scarto_max_pct': None, 'scarto_max_pezzi': None,
                            'consumi_standard': [{'codice': rb.codice_figlio, 'quantita': rb.quantita}
-                                                for rb in _righe_bom_attive_wood(o.codice_articolo)]}
+                                                for rb in _righe_bom_attive_wood(codice_lavorato)]}
     elif righe['lavorazione']:
         riga_attiva = righe['lavorazione'][0]
     elif righe['da_iniziare']:
@@ -253,6 +311,7 @@ def api_totem_sessione_aperta(cid):
     minuti = round((datetime.utcnow() - s.iniziata_il).total_seconds() / 60)
     return jsonify({
         'aperta': True, 'sessione_id': s.id, 'ordine_produzione_id': s.ordine_produzione_id,
+        'componente': s.componente,
         'op_codice': s.ordine_produzione.codice, 'iniziata_il': s.iniziata_il.isoformat(),
         'minuti_trascorsi': minuti,
     })
@@ -260,27 +319,36 @@ def api_totem_sessione_aperta(cid):
 
 @monitor_bp.route('/api/totem/<int:cid>/inizia', methods=['POST'])
 def api_totem_inizia(cid):
+    """
+    'componente' (facoltativo): quale componente della distinta base dell'OP
+    si sta lavorando in QUESTA macchina — es. uno dei pezzi che passano dalla
+    segatrice prima di diventare il prodotto finito. Vuoto/assente = si sta
+    lavorando il prodotto finito/assieme finale dell'OP (comportamento storico).
+    """
     centro = CentroCostoWood.query.get_or_404(cid)
     d = request.get_json(force=True)
     try:
         op_id = int(d['ordine_produzione_id'])
     except (KeyError, TypeError, ValueError):
         return jsonify({'errore': True, 'messaggio': 'ordine_produzione_id obbligatorio'}), 400
+    componente = (d.get('componente') or '').strip() or None
     o = OrdineProduzione.query.get_or_404(op_id)
 
     esistente = SessioneLavoroMacchina.query.filter_by(centro_costo_id=cid, terminata_il=None).first()
     if esistente:
-        if esistente.ordine_produzione_id == op_id:
+        if esistente.ordine_produzione_id == op_id and esistente.componente == componente:
             return jsonify({'ok': True, 'sessione_id': esistente.id, 'gia_aperta': True})
+        etichetta = esistente.componente or esistente.ordine_produzione.codice_articolo
         return jsonify({'errore': True,
-                        'messaggio': f'Macchina già impegnata su {esistente.ordine_produzione.codice} — chiudi prima quel lavoro'}), 409
+                        'messaggio': f'Macchina già impegnata su {esistente.ordine_produzione.codice} ({etichetta}) — chiudi prima quel lavoro'}), 409
 
     if not _is_carpenteria(o.asa) or o.stato not in ('Rilasciato', 'In esecuzione'):
         return jsonify({'errore': True, 'messaggio': 'OP non attivo o non disponibile per Carpenteria Propria'}), 409
 
-    s = SessioneLavoroMacchina(ordine_produzione_id=op_id, centro_costo_id=cid, iniziata_il=datetime.utcnow())
+    s = SessioneLavoroMacchina(ordine_produzione_id=op_id, centro_costo_id=cid, componente=componente,
+                                iniziata_il=datetime.utcnow())
     db.session.add(s)
-    log(f'Totem {centro.nome}: iniziato lavoro su OP {o.codice}')
+    log(f'Totem {centro.nome}: iniziato lavoro su OP {o.codice}' + (f' — componente {componente}' if componente else ''))
     db.session.commit()
     return jsonify({'ok': True, 'sessione_id': s.id})
 
@@ -297,11 +365,12 @@ def api_totem_termina(cid):
         return jsonify({'errore': True, 'messaggio': 'ordine_produzione_id, pezzi_buoni e pezzi_scarto sono obbligatori (numerici)'}), 400
     if good < 0 or scrap < 0:
         return jsonify({'errore': True, 'messaggio': 'I pezzi non possono essere negativi'}), 400
+    componente = (d.get('componente') or '').strip() or None
 
     s = (SessioneLavoroMacchina.query
-         .filter_by(ordine_produzione_id=op_id, centro_costo_id=cid, terminata_il=None).first())
+         .filter_by(ordine_produzione_id=op_id, centro_costo_id=cid, componente=componente, terminata_il=None).first())
     if not s:
-        return jsonify({'errore': True, 'messaggio': 'Nessuna sessione di lavoro aperta per questo OP su questa macchina'}), 404
+        return jsonify({'errore': True, 'messaggio': 'Nessuna sessione di lavoro aperta per questo OP/componente su questa macchina'}), 404
 
     now = datetime.utcnow()
     tempo_minuti = max(round((now - s.iniziata_il).total_seconds() / 60), 0)
@@ -313,12 +382,13 @@ def api_totem_termina(cid):
 
     event_id = f'totem-sessione-{s.id}'
     try:
-        _registra_evento_consuntivo(o, centro.nome, now, good, scrap, tempo_minuti, event_id)
+        _registra_evento_consuntivo(o, centro.nome, now, good, scrap, tempo_minuti, event_id, componente=componente)
         s.terminata_il = now
         s.pezzi_buoni = good
         s.pezzi_scarto = scrap
         s.event_id_generato = event_id
-        log(f'Totem {centro.nome}: terminato lavoro su OP {o.codice} — {good} buoni, {scrap} scarto, {tempo_minuti} min')
+        log(f'Totem {centro.nome}: terminato lavoro su OP {o.codice}' + (f' ({componente})' if componente else '') +
+            f' — {good} buoni, {scrap} scarto, {tempo_minuti} min')
         db.session.commit()
     except Exception as e:
         db.session.rollback()
