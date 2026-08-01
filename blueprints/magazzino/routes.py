@@ -1090,6 +1090,43 @@ def _giacenza_residua_dopo_impegni(escludi_op_id=None):
     return giacenza_residua
 
 
+def _residuo_giacenza_progressivo(op_aperti=None):
+    """
+    Versione efficiente di _giacenza_residua_dopo_impegni pensata per essere
+    chiamata UNA VOLTA SOLA per ottenere il residuo di TUTTI gli OP aperti
+    insieme, invece che una volta per OP dentro un ciclo — il pattern
+    "for o in ordini: _giacenza_residua_dopo_impegni(escludi_op_id=o.id)"
+    è O(N²) (per ogni OP riesplode la distinta di TUTTI gli altri OP da
+    zero) e con qualche decina di OP aperti porta i tempi di risposta da
+    millisecondi a decine di secondi.
+
+    Un solo passaggio in ordine di priorità: per ogni OP salva la giacenza
+    residua PRIMA di servirlo (cioè dopo aver servito solo chi ha priorità
+    pari o superiore ed è quindi davanti a lui in coda), poi lo consuma e
+    passa al successivo. Semanticamente equivalente a "quanto materiale mi
+    aspetto di trovare disponibile quando tocca a me", coerente con la stessa
+    logica di priorità già usata ovunque nell'app (P1 più urgente di P9).
+
+    Ritorna (residuo_per_op, residuo_finale): il primo è {op.id: {codice: qta
+    residua prima di servire quell'OP}} per gli OP che impegnano davvero
+    materiale (STATI_CHE_IMPEGNANO); il secondo è il residuo DOPO aver
+    servito tutti — da usare per un OP che non impegna nulla (es. ancora
+    'Creato', non rilasciato): per lui escludere se stesso è un no-op, quindi
+    il suo residuo coincide con quello finale.
+    """
+    if op_aperti is None:
+        op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
+                     .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+    giacenza = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
+    residuo_per_op = {}
+    for op in op_aperti:
+        residuo_per_op[op.id] = dict(giacenza)  # snapshot prima di servire QUESTO OP
+        saldo = (op.qta_pianificata or 0) - (op.qta_buona or 0)
+        if saldo > 0:
+            _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza, {})
+    return residuo_per_op, giacenza
+
+
 @magazzino_bp.route('/api/fabbisogno_disponibilita')
 def api_fabbisogno_disponibilita():
     """
