@@ -1386,7 +1386,15 @@ def pagina_dichiarazione_produzione_app():
 
 @pp_bp.get('/api/dichiarazione-produzione/centri')
 def api_dichiarazione_centri():
-    return jsonify(get_macchine_monitor())
+    """
+    Tutti i centri di costo INTERNI (non esterno), non solo quelli già usati
+    in un Ciclo di Lavoro come per il Monitor — qui il capo reparto deve
+    poter scegliere il proprio centro anche se non è ancora stato assegnato
+    a nessun articolo, altrimenti il menu risulterebbe vuoto o incompleto.
+    """
+    centri = (CentroCostoWood.query.filter_by(esterno=False, attivo=True)
+              .order_by(CentroCostoWood.nome).all())
+    return jsonify([{'id': c.id, 'nome': c.nome} for c in centri])
 
 
 @pp_bp.get('/api/dichiarazione-produzione/<int:cid>/op-aperti')
