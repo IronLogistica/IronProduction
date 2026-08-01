@@ -1982,6 +1982,7 @@ def api_albero_schede_lavorazione(codice_radice):
             'approvvigionamento_padre': {'tipo_approvvigionamento': approvvigionamenti.get(padre).tipo_approvvigionamento if approvvigionamenti.get(padre) else 'DA_CLASSIFICARE', 'unita_misura': approvvigionamenti.get(padre).unita_misura if approvvigionamenti.get(padre) else ''},
             'approvvigionamento_figlio': {'tipo_approvvigionamento': approvvigionamenti.get(figlio).tipo_approvvigionamento if approvvigionamenti.get(figlio) else 'DA_CLASSIFICARE', 'unita_misura': approvvigionamenti.get(figlio).unita_misura if approvvigionamenti.get(figlio) else ''},
             'lunghezza_barra_mm': s.lunghezza_barra_mm if s else None,
+            'spessore_mm': s.spessore_mm if s else None,
             'pezzi_per_barra': s.pezzi_per_barra if s else None,
             'sviluppo': s.sviluppo if s else '',
             'matrice_id': s.matrice_id if s else None,
@@ -2005,6 +2006,7 @@ def api_upsert_scheda_lavorazione():
         return jsonify({'errore': True, 'messaggio': 'Codice padre e figlio sono obbligatori'}), 400
     try:
         lunghezza_barra_mm = float(d['lunghezza_barra_mm']) if d.get('lunghezza_barra_mm') not in (None, '') else None
+        spessore_mm = float(d['spessore_mm']) if d.get('spessore_mm') not in (None, '') else None
         pezzi_per_barra = float(d['pezzi_per_barra']) if d.get('pezzi_per_barra') not in (None, '') else None
         matrice_id = int(d['matrice_id']) if d.get('matrice_id') not in (None, '') else None
         rullo_id = int(d['rullo_id']) if d.get('rullo_id') not in (None, '') else None
@@ -2016,7 +2018,7 @@ def api_upsert_scheda_lavorazione():
         return jsonify({'errore': True, 'messaggio': 'Rullo non trovato'}), 404
 
     valori = dict(
-        lunghezza_barra_mm=lunghezza_barra_mm, pezzi_per_barra=pezzi_per_barra,
+        lunghezza_barra_mm=lunghezza_barra_mm, spessore_mm=spessore_mm, pezzi_per_barra=pezzi_per_barra,
         sviluppo=(d.get('sviluppo') or '').strip(), matrice_id=matrice_id,
         punto_zero=(d.get('punto_zero') or '').strip(),
         indice_assorbimento=(d.get('indice_assorbimento') or '').strip(),
