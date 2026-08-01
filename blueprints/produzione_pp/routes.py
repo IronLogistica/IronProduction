@@ -9,7 +9,8 @@ from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     CostoStandardVersioneDettaglioWood, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     CostoStandardVersioneFaseWood, ManodoperaRealeWood,
                     SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
-                    VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood)
+                    VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
+                    NumeroListaLavoroWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -1134,6 +1135,32 @@ def api_set_conto_contabile(cid):
 #  utilizzabile con le sole quantità, in attesa che vengano aggiunti.
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _prefisso_lista(nome_centro):
+    """Prefisso del numero di lista (es. CUT/001) in base al tipo di macchina."""
+    n = (nome_centro or '').strip().lower()
+    if 'sega' in n: return 'CUT'
+    if 'punzon' in n: return 'PUNZ'
+    if 'piega' in n: return 'PRES'
+    if 'curva' in n: return 'CURV'
+    if 'trapan' in n: return 'TRAPA'
+    if 'satin' in n: return 'SAT'
+    return 'LIST'
+
+
+def _numero_lista_lavoro(op_code, centro):
+    """Numero di lista idempotente per la coppia OP+centro — vedi NumeroListaLavoroWood."""
+    prefisso = _prefisso_lista(centro.nome)
+    esistente = NumeroListaLavoroWood.query.filter_by(op_code=op_code, centro_costo_id=centro.id).first()
+    if esistente:
+        return f'{esistente.prefisso}/{esistente.numero:03d}'
+    ultimo = (db.session.query(db.func.max(NumeroListaLavoroWood.numero))
+              .filter_by(prefisso=prefisso).scalar()) or 0
+    nuovo = NumeroListaLavoroWood(op_code=op_code, centro_costo_id=centro.id, prefisso=prefisso, numero=ultimo + 1)
+    db.session.add(nuovo)
+    db.session.commit()
+    return f'{prefisso}/{nuovo.numero:03d}'
+
+
 def _lista_lavoro_op(o, centro):
     """
     Costruisce la Lista di Lavoro per l'OP o SU QUESTO centro di costo: una
@@ -1141,7 +1168,20 @@ def _lista_lavoro_op(o, centro):
     passa da questo centro, raggruppate per materiale (codice_figlio) — con
     le specifiche macchina di Parametri di Lavorazione già compilate (o vuote
     se non ancora inserite per quel tipo di lavorazione).
+
+    Le colonne mostrate dipendono dal TIPO di macchina (nome del centro di
+    costo), NON da quali campi risultano compilati nella Scheda di Lavorazione
+    — la stessa coppia padre/figlio può avere sia dati di taglio (barra) sia
+    dati di piega, perché lo stesso componente passa da entrambe le macchine
+    in sequenza: mostrare le colonne di piega sulla lista Segatrice (o
+    viceversa) sarebbe fuorviante, anche se il dato esiste nel database.
     """
+    nome_l = (centro.nome or '').strip().lower()
+    mostra_barra = any(k in nome_l for k in ('sega', 'punzon'))
+    mostra_piega = any(k in nome_l for k in ('piega', 'curva'))
+    mostra_rullo = 'piega' in nome_l   # il Rullo è specifico della Pressopiegatrice, non del Curvatubi
+    mostra_satinatura = 'satin' in nome_l
+
     nodi = _esplodi_componenti_op(o)
     moltiplicatore_per_codice = {n['codice']: n['moltiplicatore'] for n in nodi}
 
@@ -1154,10 +1194,6 @@ def _lista_lavoro_op(o, centro):
     schede_per_padre = {}
     for s in schede:
         schede_per_padre.setdefault(s.codice_padre, []).append(s)
-
-    ha_barra = any(s.lunghezza_barra_mm is not None for s in schede)
-    ha_piega = any(s.matrice_id or s.punto_zero or s.indice_assorbimento or s.rullo_id for s in schede)
-    ha_satinatura = any(s.impostazione_satinatrice for s in schede)
 
     righe_per_materiale = {}
     for codice_comp in componenti_di_centro:
@@ -1174,15 +1210,17 @@ def _lista_lavoro_op(o, centro):
         schede_padre = schede_per_padre.get(codice_comp)
         if schede_padre:
             for s in schede_padre:
-                pz_per_barra = s.pezzi_per_barra
-                nr_barre = int((saldo + pz_per_barra - 1) // pz_per_barra) if pz_per_barra else None
+                pz_per_barra = s.pezzi_per_barra if mostra_barra else None
+                nr_barre = int((saldo + pz_per_barra - 1) // pz_per_barra) if (mostra_barra and pz_per_barra) else None
                 riga = {
                     'codice': codice_comp, 'materiale': s.codice_figlio, 'misura': s.sviluppo or '',
-                    'lunghezza_barra_mm': s.lunghezza_barra_mm,
-                    'matrice': s.matrice.codice if s.matrice else '',
-                    'punto_zero': s.punto_zero or '', 'indice_assorbimento': s.indice_assorbimento or '',
-                    'rullo': s.rullo.codice if s.rullo else '',
-                    'impostazione_satinatrice': s.impostazione_satinatrice or '',
+                    'lunghezza_barra_mm': s.lunghezza_barra_mm if mostra_barra else None,
+                    'spessore_mm': s.spessore_mm if mostra_barra else None,
+                    'matrice': (s.matrice.codice if s.matrice else '') if mostra_piega else '',
+                    'punto_zero': (s.punto_zero or '') if mostra_piega else '',
+                    'indice_assorbimento': (s.indice_assorbimento or '') if mostra_piega else '',
+                    'rullo': (s.rullo.codice if s.rullo else '') if mostra_rullo else '',
+                    'impostazione_satinatrice': (s.impostazione_satinatrice or '') if mostra_satinatura else '',
                     'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti, 'saldo': saldo,
                     'pz_per_barra': pz_per_barra, 'nr_barre': nr_barre, 'nota': '',
                 }
@@ -1252,7 +1290,9 @@ def _lista_lavoro_op(o, centro):
         'commessa': o.commessa or '', 'cliente': o.cliente or '', 'stato': o.stato,
         'qta_pianificata': o.qta_pianificata,
         'data_inizio': o.data_inizio.strftime('%d/%m/%Y') if o.data_inizio else '',
-        'gruppi': gruppi, 'ha_barra': ha_barra, 'ha_piega': ha_piega, 'ha_satinatura': ha_satinatura,
+        'numero_lista': _numero_lista_lavoro(o.codice, centro),
+        'gruppi': gruppi, 'ha_barra': mostra_barra, 'ha_piega': mostra_piega,
+        'ha_rullo': mostra_rullo, 'ha_satinatura': mostra_satinatura,
         'totale_pz': totale_pz, 'pz_effettuati': totale_fatti,
         'residuo_pz': max(totale_pz - totale_fatti, 0),
     }
