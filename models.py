@@ -538,6 +538,7 @@ class SchedaLavorazioneWood(db.Model):
     codice_padre              = db.Column(db.String(50), nullable=False)
     codice_figlio             = db.Column(db.String(50), nullable=False)
     lunghezza_barra_mm        = db.Column(db.Float, nullable=True)          # es. 6000 o 7000
+    spessore_mm               = db.Column(db.Float, nullable=True)          # es. 1.5, 2, 3 — spessore del materiale/barra
     pezzi_per_barra           = db.Column(db.Float, nullable=True)
     sviluppo                  = db.Column(db.String(50), default='')        # es. "L. 1.932"
     matrice_id                = db.Column(db.Integer, db.ForeignKey('matrici_wood.id', ondelete='SET NULL'), nullable=True)
@@ -1549,6 +1550,7 @@ def init_db():
         # ── Consuntivi per singolo componente della distinta base (non solo per l'assieme finale dell'OP) ──
         "ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS componente VARCHAR(50)",
         "ALTER TABLE sessioni_lavoro_macchina ADD COLUMN IF NOT EXISTS componente VARCHAR(50)",
+        "ALTER TABLE schede_lavorazione_wood ADD COLUMN IF NOT EXISTS spessore_mm DOUBLE PRECISION",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
