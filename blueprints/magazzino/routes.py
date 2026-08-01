@@ -782,11 +782,18 @@ def api_giacenza_lista():
                      {r[0] for r in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
         query = query.filter(GiacenzaWood.codice.in_(codici_bom))
     totale = query.count()
+    codici_bom_ricerca = set()
     if q:
         codici_per_descrizione = {c for c, in db.session.query(RigaOrdineAcquistoWood.codice)
                                    .filter(RigaOrdineAcquistoWood.descrizione.ilike(f'%{q}%')).distinct().all()}
         query = query.filter(db.or_(GiacenzaWood.codice.ilike(f'%{q}%'),
                                      GiacenzaWood.codice.in_(codici_per_descrizione)))
+        # Un codice della Distinta Base senza NESSUNA giacenza registrata non
+        # esiste come riga GiacenzaWood: senza questo, cercandolo per nome non
+        # lo si troverebbe MAI, impedendo di inserirne il primo carico.
+        if solo_bom:
+            ql = q.lower()
+            codici_bom_ricerca = {c for c in codici_bom if ql in c.lower()}
     righe = query.order_by(GiacenzaWood.aggiornato_il.desc()).limit(LIMITE_DEFAULT).all()
     # Giacenza Iron Wood è guidata dalla distinta impostata in Parametri: anche
     # un componente senza movimento/stock registrato deve comparire a zero, per
@@ -797,6 +804,11 @@ def api_giacenza_lista():
         spazio = max(LIMITE_DEFAULT - len(righe), 0)
         righe.extend(GiacenzaWood(codice=codice, quantita=0) for codice in mancanti[:spazio])
         totale = len(codici_bom)
+    elif solo_bom and q and codici_bom_ricerca:
+        presenti = {g.codice for g in righe}
+        mancanti = sorted(codici_bom_ricerca - presenti)
+        righe.extend(GiacenzaWood(codice=codice, quantita=0) for codice in mancanti)
+        totale += len(mancanti)
     codici = [g.codice for g in righe]
 
     # Impegnato: quanto di ogni codice è già "preso" dagli OP aperti (stessa
