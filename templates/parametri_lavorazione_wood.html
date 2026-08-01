@@ -363,7 +363,7 @@ function evidenziaRiga(indice, padre, figlio){
 
 function renderTabellaAlbero(righe){
   let html = '<table class="kanban-table"><thead><tr>' +
-    '<th>Padre</th><th>Figlio</th><th>Tipo / U.M.<br>(figlio)</th><th>Ciclo di<br>Lavoro (figlio)</th><th>Lunghezza<br>Barra</th><th>pz/Barra</th><th>Sviluppo</th>' +
+    '<th>Padre</th><th>Figlio</th><th>Tipo / U.M.<br>(figlio)</th><th>Ciclo di<br>Lavoro (figlio)</th><th>Lunghezza<br>Barra</th><th>Spessore<br>(mm)</th><th>pz/Barra</th><th>Sviluppo</th>' +
     '<th>Matrice</th><th>Punto 0</th><th>Indice<br>assorbimento</th><th>Rullo<br>Sgolatrice</th>' +
     '<th>Impostazione<br>Satinatrice</th><th>Note</th></tr></thead><tbody>';
   righe.forEach((x, i) => {
@@ -379,6 +379,7 @@ function renderTabellaAlbero(righe){
       <td>${tipoInline}</td>
       <td>${badgeCiclo}</td>
       <td><select style="width:80px" ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
+      <td><input type="number" step="0.1" min="0" value="${x.spessore_mm??''}" style="width:65px" ${f} onchange="salvaCella(${i},'spessore_mm',this.value)"></td>
       <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
       <td><input type="text" value="${x.sviluppo||''}" style="width:100px" ${f} onchange="salvaCella(${i},'sviluppo',this.value)"></td>
       <td><select style="width:90px" ${f} onchange="salvaCella(${i},'matrice_id',this.value)">${optionsMatrici(x.matrice_id)}</select></td>
@@ -404,7 +405,7 @@ async function salvaCella(indice, campo, valore){
   const riga = window._RIGHE_ALBERO[indice];
   const payload = {
     codice_padre: riga.codice_padre, codice_figlio: riga.codice_figlio,
-    lunghezza_barra_mm: riga.lunghezza_barra_mm, pezzi_per_barra: riga.pezzi_per_barra,
+    lunghezza_barra_mm: riga.lunghezza_barra_mm, spessore_mm: riga.spessore_mm, pezzi_per_barra: riga.pezzi_per_barra,
     sviluppo: riga.sviluppo, matrice_id: riga.matrice_id, punto_zero: riga.punto_zero,
     indice_assorbimento: riga.indice_assorbimento, rullo_id: riga.rullo_id,
     impostazione_satinatrice: riga.impostazione_satinatrice, note: riga.note,
