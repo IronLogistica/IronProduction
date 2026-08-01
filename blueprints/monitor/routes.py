@@ -120,7 +120,8 @@ def index():
     if not macchine:
         return render_template('monitor/nessuna_macchina.html', active='monitor')
     from flask import redirect, url_for
-    return redirect(url_for('monitor.macchina', cid=macchine[0]['id']))
+    sega = next((m for m in macchine if 'sega' in m['nome'].lower()), None)
+    return redirect(url_for('monitor.macchina', cid=(sega or macchine[0])['id']))
 
 
 # Redirect di cortesia per il vecchio indirizzo /monitor/trapani
