@@ -561,7 +561,10 @@ def assicura_lunghezze_barra_default():
         LunghezzaBarraWood(valore_mm=6000, etichetta='6 mt'),
         LunghezzaBarraWood(valore_mm=7000, etichetta='7 mt'),
     ])
-    db.session.commit()
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()  # vedi nota in migra_schede_lavorazione_unificate()
 
 
 def migra_schede_lavorazione_unificate():
@@ -611,8 +614,15 @@ def migra_schede_lavorazione_unificate():
     for (padre, figlio), campi in unite.items():
         db.session.add(SchedaLavorazioneWood(codice_padre=padre, codice_figlio=figlio, **campi))
     if unite:
-        db.session.commit()
-        log(f"Migrazione schede lavorazione: unificate {len(unite)} righe da taglio/piega/satinatura in una sola tabella")
+        try:
+            db.session.commit()
+            log(f"Migrazione schede lavorazione: unificate {len(unite)} righe da taglio/piega/satinatura in una sola tabella")
+        except Exception:
+            # Difesa in profondità oltre a --preload: se un'altra istanza ha
+            # già eseguito questa stessa migrazione nel frattempo (es. durante
+            # un deploy con sovrapposizione breve), non deve mai far crashare
+            # l'avvio — i dati sono comunque già lì.
+            db.session.rollback()
 
 
 class NumeroListaLavoroWood(db.Model):
@@ -846,10 +856,18 @@ class ArticoloApprovvigionamento(db.Model):
 
 def assicura_unita_misura_articoli():
     """Migrazione compatibile con DB già esistenti: aggiunge la UoM senza ricreare tabelle."""
-    colonne = {c['name'] for c in inspect(db.engine).get_columns('articoli_approvvigionamento')}
-    if 'unita_misura' not in colonne:
-        db.session.execute(text("ALTER TABLE articoli_approvvigionamento ADD COLUMN unita_misura VARCHAR(20) NOT NULL DEFAULT ''"))
-        db.session.commit()
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE articoli_approvvigionamento ADD COLUMN IF NOT EXISTS unita_misura VARCHAR(20) NOT NULL DEFAULT ''"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('articoli_approvvigionamento')}
+        if 'unita_misura' not in colonne:
+            db.session.execute(text("ALTER TABLE articoli_approvvigionamento ADD COLUMN unita_misura VARCHAR(20) NOT NULL DEFAULT ''"))
+            db.session.commit()
 
 class KanbanProdotto(db.Model):
     __tablename__ = "kanban_prodotti"
