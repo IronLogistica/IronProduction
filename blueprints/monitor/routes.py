@@ -63,7 +63,7 @@ def _righe_macchina(centro):
     questa macchina — smistate nelle 4 sezioni in base all'avanzamento REALE
     (consuntivi, tracciati per componente — vedi EventoConsuntivoPP.componente).
 
-    Ottimizzata per evitare TRE trappole N+1 che rendevano questa funzione
+    Ottimizzata per evitare QUATTRO trappole N+1 che rendevano questa funzione
     sempre più lenta al crescere del numero di OP aperti E della dimensione
     delle distinte base:
     1) l'intera distinta_base_wood viene caricata UNA VOLTA SOLA in memoria
@@ -74,7 +74,11 @@ def _righe_macchina(centro):
        separata per OGNI (OP, componente) — ora è UNA query sola per tutti;
     3) _materiale_disponibile(o) (che a sua volta simula TUTTI gli OP aperti)
        veniva richiamata da zero per ogni componente in prima fase dello
-       stesso OP — ora si calcola una volta sola per OP e si tiene in cache.
+       stesso OP — ora si calcola una volta sola per OP e si tiene in cache;
+    4) _pezzi_fase() interrogava il database una volta per ogni (OP,
+       componente) — fino a due volte per riga (fase corrente + fase
+       precedente) — ora tutte le somme pezzi_buoni per gli OP coinvolti
+       si leggono con UNA query aggregata sola, tenuta in un dizionario.
     """
     ordini = (OrdineProduzione.query
               .filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
@@ -107,6 +111,23 @@ def _righe_macchina(centro):
             cache_materiale_disponibile[o.id] = _materiale_disponibile(o, residuo_per_op.get(o.id, residuo_finale), mappa_distinta=mappa_distinta)
         return cache_materiale_disponibile[o.id]
 
+    # Vedi punto 4) sopra: una sola query aggregata per TUTTI i pezzi_buoni
+    # consuntivati sugli OP coinvolti, invece di una query per (OP, fase,
+    # componente) ripetuta nel ciclo sotto.
+    codici_op = [o.codice for o in ordini]
+    somma_pezzi = {}
+    if codici_op:
+        for op_code, fase, componente, tot in (db.session.query(
+                EventoConsuntivoPP.op_code, db.func.lower(EventoConsuntivoPP.fase),
+                EventoConsuntivoPP.componente, db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+                .filter(EventoConsuntivoPP.op_code.in_(codici_op))
+                .group_by(EventoConsuntivoPP.op_code, db.func.lower(EventoConsuntivoPP.fase),
+                          EventoConsuntivoPP.componente).all()):
+            somma_pezzi[(op_code, fase, componente)] = tot or 0
+
+    def _pezzi_fase_cached(op_code, nome_centro, componente=None):
+        return somma_pezzi.get((op_code, (nome_centro or '').lower(), componente), 0)
+
     righe = {k: [] for k in SEZIONI}
     for o in ordini:
         for comp in componenti_per_op[o.id]:
@@ -120,7 +141,7 @@ def _righe_macchina(centro):
                 continue  # questo componente non passa da questa macchina
 
             qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
-            pezzi_fase = _pezzi_fase(o.codice, centro.nome, componente=componente_param)
+            pezzi_fase = _pezzi_fase_cached(o.codice, centro.nome, componente=componente_param)
             saldo_fase = max(qta_necessaria - pezzi_fase, 0)
             pct_fase = round(pezzi_fase / qta_necessaria * 100) if qta_necessaria else 0
 
@@ -137,7 +158,7 @@ def _righe_macchina(centro):
                     pronto = _materiale_disponibile_cached(o)
                 else:
                     fase_prec = fasi_ciclo[idx - 1]
-                    pronto = _pezzi_fase(o.codice, fase_prec.centro_costo.nome, componente=componente_param) >= qta_necessaria
+                    pronto = _pezzi_fase_cached(o.codice, fase_prec.centro_costo.nome, componente=componente_param) >= qta_necessaria
                 sezione = 'da_iniziare' if pronto else 'in_attesa'
 
             fase_ciclo = fasi_ciclo[idx]
