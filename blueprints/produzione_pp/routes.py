@@ -187,7 +187,7 @@ def rilascia(oid):
 
 @pp_bp.get('/ordini-produzione/situazione')
 def pagina_ordini_situazione():
-    return render_template('produzione_pp/situazione_cards.html', active='produzione_pp')
+    return render_template('produzione_pp/situazione_cards.html', active='situazione_op')
 
 
 @pp_bp.route('/api/ordini-produzione/riepilogo_disponibilita')
