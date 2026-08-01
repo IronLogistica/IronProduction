@@ -5,7 +5,7 @@ from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo)
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
-                    _righe_bom_attive_wood, STATI_CHE_IMPEGNANO)
+                    _righe_bom_attive_wood, _esplodi_componenti_op, STATI_CHE_IMPEGNANO)
 from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria
 
 monitor_bp = Blueprint('monitor', __name__)
@@ -27,34 +27,6 @@ def _pezzi_fase(op_code, nome_centro, componente=None):
         db.func.lower(EventoConsuntivoPP.fase) == nome_centro.lower())
     q = q.filter(EventoConsuntivoPP.componente.is_(None)) if not componente else q.filter(EventoConsuntivoPP.componente == componente)
     return q.scalar() or 0
-
-
-def _esplodi_componenti_op(o, _max_profondita=15):
-    """
-    Ritorna un nodo per OGNI codice della distinta base di o.codice_articolo
-    — l'articolo stesso (moltiplicatore 1) più TUTTI i suoi componenti a
-    qualunque livello, ciascuno con il moltiplicatore di quantità cumulato
-    dalla radice — usando solo l'alternativa attiva per gruppo (vedi
-    _righe_bom_attive_wood). Un codice riusato in più punti dell'albero
-    compare una sola volta (al moltiplicatore del primo punto in cui viene
-    incontrato) — protezione anti-ciclo/doppio conteggio.
-    """
-    risultato = [{'codice': o.codice_articolo, 'moltiplicatore': 1.0}]
-    visitati = {o.codice_articolo}
-
-    def walk(codice, moltiplicatore, profondita):
-        if profondita > _max_profondita:
-            return
-        for r in _righe_bom_attive_wood(codice):
-            if r.codice_figlio in visitati:
-                continue
-            visitati.add(r.codice_figlio)
-            m = moltiplicatore * (r.quantita or 1.0)
-            risultato.append({'codice': r.codice_figlio, 'moltiplicatore': m})
-            walk(r.codice_figlio, m, profondita + 1)
-
-    walk(o.codice_articolo, 1.0, 0)
-    return risultato
 
 
 def _materiale_disponibile(o):
