@@ -226,6 +226,36 @@ def _righe_bom_attive_wood(codice_padre, query=None):
     return risultato
 
 
+def _esplodi_componenti_op(o, _max_profondita=15):
+    """
+    Ritorna un nodo per OGNI codice della distinta base di o.codice_articolo
+    — l'articolo stesso (moltiplicatore 1) più TUTTI i suoi componenti a
+    qualunque livello, ciascuno con il moltiplicatore di quantità cumulato
+    dalla radice — usando solo l'alternativa attiva per gruppo (vedi
+    _righe_bom_attive_wood). Un codice riusato in più punti dell'albero
+    compare una sola volta (al moltiplicatore del primo punto in cui viene
+    incontrato) — protezione anti-ciclo/doppio conteggio.
+    Condivisa da Monitor Macchina e Lista Tagli (vive qui, non in un blueprint
+    specifico, per evitare import circolari fra monitor e produzione_pp).
+    """
+    risultato = [{'codice': o.codice_articolo, 'moltiplicatore': 1.0}]
+    visitati = {o.codice_articolo}
+
+    def walk(codice, moltiplicatore, profondita):
+        if profondita > _max_profondita:
+            return
+        for r in _righe_bom_attive_wood(codice):
+            if r.codice_figlio in visitati:
+                continue
+            visitati.add(r.codice_figlio)
+            m = moltiplicatore * (r.quantita or 1.0)
+            risultato.append({'codice': r.codice_figlio, 'moltiplicatore': m})
+            walk(r.codice_figlio, m, profondita + 1)
+
+    walk(o.codice_articolo, 1.0, 0)
+    return risultato
+
+
 def _esplodi_bom_wood(codice, qta=1.0, _visitati=None, _profondita=0, _max_profondita=12):
     """
     Costruisce l'albero grezzo dalla sola distinta_base_wood locale (nessuna
