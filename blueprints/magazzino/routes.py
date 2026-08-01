@@ -27,8 +27,7 @@ def pagina_centri_costo():
 
 @magazzino_bp.route('/giacenza-wood')
 def pagina_giacenza():
-    # URL storico: una sola area operativa, Magazzino.
-    return redirect('/magazzino?tab=giacenza')
+    return render_template('giacenza_wood.html', active='giacenza_wood')
 
 
 @magazzino_bp.route('/costo-standard-wood')
