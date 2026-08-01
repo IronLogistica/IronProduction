@@ -77,11 +77,23 @@ async function caricaMagazzinoWood(){
       html += `<tr>
         <td class="codice">${g.codice}</td>
         <td class="prod-name">${g.descrizione || '—'}</td>
-        <td class="${g.quantita>0?'mt-val-stock':'mt-val-zero'}">${g.quantita}</td>
+        <td class="${g.quantita>0?'mt-val-stock':'mt-val-zero'}">
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="number" step="0.01" value="${g.quantita}" id="stock-${g.codice}"
+                   style="width:80px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);background:var(--dark3);color:inherit">
+            <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="salvaStock('${g.codice}')" title="Salva nuovo stock">💾</button>
+          </div>
+        </td>
         <td class="${g.impegnato>0?'mt-val-impegnato':'mt-val-zero'}">${g.impegnato>0?g.impegnato:0}</td>
         <td class="${g.ordinato>0?'mt-val-ordinato':'mt-val-zero'}">${g.ordinato>0?g.ordinato:0}</td>
         <td class="mt-val-disp">${g.disponibile_contabile}</td>
-        <td class="mt-val-zero">${g.scorta_minima}</td>
+        <td class="mt-val-zero">
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="number" step="0.01" value="${g.scorta_minima}" id="scorta-${g.codice}"
+                   style="width:70px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);background:var(--dark3);color:inherit">
+            <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="salvaScortaMinima('${g.codice}')" title="Salva scorta minima">💾</button>
+          </div>
+        </td>
         <td>${g.fabbisogno>0?`<span class="mt-fabb-badge">▲ ${g.fabbisogno}</span>`:`<span class="mt-fabb-ok">0</span>`}</td>
       </tr>`;
     });
@@ -89,6 +101,51 @@ async function caricaMagazzinoWood(){
     box.innerHTML = html;
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+async function salvaStock(codice){
+  const input = document.getElementById('stock-' + codice);
+  const nuovoValore = parseFloat(input.value);
+  if(isNaN(nuovoValore)){ alert('⚠️ Valore non valido.'); return; }
+  try{
+    // /api/giacenza_wood/rettifica lavora per DELTA (movimento carico/scarico,
+    // tracciato nello storico) — qui calcoliamo il delta necessario per
+    // portare lo stock esattamente al valore che hai scritto.
+    const rAttuale = await fetch('/api/giacenza_wood?q=' + encodeURIComponent(codice));
+    const dAttuale = await rAttuale.json();
+    const rigaAttuale = (dAttuale.righe || []).find(x => x.codice === codice);
+    const valoreAttuale = rigaAttuale ? rigaAttuale.quantita : 0;
+    const delta = nuovoValore - valoreAttuale;
+    if(delta === 0){ return; }
+    const r = await fetch('/api/giacenza_wood/rettifica', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice: codice, quantita: delta, note: 'Modifica da Magazzino'})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    showToast('✅ Stock aggiornato');
+    caricaMagazzinoWood();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function salvaScortaMinima(codice){
+  const input = document.getElementById('scorta-' + codice);
+  const valore = parseFloat(input.value);
+  if(isNaN(valore) || valore < 0){ alert('⚠️ La scorta minima deve essere un numero ≥ 0.'); return; }
+  try{
+    const r = await fetch('/api/giacenza_wood/' + encodeURIComponent(codice) + '/scorta_minima', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({scorta_minima: valore})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    showToast('✅ Scorta minima aggiornata');
+    caricaMagazzinoWood();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
   }
 }
 
