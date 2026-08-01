@@ -213,19 +213,27 @@ async function apriSituazione(codice){
 
 function renderTabellaCategoria(righe, mostraMonitor){
   if(!righe.length) return '<p style="color:#aaa;font-style:italic">Nessuna riga in questa categoria.</p>';
-  let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Mancante</th><th>U.M.</th>' +
-    (mostraMonitor?'<th>Monitor (centro di costo)</th>':'') + '<th>Fornitore / arrivo</th></tr></thead><tbody>';
+  let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Fabbisogno</th><th>Giacenza</th><th>Già impegnato</th><th>Disponibile</th><th>Mancante</th><th>U.M.</th>' +
+    (mostraMonitor?'<th>Monitor (centro di costo)</th>':'') + '<th>Stato / Fornitore</th></tr></thead><tbody>';
   righe.forEach(r=>{
-    const arrivo = r.ordini_acquisto.length
-      ? r.ordini_acquisto.map(oa => `🛒 OA n° ${oa.ordine_n} — ${oa.fornitore} — ${oa.qta_in_arrivo} in arrivo${oa.data_consegna?' per '+oa.data_consegna:''} (${oa.stato_label})`).join('<br>')
-      : '<span style="color:#c0392b">⚠️ Non ancora ordinato</span>';
+    let arrivo;
+    if(r.mancante <= 0){
+      arrivo = '<span style="color:#2a9d5c">✅ Disponibile — copre tutto il fabbisogno</span>';
+    } else if(r.ordini_acquisto.length){
+      arrivo = r.ordini_acquisto.map(oa => `🛒 OA n° ${oa.ordine_n} — ${oa.fornitore} — ${oa.qta_in_arrivo} in arrivo${oa.data_consegna?' per '+oa.data_consegna:''} (${oa.stato_label})`).join('<br>');
+    } else {
+      arrivo = '<span style="color:#c0392b">⚠️ Non ancora ordinato</span>';
+    }
     let monitorCell = '';
     if(mostraMonitor){
       monitorCell = r.ciclo_configurato
         ? `<td>${(r.reparti||[]).map(f => `${f.sequenza}) ${f.nome}`).join(' → ')}</td>`
         : `<td><span style="color:#b8860b">⚠️ Ciclo di lavoro non configurato</span></td>`;
     }
-    html += `<tr><td class="codice">${r.codice}</td><td class="num" style="font-weight:700">${r.mancante}</td>` +
+    html += `<tr><td class="codice">${r.codice}</td>` +
+      `<td class="num">${r.fabbisogno}</td><td class="num">${r.giacenza}</td>` +
+      `<td class="num">${r.gia_impegnato}</td><td class="num">${r.disponibile}</td>` +
+      `<td class="num" style="font-weight:700;color:${r.mancante>0?'#c0392b':'#2a9d5c'}">${r.mancante}</td>` +
       `<td class="num">${r.unita_misura||'—'}</td>` + monitorCell +
       `<td style="font-size:12px">${arrivo}</td></tr>`;
   });
