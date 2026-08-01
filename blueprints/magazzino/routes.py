@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, redirect
 from datetime import datetime, date
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
@@ -27,7 +27,8 @@ def pagina_centri_costo():
 
 @magazzino_bp.route('/giacenza-wood')
 def pagina_giacenza():
-    return render_template('giacenza_wood.html', active='giacenza_wood')
+    # URL storico: una sola area operativa, Magazzino.
+    return redirect('/magazzino?tab=giacenza')
 
 
 @magazzino_bp.route('/costo-standard-wood')
@@ -440,6 +441,53 @@ def api_del_distinta_wood(id_riga):
     try:
         riga = DistintaBaseWood.query.get_or_404(id_riga)
         db.session.delete(riga)
+        db.session.commit()
+        return jsonify({'ok': True})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'errore': True, 'messaggio': str(e)}), 500
+
+
+@magazzino_bp.route('/api/distinta_base_wood/<int:id_riga>', methods=['PUT'])
+def api_modifica_distinta_wood(id_riga):
+    """Modifica esplicitamente una riga BOM identificata dal suo ID."""
+    try:
+        riga = DistintaBaseWood.query.get_or_404(id_riga)
+        data = request.get_json(force=True) or {}
+        padre = (data.get('codice_padre') or riga.codice_padre).strip().upper()
+        figlio = (data.get('codice_figlio') or riga.codice_figlio).strip().upper()
+        if not padre or not figlio or padre == figlio:
+            return jsonify({'errore': True, 'messaggio': 'Padre e figlio sono obbligatori e devono essere diversi.'}), 400
+        try:
+            quantita = float(data.get('quantita', riga.quantita))
+            livello = int(data.get('livello', riga.livello or 1))
+        except (ValueError, TypeError):
+            return jsonify({'errore': True, 'messaggio': 'Quantità e livello devono essere numerici.'}), 400
+        if quantita <= 0 or livello < 1:
+            return jsonify({'errore': True, 'messaggio': 'La quantità deve essere maggiore di zero e il livello almeno 1.'}), 400
+        doppia = DistintaBaseWood.query.filter_by(codice_padre=padre, codice_figlio=figlio).filter(DistintaBaseWood.id != id_riga).first()
+        if doppia:
+            return jsonify({'errore': True, 'messaggio': 'Esiste già una riga con lo stesso padre e figlio.'}), 400
+        # Verifica ciclo indiretto: dopo padre -> figlio, figlio non deve poter raggiungere padre.
+        archi = {}
+        for x in DistintaBaseWood.query.filter(DistintaBaseWood.id != id_riga).all():
+            archi.setdefault(x.codice_padre, set()).add(x.codice_figlio)
+        archi.setdefault(padre, set()).add(figlio)
+        da_visitare, visitati = [figlio], set()
+        while da_visitare:
+            c = da_visitare.pop()
+            if c == padre:
+                return jsonify({'errore': True, 'messaggio': 'Modifica non consentita: creerebbe un ciclo nella distinta base.'}), 400
+            if c not in visitati:
+                visitati.add(c); da_visitare.extend(archi.get(c, set()) - visitati)
+        riga.codice_padre, riga.codice_figlio = padre, figlio
+        riga.quantita, riga.livello = quantita, livello
+        riga.note = (data.get('note') or '').strip()
+        riga.gruppo_alternativa = (data.get('gruppo_alternativa') or '').strip().upper() or None
+        riga.preferita = bool(data.get('preferita', True)) if riga.gruppo_alternativa else True
+        if riga.gruppo_alternativa and riga.preferita:
+            (DistintaBaseWood.query.filter_by(codice_padre=padre, gruppo_alternativa=riga.gruppo_alternativa)
+             .filter(DistintaBaseWood.id != riga.id).update({'preferita': False}))
         db.session.commit()
         return jsonify({'ok': True})
     except Exception as e:
@@ -1888,6 +1936,9 @@ def api_albero_schede_lavorazione(codice_radice):
             'id': s.id if s else None, 'codice_padre': padre, 'codice_figlio': figlio,
             'n_fasi_ciclo_lavoro_padre': conteggio_fasi.get(padre, 0),
             'n_fasi_ciclo_lavoro_figlio': conteggio_fasi.get(figlio, 0),
+            # I parametri articolo sono indipendenti: sia il padre sia il figlio
+            # possono essere materia prima, laserato, acquisto ecc. e avere U.M./ciclo propri.
+            'approvvigionamento_padre': {'tipo_approvvigionamento': approvvigionamenti.get(padre).tipo_approvvigionamento if approvvigionamenti.get(padre) else 'DA_CLASSIFICARE', 'unita_misura': approvvigionamenti.get(padre).unita_misura if approvvigionamenti.get(padre) else ''},
             'approvvigionamento_figlio': {'tipo_approvvigionamento': approvvigionamenti.get(figlio).tipo_approvvigionamento if approvvigionamenti.get(figlio) else 'DA_CLASSIFICARE', 'unita_misura': approvvigionamenti.get(figlio).unita_misura if approvvigionamenti.get(figlio) else ''},
             'lunghezza_barra_mm': s.lunghezza_barra_mm if s else None,
             'pezzi_per_barra': s.pezzi_per_barra if s else None,
