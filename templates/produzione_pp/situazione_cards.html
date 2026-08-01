@@ -57,6 +57,7 @@ const FILTRI = [
   {id:'disponibile', label:'✅ DISPONIBILE',  test:o => o.categoria_materiale === 'disponibile'},
   {id:'in_corso',    label:'⚙️ IN ESECUZIONE', test:o => o.stato === 'In esecuzione'},
   {id:'completati',  label:'🏁 COMPLETATI',   test:o => o.stato === 'Tecnicamente completato'},
+  {id:'senza_ciclo',  label:'⚠️ SENZA CICLO',  test:o => o.ha_ciclo_lavoro === false},
 ];
 
 function renderFiltri(){
@@ -119,6 +120,7 @@ function renderCards(){
         <span style="background:rgba(255,255,255,.06);color:${pctBuona>=100?'#1a9e5c':'var(--text)'};font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px">✓ ${pctBuona}%</span>
         <span style="background:rgba(255,255,255,.06);color:${pctDisp>=100?'#1a9e5c':'var(--text)'};font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px">📦 ${pctDisp}%</span>
         <span style="background:${statoPill.bg};color:${statoPill.col};font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap">${statoPill.txt}</span>
+        ${o.ha_ciclo_lavoro === false ? '<span style="background:rgba(184,134,11,.22);color:#e6b800;font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap" title="Nessuna fase di Ciclo di Lavoro impostata per questo articolo — non comparirà in nessun Monitor Macchina">⚠️ NESSUN CICLO DI LAVORO</span>' : ''}
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span style="border:1px solid var(--border);color:var(--text-dim);font-size:11px;padding:4px 10px;border-radius:999px">📅 ${dataLabel}</span>
