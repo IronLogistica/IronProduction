@@ -6,8 +6,10 @@ import PyPDF2
 from flask import Blueprint, render_template, jsonify, request, Response
 
 from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
-                    DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood)
-from blueprints.magazzino.routes import _registra_movimento_giacenza, api_fabbisogno_produzione
+                    DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
+                    OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento)
+from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
+                    _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO)
 
 acquisti_wood_bp = Blueprint('acquisti_wood', __name__)
 
@@ -585,3 +587,86 @@ def api_scarica_pdf_ddt(did):
         return jsonify({'errore': True, 'messaggio': 'PDF non disponibile per questo DDT.'}), 404
     return Response(d.pdf_bytes, mimetype='application/pdf',
                      headers={'Content-Disposition': f'inline; filename="{d.filename}"'})
+
+
+@acquisti_wood_bp.route('/acquisti-da-fabbisogno')
+def pagina_acquisti_da_fabbisogno():
+    return render_template('acquisti_wood/acquisti_da_fabbisogno.html', active='acquisti_wood')
+
+
+@acquisti_wood_bp.route('/api/fabbisogno_acquisti_globale')
+def api_fabbisogno_acquisti_globale():
+    ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
+              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+    giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
+    mappa = _carica_mappa_distinta_base_wood()
+    out_globale = {}
+    for o in ordini:
+        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        if saldo > 0:
+            _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, out_globale, mappa=mappa)
+
+    righe = []
+    for cod, r in out_globale.items():
+        if r['mancante'] <= 0:
+            continue
+        approvv = ArticoloApprovvigionamento.query.filter_by(codice=cod).first()
+        tipo = approvv.tipo_approvvigionamento if approvv else 'DA_CLASSIFICARE'
+        if tipo not in ('COMPONENTE_ACQUISTO', 'MATERIA_PRIMA_FORNITORE'):
+            continue
+
+        ultima_riga_oa = (RigaOrdineAcquistoWood.query.filter_by(codice=cod)
+                          .join(OrdineAcquistoWood).order_by(OrdineAcquistoWood.caricato_il.desc()).first())
+        righe_oa_aperte = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
+                          .filter(RigaOrdineAcquistoWood.codice == cod,
+                                  OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all())
+        gia_ordinato = sum(max((ro.qta_originale or 0) - (ro.qta_ricevuta or 0), 0) for ro in righe_oa_aperte)
+
+        righe.append({
+            'codice': cod, 'tipo': tipo,
+            'descrizione': ultima_riga_oa.descrizione if ultima_riga_oa else '',
+            'unita_misura': ultima_riga_oa.unita_misura if ultima_riga_oa else '',
+            'ultimo_fornitore': ultima_riga_oa.ordine.fornitore if ultima_riga_oa else '',
+            'ultimo_prezzo': ultima_riga_oa.prezzo_unitario if ultima_riga_oa else None,
+            'mancante': round(r['mancante'], 3),
+            'gia_ordinato': round(gia_ordinato, 3),
+            'da_ordinare_suggerito': round(max(r['mancante'] - gia_ordinato, 0), 3),
+        })
+    righe.sort(key=lambda x: (-x['da_ordinare_suggerito'], x['codice']))
+    return jsonify(righe)
+
+
+@acquisti_wood_bp.route('/api/ordini_acquisto_wood/manuale', methods=['POST'])
+def api_crea_ordine_acquisto_manuale():
+    d = request.get_json(force=True)
+    fornitore = (d.get('fornitore') or '').strip()
+    righe = d.get('righe') or []
+    if not fornitore:
+        return jsonify({'errore': True, 'messaggio': 'Indica il fornitore.'}), 400
+    if not righe:
+        return jsonify({'errore': True, 'messaggio': 'Aggiungi almeno una riga.'}), 400
+
+    filename = f"MANUALE-{fornitore}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
+    o = OrdineAcquistoWood(filename=filename, fornitore=fornitore, ordine_n='N/D', stato_label='DA_CONFERMARE')
+    db.session.add(o)
+    db.session.flush()
+    for r in righe:
+        codice = (r.get('codice') or '').strip()
+        if not codice:
+            continue
+        try:
+            qta = float(r.get('qta') or 0)
+        except (TypeError, ValueError):
+            qta = 0
+        if qta <= 0:
+            continue
+        try:
+            prezzo = float(r['prezzo_unitario']) if r.get('prezzo_unitario') not in (None, '') else None
+        except (TypeError, ValueError):
+            prezzo = None
+        db.session.add(RigaOrdineAcquistoWood(
+            ordine_id=o.id, codice=codice, descrizione=(r.get('descrizione') or '').strip(),
+            unita_misura=(r.get('unita_misura') or '').strip(), qta_originale=qta, prezzo_unitario=prezzo,
+        ))
+    db.session.commit()
+    return jsonify({'ok': True, 'id': o.id})
