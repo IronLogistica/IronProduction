@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dichiarazione Produzione — MES Carpenteria</title>
+<style>
+  :root{
+    --bg:#07090d; --surf:#0e1117; --surf2:#141920; --border:#1e2a38;
+    --text:#d4e0f0; --muted:#4a6080; --accent:#00b4d8;
+    --ok:#22c55e; --warn:#f59e0b; --danger:#ef4444;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',Arial,sans-serif;min-height:100vh;padding:18px}
+  .header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--border);padding-bottom:12px;margin-bottom:18px}
+  .titolo{font-size:1.5rem;font-weight:800;color:var(--accent);text-transform:uppercase;letter-spacing:.5px}
+  .sottotitolo{font-size:.85rem;color:var(--muted);margin-top:2px}
+
+  select{width:100%;padding:16px;font-size:1.1rem;background:var(--surf);border:2px solid var(--border);border-radius:12px;color:var(--text);margin-bottom:18px}
+  select:focus{outline:none;border-color:var(--accent)}
+
+  .card-op{background:var(--surf);border:1px solid var(--border);border-left:5px solid var(--accent);border-radius:14px;padding:20px;margin-bottom:14px;cursor:pointer;transition:transform .1s}
+  .card-op:active{transform:scale(.98)}
+  .co-op{font-family:'Consolas',monospace;color:var(--muted);font-size:.85rem}
+  .co-codice{font-size:1.8rem;font-weight:800;margin:4px 0}
+  .co-riga{display:flex;gap:20px;flex-wrap:wrap;font-size:.95rem;color:var(--muted)}
+  .co-riga b{color:var(--text);font-size:1.15rem}
+  .co-saldo{font-size:2rem;font-weight:800;color:var(--warn)}
+
+  .form-box{background:var(--surf);border:2px solid var(--accent);border-radius:16px;padding:24px}
+  .form-box h2{font-size:1.3rem;margin-bottom:4px}
+  .form-box .sub{color:var(--muted);font-size:.9rem;margin-bottom:20px}
+  .campo{margin-bottom:18px}
+  .campo label{display:block;font-size:.85rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:8px}
+  .campo input{width:100%;padding:18px;font-size:1.6rem;font-weight:700;text-align:center;background:var(--surf2);border:2px solid var(--border);border-radius:12px;color:var(--text)}
+  .campo input:focus{outline:none;border-color:var(--accent)}
+
+  .btn-grande{width:100%;padding:20px;font-size:1.2rem;font-weight:800;border:none;border-radius:14px;cursor:pointer;margin-top:6px}
+  .btn-conferma{background:var(--ok);color:#fff}
+  .btn-annulla{background:transparent;color:var(--muted);border:1px solid var(--border);margin-top:10px}
+
+  .esito{text-align:center;padding:14px;border-radius:10px;font-weight:700;margin-top:14px}
+  .esito.ok{background:rgba(34,197,94,.15);color:var(--ok)}
+  .esito.err{background:rgba(239,68,68,.15);color:var(--danger)}
+
+  .vuoto{text-align:center;color:var(--muted);padding:40px 0;font-style:italic}
+  .link-capo{display:block;text-align:center;margin-top:24px;color:var(--muted);font-size:.8rem;text-decoration:none}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div>
+    <div class="titolo">✅ Dichiarazione Produzione</div>
+    <div class="sottotitolo">Registra la produzione a fine giornata</div>
+  </div>
+</div>
+
+<div id="passo-centro">
+  <select id="centro-sel" onchange="scegliCentro()">
+    <option value="">Seleziona il tuo centro di costo...</option>
+  </select>
+</div>
+
+<div id="passo-op" style="display:none">
+  <div id="op-lista"></div>
+</div>
+
+<div id="passo-form" style="display:none">
+  <div class="form-box">
+    <h2 id="form-codice"></h2>
+    <div class="sub" id="form-articolo"></div>
+    <div class="campo">
+      <label>Pezzi buoni</label>
+      <input id="f-buoni" type="number" inputmode="numeric" min="0" value="0">
+    </div>
+    <div class="campo">
+      <label>Pezzi di scarto</label>
+      <input id="f-scarto" type="number" inputmode="numeric" min="0" value="0">
+    </div>
+    <div class="campo">
+      <label>Minuti impiegati</label>
+      <input id="f-tempo" type="number" inputmode="numeric" min="0" value="0">
+    </div>
+    <button class="btn-grande btn-conferma" onclick="conferma()">✅ Registra dichiarazione</button>
+    <button class="btn-grande btn-annulla" onclick="tornaAllaLista()">← Indietro</button>
+    <div id="esito"></div>
+  </div>
+</div>
+
+<a class="link-capo" href="/dichiarazione-produzione">🔒 Sei il capo? Accedi allo storico e alle correzioni →</a>
+
+<script>
+let CENTRO_ID = null, CENTRO_NOME = '', OP_CORRENTE = null;
+
+async function caricaCentri(){
+  const r = await fetch('/api/dichiarazione-produzione/centri');
+  const centri = await r.json();
+  const sel = document.getElementById('centro-sel');
+  sel.innerHTML = '<option value="">Seleziona il tuo centro di costo...</option>' +
+    centri.map(c => `<option value="${c.id}" data-nome="${c.nome}">${c.nome}</option>`).join('');
+}
+
+async function scegliCentro(){
+  const sel = document.getElementById('centro-sel');
+  CENTRO_ID = sel.value;
+  CENTRO_NOME = sel.options[sel.selectedIndex]?.dataset.nome || '';
+  if(!CENTRO_ID){ document.getElementById('passo-op').style.display = 'none'; return; }
+  document.getElementById('passo-op').style.display = 'block';
+  document.getElementById('passo-form').style.display = 'none';
+  const box = document.getElementById('op-lista');
+  box.innerHTML = '<div class="vuoto">Caricamento...</div>';
+  const r = await fetch(`/api/dichiarazione-produzione/${CENTRO_ID}/op-aperti`);
+  const ops = await r.json();
+  if(!ops.length){ box.innerHTML = '<div class="vuoto">Nessun Ordine di Produzione aperto su questo centro.</div>'; return; }
+  box.innerHTML = ops.map(o => `<div class="card-op" onclick='apriForm(${JSON.stringify(o)})'>
+    <div class="co-op">${o.codice} ${o.commessa ? '· ' + o.commessa : ''}</div>
+    <div class="co-codice">${o.codice_articolo}</div>
+    <div class="co-riga">
+      <div>Pianificata: <b>${o.qta_pianificata}</b></div>
+      <div>Buoni: <b>${o.qta_buona}</b></div>
+      <div>Scarto: <b>${o.qta_scarto}</b></div>
+    </div>
+    <div class="co-saldo">${o.saldo} <span style="font-size:.9rem;color:var(--muted)">da fare</span></div>
+  </div>`).join('');
+}
+
+function apriForm(o){
+  OP_CORRENTE = o;
+  document.getElementById('passo-form').style.display = 'block';
+  document.getElementById('form-codice').textContent = o.codice;
+  document.getElementById('form-articolo').textContent = o.codice_articolo + (o.descrizione ? ' — ' + o.descrizione : '');
+  document.getElementById('f-buoni').value = 0;
+  document.getElementById('f-scarto').value = 0;
+  document.getElementById('f-tempo').value = 0;
+  document.getElementById('esito').innerHTML = '';
+  document.getElementById('passo-form').scrollIntoView({behavior:'smooth'});
+}
+
+function tornaAllaLista(){
+  document.getElementById('passo-form').style.display = 'none';
+  scegliCentro();
+}
+
+async function conferma(){
+  const esito = document.getElementById('esito');
+  const payload = {
+    op_code: OP_CORRENTE.codice, centro_id: CENTRO_ID,
+    pezzi_buoni: document.getElementById('f-buoni').value,
+    pezzi_scarto: document.getElementById('f-scarto').value,
+    tempo_minuti: document.getElementById('f-tempo').value,
+  };
+  try{
+    const r = await fetch('/api/dichiarazione-produzione', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ esito.innerHTML = `<div class="esito err">⚠️ ${d.error}</div>`; return; }
+    esito.innerHTML = '<div class="esito ok">✓ Dichiarazione registrata</div>';
+    setTimeout(tornaAllaLista, 1000);
+  }catch(e){
+    esito.innerHTML = '<div class="esito err">❌ Errore di rete, riprova.</div>';
+  }
+}
+
+caricaCentri();
+</script>
+</body>
+</html>
