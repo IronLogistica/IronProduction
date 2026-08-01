@@ -199,7 +199,7 @@ def api_distinta_base(codice):
 #  gli articoli/stock restano quelli condivisi (ArticoloML), ma le righe di
 #  distinta sono gestite qui per non toccare mai la tabella di MasterLogistic.
 # ══════════════════════════════════════════════════════════════════════════════
-def _righe_bom_attive_wood(codice_padre, query=None):
+def _righe_bom_attive_wood(codice_padre, query=None, mappa=None):
     """
     Righe di distinta_base_wood da usare per un dato codice_padre in TUTTE le
     esplosioni di default (albero BOM, fabbisogno/netting, costo standard):
@@ -209,9 +209,17 @@ def _righe_bom_attive_wood(codice_padre, query=None):
       preferita nello stesso gruppo, si tiene la prima per id, per determinismo).
     Il parametro 'query' opzionale permette di riusare una query già filtrata
     (es. con order_by) invece di ripartire da DistintaBaseWood.query.
+    Il parametro 'mappa' opzionale (vedi _carica_mappa_distinta_base_wood) evita
+    del tutto la query: usa un dict {codice_padre: [righe]} già in memoria —
+    indispensabile quando questa funzione viene chiamata molte volte di
+    seguito (esplosione di più OP), altrimenti ogni nodo dell'albero costa
+    una query separata e con distinte larghe/profonde diventa lentissimo.
     """
-    righe = (query if query is not None
-             else DistintaBaseWood.query.filter_by(codice_padre=codice_padre)).all()
+    if mappa is not None:
+        righe = mappa.get(codice_padre, [])
+    else:
+        righe = (query if query is not None
+                 else DistintaBaseWood.query.filter_by(codice_padre=codice_padre)).all()
     per_gruppo = {}
     risultato = []
     for r in righe:
@@ -226,7 +234,23 @@ def _righe_bom_attive_wood(codice_padre, query=None):
     return risultato
 
 
-def _esplodi_componenti_op(o, _max_profondita=15):
+def _carica_mappa_distinta_base_wood():
+    """
+    Carica TUTTA la distinta_base_wood in un solo colpo, raggruppata per
+    codice_padre: {codice_padre: [righe]}. Da passare a _righe_bom_attive_wood/
+    _esplodi_componenti_op quando si devono esplodere le distinte di MOLTI
+    OP nella stessa richiesta (Monitor Macchina, Lista Lavoro) — una singola
+    query invece di una per ogni nodo di ogni albero, che con distinte reali
+    (non solo 4-5 componenti come nei test) può voler dire centinaia di
+    query sequenziali e tempi di risposta di decine di secondi.
+    """
+    mappa = {}
+    for r in DistintaBaseWood.query.all():
+        mappa.setdefault(r.codice_padre, []).append(r)
+    return mappa
+
+
+def _esplodi_componenti_op(o, _max_profondita=15, mappa_distinta=None):
     """
     Ritorna un nodo per OGNI codice della distinta base di o.codice_articolo
     — l'articolo stesso (moltiplicatore 1) più TUTTI i suoi componenti a
@@ -237,6 +261,9 @@ def _esplodi_componenti_op(o, _max_profondita=15):
     incontrato) — protezione anti-ciclo/doppio conteggio.
     Condivisa da Monitor Macchina e Lista Tagli (vive qui, non in un blueprint
     specifico, per evitare import circolari fra monitor e produzione_pp).
+    'mappa_distinta' opzionale (vedi _carica_mappa_distinta_base_wood): se
+    fornita, esplode SENZA query aggiuntive — indispensabile quando la si
+    chiama per molti OP di seguito nella stessa richiesta.
     """
     risultato = [{'codice': o.codice_articolo, 'moltiplicatore': 1.0}]
     visitati = {o.codice_articolo}
@@ -244,7 +271,7 @@ def _esplodi_componenti_op(o, _max_profondita=15):
     def walk(codice, moltiplicatore, profondita):
         if profondita > _max_profondita:
             return
-        for r in _righe_bom_attive_wood(codice):
+        for r in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
             if r.codice_figlio in visitati:
                 continue
             visitati.add(r.codice_figlio)
@@ -1029,7 +1056,7 @@ def api_importa_giacenza():
         return jsonify({'errore': True, 'messaggio': f'Errore durante l\'import: {e}'}), 500
 
 
-def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _profondita=0, _max_profondita=12):
+def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _profondita=0, _max_profondita=12, mappa=None):
     """
     Esplode la distinta Iron Wood da `codice` per una quantità `qta`, NETTANDO
     ad ogni nodo contro `giacenza_residua` (dict mutabile {codice: qta libera},
@@ -1042,6 +1069,10 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
     Accumula in `out` (dict) una riga per ogni codice toccato in QUESTA
     esplosione: {fabbisogno, usato, mancante} — sommati se il codice compare
     più volte nell'albero (es. la stessa vite in più punti).
+    'mappa' opzionale (vedi _carica_mappa_distinta_base_wood): se fornita,
+    evita una query per nodo — indispensabile quando si esplodono le
+    distinte di molti OP nella stessa richiesta (es. Situazione Ordini di
+    Produzione, Monitor Macchina).
     """
     if _visitati is None:
         _visitati = set()
@@ -1061,13 +1092,13 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
 
     if mancante <= 0:
         return
-    righe_bom = _righe_bom_attive_wood(codice)
+    righe_bom = _righe_bom_attive_wood(codice, mappa=mappa)
     for r in righe_bom:
         qta_figlio = (r.quantita or 1.0) * mancante
-        _netta_e_esplodi_wood(r.codice_figlio, qta_figlio, giacenza_residua, out, _visitati, _profondita + 1, _max_profondita)
+        _netta_e_esplodi_wood(r.codice_figlio, qta_figlio, giacenza_residua, out, _visitati, _profondita + 1, _max_profondita, mappa=mappa)
 
 
-def _giacenza_residua_dopo_impegni(escludi_op_id=None):
+def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None):
     """
     Parte dalla giacenza fisica attuale e simula il consumo di TUTTI gli OP
     aperti (stato in STATI_CHE_IMPEGNANO), servendo PRIMA gli OP con priorità
@@ -1076,7 +1107,7 @@ def _giacenza_residua_dopo_impegni(escludi_op_id=None):
     primo è la priorità che il capo ha impostato sull'OP (colonna PRIO in
     Ordini di Produzione), non semplicemente chi è stato creato prima.
     Ritorna il dict {codice: qta rimasta} DOPO aver tolto quanto già
-    impegnato da quegli OP.
+    impegnato da quegli OP. 'mappa' opzionale: vedi _carica_mappa_distinta_base_wood.
     """
     giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
     op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
@@ -1086,11 +1117,11 @@ def _giacenza_residua_dopo_impegni(escludi_op_id=None):
             continue
         saldo = (op.qta_pianificata or 0) - (op.qta_buona or 0)
         if saldo > 0:
-            _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua, {})
+            _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua, {}, mappa=mappa)
     return giacenza_residua
 
 
-def _residuo_giacenza_progressivo(op_aperti=None):
+def _residuo_giacenza_progressivo(op_aperti=None, mappa=None):
     """
     Versione efficiente di _giacenza_residua_dopo_impegni pensata per essere
     chiamata UNA VOLTA SOLA per ottenere il residuo di TUTTI gli OP aperti
@@ -1123,7 +1154,7 @@ def _residuo_giacenza_progressivo(op_aperti=None):
         residuo_per_op[op.id] = dict(giacenza)  # snapshot prima di servire QUESTO OP
         saldo = (op.qta_pianificata or 0) - (op.qta_buona or 0)
         if saldo > 0:
-            _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza, {})
+            _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza, {}, mappa=mappa)
     return residuo_per_op, giacenza
 
 
