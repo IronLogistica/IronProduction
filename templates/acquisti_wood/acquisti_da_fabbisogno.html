@@ -2,16 +2,19 @@
 {% block content %}
 <div class="page-toolbar">
   <div class="page-title">🧮 Acquisti da Fabbisogno</div>
+  <a class="btn btn-primary" href="/ordini-produzione/situazione" style="margin-left:auto">🏭 Vai alla Situazione OP</a>
 </div>
 
 <div class="mon-section">
   <div style="padding:14px">
-    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
       Fabbisogno di Componenti d'Acquisto e Materie Prime, aggregato su <b>tutti</b> gli Ordini di Produzione
       aperti (la stessa scorta scarsa contesa da più ordini è contata una volta sola, per priorità).
-      Seleziona le righe, correggi la quantità se serve, indica il fornitore e genera l'Ordine di Acquisto.
+      Seleziona le card, correggi la quantità se serve, indica il fornitore e genera l'Ordine di Acquisto.
     </p>
-    <div id="fabbisogno-lista">Caricamento...</div>
+    <div id="stats" style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap"></div>
+    <div id="filtri" style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap"></div>
+    <div id="fabbisogno-cards" style="display:flex;flex-wrap:wrap;gap:12px">Caricamento...</div>
 
     <div id="crea-box" style="display:none;margin-top:18px;border:1px solid var(--accent2);border-radius:8px;padding:14px">
       <div style="font-weight:700;margin-bottom:10px">🛒 Crea Ordine di Acquisto — <span id="crea-conteggio"></span> righe selezionate</div>
@@ -26,34 +29,93 @@
 {% block scripts %}
 let RIGHE = [];
 const SELEZIONATE = new Set();
+let _filtroAttivo = 'tutti';
+
+const FILTRI = [
+  {id:'tutti',      label:'TUTTI',                    test:r => true},
+  {id:'materie',    label:'📦 MATERIE PRIME',         test:r => r.tipo === 'MATERIA_PRIMA_FORNITORE'},
+  {id:'acquisto',   label:'🔩 COMPONENTI ACQUISTO',   test:r => r.tipo === 'COMPONENTE_ACQUISTO'},
+  {id:'mai_ordinato', label:'⚠️ MAI ORDINATO',        test:r => r.gia_ordinato === 0},
+  {id:'parziale',   label:'🚚 GIÀ IN PARTE ORDINATO', test:r => r.gia_ordinato > 0},
+];
+
+function renderStats(){
+  const box = document.getElementById('stats');
+  const nMaterie = RIGHE.filter(r => r.tipo === 'MATERIA_PRIMA_FORNITORE').length;
+  const nAcquisto = RIGHE.filter(r => r.tipo === 'COMPONENTE_ACQUISTO').length;
+  const nMaiOrdinato = RIGHE.filter(r => r.gia_ordinato === 0).length;
+  const stat = (n, label, colore) => `<div style="background:var(--dark3);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center;min-width:110px">
+    <div style="font-size:22px;font-weight:800;color:${colore||'inherit'}">${n}</div><div style="font-size:11px;color:var(--text-dim)">${label}</div></div>`;
+  box.innerHTML = stat(RIGHE.length, 'Righe da ordinare', '#c0392b') + stat(nMaterie, 'Materie Prime') +
+    stat(nAcquisto, 'Componenti Acquisto') + stat(nMaiOrdinato, 'Mai ordinato', '#b8860b');
+}
+
+function renderFiltri(){
+  const box = document.getElementById('filtri');
+  box.innerHTML = FILTRI.map(f => {
+    const n = RIGHE.filter(f.test).length;
+    const attivo = f.id === _filtroAttivo;
+    return `<button onclick="impostaFiltro('${f.id}')"
+      style="padding:6px 14px;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer;
+             border:1px solid ${attivo ? 'var(--accent2)' : 'var(--border)'};
+             background:${attivo ? 'var(--accent2)' : 'var(--dark3)'};
+             color:${attivo ? '#fff' : 'var(--text-dim)'}">${f.label} <span style="opacity:.75">${n}</span></button>`;
+  }).join('');
+}
+
+function impostaFiltro(id){ _filtroAttivo = id; renderCards(); }
 
 async function carica(){
-  const box = document.getElementById('fabbisogno-lista');
+  const box = document.getElementById('fabbisogno-cards');
   box.innerHTML = 'Caricamento...';
   try{
     const r = await fetch('/api/fabbisogno_acquisti_globale');
     RIGHE = await r.json();
-    if(!RIGHE.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun fabbisogno di acquisto al momento — tutto coperto da scorta o già ordinato.</p>'; return; }
-    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th></th><th>Codice</th><th>Tipo</th><th>Mancante</th><th>Già ordinato</th><th>Da ordinare</th><th>Ultimo fornitore</th><th>Ultimo prezzo</th></tr></thead><tbody>';
-    RIGHE.forEach((r,i)=>{
-      const tipoLabel = r.tipo === 'MATERIA_PRIMA_FORNITORE' ? '📦 Materia Prima' : '🔩 Componente Acquisto';
-      html += `<tr><td><input type="checkbox" onchange="toggleRiga(${i}, this.checked)"></td>` +
-        `<td class="codice">${r.codice}</td><td style="font-size:11px">${tipoLabel}</td>` +
-        `<td class="num">${r.mancante}</td><td class="num">${r.gia_ordinato}</td>` +
-        `<td class="num" id="qta-${i}" style="font-weight:700">` +
-        `<input type="number" step="0.01" min="0" value="${r.da_ordinare_suggerito}" style="width:80px" onchange="RIGHE[${i}].da_ordinare_suggerito=parseFloat(this.value)||0; aggiornaConteggio()"></td>` +
-        `<td>${r.ultimo_fornitore||'—'}</td><td>${r.ultimo_prezzo!=null?'€ '+r.ultimo_prezzo:'—'}</td></tr>`;
-    });
-    html += '</tbody></table></div>';
-    box.innerHTML = html;
+    renderStats();
+    renderFiltri();
+    renderCards();
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
   }
 }
 
+function renderCards(){
+  const box = document.getElementById('fabbisogno-cards');
+  const filtro = FILTRI.find(f => f.id === _filtroAttivo) || FILTRI[0];
+  const righeFiltrate = RIGHE.map((r,i) => ({...r, _idx:i})).filter(filtro.test);
+  if(!righeFiltrate.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna riga in questa categoria — tutto coperto da scorta o già ordinato.</p>'; return; }
+
+  box.innerHTML = righeFiltrate.map(r => {
+    const i = r._idx;
+    const bordo = r.gia_ordinato > 0 ? '#2589c7' : '#c0392b';
+    const tipoLabel = r.tipo === 'MATERIA_PRIMA_FORNITORE' ? '📦 Materia Prima' : '🔩 Componente Acquisto';
+    const selezionata = SELEZIONATE.has(i);
+    return `<div style="width:270px;background:var(--dark3);border:1px solid var(--border);border-left:4px solid ${bordo};border-radius:10px;padding:16px;${selezionata?'box-shadow:0 0 0 2px var(--accent2)':''}">
+      <div style="display:flex;justify-content:space-between;align-items:start">
+        <div>
+          <div style="font-size:11px;color:var(--text-dim)">${tipoLabel}</div>
+          <div style="font-size:18px;font-weight:800;color:#e0eefc">${r.codice}</div>
+          <div style="font-size:11px;color:var(--text-dim)">${r.descrizione||''}</div>
+        </div>
+        <input type="checkbox" ${selezionata?'checked':''} style="width:20px;height:20px" onchange="toggleRiga(${i}, this.checked)">
+      </div>
+      <div style="display:flex;justify-content:space-between;text-align:center;margin:10px 0">
+        <div><div style="font-size:16px;font-weight:800">${r.mancante}</div><div style="font-size:9px;color:var(--text-dim)">MANCANTE</div></div>
+        <div><div style="font-size:16px;font-weight:800;color:#2589c7">${r.gia_ordinato}</div><div style="font-size:9px;color:var(--text-dim)">GIÀ ORDINATO</div></div>
+        <div><div style="font-size:16px;font-weight:800;color:#c0392b">${r.da_ordinare_suggerito}</div><div style="font-size:9px;color:var(--text-dim)">DA ORDINARE</div></div>
+      </div>
+      <label style="font-size:10px;color:var(--text-dim)">Quantità da ordinare</label>
+      <input type="number" step="0.01" min="0" value="${r.da_ordinare_suggerito}" style="width:100%;padding:6px;margin-bottom:8px;border-radius:5px;border:1px solid var(--border);background:var(--surf);color:inherit"
+             onchange="RIGHE[${i}].da_ordinare_suggerito=parseFloat(this.value)||0">
+      <div style="font-size:11px;color:var(--text-dim)">${r.ultimo_fornitore ? '🏭 '+r.ultimo_fornitore : 'Mai ordinato prima'}${r.ultimo_prezzo!=null?' — € '+r.ultimo_prezzo:''}</div>
+    </div>`;
+  }).join('');
+}
+
 function toggleRiga(i, checked){
   if(checked) SELEZIONATE.add(i); else SELEZIONATE.delete(i);
   aggiornaConteggio();
+  renderCards();
 }
 
 function aggiornaConteggio(){
