@@ -1,3 +1,4 @@
+import uuid
 from datetime import datetime, date
 from flask import Blueprint, current_app, jsonify, render_template, request, Response
 from sqlalchemy.exc import IntegrityError
@@ -15,7 +16,7 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
-                    _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood)
+                    _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 
@@ -1365,3 +1366,147 @@ def api_lista_lavoro_op(codice, cid):
     if not o:
         return jsonify({'errore': True, 'messaggio': 'Ordine di produzione non trovato'}), 404
     return jsonify(_lista_lavoro_op(o, centro))
+
+
+@pp_bp.get('/dichiarazione-produzione')
+def pagina_dichiarazione_produzione():
+    return render_template('produzione_pp/dichiarazione_produzione.html', active='dichiarazione_produzione')
+
+
+@pp_bp.get('/api/dichiarazione-produzione/centri')
+def api_dichiarazione_centri():
+    return jsonify(get_macchine_monitor())
+
+
+@pp_bp.get('/api/dichiarazione-produzione/<int:cid>/op-aperti')
+def api_dichiarazione_op_aperti(cid):
+    centro = CentroCostoWood.query.get_or_404(cid)
+    ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
+              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+    risultato = []
+    for o in ordini:
+        ha_fase = CicloLavoroWood.query.filter_by(codice=o.codice_articolo, centro_costo_id=centro.id).first()
+        if ha_fase:
+            risultato.append({
+                'codice': o.codice, 'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione,
+                'commessa': o.commessa, 'qta_pianificata': o.qta_pianificata,
+                'qta_buona': o.qta_buona, 'qta_scarto': o.qta_scarto,
+                'saldo': max((o.qta_pianificata or 0) - (o.qta_buona or 0) - (o.qta_scarto or 0), 0),
+            })
+    return jsonify(risultato)
+
+
+@pp_bp.post('/api/dichiarazione-produzione')
+def api_dichiarazione_crea():
+    """Il capo reparto dichiara: crea SOLO, nessun accesso a modifica/storico."""
+    d = request.get_json(force=True)
+    o = OrdineProduzione.query.filter_by(codice=(d.get('op_code') or '').strip()).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+    centro = CentroCostoWood.query.get(d.get('centro_id'))
+    if not centro:
+        return jsonify(ok=False, error='Centro di costo non trovato'), 404
+    try:
+        good = _integer(d.get('pezzi_buoni', 0), 'Pezzi buoni')
+        scrap = _integer(d.get('pezzi_scarto', 0), 'Pezzi scarto')
+        tempo = _integer(d.get('tempo_minuti', 0), 'Tempo')
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    if good <= 0 and scrap <= 0:
+        return jsonify(ok=False, error='Dichiara almeno un pezzo buono o di scarto'), 400
+    event_id = str(uuid.uuid4())
+    _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id)
+    db.session.commit()
+    return jsonify(ok=True, event_id=event_id, ordine=_ordine(o))
+
+
+def _verifica_pin_capo(d):
+    pin = (d.get('pin') or '').strip()
+    return pin and pin == current_app.config.get('CAPO_PIN', '')
+
+
+@pp_bp.get('/api/dichiarazione-produzione/verifica-pin')
+def api_dichiarazione_verifica_pin():
+    if not _verifica_pin_capo(request.args):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    return jsonify(ok=True)
+
+
+@pp_bp.get('/api/dichiarazione-produzione/<int:cid>/storico')
+def api_dichiarazione_storico(cid):
+    """Visibile SOLO al capo — richiede il PIN come query param."""
+    if not _verifica_pin_capo(request.args):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    centro = CentroCostoWood.query.get_or_404(cid)
+    data_str = request.args.get('data') or datetime.utcnow().strftime('%Y-%m-%d')
+    try:
+        giorno = datetime.strptime(data_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify(ok=False, error='Data non valida'), 400
+    eventi = (EventoConsuntivoPP.query
+              .filter(db.func.lower(EventoConsuntivoPP.fase) == centro.nome.lower(),
+                      db.func.date(EventoConsuntivoPP.timestamp_evento) == giorno)
+              .order_by(EventoConsuntivoPP.timestamp_evento.desc()).all())
+    return jsonify(ok=True, eventi=[{
+        'id': e.id, 'event_id': e.event_id, 'op_code': e.op_code, 'componente': e.componente,
+        'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M'),
+        'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto, 'tempo_minuti': e.tempo_minuti,
+    } for e in eventi])
+
+
+@pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/annulla')
+def api_dichiarazione_annulla(eid):
+    """
+    Storno di una dichiarazione sbagliata — SOLO col PIN del capo. Non
+    modifica i numeri sul posto: inverte esattamente quantità OP, giacenza
+    (ri-carica i materiali scaricati, ri-scarica il prodotto caricato) e
+    tempo, poi elimina l'evento. Il capo reparto ridichiara poi quella
+    corretta con la dichiarazione normale.
+    ⚠️ LIMITE: le eventuali righe di Varianza di Produzione legate a questo
+    evento NON vengono rimosse (restano come residuo storico) — non alterano
+    la giacenza, solo l'Analisi Costo di quell'OP potrebbe mostrare una
+    varianza in più che non riflette più produzione reale.
+    """
+    d = request.get_json(force=True)
+    if not _verifica_pin_capo(d):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    e = EventoConsuntivoPP.query.get_or_404(eid)
+    o = OrdineProduzione.query.filter_by(codice=e.op_code).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione collegato non trovato'), 404
+
+    componente_finale = not e.componente or e.componente == o.codice_articolo
+    codice_lavorato = o.codice_articolo if componente_finale else e.componente
+
+    o.tempo_consuntivo_minuti = max((o.tempo_consuntivo_minuti or 0) - e.tempo_minuti, 0)
+    if componente_finale:
+        o.qta_buona = max((o.qta_buona or 0) - e.pezzi_buoni, 0)
+        o.qta_scarto = max((o.qta_scarto or 0) - e.pezzi_scarto, 0)
+        if o.stato == 'Tecnicamente completato':
+            o.stato = 'In esecuzione'
+    _audit(o, 'ANNULLO_CONSUNTIVO', f'storno evento {e.event_id}: componente={codice_lavorato}; '
+           f'buoni={e.pezzi_buoni}; scarto={e.pezzi_scarto}; minuti={e.tempo_minuti}')
+
+    if e.pezzi_buoni > 0:
+        try:
+            if componente_finale:
+                componenti_esplosi = _esplodi_bom_wood(o.codice_articolo, qta=e.pezzi_buoni)
+                consumi = {}
+                _flatten_componenti(componenti_esplosi, consumi)
+            else:
+                consumi = {rb.codice_figlio: rb.quantita * e.pezzi_buoni for rb in _righe_bom_attive_wood(e.componente)}
+            for cod, qta_consumata in consumi.items():
+                if qta_consumata:
+                    _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',
+                                                  riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
+        except Exception:
+            pass
+        try:
+            _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
+                                          riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
+        except Exception:
+            pass
+
+    db.session.delete(e)
+    db.session.commit()
+    return jsonify(ok=True)
