@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">✅ Dichiarazione di Produzione</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+      Il capo reparto dichiara qui la produzione del giorno, centro di costo per centro di costo — pezzi buoni,
+      scarto e tempo. Ogni dichiarazione scarica automaticamente i materiali e carica il prodotto a magazzino.
+      <b>Non è possibile modificare o cancellare</b> una dichiarazione da qui — solo il capo, col proprio PIN, può
+      vedere lo storico e correggere un errore.
+    </p>
+
+    <label class="modal-label">Centro di costo</label>
+    <select id="centro-sel" style="width:280px;padding:9px;border-radius:6px;border:1px solid var(--border);margin-bottom:16px" onchange="caricaOpAperti()">
+      <option value="">Seleziona un centro di costo...</option>
+    </select>
+
+    <div id="op-lista">Seleziona un centro di costo per vedere gli Ordini di Produzione aperti.</div>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🔒 Area Capo — storico e correzioni</div>
+  <div style="padding:14px">
+    <div id="capo-blocco">
+      <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <input id="capo-pin" type="password" placeholder="PIN capo" style="width:140px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="capo-data" type="date" style="padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="sbloccaCapo()">🔓 Sblocca</button>
+        <span id="capo-esito" style="font-size:12px"></span>
+      </div>
+    </div>
+    <div id="capo-storico" style="margin-top:14px"></div>
+  </div>
+</div>
+
+<!-- ══ MODAL: DICHIARA PRODUZIONE ══════════════════════════════════════════ -->
+<div class="modal-overlay" id="modal-dichiara">
+  <div class="modal-box" style="width:420px;max-width:96vw">
+    <h3>✅ Dichiara produzione — <span id="dich-titolo"></span></h3>
+    <label class="modal-label">Pezzi buoni</label>
+    <input id="dich-buoni" class="modal-input" type="number" min="0" value="0">
+    <label class="modal-label">Pezzi di scarto</label>
+    <input id="dich-scarto" class="modal-input" type="number" min="0" value="0">
+    <label class="modal-label">Tempo impiegato (minuti)</label>
+    <input id="dich-tempo" class="modal-input" type="number" min="0" value="0">
+    <button class="btn btn-primary" style="margin-top:10px" onclick="salvaDichiarazione()">💾 Registra dichiarazione</button>
+    <span id="dich-esito" style="font-size:12px;margin-left:8px"></span>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-dichiara')">Chiudi</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+let _centroCorrente = null;
+let _opInDichiarazione = null;
+let _pinCapoAttivo = null;
+
+async function caricaCentri(){
+  const r = await fetch('/api/dichiarazione-produzione/centri');
+  const centri = await r.json();
+  const sel = document.getElementById('centro-sel');
+  sel.innerHTML = '<option value="">Seleziona un centro di costo...</option>' +
+    centri.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+}
+
+async function caricaOpAperti(){
+  const cid = document.getElementById('centro-sel').value;
+  const box = document.getElementById('op-lista');
+  _centroCorrente = cid;
+  if(!cid){ box.innerHTML = 'Seleziona un centro di costo per vedere gli Ordini di Produzione aperti.'; return; }
+  box.innerHTML = 'Caricamento...';
+  const r = await fetch(`/api/dichiarazione-produzione/${cid}/op-aperti`);
+  const ops = await r.json();
+  if(!ops.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun Ordine di Produzione aperto su questo centro di costo.</p>'; return; }
+  box.innerHTML = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>OP</th><th>Articolo</th><th>Commessa</th><th>Pian. · Buoni · Scarto</th><th>Saldo</th><th></th></tr></thead><tbody>' +
+    ops.map(o => `<tr><td class="codice">${o.codice}</td><td>${o.codice_articolo}<br><small>${o.descrizione||''}</small></td><td>${o.commessa||'—'}</td>` +
+      `<td>${o.qta_pianificata} · ${o.qta_buona} · ${o.qta_scarto}</td><td style="font-weight:700">${o.saldo}</td>` +
+      `<td><button class="btn btn-primary" onclick='apriDichiarazione(${JSON.stringify(o)})'>✅ Dichiara</button></td></tr>`).join('') +
+    '</tbody></table></div>';
+}
+
+function apriDichiarazione(o){
+  _opInDichiarazione = o.codice;
+  document.getElementById('dich-titolo').textContent = `${o.codice} — ${o.codice_articolo}`;
+  document.getElementById('dich-buoni').value = 0;
+  document.getElementById('dich-scarto').value = 0;
+  document.getElementById('dich-tempo').value = 0;
+  document.getElementById('dich-esito').textContent = '';
+  openModal('modal-dichiara');
+}
+
+async function salvaDichiarazione(){
+  const esito = document.getElementById('dich-esito');
+  const payload = {
+    op_code: _opInDichiarazione, centro_id: _centroCorrente,
+    pezzi_buoni: document.getElementById('dich-buoni').value,
+    pezzi_scarto: document.getElementById('dich-scarto').value,
+    tempo_minuti: document.getElementById('dich-tempo').value,
+  };
+  try{
+    const r = await fetch('/api/dichiarazione-produzione', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ esito.style.color='#c0392b'; esito.textContent = '⚠️ ' + d.error; return; }
+    esito.style.color = '#2a9d5c'; esito.textContent = '✓ Registrata.';
+    setTimeout(()=>{ closeModal('modal-dichiara'); caricaOpAperti(); }, 700);
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
+// ── AREA CAPO ──────────────────────────────────────────────────────────
+document.getElementById('capo-data').valueAsDate = new Date();
+
+async function sbloccaCapo(){
+  const pin = document.getElementById('capo-pin').value.trim();
+  const data = document.getElementById('capo-data').value;
+  const esito = document.getElementById('capo-esito');
+  if(!pin){ esito.style.color='#c0392b'; esito.textContent='Inserisci il PIN.'; return; }
+  const r = await fetch(`/api/dichiarazione-produzione/verifica-pin?pin=${encodeURIComponent(pin)}`);
+  if(r.status === 403){ esito.style.color='#c0392b'; esito.textContent='⚠️ PIN non valido.'; return; }
+  _pinCapoAttivo = pin;
+  esito.style.color = '#2a9d5c'; esito.textContent = '🔓 Sbloccato.';
+  caricaStoricoCapo();
+}
+
+async function caricaStoricoCapo(){
+  if(!_pinCapoAttivo) return;
+  const box = document.getElementById('capo-storico');
+  const data = document.getElementById('capo-data').value;
+  box.innerHTML = 'Caricamento...';
+  const centri = await (await fetch('/api/dichiarazione-produzione/centri')).json();
+  let html = '';
+  for(const c of centri){
+    const r = await fetch(`/api/dichiarazione-produzione/${c.id}/storico?pin=${encodeURIComponent(_pinCapoAttivo)}&data=${data}`);
+    const d = await r.json();
+    if(!d.ok || !d.eventi.length) continue;
+    html += `<div style="font-weight:700;font-size:13px;margin:12px 0 6px">${c.nome}</div>`;
+    html += '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Ora</th><th>OP</th><th>Componente</th><th>Buoni</th><th>Scarto</th><th>Minuti</th><th></th></tr></thead><tbody>';
+    d.eventi.forEach(e=>{
+      html += `<tr><td>${e.timestamp}</td><td class="codice">${e.op_code}</td><td>${e.componente||'(prodotto finito)'}</td>` +
+        `<td>${e.pezzi_buoni}</td><td>${e.pezzi_scarto}</td><td>${e.tempo_minuti}</td>` +
+        `<td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="annullaDichiarazione(${e.id})">🗑️ Storna</button></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+  }
+  box.innerHTML = html || '<p style="color:#aaa;font-style:italic">Nessuna dichiarazione in questa giornata.</p>';
+}
+
+async function annullaDichiarazione(eid){
+  if(!confirm('Stornare questa dichiarazione? Materiali e quantità verranno ripristinati, poi va ridichiarata correttamente.')) return;
+  const r = await fetch(`/api/dichiarazione-produzione/eventi/${eid}/annulla`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin:_pinCapoAttivo})
+  });
+  const d = await r.json();
+  if(!d.ok){ alert('⚠️ ' + d.error); return; }
+  caricaStoricoCapo();
+}
+
+caricaCentri();
+{% endblock %}
