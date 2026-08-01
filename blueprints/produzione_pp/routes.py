@@ -50,6 +50,23 @@ def _api_auth():
 
 def _is_carpenteria(asa): return (asa or "").strip().casefold() == ASA_MASTERWORK.casefold()
 
+
+@pp_bp.route('/ordini-produzione/<codice>/cartellino')
+def pagina_cartellino_op(codice):
+    """
+    Cartellino di lavoro stampabile per un OP — il ciclo di lavoro completo
+    (sequenza di reparti/monitor) con spazio firma, pensato per accompagnare
+    fisicamente il lotto in produzione. Nessuna dipendenza da base.html
+    (pagina standalone, stessa logica del cartellino Schede Trattamento).
+    """
+    o = OrdineProduzione.query.filter_by(codice=codice).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+    fasi = (CicloLavoroWood.query.filter_by(codice=o.codice_articolo)
+            .order_by(CicloLavoroWood.sequenza).all())
+    return render_template('produzione_pp/cartellino_stampa.html', o=o, fasi=fasi)
+
+
 def _audit(o, action, detail="", event_id=""):
     db.session.add(AuditPP(op_code=o.codice, event_id=event_id, azione=action, dettaglio=detail))
 
