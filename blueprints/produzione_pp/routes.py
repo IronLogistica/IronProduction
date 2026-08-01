@@ -13,7 +13,8 @@ from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
-                    _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood)
+                    _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
+                    _residuo_giacenza_progressivo)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 
@@ -229,11 +230,12 @@ def api_ordini_riepilogo_disponibilita():
     risultato = []
     mancanti_per_ordine = []
     tutti_codici_mancanti = set()
+    residuo_per_op, residuo_finale = _residuo_giacenza_progressivo()
     for o in ordini:
         saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
         righe = {}
         if saldo > 0:
-            giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
+            giacenza_residua = dict(residuo_per_op.get(o.id, residuo_finale))
             _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe)
         mancanti = [codice for codice, r in righe.items() if r['mancante'] > 0]
         mancanti_per_ordine.append(mancanti)
