@@ -221,6 +221,11 @@ def api_ordini_riepilogo_disponibilita():
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato != 'Chiuso CO')
               .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
     oggi = datetime.utcnow().date()
+    # Un solo giro per sapere quali codici_articolo hanno ALMENO una fase di
+    # Ciclo di Lavoro impostata — alimenta il flag diagnostico ha_ciclo_lavoro.
+    codici_articolo_op = {o.codice_articolo for o in ordini}
+    codici_con_ciclo = {c for c, in db.session.query(CicloLavoroWood.codice)
+                         .filter(CicloLavoroWood.codice.in_(codici_articolo_op)).distinct().all()} if codici_articolo_op else set()
     risultato = []
     mancanti_per_ordine = []
     tutti_codici_mancanti = set()
@@ -245,6 +250,7 @@ def api_ordini_riepilogo_disponibilita():
             'n_componenti_mancanti': len(mancanti),
             'n_componenti_totali': len(righe),
             'scaduto': bool(o.data_prevista and o.data_prevista < oggi and o.stato != 'Tecnicamente completato'),
+            'ha_ciclo_lavoro': o.codice_articolo in codici_con_ciclo,
         })
 
     # Un solo giro di query per sapere quali codici mancanti hanno GIA' un
@@ -422,7 +428,7 @@ def api_ordini_attivi():
     rows = [o for o in rows if _is_carpenteria(o.asa)]
     return jsonify(orders=[_ordine(o) for o in sorted(rows, key=lambda o: (o.data_prevista is None, o.data_prevista, o.priorita, o.codice))])
 
-def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id):
+def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None):
     """
     Nucleo di registrazione di un consuntivo per l'OP o (già lockato con
     with_for_update dal chiamante): crea l'EventoConsuntivoPP, aggiorna
@@ -431,62 +437,95 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id):
     Condivisa da /api/pp/events (integrazione MasterWork) e dal totem a bordo
     macchina (inizio/fine lavoro) — stesso identico comportamento in entrambi
     i casi. NON fa il commit: il chiamante decide quando farlo.
+
+    'componente': None (o uguale a o.codice_articolo) = si sta consuntivando
+    il prodotto finito/assieme finale dell'OP — comportamento storico
+    invariato (avanza qta_buona/qta_scarto dell'OP, può chiudere l'OP).
+    Se invece è il codice di un COMPONENTE della distinta base (es. uno dei
+    pezzi che passano dalla segatrice prima di diventare il prodotto finito),
+    NON tocca qta_buona/qta_scarto dell'OP (quelle restano riservate al
+    prodotto finito): scarica solo la distinta DIRETTA di quel componente,
+    lo carica a magazzino come semilavorato pronto, e registra la sua
+    varianza separatamente — l'assemblaggio finale (componente=None)
+    continua a esplodere l'intera distinta come sempre.
+    ⚠️ LIMITE NOTO: l'esplosione dell'assemblaggio finale non fa ancora
+    netting contro lo stock di semilavorati creato qui — se si consuntivano
+    ENTRAMBI i livelli per le stesse unità, il consumo di materia prima può
+    risultare contato due volte. Da rifinire con un netting dedicato.
     """
+    componente_finale = not componente or componente == o.codice_articolo
+    codice_lavorato = o.codice_articolo if componente_finale else componente
+
     db.session.add(EventoConsuntivoPP(event_id=event_id, op_code=o.codice, fase=fase_nome,
+                                       componente=None if componente_finale else componente,
                                        timestamp_evento=ts, pezzi_buoni=good, pezzi_scarto=scrap, tempo_minuti=tempo))
-    o.qta_buona += good; o.qta_scarto += scrap; o.tempo_consuntivo_minuti += tempo
-    if o.stato == 'Rilasciato': o.stato = 'In esecuzione'
-    if o.qta_pianificata and o.qta_buona >= o.qta_pianificata:
-        o.stato, o.data_completamento = 'Tecnicamente completato', datetime.utcnow()
-    _audit(o, 'EVENTO_CONSUNTIVO', f'fase={fase_nome}; buoni={good}; scarto={scrap}; minuti={tempo}', event_id)
+    o.tempo_consuntivo_minuti += tempo
+    if componente_finale:
+        o.qta_buona += good; o.qta_scarto += scrap
+        if o.stato == 'Rilasciato': o.stato = 'In esecuzione'
+        if o.qta_pianificata and o.qta_buona >= o.qta_pianificata:
+            o.stato, o.data_completamento = 'Tecnicamente completato', datetime.utcnow()
+    elif o.stato == 'Rilasciato':
+        o.stato = 'In esecuzione'   # un componente ha iniziato la lavorazione: l'OP non è più solo "rilasciato"
+    _audit(o, 'EVENTO_CONSUNTIVO', f'componente={codice_lavorato}; fase={fase_nome}; buoni={good}; scarto={scrap}; minuti={tempo}', event_id)
 
     # Scarico automatico giacenza Iron Wood in proporzione ai pezzi buoni
-    # appena consuntivati: esplode l'intera distinta (nessun netting qui,
-    # solo la quantità reale consumata) e scarica ogni componente toccato.
-    # Poi carica il PRODOTTO FINITO stesso a magazzino, valorizzato al suo
-    # costo standard (materiali + lavorazione + overhead), e registra la
-    # varianza di lavorazione (tempo reale vs standard) quando la fase
-    # dell'evento è abbinabile per nome a un reparto del suo Ciclo di Lavoro.
+    # appena consuntivati. Per il prodotto finito: esplode l'INTERA distinta
+    # (nessun netting qui, solo la quantità reale consumata) e scarica ogni
+    # componente toccato, poi carica il PRODOTTO FINITO a magazzino. Per un
+    # componente intermedio: scarica solo la SUA distinta diretta (un
+    # livello) e carica LUI STESSO a magazzino come semilavorato pronto.
+    # In entrambi i casi si registra anche la varianza di lavorazione (tempo
+    # reale vs standard) quando la fase è abbinabile per nome a un reparto
+    # del Ciclo di Lavoro del codice appena lavorato.
     if good > 0:
         try:
-            componenti = _esplodi_bom_wood(o.codice_articolo, qta=good)
-            consumi = {}
-            _flatten_componenti(componenti, consumi)
+            if componente_finale:
+                componenti_esplosi = _esplodi_bom_wood(o.codice_articolo, qta=good)
+                consumi = {}
+                _flatten_componenti(componenti_esplosi, consumi)
+            else:
+                consumi = {rb.codice_figlio: rb.quantita * good for rb in _righe_bom_attive_wood(componente)}
             for cod, qta_consumata in consumi.items():
                 if qta_consumata:
                     costo_corrente = _calcola_costo_standard(cod)['costo_totale']
                     _registra_movimento_giacenza(cod, -qta_consumata, 'scarico_produzione',
-                                                  riferimento=o.codice, note=f'Consuntivo {good} pz buoni',
+                                                  riferimento=o.codice, note=f'Consuntivo {good} pz buoni ({codice_lavorato})',
                                                   costo_unitario=costo_corrente)
         except Exception:
             pass  # lo scarico giacenza non deve mai bloccare la registrazione del consuntivo
 
         try:
-            costo = _calcola_costo_standard(o.codice_articolo)
+            costo = _calcola_costo_standard(codice_lavorato)
             if costo['codici_senza_costo']:
                 nota_costo = (f'Consuntivo {good} pz buoni — ⚠️ COSTO INCOMPLETO: mancano prezzi per '
                                f'{", ".join(sorted(costo["codici_senza_costo"]))} — totale sottostimato')
             else:
-                nota_costo = f'Consuntivo {good} pz buoni'
-            _registra_movimento_giacenza(o.codice_articolo, good, 'carico_produzione',
+                nota_costo = f'Consuntivo {good} pz buoni' + ('' if componente_finale else ' (semilavorato)')
+            _registra_movimento_giacenza(codice_lavorato, good, 'carico_produzione',
                                           riferimento=o.codice, note=nota_costo,
                                           costo_unitario=costo['costo_totale'])
         except Exception:
             pass  # il carico a magazzino non deve mai bloccare la registrazione del consuntivo
 
         try:
-            riga_ciclo = (CicloLavoroWood.query.filter_by(codice=o.codice_articolo)
+            riga_ciclo = (CicloLavoroWood.query.filter_by(codice=codice_lavorato)
                           .join(CicloLavoroWood.centro_costo)
                           .filter(db.func.lower(CentroCostoWood.nome) == fase_nome.lower())
                           .first())
             if riga_ciclo and riga_ciclo.produttivita_oraria:
                 fase_congelata = None
-                legame = LegameCostoStandardOrdineWood.query.get(o.codice)
-                if legame and legame.costo_standard_versione_id:
-                    fase_congelata = (CostoStandardVersioneFaseWood.query
-                                      .filter_by(versione_id=legame.costo_standard_versione_id)
-                                      .filter(db.func.lower(CostoStandardVersioneFaseWood.nome_reparto) == fase_nome.lower())
-                                      .first())
+                if componente_finale:
+                    legame = LegameCostoStandardOrdineWood.query.get(o.codice)
+                    if legame and legame.costo_standard_versione_id:
+                        fase_congelata = (CostoStandardVersioneFaseWood.query
+                                          .filter_by(versione_id=legame.costo_standard_versione_id)
+                                          .filter(db.func.lower(CostoStandardVersioneFaseWood.nome_reparto) == fase_nome.lower())
+                                          .first())
+                # Per i componenti intermedi non esiste ancora uno snapshot di
+                # costo standard congelato dedicato: si usano le tariffe
+                # CORRENTI sia per lo standard sia per il reale (varianza di
+                # tariffa sempre 0 in quel caso — solo efficienza è significativa).
 
                 produttivita_std = fase_congelata.produttivita_oraria_congelata if fase_congelata else riga_ciclo.produttivita_oraria
                 tariffa_macchina_std = fase_congelata.costo_orario_congelato if fase_congelata else (riga_ciclo.centro_costo.costo_orario or 0)
@@ -511,7 +550,7 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id):
                 var_tariffa_mdo = varianza_tariffa(tariffa_mdo_reale, tariffa_mdo_std, ore_reali)
 
                 db.session.add(VarianzaProduzioneWood(
-                    op_code=o.codice, codice_articolo=o.codice_articolo, fase=fase_nome, quantita=good,
+                    op_code=o.codice, codice_articolo=codice_lavorato, fase=fase_nome, quantita=good,
                     tempo_standard_minuti=round(tempo_standard_min, 2), tempo_reale_minuti=tempo,
                     costo_standard_lavorazione=round(costo_standard_lav, 4),
                     costo_reale_lavorazione=round(costo_reale_lav, 4),
@@ -542,7 +581,8 @@ def api_evento():
         if not o: return jsonify(ok=False, error='OP non trovato'), 404
         if not _is_carpenteria(o.asa) or o.stato not in ('Rilasciato','In esecuzione'):
             return jsonify(ok=False, error='OP non attivo o non disponibile per Carpenteria Propria'), 409
-        _registra_evento_consuntivo(o, str(d['fase']).strip(), ts, good, scrap, tempo, str(d['event_id']).strip())
+        _registra_evento_consuntivo(o, str(d['fase']).strip(), ts, good, scrap, tempo, str(d['event_id']).strip(),
+                                     componente=(str(d['componente']).strip() if d.get('componente') else None))
         db.session.commit(); return jsonify(ok=True, deduplicated=False, ordine=_ordine(o)), 201
     except ValueError as exc: return jsonify(ok=False, error=str(exc)), 400
     except IntegrityError:
