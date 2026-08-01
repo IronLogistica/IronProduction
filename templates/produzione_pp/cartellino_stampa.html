@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cartellino di Lavoro — {{ o.codice }}</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<style>
+  :root{ --iron-black:#111318; --iron-blue:#1e5fa8; --iron-blue2:#2b7bd1; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:#e7ebef;display:flex;justify-content:center;padding:24px 12px}
+
+  .toolbar{position:fixed;top:14px;right:14px;display:flex;gap:8px;z-index:10}
+  .toolbar button{border:none;padding:10px 18px;border-radius:7px;font-weight:700;font-size:13px;cursor:pointer;box-shadow:0 3px 10px rgba(0,0,0,.25)}
+  .btn-print{background:var(--iron-blue);color:#fff}
+
+  .card{width:640px;max-width:96vw;background:#fff;border:3px solid var(--iron-black);border-radius:6px;overflow:hidden}
+
+  .hdr{display:flex;align-items:stretch}
+  .hdr-logo{background:var(--iron-black);color:#fff;flex:1;display:flex;flex-direction:column;justify-content:center;padding:12px 18px}
+  .hdr-logo .brand{font-size:20px;font-weight:900;letter-spacing:2px}
+  .hdr-logo .title{font-size:15px;font-weight:800;letter-spacing:.5px;margin-top:2px}
+  .hdr-qr{background:linear-gradient(135deg,var(--iron-blue),var(--iron-blue2));width:120px;display:flex;align-items:center;justify-content:center;padding:8px}
+  #qrcode{background:#fff;padding:4px;border-radius:4px}
+
+  .field{padding:10px 18px;border-bottom:2px dashed #c6ccd3}
+  .field .lbl{font-size:10px;font-weight:800;letter-spacing:1px;color:#5a6472;text-transform:uppercase}
+  .field .val{font-size:20px;font-weight:900;color:var(--iron-black);margin-top:2px;word-break:break-word}
+  .field-grid{display:grid;grid-template-columns:1fr 1fr;gap:0}
+  .field-grid .field{border-right:2px dashed #c6ccd3}
+
+  table.ciclo{width:100%;border-collapse:collapse;font-size:13px}
+  table.ciclo th{background:#f0f3f7;text-align:left;padding:8px 12px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#5a6472;border-bottom:2px solid #c6ccd3}
+  table.ciclo td{padding:10px 12px;border-bottom:1px solid #e2e6ea}
+  .seq-badge{display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:var(--iron-blue);color:#fff;font-weight:800;font-size:12px}
+
+  .firma{padding:18px;display:flex;gap:24px}
+  .firma-box{flex:1}
+  .firma-box .lbl{font-size:10px;font-weight:800;letter-spacing:1px;color:#5a6472;text-transform:uppercase;margin-bottom:28px}
+  .firma-line{border-top:1px solid #5a6472}
+
+  .note-area{padding:0 18px 18px}
+  .note-area .lbl{font-size:10px;font-weight:800;letter-spacing:1px;color:#5a6472;text-transform:uppercase;margin-bottom:6px}
+  .note-box{border:1px solid #c6ccd3;border-radius:4px;height:60px}
+
+  @media print{
+    body{background:#fff;padding:0}
+    .toolbar{display:none}
+    .card{border-width:2px}
+  }
+</style>
+</head>
+<body>
+<div class="toolbar">
+  <button class="btn-print" onclick="window.print()">🖨️ Stampa</button>
+</div>
+
+<div class="card">
+  <div class="hdr">
+    <div class="hdr-logo">
+      <div class="brand">MES CARPENTERIA</div>
+      <div class="title">Cartellino di Lavoro</div>
+    </div>
+    <div class="hdr-qr"><div id="qrcode"></div></div>
+  </div>
+
+  <div class="field-grid">
+    <div class="field"><div class="lbl">OP</div><div class="val">{{ o.codice }}</div></div>
+    <div class="field"><div class="lbl">Priorità</div><div class="val">P{{ o.priorita }}</div></div>
+  </div>
+  <div class="field"><div class="lbl">Articolo</div><div class="val">{{ o.codice_articolo }}{% if o.descrizione %} — {{ o.descrizione }}{% endif %}</div></div>
+  <div class="field-grid">
+    <div class="field"><div class="lbl">Cliente</div><div class="val">{{ o.cliente or '—' }}</div></div>
+    <div class="field"><div class="lbl">Commessa</div><div class="val">{{ o.commessa or '—' }}</div></div>
+  </div>
+  <div class="field-grid">
+    <div class="field"><div class="lbl">Quantità pianificata</div><div class="val">{{ o.qta_pianificata }}</div></div>
+    <div class="field"><div class="lbl">Consegna</div><div class="val">{{ o.data_prevista.strftime('%d/%m/%Y') if o.data_prevista else '—' }}</div></div>
+  </div>
+
+  <table class="ciclo">
+    <thead><tr><th>Fase</th><th>Monitor / Centro di costo</th><th>Pz/ora</th></tr></thead>
+    <tbody>
+      {% for f in fasi %}
+      <tr><td><span class="seq-badge">{{ f.sequenza }}</span></td><td>{{ f.centro_costo.nome if f.centro_costo else '—' }}</td><td>{{ f.produttivita_oraria or '—' }}</td></tr>
+      {% else %}
+      <tr><td colspan="3" style="color:#999;font-style:italic;text-align:center">Nessun ciclo di lavoro configurato per questo articolo.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="note-area">
+    <div class="lbl">Note</div>
+    <div class="note-box"></div>
+  </div>
+
+  <div class="firma">
+    <div class="firma-box"><div class="lbl">Consegnato da</div><div class="firma-line"></div></div>
+    <div class="firma-box"><div class="lbl">Ritirato da</div><div class="firma-line"></div></div>
+  </div>
+</div>
+
+<script>
+  new QRCode(document.getElementById("qrcode"), {
+    text: window.location.href, width: 90, height: 90,
+    colorDark: "#111318", colorLight: "#ffffff"
+  });
+</script>
+</body>
+</html>

@@ -77,7 +77,8 @@ async function load(){try{const list=await api('/api/ordini-produzione'); rows.i
   if(x.stato==='Tecnicamente completato') azioni += `<button class="btn btn-ghost" onclick="closeCo(${x.id})">Chiudi CO</button> `;
   if(puoModificare) azioni += `<button class="btn btn-ghost" onclick='apriModificaOp(${JSON.stringify(x)})'>✏️ Modifica</button> `;
   if(puoEliminare) azioni += `<button class="btn btn-ghost" onclick="deleteOp(${x.id},'${esc(x.codice)}')" style="color:#c0392b">🗑️ Elimina</button> `;
-  if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/analisi-costo">📊 Analisi Costo</a>`;
+  if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/analisi-costo">📊 Analisi Costo</a> `;
+  if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/cartellino" target="_blank">🖨️ Cartellino</a>`;
   return `<tr><td><b>${esc(x.codice)}</b><br>${priorita}</td><td>${esc(x.codice_articolo)}<br><small>${esc(x.descrizione)}</small></td><td>${esc(x.cliente)}<br><small>${esc(x.commessa)}</small></td><td>${esc(x.asa)}<br><small>${x.data_inizio||'—'} → ${x.data_prevista||'—'}</small></td><td>${x.qta_pianificata} · ${x.qta_buona} · ${x.qta_scarto}</td><td>${esc(x.stato)}</td><td style="white-space:nowrap">${azioni}</td></tr>`;
 }).join('')||'<tr><td colspan="7">Nessun ordine di produzione.</td></tr>'}catch(e){message.textContent=e.message}}
 
