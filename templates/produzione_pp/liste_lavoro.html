@@ -46,7 +46,11 @@ async function caricaListeLavoro(){
         <div class="pct-bar" style="background:rgba(255,255,255,.08);border-radius:8px;height:10px;overflow:hidden">
           <div style="background:linear-gradient(90deg,#2589c7,#1a9e5c);height:100%;width:${pct}%"></div>
         </div>
-        <div style="text-align:right;font-size:11px;color:var(--accent2);margin-top:8px">📄 Apri ordine di lavoro →</div>
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px">
+          <span style="font-size:11px;color:var(--accent2)">📄 Apri ordine di lavoro →</span>
+          <button onclick="event.stopPropagation(); window.open('/ordini-produzione/${o.op_codice}/lista-lavoro/${CENTRO_ID}?stampa=1','_blank')"
+                  style="background:var(--accent2);color:#fff;border:none;border-radius:6px;padding:6px 12px;font-size:11px;font-weight:700;cursor:pointer">🖨️ Stampa</button>
+        </div>
       </div>`;
     }).join('');
   }catch(e){

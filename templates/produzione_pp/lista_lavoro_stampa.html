@@ -167,6 +167,13 @@
 
   <div class="foto-placeholder">📷 Documentazione tecnica e foto di riferimento — consultabili in "Documentazione Articolo" per il codice {{ dati.codice_articolo }}</div>
 </div>
+<script>
+  // Arrivo dal pulsante "🖨️ Stampa" della card nella pagina Liste di Lavoro —
+  // apre subito la finestra di stampa, senza dover cercare il pulsante qui.
+  if (new URLSearchParams(window.location.search).get('stampa') === '1') {
+    window.addEventListener('load', () => setTimeout(() => window.print(), 300));
+  }
+</script>
 {% endif %}
 </body>
 </html>
