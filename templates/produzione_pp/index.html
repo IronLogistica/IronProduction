@@ -1,137 +1,161 @@
 {% extends "base.html" %}
 {% block content %}
-<div class="page-toolbar"><div class="page-title">🏭 Ordini di Produzione</div><a class="btn btn-ghost" href="/ordini-produzione/situazione">🗂️ Situazione (card)</a> <a class="btn btn-ghost" href="/ordini-produzione/avanzamento">📊 Avanzamento</a></div>
-<div class="card" style="padding:18px;margin-bottom:16px"><form id="opForm" class="op-grid">
-<div style="position:relative"><input id="opCodiceArticolo" name="codice_articolo" required maxlength="100" placeholder="Codice articolo *" autocomplete="off" oninput="suggerisciCodiciOP()" onfocus="suggerisciCodiciOP()">
-<div id="opCodiceSuggerimenti" style="display:none;position:absolute;top:100%;left:0;z-index:20;background:#fff;border:1px solid #ccd5df;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;width:100%"></div></div>
-<input name="descrizione" maxlength="300" placeholder="Descrizione">
-<input name="cliente" maxlength="200" placeholder="Cliente"><input readonly value="La commessa viene generata automaticamente (es. 26070001)" style="color:var(--text-dim);font-style:italic;background:#f4f6f8">
-<input name="qta_pianificata" required type="number" min="0" placeholder="Quantità pianificata *"><input name="asa" required maxlength="100" value="Carpenteria Propria" placeholder="ASA *">
-<label>Inizio <input name="data_inizio" type="date"></label><label>Consegna <input name="data_prevista" type="date"></label>
-<label>Priorità <select name="priorita">{% for n in range(1,10) %}<option value="{{n}}" {% if n==5 %}selected{% endif %}>{{n}}</option>{% endfor %}</select></label>
-<button class="btn btn-primary" type="submit">Crea OP</button></form><p id="message"></p><div id="scorta-result"></div></div>
-<div class="card" style="padding:18px;overflow:auto"><table class="kanban-table"><thead><tr><th>OP / priorità</th><th>Articolo</th><th>Cliente / commessa</th><th>ASA / date</th><th>Pian. · buoni · scarto</th><th>Stato</th><th>Azioni</th></tr></thead><tbody id="rows"></tbody></table></div>
-<style>.op-grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px}.op-grid input,.op-grid select{width:100%;box-sizing:border-box;padding:9px;border:1px solid #ccd5df;border-radius:5px}.op-grid label{font-size:12px;color:var(--text-dim)}@media(max-width:850px){.op-grid{grid-template-columns:1fr 1fr}}</style>
+<style>
+  .mat-table{width:100%;border-collapse:collapse;font-size:13px}
+  .mat-table thead th{padding:10px 12px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.3px;
+                       border-bottom:2px solid var(--border);white-space:nowrap}
+  .mat-table tbody td{padding:10px 12px;border-bottom:1px solid rgba(255,255,255,.04);vertical-align:middle}
+  .mat-table tbody tr:hover{background:rgba(255,255,255,.03)}
+  .mt-th-stock{color:#2a9d5c}
+  .mt-th-impegnato{color:#e8760a}
+  .mt-th-ordinato{color:#4d9fd6}
+  .mt-th-disp{color:#2589c7}
+  .mt-th-scorta{color:var(--text-dim)}
+  .mt-th-fabb{color:#e74c3c}
+  .mt-val-stock{color:#e0eefc;font-weight:700;font-size:14px}
+  .mt-val-impegnato{color:#e8760a;font-weight:600}
+  .mt-val-ordinato{color:#4d9fd6;font-weight:600}
+  .mt-val-disp{color:#2589c7;font-weight:800;font-size:14px}
+  .mt-val-zero{color:var(--text-dim);opacity:.55}
+  .mt-fabb-badge{color:#ff6b6b;font-weight:800;display:inline-flex;align-items:center;gap:3px}
+  .mt-fabb-ok{color:var(--text-dim);opacity:.5}
+</style>
+<div class="page-toolbar">
+  <div class="page-title">📦 Magazzino Iron Wood</div>
+  <span style="font-size:11px;color:var(--text-dim);margin-left:auto">Solo codici della Distinta Base Iron Wood — prodotti finiti, semilavorati, materia prima</span>
+</div>
 
-<div class="modal-overlay" id="modal-modifica-op">
-  <div class="modal-box" style="width:480px;max-width:96vw">
-    <h3>✏️ Modifica Ordine di Produzione</h3>
-    <label class="modal-label">Codice articolo</label>
-    <input id="mod-codice-articolo" class="modal-input" type="text">
-    <label class="modal-label">Descrizione</label>
-    <input id="mod-descrizione" class="modal-input" type="text">
-    <label class="modal-label">Cliente</label>
-    <input id="mod-cliente" class="modal-input" type="text">
-    <div style="display:flex;gap:10px">
-      <div style="flex:1"><label class="modal-label">Quantità pianificata</label>
-        <input id="mod-qta" class="modal-input" type="number" min="1"></div>
-      <div style="flex:1"><label class="modal-label">Priorità</label>
-        <input id="mod-priorita" class="modal-input" type="number" min="1"></div>
+<div class="mon-section" style="border:1px dashed var(--border)">
+  <div style="padding:12px;font-size:12px;color:var(--text-dim)">
+    🌲 La gestione della Distinta Base Iron Wood e del Ciclo di Lavoro si fa in
+    <a href="/parametri-lavorazione-wood" style="color:var(--accent2)">⚙️ Parametri di Lavorazione</a> — qui resta solo il magazzino.
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">📊 Giacenza — prodotti finiti, semilavorati, materia prima</div>
+  <div style="padding:14px">
+    <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px">
+      <input id="mag-ricerca" type="text" placeholder="🔍 Cerca codice o descrizione..." oninput="caricaMagazzinoWood()"
+             style="flex:1;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text);font-size:13px">
     </div>
-    <p style="font-size:11px;color:var(--text-dim);margin-top:6px">
-      Se l'OP è già Rilasciato, la modifica ricalcola subito l'impatto su giacenza/impegni/mancante — vedi sotto dopo aver salvato.
-    </p>
-    <button class="btn btn-primary" style="margin-top:8px" onclick="salvaModificaOp()">💾 Salva modifiche</button>
-    <span id="mod-esito" style="font-size:12px;margin-left:8px"></span>
-    <div id="mod-scorta" style="margin-top:10px"></div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-modifica-op')">Chiudi</button>
-    </div>
+    <div id="mag-avviso" style="font-size:12px;color:#b8860b;margin-bottom:8px"></div>
+    <div id="mag-lista" style="font-size:13px;color:#666">Caricamento...</div>
   </div>
 </div>
 {% endblock %}
 {% block scripts %}
-const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
-async function api(url, options={}) { const r=await fetch(url,options); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Errore'); return d; }
-let codiciPadreCache=[];
-let codiciPadreValidi=new Set();
-async function precaricaCodiciPadre(){
+async function caricaMagazzinoWood(){
+  const box = document.getElementById('mag-lista');
+  const avviso = document.getElementById('mag-avviso');
+  const q = document.getElementById('mag-ricerca').value.trim();
+  box.innerHTML = 'Caricamento...';
+  avviso.innerHTML = '';
   try{
-    codiciPadreCache=await api('/api/codici_padre_wood');
-    codiciPadreValidi=new Set(codiciPadreCache.map(x=>x.codice));
-  }catch(e){/* silenzioso: il campo resta comunque compilabile a mano */}
-}
-async function suggerisciCodiciOP(){
-  const input=document.getElementById('opCodiceArticolo');
-  const box=document.getElementById('opCodiceSuggerimenti');
-  const val=input.value.trim().toLowerCase();
-  if(!codiciPadreCache.length) await precaricaCodiciPadre();
-  const match=val?codiciPadreCache.filter(x=>x.codice.toLowerCase().includes(val)).slice(0,30):codiciPadreCache.slice(0,30);
-  if(!match.length){box.style.display='none';box.innerHTML='';return;}
-  box.innerHTML=match.map(x=>`<div style="padding:7px 10px;cursor:pointer;border-bottom:1px solid #eee"
-    onmousedown="document.getElementById('opCodiceArticolo').value='${esc(x.codice)}';document.getElementById('opCodiceSuggerimenti').style.display='none';"
-    onmouseover="this.style.background='#f2f6fa'" onmouseout="this.style.background='#fff'">
-    <b>${esc(x.codice)}</b>${x.descrizione?`<br><span style="font-size:11px;color:#999">${esc(x.descrizione)}</span>`:''}</div>`).join('');
-  box.style.display='block';
-}
-document.addEventListener('click',e=>{
-  const box=document.getElementById('opCodiceSuggerimenti');
-  if(box && !e.target.closest('#opCodiceArticolo') && !e.target.closest('#opCodiceSuggerimenti')) box.style.display='none';
-});
-async function load(){try{const list=await api('/api/ordini-produzione'); rows.innerHTML=list.map(x=>{
-  const puoModificare = x.stato==='Creato' || x.stato==='Rilasciato';
-  const puoEliminare = x.stato==='Creato' || (x.stato==='Rilasciato' && x.qta_buona===0);
-  const priorita = (x.stato==='Creato'||x.stato==='Rilasciato')?`<select style="width:52px;font-size:11px;padding:1px" onchange="cambiaPriorita(${x.id},this.value)">${Array.from({length:9},(_,i)=>i+1).map(n=>`<option value="${n}" ${n===x.priorita?'selected':''}>P${n}</option>`).join('')}</select>`:`<small>P${x.priorita}</small>`;
-  let azioni = '';
-  if(x.stato==='Creato') azioni += `<button class="btn btn-primary" onclick="releaseOp(${x.id})">Rilascia</button> `;
-  if(x.stato==='Tecnicamente completato') azioni += `<button class="btn btn-ghost" onclick="closeCo(${x.id})">Chiudi CO</button> `;
-  if(puoModificare) azioni += `<button class="btn btn-ghost" onclick='apriModificaOp(${JSON.stringify(x)})'>✏️ Modifica</button> `;
-  if(puoEliminare) azioni += `<button class="btn btn-ghost" onclick="deleteOp(${x.id},'${esc(x.codice)}')" style="color:#c0392b">🗑️ Elimina</button> `;
-  if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/analisi-costo">📊 Analisi Costo</a>`;
-  return `<tr><td><b>${esc(x.codice)}</b><br>${priorita}</td><td>${esc(x.codice_articolo)}<br><small>${esc(x.descrizione)}</small></td><td>${esc(x.cliente)}<br><small>${esc(x.commessa)}</small></td><td>${esc(x.asa)}<br><small>${x.data_inizio||'—'} → ${x.data_prevista||'—'}</small></td><td>${x.qta_pianificata} · ${x.qta_buona} · ${x.qta_scarto}</td><td>${esc(x.stato)}</td><td style="white-space:nowrap">${azioni}</td></tr>`;
-}).join('')||'<tr><td colspan="7">Nessun ordine di produzione.</td></tr>'}catch(e){message.textContent=e.message}}
-
-let _opInModifica = null;
-function apriModificaOp(x){
-  _opInModifica = x.id;
-  document.getElementById('mod-codice-articolo').value = x.codice_articolo;
-  document.getElementById('mod-descrizione').value = x.descrizione || '';
-  document.getElementById('mod-cliente').value = x.cliente || '';
-  document.getElementById('mod-qta').value = x.qta_pianificata;
-  document.getElementById('mod-priorita').value = x.priorita;
-  document.getElementById('mod-esito').textContent = '';
-  document.getElementById('mod-scorta').innerHTML = '';
-  openModal('modal-modifica-op');
-}
-async function salvaModificaOp(){
-  const esito = document.getElementById('mod-esito');
-  const payload = {
-    codice_articolo: document.getElementById('mod-codice-articolo').value.trim(),
-    descrizione: document.getElementById('mod-descrizione').value.trim(),
-    cliente: document.getElementById('mod-cliente').value.trim(),
-    qta_pianificata: document.getElementById('mod-qta').value,
-    priorita: document.getElementById('mod-priorita').value,
-  };
-  try{
-    const r = await fetch('/api/ordini-produzione/' + _opInModifica, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const url = '/api/giacenza_wood?solo_bom=1' + (q ? '&q=' + encodeURIComponent(q) : '');
+    const r = await fetch(url);
     const d = await r.json();
-    if(!d.ok){ esito.style.color='#c0392b'; esito.textContent='⚠️ ' + d.error; return; }
-    esito.style.color = '#2a9d5c'; esito.textContent = '✓ Salvato.';
-    renderControlloScorta(d.controllo_scorta, 'mod-scorta');
-    load();
+    const righe = d.righe || [];
+    if(d.totale > d.mostrate){
+      avviso.innerHTML = q
+        ? `⚠️ Mostrate ${d.mostrate} righe su ${d.totale} totali che corrispondono alla ricerca.`
+        : `ℹ️ Mostrate le ${d.mostrate} righe più recenti su ${d.totale} totali — usa la ricerca per trovarne altre.`;
+    }
+    if(!righe.length){
+      box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun codice trovato — verifica che la Distinta Base Iron Wood sia compilata e che il codice abbia una giacenza registrata.</p>';
+      return;
+    }
+    let html = `<div style="overflow-x:auto"><table class="mat-table"><thead><tr>
+      <th>Codice</th><th>Descrizione</th>
+      <th class="mt-th-stock">+ Stock</th>
+      <th class="mt-th-impegnato">− Impegnato OP</th>
+      <th class="mt-th-ordinato">+ Ordinato Fornitori</th>
+      <th class="mt-th-disp">(=) Disp. Contabile</th>
+      <th class="mt-th-scorta">− Scorta Min.</th>
+      <th class="mt-th-fabb">(=) Fabbisogno</th></tr></thead><tbody>`;
+    righe.forEach(g=>{
+      html += `<tr>
+        <td class="codice">${g.codice}</td>
+        <td class="prod-name">${g.descrizione || '—'}</td>
+        <td class="${g.quantita>0?'mt-val-stock':'mt-val-zero'}">
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="number" step="0.01" value="${g.quantita}" id="stock-${g.codice}"
+                   style="width:80px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);background:var(--dark3);color:inherit">
+            <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="salvaStock('${g.codice}')" title="Salva nuovo stock">💾</button>
+          </div>
+        </td>
+        <td class="${g.impegnato>0?'mt-val-impegnato':'mt-val-zero'}">${g.impegnato>0?g.impegnato:0}</td>
+        <td class="${g.ordinato>0?'mt-val-ordinato':'mt-val-zero'}">${g.ordinato>0?g.ordinato:0}</td>
+        <td class="mt-val-disp">${g.disponibile_contabile}</td>
+        <td class="mt-val-zero">
+          <div style="display:flex;align-items:center;gap:4px">
+            <input type="number" step="0.01" value="${g.scorta_minima}" id="scorta-${g.codice}"
+                   style="width:70px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);background:var(--dark3);color:inherit">
+            <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="salvaScortaMinima('${g.codice}')" title="Salva scorta minima">💾</button>
+          </div>
+        </td>
+        <td>${g.fabbisogno>0?`<span class="mt-fabb-badge">▲ ${g.fabbisogno}</span>`:`<span class="mt-fabb-ok">0</span>`}</td>
+      </tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
   }catch(e){
-    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
   }
 }
-async function cambiaPriorita(id,valore){try{await api('/api/ordini-produzione/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({priorita:parseInt(valore)})});load()}catch(e){alert(e.message)}}
-async function releaseOp(id){try{await api('/api/ordini-produzione/'+id+'/rilascia',{method:'POST'});load()}catch(e){alert(e.message)}}
-async function closeCo(id){try{await api('/api/ordini-produzione/'+id+'/chiudi-co',{method:'POST'});load()}catch(e){alert(e.message)}}
-async function deleteOp(id,codice){if(!confirm('Eliminare definitivamente '+codice+'? L\'operazione non è reversibile.'))return;try{await api('/api/ordini-produzione/'+id,{method:'DELETE'});load()}catch(e){alert(e.message)}}
-opForm.onsubmit=async e=>{e.preventDefault();message.textContent='';document.getElementById('scorta-result').innerHTML='';const data=Object.fromEntries(new FormData(opForm));if(codiciPadreValidi.size && !codiciPadreValidi.has(data.codice_articolo)){message.textContent='⚠️ Codice non presente tra i codici padre della distinta base Iron Wood — selezionalo dall\'elenco.';return}try{const r=await api('/api/ordini-produzione',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});message.textContent='Creato '+r.ordine.codice+' — Commessa '+r.ordine.commessa;renderControlloScorta(r.controllo_scorta);opForm.reset();load()}catch(e){message.textContent='Errore: '+e.message}}; load(); precaricaCodiciPadre();
 
-function renderControlloScorta(righe, targetId){
-  const box = document.getElementById(targetId || 'scorta-result');
-  if(!righe || !righe.length){ box.innerHTML=''; return; }
-  let html = '<div style="margin-top:10px"><div style="font-weight:700;font-size:12px;margin-bottom:4px">📊 Controllo scorta per questo OP</div>' +
-    '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
-    '<th>Codice</th><th>Giacenza</th><th>Già impegnato</th><th>Disponibile</th><th>Fabbisogno OP</th><th>Mancante</th></tr></thead><tbody>';
-  righe.forEach(r=>{
-    const colore = r.mancante > 0 ? '#c0392b' : '#2a9d5c';
-    const badge = r.mancante > 0 ? `<span class="badge badge-warn">❌ Mancano ${r.mancante}</span>` : '<span class="badge badge-ok">✅ Coperto</span>';
-    html += `<tr><td class="codice">${esc(r.codice)}</td><td class="num">${r.giacenza}</td><td class="num">${r.gia_impegnato}</td>` +
-      `<td class="num">${r.disponibile}</td><td class="num">${r.fabbisogno_nuovo_op}</td><td class="num" style="color:${colore};font-weight:700">${badge}</td></tr>`;
-  });
-  html += '</tbody></table></div></div>';
-  box.innerHTML = html;
+async function salvaStock(codice){
+  const input = document.getElementById('stock-' + codice);
+  const nuovoValore = parseFloat(input.value);
+  if(isNaN(nuovoValore)){ alert('⚠️ Valore non valido.'); return; }
+  try{
+    // /api/giacenza_wood/rettifica lavora per DELTA (movimento carico/scarico,
+    // tracciato nello storico) — qui calcoliamo il delta necessario per
+    // portare lo stock esattamente al valore che hai scritto.
+    const rAttuale = await fetch('/api/giacenza_wood?q=' + encodeURIComponent(codice));
+    const dAttuale = await rAttuale.json();
+    const rigaAttuale = (dAttuale.righe || []).find(x => x.codice === codice);
+    const valoreAttuale = rigaAttuale ? rigaAttuale.quantita : 0;
+    const delta = nuovoValore - valoreAttuale;
+    if(delta === 0){ return; }
+    const r = await fetch('/api/giacenza_wood/rettifica', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice: codice, quantita: delta, note: 'Modifica da Magazzino'})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    showToast('✅ Stock aggiornato');
+    caricaMagazzinoWood();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
 }
+
+async function salvaScortaMinima(codice){
+  const input = document.getElementById('scorta-' + codice);
+  const valore = parseFloat(input.value);
+  if(isNaN(valore) || valore < 0){ alert('⚠️ La scorta minima deve essere un numero ≥ 0.'); return; }
+  try{
+    const r = await fetch('/api/giacenza_wood/' + encodeURIComponent(codice) + '/scorta_minima', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({scorta_minima: valore})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    showToast('✅ Scorta minima aggiornata');
+    caricaMagazzinoWood();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+caricaMagazzinoWood();
+
+// Arrivo da un link incrociato (es. da un altro report): ?articolo=/?ciclo=/?distinta=
+// portano tutti alla pagina Parametri di Lavorazione, che gestisce ormai anche la BOM.
+(function apriConfigurazioneDaCostoStandard(){
+  const q = new URLSearchParams(window.location.search);
+  const articolo = q.get('articolo') || q.get('ciclo') || q.get('distinta');
+  if(articolo){ window.location.href = '/parametri-lavorazione-wood?radice=' + encodeURIComponent(articolo); }
+})();
 {% endblock %}
