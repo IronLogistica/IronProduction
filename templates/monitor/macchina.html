@@ -38,28 +38,53 @@
 {% set label, hdr_class = sezioni_map[sezione] %}
 <div class="mon-section">
   <div class="{{ hdr_class }}">
-    <div class="section-hdr-wrap"><span>{{ label }}</span><span style="font-size:11px;color:rgba(255,255,255,.8)">{{ righe_per_sezione[sezione]|length }}</span></div>
+    <div class="section-hdr-wrap"><span>{{ label }}</span><span style="font-size:11px;color:rgba(255,255,255,.8)">{{ gruppi_per_sezione[sezione]|length }}</span></div>
   </div>
   <table class="mon-table">
     <thead><tr>
       <th>Prio</th><th>Commessa</th><th>OP</th><th>Prodotto finito</th><th>Componente lavorato</th><th>Saldo</th><th>Descrizione</th><th>%</th><th>Tot.</th>
     </tr></thead>
     <tbody id="tbody-{{ sezione }}">
-    {% set righe = righe_per_sezione[sezione] %}
-    {% if righe %}
-      {% for r in righe %}
-      <tr id="row-{{ r.op_id }}-{{ loop.index }}">
-        <td><input class="prio-input" type="number" value="{{ r.posizione_manuale if r.posizione_manuale is not none else '' }}"
-                   placeholder="{{ r.priorita }}" onchange="impostaPosizione({{ r.op_id }}, this.value)"></td>
-        <td class="comm-id">{{ r.commessa }}</td>
-        <td class="codice" style="cursor:pointer" onclick="apriSituazioneOP('{{ r.op_codice }}')">{{ r.op_codice }}</td>
-        <td class="codice">{{ r.codice_articolo }}</td>
-        <td class="codice">{% if r.componente_finale %}<span style="color:var(--text-dim);font-style:italic">assieme finale</span>{% else %}{{ r.componente }} <span class="badge" style="font-size:9px;background:rgba(37,137,199,.18);color:#2589c7">componente</span>{% endif %}</td>
-        <td class="num {% if r.saldo > 0 %}num-pos{% endif %}">{{ r.saldo }}</td>
-        <td class="descr-td">{{ r.descrizione }}</td>
-        <td><div class="pct-bar"><div class="pct-fill" style="width:{{ [r.pct,100]|min }}%"></div><span>{{ r.pct }}%</span></div></td>
-        <td class="num">{{ r.totale }}</td>
+    {% set gruppi = gruppi_per_sezione[sezione] %}
+    {% if gruppi %}
+      {% for g in gruppi %}
+      {% set gid = sezione ~ '-' ~ g.op_id %}
+      {% set multi = g.componenti|length > 1 %}
+      <tr id="grp-{{ gid }}" {% if multi %}style="cursor:pointer" onclick="toggleGruppo('{{ gid }}')"{% endif %}>
+        <td onclick="event.stopPropagation()"><input class="prio-input" type="number" value="{{ g.posizione_manuale if g.posizione_manuale is not none else '' }}"
+                   placeholder="{{ g.priorita }}" onchange="impostaPosizione({{ g.op_id }}, this.value)"></td>
+        <td class="comm-id">{{ g.commessa }}</td>
+        <td class="codice" style="cursor:pointer" onclick="event.stopPropagation();apriSituazioneOP('{{ g.op_codice }}')">{{ g.op_codice }}</td>
+        <td class="codice">{{ g.codice_articolo }}</td>
+        <td class="codice">
+          {% if multi %}
+            <span id="chev-{{ gid }}">▶</span> {{ g.componenti|length }} componenti
+          {% elif g.componenti[0].componente_finale %}
+            <span style="color:var(--text-dim);font-style:italic">assieme finale</span>
+          {% else %}
+            {{ g.componenti[0].componente }} <span class="badge" style="font-size:9px;background:rgba(37,137,199,.18);color:#2589c7">componente</span>
+          {% endif %}
+        </td>
+        <td class="num {% if g.saldo_totale > 0 %}num-pos{% endif %}">{{ g.saldo_totale }}</td>
+        <td class="descr-td">{{ g.descrizione }}</td>
+        <td><div class="pct-bar"><div class="pct-fill" style="width:{{ [g.pct_aggregato,100]|min }}%"></div><span>{{ g.pct_aggregato }}%</span></div></td>
+        <td class="num">{{ g.totale_totale }}</td>
       </tr>
+      {% if multi %}
+        {% for r in g.componenti %}
+        <tr class="riga-dettaglio" data-gruppo="{{ gid }}" style="display:none;background:rgba(255,255,255,.03)">
+          <td></td>
+          <td class="comm-id" style="opacity:.55">↳</td>
+          <td class="codice" style="opacity:.7">{{ r.op_codice }}</td>
+          <td class="codice" style="opacity:.7">{{ r.codice_articolo }}</td>
+          <td class="codice">{% if r.componente_finale %}<span style="color:var(--text-dim);font-style:italic">assieme finale</span>{% else %}{{ r.componente }} <span class="badge" style="font-size:9px;background:rgba(37,137,199,.18);color:#2589c7">componente</span>{% endif %}</td>
+          <td class="num {% if r.saldo > 0 %}num-pos{% endif %}">{{ r.saldo }}</td>
+          <td class="descr-td">{{ r.descrizione }}</td>
+          <td><div class="pct-bar"><div class="pct-fill" style="width:{{ [r.pct,100]|min }}%"></div><span>{{ r.pct }}%</span></div></td>
+          <td class="num">{{ r.totale }}</td>
+        </tr>
+        {% endfor %}
+      {% endif %}
       {% endfor %}
     {% else %}
       <tr><td colspan="9" style="text-align:center;color:#5a7090;padding:10px;font-style:italic">Nessun OP in questa sezione</td></tr>
@@ -75,6 +100,14 @@
 
 {% block scripts %}
 const CENTRO_ID = {{ centro.id }};
+
+function toggleGruppo(gid){
+  const righe = document.querySelectorAll(`tr.riga-dettaglio[data-gruppo="${gid}"]`);
+  const chev = document.getElementById('chev-' + gid);
+  const aperto = righe.length && righe[0].style.display !== 'none';
+  righe.forEach(r => r.style.display = aperto ? 'none' : '');
+  if(chev) chev.textContent = aperto ? '▶' : '▼';
+}
 
 function impostaPosizione(opId, valore){
   valore = (valore || '').trim();
