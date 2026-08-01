@@ -615,6 +615,23 @@ def migra_schede_lavorazione_unificate():
         log(f"Migrazione schede lavorazione: unificate {len(unite)} righe da taglio/piega/satinatura in una sola tabella")
 
 
+class NumeroListaLavoroWood(db.Model):
+    """
+    Numero identificativo di ogni Lista di Lavoro stampata (es. CUT/001,
+    PRES/001) — assegnato UNA VOLTA per coppia OP+centro di costo (idempotente:
+    aprire/stampare di nuovo la stessa lista mostra sempre lo stesso numero,
+    non ne genera uno nuovo), progressivo per tipo di macchina (prefisso).
+    """
+    __tablename__ = 'numero_lista_lavoro_wood'
+    id               = db.Column(db.Integer, primary_key=True)
+    op_code          = db.Column(db.String(20), nullable=False)
+    centro_costo_id  = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
+    prefisso         = db.Column(db.String(10), nullable=False)
+    numero           = db.Column(db.Integer, nullable=False)
+    creato_il        = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('op_code', 'centro_costo_id', name='_numlista_op_centro_uc'),)
+
+
 class Cliente(db.Model):
     __tablename__ = "clienti"
     id       = db.Column(db.Integer, primary_key=True)
