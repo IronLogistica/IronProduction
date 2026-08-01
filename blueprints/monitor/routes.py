@@ -153,6 +153,32 @@ def index_trapani_legacy():
     return redirect(url_for('monitor.index'))
 
 
+def _raggruppa_per_op(righe):
+    """
+    Raggruppa le righe (già in ordine di priorità da _righe_macchina) per OP —
+    alimenta la vista 'a capo' del Monitor: una riga sola per OP con i totali
+    aggregati, espandibile ai singoli componenti quando sono più di uno.
+    L'ordine dei gruppi rispetta quello già calcolato riga per riga.
+    """
+    gruppi, indice_per_op = [], {}
+    for r in righe:
+        if r['op_id'] not in indice_per_op:
+            indice_per_op[r['op_id']] = len(gruppi)
+            gruppi.append({
+                'op_id': r['op_id'], 'op_codice': r['op_codice'], 'commessa': r['commessa'],
+                'codice_articolo': r['codice_articolo'], 'priorita': r['priorita'],
+                'posizione_manuale': r['posizione_manuale'], 'descrizione': r['descrizione'],
+                'componenti': [], 'saldo_totale': 0, 'totale_totale': 0,
+            })
+        g = gruppi[indice_per_op[r['op_id']]]
+        g['componenti'].append(r)
+        g['saldo_totale'] += r['saldo']
+        g['totale_totale'] += r['totale']
+    for g in gruppi:
+        g['pct_aggregato'] = round(100 * (g['totale_totale'] - g['saldo_totale']) / g['totale_totale']) if g['totale_totale'] else 0
+    return gruppi
+
+
 @monitor_bp.route('/monitor/macchina/<int:cid>')
 def macchina(cid):
     centro = CentroCostoWood.query.get_or_404(cid)
@@ -161,10 +187,11 @@ def macchina(cid):
             messaggio=f'"{centro.nome}" è marcato come {"esterno" if centro.esterno else "escluso dal Monitor Produzione"} — '
                       f'non genera una coda qui. Se pensi sia un errore, vai su Centri di Costo e correggi la configurazione.')
     righe_per_sezione = _righe_macchina(centro)
+    gruppi_per_sezione = {sezione: _raggruppa_per_op(righe) for sezione, righe in righe_per_sezione.items()}
     return render_template('monitor/macchina.html',
         active='monitor', active_page='monitor',
         centro=centro, macchine=get_macchine_monitor(),
-        sezioni_map=SEZIONI, righe_per_sezione=righe_per_sezione,
+        sezioni_map=SEZIONI, gruppi_per_sezione=gruppi_per_sezione,
         now=datetime.now().strftime('%d/%m/%Y'))
 
 
