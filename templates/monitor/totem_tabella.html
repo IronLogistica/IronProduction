@@ -93,13 +93,13 @@
         <div class="pct-bar"><div class="pct-fill" style="width:{{ g.pct_aggregato }}%"></div><span class="pct-label">{{ g.pct_aggregato }}%</span></div>
       </td>
     </tr>
-    {% if mostra_dettaglio_codici and g.componenti %}
+    {% if colonne_parametri and g.componenti %}
     <tr class="dettaglio-codici">
       <td colspan="8">
         <table class="tabella-dettaglio">
           <thead><tr>
             <th>Codice lavorato</th><th>Da fare</th><th>Fatti</th><th>Saldo</th>
-            <th>Velocità std</th><th>Scarto max %</th><th>Scarto max pz</th>
+            {% for col in colonne_parametri %}<th>{{ col.etichetta }}</th>{% endfor %}
           </tr></thead>
           <tbody>
             {% for c in g.componenti %}
@@ -108,9 +108,7 @@
               <td>{{ c.totale }}</td>
               <td>{{ c.totale - c.saldo }}</td>
               <td>{{ c.saldo }}</td>
-              <td>{{ (c.tempo_standard_min_pz ~ ' min/pz') if c.tempo_standard_min_pz else '—' }}</td>
-              <td>{{ c.scarto_max_pct if c.scarto_max_pct is not none else '—' }}</td>
-              <td>{{ c.scarto_max_pezzi if c.scarto_max_pezzi is not none else '—' }}</td>
+              {% for col in colonne_parametri %}<td>{{ c.parametri[col.chiave] or '—' }}</td>{% endfor %}
             </tr>
             {% endfor %}
           </tbody>
