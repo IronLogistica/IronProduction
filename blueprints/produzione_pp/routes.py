@@ -258,24 +258,56 @@ def api_ordini_riepilogo_disponibilita():
             'ha_ciclo_lavoro': o.codice_articolo in codici_con_ciclo,
         })
 
-    # Un solo giro di query per sapere quali codici mancanti hanno GIA' un
-    # Ordine di Acquisto aperto che li copre (evita N+1 query per ordine).
-    codici_coperti = set()
+    # Solo i codici REALMENTE acquistabili contano per lo stato materiale di
+    # un OP — un semilavorato (o il prodotto finito stesso) non si "ordina"
+    # a un fornitore, quindi non deve mai far scattare DA_ORDINARE anche se
+    # tecnicamente "manca" (perché non ancora prodotto).
+    tutti_i_codici_coinvolti = tutti_codici_mancanti | {o.codice_articolo for o in ordini}
+    tipo_per_codice = {a.codice: a.tipo_approvvigionamento for a in
+                        ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(tutti_i_codici_coinvolti)).all()
+                        } if tutti_i_codici_coinvolti else {}
+    TIPI_ACQUISTABILI = ('LASERATO', 'COMPONENTE_ACQUISTO', 'MATERIA_PRIMA_FORNITORE')
+
+    # Stato di acquisto per ogni codice mancante — scala a 4 livelli (dal
+    # peggiore al migliore): DA_ORDINARE (nessun ordine) → ORDINATO (ordine
+    # aperto non confermato) → ORDINI_CONFERMATI (confermato dal fornitore,
+    # ma non ancora imminente) → IN_ARRIVO (confermato E la consegna prevista
+    # è entro 48 ore da adesso). Con più ordini aperti sullo stesso codice, si
+    # prende il migliore raggiunto (semplificazione: non verifica che la
+    # quantità confermata basti da sola a coprire tutto il mancante).
+    stato_per_codice = {}
     if tutti_codici_mancanti:
+        adesso = datetime.utcnow()
         righe_oa = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
                     .filter(RigaOrdineAcquistoWood.codice.in_(tutti_codici_mancanti),
                             OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all())
+        SEVERITA = {'DA_ORDINARE': 4, 'ORDINATO': 3, 'ORDINI_CONFERMATI': 2, 'IN_ARRIVO': 1}
         for r_oa in righe_oa:
-            if (r_oa.qta_originale or 0) > (r_oa.qta_ricevuta or 0):
-                codici_coperti.add(r_oa.codice)
+            if (r_oa.qta_originale or 0) <= (r_oa.qta_ricevuta or 0):
+                continue
+            ordine_oa = r_oa.ordine
+            if not ordine_oa.confermato:
+                stato_riga = 'ORDINATO'
+            elif ordine_oa.data_consegna and (ordine_oa.data_consegna - adesso.date()).days <= 2:
+                stato_riga = 'IN_ARRIVO'
+            else:
+                stato_riga = 'ORDINI_CONFERMATI'
+            attuale = stato_per_codice.get(r_oa.codice)
+            if attuale is None or SEVERITA[stato_riga] < SEVERITA[attuale]:
+                stato_per_codice[r_oa.codice] = stato_riga
 
+    SEVERITA = {'DA_ORDINARE': 4, 'ORDINATO': 3, 'ORDINI_CONFERMATI': 2, 'IN_ARRIVO': 1}
     for riga, mancanti in zip(risultato, mancanti_per_ordine):
-        if not mancanti:
-            riga['categoria_materiale'] = 'disponibile'
-        elif all(c in codici_coperti for c in mancanti):
-            riga['categoria_materiale'] = 'in_arrivo'
+        mancanti_acquistabili = [c for c in mancanti if tipo_per_codice.get(c) in TIPI_ACQUISTABILI]
+        if not mancanti_acquistabili:
+            riga['materiale_stato'] = 'PRODUCIBILE'
         else:
-            riga['categoria_materiale'] = 'da_ordinare'
+            peggiore = max((SEVERITA[stato_per_codice.get(c, 'DA_ORDINARE')] for c in mancanti_acquistabili), default=4)
+            riga['materiale_stato'] = {v: k for k, v in SEVERITA.items()}[peggiore]
+        # "In esecuzione" è un flag INDIPENDENTE dal materiale: appena parte
+        # anche un solo Ordine di Lavoro agli operai, resta vero a prescindere
+        # da quanto ancora manca da ordinare — i due stati convivono in card.
+        riga['in_esecuzione'] = riga['stato'] in ('In esecuzione', 'Tecnicamente completato')
 
     # Riepilogo Ordini di Lavoro emessi (per centro di costo) — avanzamento
     # pezzi e link diretto alla stampa, per la card principale. Non assegna
