@@ -1507,25 +1507,78 @@ def api_dichiarazione_centri():
 
 @pp_bp.get('/api/dichiarazione-produzione/<int:cid>/op-aperti')
 def api_dichiarazione_op_aperti(cid):
+    """
+    Tutti i CODICI dichiarabili su questo centro di costo, raggruppati per
+    OP/commessa — non solo il prodotto finito dell'OP (limite del vecchio
+    comportamento: un centro attraversato solo da un componente intermedio,
+    es. Segatrice prima dell'assemblaggio finale, risultava sempre vuoto).
+    Stesso motore di risoluzione già usato in Monitor/LIVE: esplode la
+    distinta base di ogni OP aperto e tiene solo i codici il cui Ciclo di
+    Lavoro passa da QUESTO centro, con il saldo calcolato sui consuntivi già
+    dichiarati per quel componente specifico.
+    """
     centro = CentroCostoWood.query.get_or_404(cid)
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
               .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+    if not ordini:
+        return jsonify([])
+
+    mappa_distinta = _carica_mappa_distinta_base_wood()
+    componenti_per_op = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini}
+    tutti_i_codici = {c['codice'] for lista in componenti_per_op.values() for c in lista}
+    fasi_per_codice = {}
+    if tutti_i_codici:
+        for f in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_i_codici))
+                  .filter_by(centro_costo_id=centro.id).all()):
+            fasi_per_codice.setdefault(f.codice, []).append(f)
+
+    codici_op = [o.codice for o in ordini]
+    fatti_per_componente = {}
+    if codici_op:
+        for op_code, componente, tot in (db.session.query(
+                EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente,
+                db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+                .filter(EventoConsuntivoPP.op_code.in_(codici_op),
+                        db.func.lower(EventoConsuntivoPP.fase) == centro.nome.lower())
+                .group_by(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente).all()):
+            fatti_per_componente[(op_code, componente)] = tot or 0
+
     risultato = []
     for o in ordini:
-        ha_fase = CicloLavoroWood.query.filter_by(codice=o.codice_articolo, centro_costo_id=centro.id).first()
-        if ha_fase:
-            risultato.append({
-                'codice': o.codice, 'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione,
-                'commessa': o.commessa, 'qta_pianificata': o.qta_pianificata,
-                'qta_buona': o.qta_buona, 'qta_scarto': o.qta_scarto,
-                'saldo': max((o.qta_pianificata or 0) - (o.qta_buona or 0) - (o.qta_scarto or 0), 0),
+        gruppo_componenti = []
+        for comp in componenti_per_op[o.id]:
+            codice_comp = comp['codice']
+            if codice_comp not in fasi_per_codice:
+                continue  # questo codice non passa da questo centro
+            componente_finale = (codice_comp == o.codice_articolo)
+            componente_param = None if componente_finale else codice_comp
+            qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+            fatti = fatti_per_componente.get((o.codice, componente_param), 0)
+            saldo = max(qta_necessaria - fatti, 0)
+            if saldo <= 0:
+                continue  # già completato su questo centro: non dichiarabile
+            gruppo_componenti.append({
+                'componente': componente_param, 'componente_finale': componente_finale,
+                'codice_lavorato': codice_comp,
+                'qta_necessaria': qta_necessaria, 'fatti': fatti, 'saldo': saldo,
             })
+        if not gruppo_componenti:
+            continue
+        risultato.append({
+            'codice': o.codice, 'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione,
+            'commessa': o.commessa, 'priorita': o.priorita,
+            'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona, 'qta_scarto': o.qta_scarto,
+            'saldo': max((o.qta_pianificata or 0) - (o.qta_buona or 0) - (o.qta_scarto or 0), 0),
+            'componenti': gruppo_componenti,
+        })
     return jsonify(risultato)
 
 
 @pp_bp.post('/api/dichiarazione-produzione')
 def api_dichiarazione_crea():
-    """Il capo reparto dichiara: crea SOLO, nessun accesso a modifica/storico."""
+    """Il capo reparto dichiara: crea SOLO, nessun accesso a modifica/storico.
+    'componente' opzionale: quale codice della distinta base si sta
+    dichiarando (None/assente = prodotto finito dell'OP)."""
     d = request.get_json(force=True)
     o = OrdineProduzione.query.filter_by(codice=(d.get('op_code') or '').strip()).first()
     if not o:
@@ -1533,6 +1586,7 @@ def api_dichiarazione_crea():
     centro = CentroCostoWood.query.get(d.get('centro_id'))
     if not centro:
         return jsonify(ok=False, error='Centro di costo non trovato'), 404
+    componente = (d.get('componente') or '').strip() or None
     try:
         good = _integer(d.get('pezzi_buoni', 0), 'Pezzi buoni')
         scrap = _integer(d.get('pezzi_scarto', 0), 'Pezzi scarto')
@@ -1542,7 +1596,7 @@ def api_dichiarazione_crea():
     if good <= 0 and scrap <= 0:
         return jsonify(ok=False, error='Dichiara almeno un pezzo buono o di scarto'), 400
     event_id = str(uuid.uuid4())
-    _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id)
+    _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id, componente=componente)
     db.session.commit()
     return jsonify(ok=True, event_id=event_id, ordine=_ordine(o))
 
