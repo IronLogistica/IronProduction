@@ -57,10 +57,12 @@ let _filtroAttivo = 'tutti';
 const FILTRI = [
   {id:'tutti',       label:'TUTTI',          test:o => true},
   {id:'scaduti',     label:'⏰ SCADUTI',      test:o => o.scaduto},
-  {id:'da_ordinare', label:'🔴 DA ORDINARE',  test:o => o.categoria_materiale === 'da_ordinare'},
-  {id:'in_arrivo',   label:'🚚 IN ARRIVO',    test:o => o.categoria_materiale === 'in_arrivo'},
-  {id:'disponibile', label:'✅ DISPONIBILE',  test:o => o.categoria_materiale === 'disponibile'},
-  {id:'in_corso',    label:'⚙️ IN ESECUZIONE', test:o => o.stato === 'In esecuzione'},
+  {id:'da_ordinare', label:'🔴 DA ORDINARE',  test:o => o.materiale_stato === 'DA_ORDINARE'},
+  {id:'ordinato',    label:'📦 ORDINATO',     test:o => o.materiale_stato === 'ORDINATO'},
+  {id:'confermato',  label:'✅ ORDINI CONFERMATI', test:o => o.materiale_stato === 'ORDINI_CONFERMATI'},
+  {id:'in_arrivo',   label:'🚚 IN ARRIVO',    test:o => o.materiale_stato === 'IN_ARRIVO'},
+  {id:'producibile', label:'⚡ PRODUCIBILE',  test:o => o.materiale_stato === 'PRODUCIBILE'},
+  {id:'in_corso',    label:'⚙️ IN ESECUZIONE', test:o => o.in_esecuzione},
   {id:'completati',  label:'🏁 COMPLETATI',   test:o => o.stato === 'Tecnicamente completato'},
   {id:'senza_ciclo',  label:'⚠️ SENZA CICLO',  test:o => o.ha_ciclo_lavoro === false},
 ];
@@ -85,11 +87,15 @@ function impostaFiltro(id){
 }
 
 function _coloreBordoOP(o){
-  if(o.scaduto)                              return '#c0392b';
-  if(o.categoria_materiale === 'da_ordinare') return '#c0392b';
-  if(o.categoria_materiale === 'in_arrivo')   return '#2589c7';
-  if(o.categoria_materiale === 'disponibile') return '#1a9e5c';
-  return 'var(--accent)';
+  if(o.scaduto) return '#c0392b';
+  switch(o.materiale_stato){
+    case 'DA_ORDINARE':       return '#c0392b';
+    case 'ORDINATO':          return '#b8860b';
+    case 'ORDINI_CONFERMATI': return '#2589c7';
+    case 'IN_ARRIVO':         return '#0d9ed6';
+    case 'PRODUCIBILE':       return '#1a9e5c';
+    default:                   return 'var(--accent)';
+  }
 }
 
 function renderCards(){
@@ -101,11 +107,18 @@ function renderCards(){
   box.innerHTML = ordini.map(o => {
     const pctBuona = o.qta_pianificata > 0 ? Math.round((o.qta_buona / o.qta_pianificata) * 100) : 0;
     const pctDisp  = o.n_componenti_totali > 0 ? Math.round(((o.n_componenti_totali - o.n_componenti_mancanti) / o.n_componenti_totali) * 100) : 100;
-    const statoPill = o.categoria_materiale === 'disponibile'
-      ? {bg:'rgba(26,158,92,.18)', col:'#1a9e5c', txt:'✅ DISPONIBILE'}
-      : o.categoria_materiale === 'in_arrivo'
-        ? {bg:'rgba(37,137,199,.18)', col:'#2589c7', txt:'🚚 IN ARRIVO'}
-        : {bg:'rgba(192,57,43,.18)', col:'#c0392b', txt:`🔴 MANCANO ${o.n_componenti_mancanti}/${o.n_componenti_totali}`};
+    const STATI_MATERIALE = {
+      PRODUCIBILE:        {bg:'#f5d800', col:'#0d3fd6', txt:'⚡ PRODUCIBILE', lampeggia:true},
+      IN_ARRIVO:          {bg:'rgba(13,158,214,.18)', col:'#0d9ed6', txt:'🚚 IN ARRIVO'},
+      ORDINI_CONFERMATI:  {bg:'rgba(37,137,199,.18)', col:'#2589c7', txt:'✅ ORDINI CONFERMATI'},
+      ORDINATO:           {bg:'rgba(184,134,11,.18)', col:'#b8860b', txt:'📦 ORDINATO'},
+      DA_ORDINARE:        {bg:'rgba(192,57,43,.18)', col:'#c0392b', txt:`🔴 DA ORDINARE (${o.n_componenti_mancanti}/${o.n_componenti_totali})`},
+    };
+    const statoPill = STATI_MATERIALE[o.materiale_stato] || STATI_MATERIALE.DA_ORDINARE;
+    // "In esecuzione" convive SEMPRE col proprio stato materiale — se il
+    // lavoro è già partito ma manca ancora qualcosa da ordinare, va
+    // evidenziato con più forza proprio perché non è più solo "da fare".
+    const bisognaOrdinareAncora = o.in_esecuzione && o.materiale_stato !== 'PRODUCIBILE';
     const bordo = _coloreBordoOP(o);
     const dataLabel = o.data_prevista ? o.data_prevista.split('-').reverse().join('/') : '—';
 
@@ -121,11 +134,16 @@ function renderCards(){
       <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px">${o.descrizione||''}</div>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:4px">${o.cliente||''} ${o.commessa?'— '+o.commessa:''}</div>
       <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px">P${o.priorita} · ${o.qta_pianificata}·${o.qta_buona}·${o.qta_scarto}</div>
-      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
         <span style="background:rgba(255,255,255,.06);color:${pctBuona>=100?'#1a9e5c':'var(--text)'};font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px">✓ ${pctBuona}%</span>
         <span style="background:rgba(255,255,255,.06);color:${pctDisp>=100?'#1a9e5c':'var(--text)'};font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px">📦 ${pctDisp}%</span>
-        <span style="background:${statoPill.bg};color:${statoPill.col};font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap">${statoPill.txt}</span>
         ${o.ha_ciclo_lavoro === false ? '<span style="background:rgba(184,134,11,.22);color:#e6b800;font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap" title="Nessuna fase di Ciclo di Lavoro impostata per questo articolo — non comparirà in nessun Monitor Macchina">⚠️ NESSUN CICLO DI LAVORO</span>' : ''}
+      </div>
+      <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px">
+        ${o.in_esecuzione ? `<span style="background:rgba(37,137,199,.22);color:#2589c7;font-size:13px;font-weight:800;padding:5px 10px;border-radius:999px;white-space:nowrap;width:fit-content">⚙️ IN ESECUZIONE</span>` : ''}
+        <span class="${statoPill.lampeggia ? 'stato-producibile-lampeggio' : ''}"
+              style="background:${statoPill.bg};color:${statoPill.col};font-size:13px;font-weight:800;padding:5px 10px;border-radius:999px;white-space:nowrap;width:fit-content
+                     ${bisognaOrdinareAncora ? ';box-shadow:0 0 0 2px #ff3b3b' : ''}">${statoPill.txt}</span>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center">
         <span style="border:1px solid var(--border);color:var(--text-dim);font-size:11px;padding:4px 10px;border-radius:999px">📅 ${dataLabel}</span>
