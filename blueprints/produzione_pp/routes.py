@@ -1552,6 +1552,18 @@ def _verifica_pin_capo(d):
     return pin and pin == current_app.config.get('CAPO_PIN', '')
 
 
+# PIN Direzione per l'approvazione delle Dichiarazioni di Produzione — fisso,
+# separato dal PIN capo (che serve solo per storico/correzioni). La
+# dichiarazione resta comunque registrata subito in OP/giacenza appena il
+# capo la dichiara: l'approvazione Direzione è un controllo successivo, non
+# un blocco.
+PIN_DIREZIONE = '12234'
+
+def _verifica_pin_direzione(d):
+    pin = (d.get('pin') or '').strip()
+    return pin == PIN_DIREZIONE
+
+
 @pp_bp.get('/api/dichiarazione-produzione/verifica-pin')
 def api_dichiarazione_verifica_pin():
     if not _verifica_pin_capo(request.args):
@@ -1578,7 +1590,46 @@ def api_dichiarazione_storico(cid):
         'id': e.id, 'event_id': e.event_id, 'op_code': e.op_code, 'componente': e.componente,
         'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M'),
         'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto, 'tempo_minuti': e.tempo_minuti,
+        'approvato_direzione': e.approvato_direzione,
+        'approvato_il': e.approvato_il.strftime('%d/%m/%Y %H:%M') if e.approvato_il else None,
     } for e in eventi])
+
+
+@pp_bp.get('/api/dichiarazione-produzione/verifica-pin-direzione')
+def api_dichiarazione_verifica_pin_direzione():
+    if not _verifica_pin_direzione(request.args):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    return jsonify(ok=True)
+
+
+@pp_bp.get('/api/dichiarazione-produzione/approvazioni')
+def api_dichiarazione_approvazioni():
+    """Dichiarazioni NON ancora approvate dalla Direzione, su tutti i centri
+    — richiede il PIN Direzione. Sono comunque già registrate/valide in
+    OP e giacenza: questa è solo la coda di controllo successivo."""
+    if not _verifica_pin_direzione(request.args):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    eventi = (EventoConsuntivoPP.query.filter_by(approvato_direzione=False)
+              .order_by(EventoConsuntivoPP.timestamp_evento.desc()).limit(200).all())
+    return jsonify(ok=True, eventi=[{
+        'id': e.id, 'event_id': e.event_id, 'op_code': e.op_code, 'fase': e.fase, 'componente': e.componente,
+        'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M'),
+        'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto, 'tempo_minuti': e.tempo_minuti,
+    } for e in eventi])
+
+
+@pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/approva')
+def api_dichiarazione_approva(eid):
+    d = request.get_json(force=True)
+    if not _verifica_pin_direzione(d):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    e = EventoConsuntivoPP.query.get_or_404(eid)
+    e.approvato_direzione = True
+    e.approvato_il = datetime.utcnow()
+    db.session.add(AuditPP(op_code=e.op_code, event_id=e.event_id, azione='APPROVAZIONE_DIREZIONE',
+                            dettaglio=f'dichiarazione {e.event_id} approvata dalla Direzione'))
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 @pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/annulla')
@@ -1635,5 +1686,91 @@ def api_dichiarazione_annulla(eid):
             pass
 
     db.session.delete(e)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@pp_bp.get('/api/dichiarazione-produzione/<int:cid>/movimenti')
+def api_dichiarazione_movimenti(cid):
+    """
+    Movimenti di carico/scarico giacenza (MovimentoGiacenzaWood, tipi
+    carico_produzione/scarico_produzione) generati dalle dichiarazioni di
+    QUESTO centro in QUESTO giorno — stesso PIN capo dello storico, sono la
+    stessa area di correzione.
+    """
+    if not _verifica_pin_capo(request.args):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    centro = CentroCostoWood.query.get_or_404(cid)
+    data_str = request.args.get('data') or datetime.utcnow().strftime('%Y-%m-%d')
+    try:
+        giorno = datetime.strptime(data_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify(ok=False, error='Data non valida'), 400
+    op_codici = {op_code for (op_code,) in db.session.query(EventoConsuntivoPP.op_code)
+                 .filter(db.func.lower(EventoConsuntivoPP.fase) == centro.nome.lower(),
+                         db.func.date(EventoConsuntivoPP.timestamp_evento) == giorno).distinct().all()}
+    if not op_codici:
+        return jsonify(ok=True, movimenti=[])
+    movimenti = (MovimentoGiacenzaWood.query
+                 .filter(MovimentoGiacenzaWood.tipo.in_(('carico_produzione', 'scarico_produzione')),
+                         MovimentoGiacenzaWood.riferimento.in_(op_codici),
+                         db.func.date(MovimentoGiacenzaWood.creato_il) == giorno)
+                 .order_by(MovimentoGiacenzaWood.creato_il.desc()).all())
+    return jsonify(ok=True, movimenti=[{
+        'id': m.id, 'codice': m.codice, 'tipo': m.tipo, 'quantita': m.quantita,
+        'costo_unitario': m.costo_unitario, 'valore': m.valore, 'riferimento': m.riferimento,
+        'note': m.note, 'timestamp': m.creato_il.strftime('%d/%m/%Y %H:%M'),
+    } for m in movimenti])
+
+
+@pp_bp.post('/api/dichiarazione-produzione/movimenti/<int:mid>/modifica')
+def api_dichiarazione_movimento_modifica(mid):
+    """
+    Corregge la quantità di un movimento già registrato — SOLO PIN capo.
+    La giacenza (saldo corrente) è un contatore progressivo, non ricalcolato
+    dai movimenti: qui si applica solo la DIFFERENZA fra vecchia e nuova
+    quantità, così il saldo resta coerente con lo storico.
+    """
+    d = request.get_json(force=True)
+    if not _verifica_pin_capo(d):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    m = MovimentoGiacenzaWood.query.get_or_404(mid)
+    try:
+        nuova_quantita = float(d.get('quantita'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Quantità non valida'), 400
+    vecchia_quantita = m.quantita
+    diff = nuova_quantita - vecchia_quantita
+    g = GiacenzaWood.query.get(m.codice)
+    if g:
+        g.quantita = (g.quantita or 0) + diff
+        g.aggiornato_il = datetime.utcnow()
+    m.quantita = nuova_quantita
+    if m.costo_unitario is not None:
+        m.valore = round(m.costo_unitario * abs(nuova_quantita), 4)
+    if 'note' in d:
+        m.note = (d.get('note') or '').strip()
+    db.session.add(AuditPP(op_code=m.riferimento or '', azione='MODIFICA_MOVIMENTO_GIACENZA',
+                            dettaglio=f'movimento {m.id} ({m.codice}, {m.tipo}): '
+                                      f'{vecchia_quantita} → {nuova_quantita}'))
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@pp_bp.post('/api/dichiarazione-produzione/movimenti/<int:mid>/elimina')
+def api_dichiarazione_movimento_elimina(mid):
+    """Elimina un movimento di carico/scarico errato — SOLO PIN capo — e ne
+    riporta indietro l'effetto sulla giacenza corrente."""
+    d = request.get_json(force=True)
+    if not _verifica_pin_capo(d):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    m = MovimentoGiacenzaWood.query.get_or_404(mid)
+    g = GiacenzaWood.query.get(m.codice)
+    if g:
+        g.quantita = (g.quantita or 0) - m.quantita
+        g.aggiornato_il = datetime.utcnow()
+    db.session.add(AuditPP(op_code=m.riferimento or '', azione='ELIMINA_MOVIMENTO_GIACENZA',
+                            dettaglio=f'eliminato movimento {m.id} ({m.codice}, {m.tipo}, {m.quantita})'))
+    db.session.delete(m)
     db.session.commit()
     return jsonify(ok=True)
