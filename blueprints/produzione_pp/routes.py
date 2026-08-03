@@ -1394,8 +1394,18 @@ def pagina_liste_tagli_legacy():
 def pagina_liste_lavoro(cid):
     from models import get_macchine_monitor
     centro = CentroCostoWood.query.get_or_404(cid)
+    macchine = get_macchine_monitor()
+    # Centri interni attivi che ESISTONO (li vedi es. in Dichiarazione
+    # Produzione) ma non compaiono qui perché nessun articolo ha ancora una
+    # fase di Ciclo di Lavoro assegnata a loro — senza questo avviso sembra
+    # un pezzo di programma mancante, mentre è solo un dato da configurare.
+    id_mostrati = {m['id'] for m in macchine}
+    centri_senza_ciclo = (CentroCostoWood.query
+                          .filter_by(esterno=False, attivo=True)
+                          .filter(~CentroCostoWood.id.in_(id_mostrati)).order_by(CentroCostoWood.nome).all()
+                          ) if id_mostrati else []
     return render_template('produzione_pp/liste_lavoro.html', active='liste_lavoro',
-        centro=centro, macchine=get_macchine_monitor())
+        centro=centro, macchine=macchine, centri_senza_ciclo=centri_senza_ciclo)
 
 
 @pp_bp.get('/api/liste-lavoro/<int:cid>')
