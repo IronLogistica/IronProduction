@@ -91,7 +91,7 @@
           </div>
         </div>
       </td>
-      <td><span class="num-grande">{{ g.totale_totale | round | int }}{{ '*' if saldatura_nota else '' }}</span></td>
+      <td><span class="num-grande">{{ g.totale_totale | round | int }}</span></td>
       <td><span class="num-grande">{{ (g.totale_totale - g.saldo_totale) | round | int }}</span></td>
       <td><span class="num-grande">{{ g.saldo_totale | round | int }}</span></td>
       <td>
@@ -138,8 +138,8 @@
 
 {% if saldatura_nota %}
 <div class="terminati-box" style="border-color:var(--warn)">
-  <div class="terminati-titolo" style="color:var(--warn)">* Nota per Alessandro</div>
-  <div style="font-size:.85rem;color:var(--text)">ATTENZIONE: SOLO IN QUESTO CASO TI HO MESSO LA QUANTITÀ DEI PRODOTTI FINITI.</div>
+  <div class="terminati-titolo" style="color:var(--warn)">* Nota</div>
+  <div style="font-size:.85rem;color:var(--text)">ATTENZIONE: SOLO PER LA SALDATURA (ultima fase) LA QUANTITÀ MOSTRATA È QUELLA DEI PRODOTTI FINITI.</div>
 </div>
 {% endif %}
 
