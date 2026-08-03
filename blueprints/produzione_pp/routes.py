@@ -277,6 +277,29 @@ def api_ordini_riepilogo_disponibilita():
         else:
             riga['categoria_materiale'] = 'da_ordinare'
 
+    # Riepilogo Ordini di Lavoro emessi (per centro di costo) — avanzamento
+    # pezzi e link diretto alla stampa, per la card principale. Non assegna
+    # mai un numero di lista solo perché la card viene visualizzata: il
+    # numero nasce solo quando l'Ordine di Lavoro viene davvero aperto/stampato.
+    mappa_op_by_id = {o.id: o for o in ordini}
+    for riga in risultato:
+        o = mappa_op_by_id[riga['id']]
+        componenti_op = _esplodi_componenti_op(o, mappa_distinta=mappa_distinta)
+        codici_componenti = {c['codice'] for c in componenti_op}
+        centri_coinvolti = (CentroCostoWood.query
+                            .join(CicloLavoroWood, CicloLavoroWood.centro_costo_id == CentroCostoWood.id)
+                            .filter(CicloLavoroWood.codice.in_(codici_componenti)).distinct().all()
+                            ) if codici_componenti else []
+        ordini_lavoro = []
+        for centro in centri_coinvolti:
+            dati_lista = _lista_lavoro_op(o, centro, assegna_numero=False)
+            ordini_lavoro.append({
+                'centro_id': centro.id, 'centro_nome': centro.nome,
+                'totale_pz': dati_lista['totale_pz'], 'pz_effettuati': dati_lista['pz_effettuati'],
+                'residuo_pz': dati_lista['residuo_pz'],
+            })
+        riga['ordini_lavoro'] = ordini_lavoro
+
     return jsonify(risultato)
 
 
@@ -301,7 +324,19 @@ def api_ordine_situazione_completa(codice):
 
     albero = _esplodi_bom_wood(o.codice_articolo, qta=saldo if saldo > 0 else 1.0)
 
+    GRAVITA = {'DA_ORDINARE': 3, 'ORDINATO': 2, 'CONFERMATO': 1}   # più alto = più bloccante
+    STATO_DA_GRAVITA = {3: 'DA_ORDINARE', 2: 'ORDINATO', 1: 'CONFERMATO'}
+
+    def _stato_da_ordini_aperti(righe_oa_coprono):
+        if not righe_oa_coprono:
+            return 'DA_ORDINARE'
+        if any(r_oa.ordine.confermato for r_oa in righe_oa_coprono):
+            return 'CONFERMATO'
+        return 'ORDINATO'
+
     def _annota_disponibilita(nodi):
+        """Ritorna la gravità peggiore (0 = tutto ok) tra questi nodi e i loro discendenti, per farla risalire al nodo padre."""
+        peggiore = 0
         for n in nodi:
             r = righe_disponibilita.get(n['codice'])
             if r:
@@ -310,19 +345,51 @@ def api_ordine_situazione_completa(codice):
                 n['fabbisogno'] = round(r['fabbisogno'], 3)
             else:
                 n['disponibile'] = n['quantita_totale']; n['mancante'] = 0; n['fabbisogno'] = n['quantita_totale']
+
+            approvv = ArticoloApprovvigionamento.query.filter_by(codice=n['codice']).first()
+            tipo = approvv.tipo_approvvigionamento if approvv else 'DA_CLASSIFICARE'
+            acquistabile = tipo in ('LASERATO', 'COMPONENTE_ACQUISTO', 'MATERIA_PRIMA_FORNITORE')
+
+            n['ordini_acquisto'] = []
+            righe_oa_coprono = []
             if n['mancante'] > 0:
                 righe_oa = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
                             .filter(RigaOrdineAcquistoWood.codice == n['codice'],
                                     OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all())
+                righe_oa_coprono = [r_oa for r_oa in righe_oa if (r_oa.qta_originale or 0) > (r_oa.qta_ricevuta or 0)]
                 n['ordini_acquisto'] = [{
                     'ordine_n': r_oa.ordine.ordine_n, 'fornitore': r_oa.ordine.fornitore,
-                    'stato_label': r_oa.ordine.stato_label,
+                    'stato_label': r_oa.ordine.stato_label, 'confermato': r_oa.ordine.confermato,
                     'data_consegna': r_oa.ordine.data_consegna.isoformat() if r_oa.ordine.data_consegna else None,
                     'qta_in_arrivo': round((r_oa.qta_originale or 0) - (r_oa.qta_ricevuta or 0), 3),
-                } for r_oa in righe_oa if (r_oa.qta_originale or 0) > (r_oa.qta_ricevuta or 0)]
+                } for r_oa in righe_oa_coprono]
+
+            gravita_figli = _annota_disponibilita(n.get('figli', []))
+
+            if acquistabile:
+                # Materia prima / laserato / componente d'acquisto: la SUA
+                # gravità è la propria (mai ereditata dai figli — non ne ha).
+                n['stato'] = _stato_da_ordini_aperti(righe_oa_coprono) if n['mancante'] > 0 else 'DISPONIBILE'
+                gravita_nodo = GRAVITA.get(n['stato'], 0)
             else:
-                n['ordini_acquisto'] = []
-            _annota_disponibilita(n.get('figli', []))
+                # Semilavorato: MAI "da ordinare" per se stesso — non si
+                # acquista, si produce. Il suo stato dipende SOLO da cosa
+                # manca ancora, in profondità, tra i materiali acquistabili
+                # che lo compongono: se sono tutti pronti è "PRODUCIBILE"
+                # (si può lavorare ADESSO), altrimenti eredita il blocco più
+                # grave tra i suoi discendenti acquistabili.
+                if n['mancante'] <= 0:
+                    n['stato'] = 'DISPONIBILE'
+                    gravita_nodo = 0
+                elif gravita_figli == 0:
+                    n['stato'] = 'PRODUCIBILE'
+                    gravita_nodo = 0
+                else:
+                    n['stato'] = STATO_DA_GRAVITA[gravita_figli]
+                    gravita_nodo = gravita_figli
+
+            peggiore = max(peggiore, gravita_nodo)
+        return peggiore
     _annota_disponibilita(albero)
 
     mancanti_totali = sum(1 for r in righe_disponibilita.values() if r['mancante'] > 0)
@@ -1162,7 +1229,7 @@ def _numero_lista_lavoro(op_code, centro):
     return f'{prefisso}/{nuovo.numero:03d}'
 
 
-def _lista_lavoro_op(o, centro):
+def _lista_lavoro_op(o, centro, assegna_numero=True):
     """
     Costruisce la Lista di Lavoro per l'OP o SU QUESTO centro di costo: una
     riga per ogni componente della sua distinta base il cui Ciclo di Lavoro
@@ -1291,7 +1358,7 @@ def _lista_lavoro_op(o, centro):
         'commessa': o.commessa or '', 'cliente': o.cliente or '', 'stato': o.stato,
         'qta_pianificata': o.qta_pianificata,
         'data_inizio': o.data_inizio.strftime('%d/%m/%Y') if o.data_inizio else '',
-        'numero_lista': _numero_lista_lavoro(o.codice, centro),
+        'numero_lista': _numero_lista_lavoro(o.codice, centro) if assegna_numero else None,
         'gruppi': gruppi, 'ha_barra': mostra_barra, 'ha_piega': mostra_piega,
         'ha_rullo': mostra_rullo, 'ha_satinatura': mostra_satinatura,
         'totale_pz': totale_pz, 'pz_effettuati': totale_fatti,
