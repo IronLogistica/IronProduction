@@ -251,7 +251,6 @@ def api_ordini_riepilogo_disponibilita():
             'asa': o.asa,
             'data_inizio': o.data_inizio.isoformat() if o.data_inizio else None,
             'data_prevista': o.data_prevista.isoformat() if o.data_prevista else None,
-            'tutto_disponibile': len(mancanti) == 0,
             'n_componenti_mancanti': len(mancanti),
             'n_componenti_totali': len(righe),
             'scaduto': bool(o.data_prevista and o.data_prevista < oggi and o.stato != 'Tecnicamente completato'),
@@ -304,6 +303,7 @@ def api_ordini_riepilogo_disponibilita():
         else:
             peggiore = max((SEVERITA[stato_per_codice.get(c, 'DA_ORDINARE')] for c in mancanti_acquistabili), default=4)
             riga['materiale_stato'] = {v: k for k, v in SEVERITA.items()}[peggiore]
+        riga['tutto_disponibile'] = (riga['materiale_stato'] == 'PRODUCIBILE')
         # "In esecuzione" è un flag INDIPENDENTE dal materiale: appena parte
         # anche un solo Ordine di Lavoro agli operai, resta vero a prescindere
         # da quanto ancora manca da ordinare — i due stati convivono in card.
@@ -422,13 +422,12 @@ def api_ordine_situazione_completa(codice):
 
             peggiore = max(peggiore, gravita_nodo)
         return peggiore
-    _annota_disponibilita(albero)
+    gravita_massima = _annota_disponibilita(albero)
 
-    mancanti_totali = sum(1 for r in righe_disponibilita.values() if r['mancante'] > 0)
     return jsonify(ok=True, codice=o.codice, codice_articolo=o.codice_articolo, descrizione=o.descrizione,
                    cliente=o.cliente, commessa=o.commessa, stato=o.stato, priorita=o.priorita,
                    qta_pianificata=o.qta_pianificata, qta_buona=o.qta_buona, qta_scarto=o.qta_scarto,
-                   tutto_disponibile=(mancanti_totali == 0), componenti=albero)
+                   tutto_disponibile=(gravita_massima == 0), componenti=albero)
 
 
 @pp_bp.route('/api/ordini-produzione/<codice>/dettaglio_per_categoria')
