@@ -1,5 +1,9 @@
 {% extends "base.html" %}
 {% block content %}
+<style>
+@keyframes lampeggioProducibile { 0%,100%{opacity:1} 50%{opacity:.35} }
+.stato-producibile-lampeggio { animation: lampeggioProducibile 1s infinite; }
+</style>
 <div class="page-toolbar">
   <div class="page-title">🏭 Situazione Ordini di Produzione</div>
   <a class="btn btn-primary" href="/acquisti-da-fabbisogno" style="margin-left:auto">🧮 Vai agli Acquisti</a>
@@ -127,6 +131,21 @@ function renderCards(){
         <span style="border:1px solid var(--border);color:var(--text-dim);font-size:11px;padding:4px 10px;border-radius:999px">📅 ${dataLabel}</span>
         <span style="color:var(--text-dim);font-size:11px">▼</span>
       </div>
+      ${(o.ordini_lavoro && o.ordini_lavoro.length) ? `
+      <div onclick="event.stopPropagation()" style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px">
+        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase;margin-bottom:4px">📋 Ordini di Lavoro</div>
+        ${o.ordini_lavoro.map(ol => {
+          const pct = ol.totale_pz > 0 ? Math.round((ol.pz_effettuati/ol.totale_pz)*100) : 0;
+          return `<div style="display:flex;justify-content:space-between;align-items:center;font-size:11px;margin-bottom:3px">
+            <span>${ol.centro_nome}</span>
+            <span style="display:flex;align-items:center;gap:6px">
+              <span style="color:${pct>=100?'#1a9e5c':'var(--text-dim)'}">${ol.pz_effettuati}/${ol.totale_pz}</span>
+              <button onclick="window.open('/ordini-produzione/${o.codice}/lista-lavoro/${ol.centro_id}?stampa=1','_blank')"
+                      style="background:var(--accent2);color:#fff;border:none;border-radius:5px;padding:2px 7px;font-size:10px;cursor:pointer">🖨️</button>
+            </span>
+          </div>`;
+        }).join('')}
+      </div>` : ''}
     </div>`;
   }).join('');
 }
@@ -160,11 +179,13 @@ async function carica(){
 }
 
 function _statoRigaSituazione(c){
-  const okDisp = c.mancante <= 0;
-  const haOA = c.ordini_acquisto && c.ordini_acquisto.length;
-  if(okDisp)  return {colore:'#1a9e5c', bg:'rgba(26,158,92,.15)', label:'✓ DISPONIBILE'};
-  if(haOA)    return {colore:'#2589c7', bg:'rgba(37,137,199,.18)', label:'🚚 IN ARRIVO'};
-  return        {colore:'#c0392b', bg:'rgba(192,57,43,.18)', label:'🔴 DA ORDINARE'};
+  switch(c.stato){
+    case 'DISPONIBILE':  return {colore:'#1a9e5c', bg:'rgba(26,158,92,.15)',  label:'✓ DISPONIBILE', lampeggia:false};
+    case 'PRODUCIBILE':  return {colore:'#0d3fd6', bg:'#f5d800',              label:'⚡ PRODUCIBILE', lampeggia:true};
+    case 'CONFERMATO':   return {colore:'#2589c7', bg:'rgba(37,137,199,.18)', label:'✅ CONFERMATO',  lampeggia:false};
+    case 'ORDINATO':     return {colore:'#b8860b', bg:'rgba(184,134,11,.18)', label:'🚚 ORDINATO',    lampeggia:false};
+    default:              return {colore:'#c0392b', bg:'rgba(192,57,43,.18)', label:'🔴 DA ORDINARE', lampeggia:false};
+  }
 }
 
 function renderAlberoSituazione(componenti, livello){
@@ -182,7 +203,7 @@ function renderAlberoSituazione(componenti, livello){
         <td class="num">${c.fabbisogno}</td>
         <td class="num" style="color:${stato.colore};font-weight:700">${c.disponibile}</td>
         <td class="num" style="${c.mancante>0?'color:#c0392b;font-weight:700':'color:var(--text-dim)'}">${c.mancante>0?c.mancante:'—'}</td>
-        <td><span style="background:${stato.bg};color:${stato.colore};font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap">${stato.label}</span></td>
+        <td><span class="${stato.lampeggia?'stato-producibile-lampeggio':''}" style="background:${stato.bg};color:${stato.colore};font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px;white-space:nowrap">${stato.label}</span></td>
         <td class="lav-td">${oa ? oa.fornitore : (c.mancante>0?'—':'')}</td>
         <td class="lav-td">${oa ? `OA ${oa.ordine_n} — ${oa.qta_in_arrivo}${oa.data_consegna?' per '+oa.data_consegna:''}${altriOA}` : ''}</td>
       </tr>` + renderAlberoSituazione(c.figli, livello + 1);

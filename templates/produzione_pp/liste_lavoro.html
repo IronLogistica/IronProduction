@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-toolbar">
-  <div class="page-title">📋 Lista {{ centro.nome }}</div>
+  <div class="page-title">📋 Ordine Lavoro {{ centro.nome }}</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     {% for m in macchine %}
     <a href="/liste-lavoro/{{ m.id }}" class="btn {% if m.id == centro.id %}btn-primary{% else %}btn-ghost{% endif %}" style="font-size:11px">{{ m.nome }}</a>
@@ -14,7 +14,7 @@
     <p style="font-size:12px;color:var(--text-dim)">
       Una card per ogni commessa con almeno un'operazione su <b>{{ centro.nome }}</b>: quanti pezzi sono da fare in
       totale su questa macchina, quanti sono già stati fatti, e il saldo. Apri la card per vedere/stampare
-      l'ordine di lavoro cartaceo — "Lista {{ centro.nome }}".
+      l'ordine di lavoro cartaceo — "Ordine Lavoro {{ centro.nome }}".
     </p>
   </div>
 </div>

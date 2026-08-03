@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Lista {{ centro.nome }} — {{ codice }}</title>
+<title>Ordine Lavoro {{ centro.nome }} — {{ codice }}</title>
 <style>
   :root{ --blue:#1e5fa8; --yellow:#ffe066; --grey:#5a6472; --border:#c6ccd3; }
   *{box-sizing:border-box;margin:0;padding:0}
@@ -62,7 +62,7 @@
 </head>
 <body>
 <div class="toolbar">
-  <a class="btn-torna" href="/liste-lavoro/{{ centro.id }}">← Torna a Lista {{ centro.nome }}</a>
+  <a class="btn-torna" href="/liste-lavoro/{{ centro.id }}">← Torna a Ordine Lavoro {{ centro.nome }}</a>
   <button class="btn-print" onclick="window.print()">🖨️ Stampa</button>
 </div>
 
@@ -71,7 +71,7 @@
 {% else %}
 <div class="sheet">
   <div class="numero-lista">N° {{ dati.numero_lista }}</div>
-  <h1>Lista {{ centro.nome }}</h1>
+  <h1>Ordine Lavoro {{ centro.nome }}</h1>
 
   <div class="hdr-grid">
     <div class="hdr-box">
@@ -101,7 +101,7 @@
   </div>
 
   {% for g in dati.gruppi %}
-  <div class="gruppo-titolo">Lista {{ centro.nome }}: <b>{{ g.materiale }}</b>{% if g.ha_barra and g.righe[0].lunghezza_barra_mm %} — barra da {{ (g.righe[0].lunghezza_barra_mm/1000)|round(2) }} METRI{% endif %}</div>
+  <div class="gruppo-titolo">Ordine Lavoro {{ centro.nome }}: <b>{{ g.materiale }}</b>{% if g.ha_barra and g.righe[0].lunghezza_barra_mm %} — barra da {{ (g.righe[0].lunghezza_barra_mm/1000)|round(2) }} METRI{% endif %}</div>
   <table class="lavoro">
     <thead><tr>
       <th class="check">Check</th><th>Codice</th><th>Materiale</th>
@@ -168,7 +168,7 @@
   <div class="foto-placeholder">📷 Documentazione tecnica e foto di riferimento — consultabili in "Documentazione Articolo" per il codice {{ dati.codice_articolo }}</div>
 </div>
 <script>
-  // Arrivo dal pulsante "🖨️ Stampa" della card nella pagina Liste di Lavoro —
+  // Arrivo dal pulsante "🖨️ Stampa" della card nella pagina Ordini di Lavoro —
   // apre subito la finestra di stampa, senza dover cercare il pulsante qui.
   if (new URLSearchParams(window.location.search).get('stampa') === '1') {
     window.addEventListener('load', () => setTimeout(() => window.print(), 300));
