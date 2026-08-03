@@ -3,7 +3,8 @@ from datetime import datetime
 from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
-                    SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo)
+                    SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo,
+                    NumeroListaLavoroWood)
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
                     _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo,
                     _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO)
@@ -12,10 +13,9 @@ from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit,
 monitor_bp = Blueprint('monitor', __name__)
 
 SEZIONI = {
-    'in_attesa':   ('🛬 IN ATTESA — Materiale / Fase Precedente', 'in_attesa-hdr'),
-    'da_iniziare': ('✅ DA INIZIARE',                              'da_iniziare-hdr'),
-    'lavorazione': ('🚧 IN LAVORAZIONE',                           'lavorazione-hdr'),
-    'terminati':   ('✅ APPENA TERMINATI (questa fase)',           'terminati-hdr'),
+    'da_iniziare': ('🛬 IN ATTESA / DA INIZIARE',           'da_iniziare-hdr'),
+    'lavorazione': ('⚙️ IN ESECUZIONE',                     'lavorazione-hdr'),
+    'terminati':   ('✅ APPENA TERMINATI (questa fase)',    'terminati-hdr'),
 }
 
 
@@ -84,6 +84,14 @@ def _righe_macchina(centro):
               .filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
               .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
 
+    # Un OP passa a "IN ESECUZIONE" appena viene emesso il suo Ordine di
+    # Lavoro su QUESTA macchina (numero di lista assegnato — vedi
+    # NumeroListaLavoroWood/_numero_lista_lavoro), non solo quando arrivano i
+    # primi pezzi consuntivati: l'emissione stessa è il segnale che il lavoro
+    # è stato affidato agli operai.
+    op_con_ordine_emesso = {r[0] for r in db.session.query(NumeroListaLavoroWood.op_code)
+                            .filter_by(centro_costo_id=centro.id).distinct().all()}
+
     sequenze_manuali = {
         (s.ordine_produzione_id, s.centro_costo_id): s.posizione
         for s in SequenzaMonitorMacchina.query.filter_by(centro_costo_id=centro.id).all()
@@ -102,14 +110,6 @@ def _righe_macchina(centro):
         for f in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_i_codici))
                   .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()):
             fasi_per_codice.setdefault(f.codice, []).append(f)
-
-    cache_materiale_disponibile = {}
-    residuo_per_op, residuo_finale = _residuo_giacenza_progressivo(ordini, mappa=mappa_distinta)
-
-    def _materiale_disponibile_cached(o):
-        if o.id not in cache_materiale_disponibile:
-            cache_materiale_disponibile[o.id] = _materiale_disponibile(o, residuo_per_op.get(o.id, residuo_finale), mappa_distinta=mappa_distinta)
-        return cache_materiale_disponibile[o.id]
 
     # Vedi punto 4) sopra: una sola query aggregata per TUTTI i pezzi_buoni
     # consuntivati sugli OP coinvolti, invece di una query per (OP, fase,
@@ -147,19 +147,13 @@ def _righe_macchina(centro):
 
             if saldo_fase <= 0:
                 sezione = 'terminati'
-            elif pezzi_fase > 0:
+            elif pezzi_fase > 0 or o.codice in op_con_ordine_emesso:
+                # In lavorazione anche solo per aver EMESSO l'Ordine di
+                # Lavoro (anche senza ancora nessun pezzo dichiarato) — non
+                # più solo quando arrivano i primi pezzi consuntivati.
                 sezione = 'lavorazione'
             else:
-                if idx == 0:
-                    # Prima fase del SUO ciclo: pronto se il materiale grezzo
-                    # dell'intero OP è disponibile (controllo approssimato a
-                    # livello OP finché non affiniamo la disponibilità per
-                    # singolo componente) — calcolato una volta sola per OP.
-                    pronto = _materiale_disponibile_cached(o)
-                else:
-                    fase_prec = fasi_ciclo[idx - 1]
-                    pronto = _pezzi_fase_cached(o.codice, fase_prec.centro_costo.nome, componente=componente_param) >= qta_necessaria
-                sezione = 'da_iniziare' if pronto else 'in_attesa'
+                sezione = 'da_iniziare'
 
             fase_ciclo = fasi_ciclo[idx]
             tempo_standard_min_pz = (60 / fase_ciclo.produttivita_oraria) if fase_ciclo.produttivita_oraria else None
@@ -282,7 +276,7 @@ def totem_macchina(cid):
         sessione_info = {'sessione_id': sessione.id, 'op_id': sessione.ordine_produzione_id,
                           'componente': sessione.componente,
                           'iniziata_il': sessione.iniziata_il.isoformat(), 'minuti_trascorsi': minuti}
-        for lista in (righe['lavorazione'], righe['da_iniziare'], righe['in_attesa'], righe['terminati']):
+        for lista in (righe['lavorazione'], righe['da_iniziare'], righe['terminati']):
             riga_attiva = next((r for r in lista if r['op_id'] == sessione.ordine_produzione_id
                                 and r['componente'] == sessione.componente), None)
             if riga_attiva:
