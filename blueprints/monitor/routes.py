@@ -129,17 +129,15 @@ def _righe_macchina(centro):
     def _pezzi_fase_cached(op_code, nome_centro, componente=None):
         return somma_pezzi.get((op_code, (nome_centro or '').lower(), componente), 0)
 
-    # Disponibilità materiale per OP — stesso motore di "Situazione Ordini di
-    # Produzione" (_residuo_giacenza_progressivo: un solo giro in ordine di
-    # priorità, non una simulazione da zero per ogni OP). Alimenta l'evidenza
-    # gialla lampeggiante in LIVE: l'operaio vede subito su quale commessa può
-    # mettere le mani ORA perché il materiale c'è già tutto.
+    # Disponibilità materiale — stesso motore "a residuo progressivo" di
+    # Situazione Ordini di Produzione (priorità servita in ordine), ma qui
+    # SOLO sul materiale che serve per lavorare QUESTA fase specifica (il
+    # consumo diretto del componente in lavorazione su questa macchina), non
+    # sull'intera distinta base del prodotto finito — un OP può benissimo
+    # avere il tubo pronto per il Curvatubi anche se manca ancora, per dire,
+    # la verniciatura finale: l'operaio alla macchina deve sapere se PUÒ
+    # lavorare ORA, non se l'intero ordine è già completo di tutto.
     residuo_per_op, residuo_finale = _residuo_giacenza_progressivo(op_aperti=ordini, mappa=mappa_distinta)
-    materiale_disponibile_per_op = {
-        o.id: _materiale_disponibile(o, giacenza_residua=residuo_per_op.get(o.id, residuo_finale),
-                                      mappa_distinta=mappa_distinta)
-        for o in ordini
-    }
 
     righe = {k: [] for k in SEZIONI}
     for o in ordini:
@@ -176,6 +174,18 @@ def _righe_macchina(centro):
             consumi_standard = [{'codice': rb.codice_figlio, 'quantita': rb.quantita}
                                 for rb in _righe_bom_attive_wood(codice_comp, mappa=mappa_distinta)]
 
+            # Materiale per lavorare QUESTA riga ORA: giacenza residua (dopo
+            # aver già servito chi ha priorità pari/superiore) sufficiente per
+            # coprire il fabbisogno di ogni materiale diretto di questo
+            # componente. Nessun consumo noto registrato → non blocca
+            # l'evidenza (stessa tolleranza già usata nelle Liste di Lavoro
+            # quando Parametri di Lavorazione non è ancora compilato).
+            giacenza_di_op = residuo_per_op.get(o.id, residuo_finale)
+            materiale_disponibile_riga = all(
+                giacenza_di_op.get(cs['codice'], 0) >= round(qta_necessaria * cs['quantita'], 4)
+                for cs in consumi_standard
+            ) if consumi_standard else True
+
             posizione_manuale = sequenze_manuali.get((o.id, centro.id))
             chiave_ordine = (0, posizione_manuale) if posizione_manuale is not None else (
                 1, o.priorita, o.data_prevista or datetime.max.date(), o.id, codice_comp)
@@ -188,7 +198,7 @@ def _righe_macchina(centro):
                 # dalla stessa macchina fa sommare 'totale' più volte, mentre questo
                 # resta il numero di unità finite che l'OP deve produrre.
                 'qta_pianificata': o.qta_pianificata,
-                'materiale_disponibile': materiale_disponibile_per_op[o.id],
+                'materiale_disponibile': materiale_disponibile_riga,
                 'componente': componente_param, 'componente_finale': componente_finale,
                 'codice_lavorato': codice_comp,
                 'descrizione': o.descrizione or '',
@@ -255,6 +265,7 @@ def _raggruppa_per_op(righe):
         g['componenti'].append(r)
         g['saldo_totale'] += r['saldo']
         g['totale_totale'] += r['totale']
+        g['materiale_disponibile'] = g['materiale_disponibile'] and r['materiale_disponibile']
     for g in gruppi:
         g['pct_aggregato'] = round(100 * (g['totale_totale'] - g['saldo_totale']) / g['totale_totale']) if g['totale_totale'] else 0
     return gruppi
