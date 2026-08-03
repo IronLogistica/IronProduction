@@ -171,6 +171,11 @@ def _righe_macchina(centro):
             righe[sezione].append({
                 'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
                 'codice_articolo': o.codice_articolo,
+                # Pezzi di PRODOTTO FINITO pianificati per questo OP — NON i pezzi di
+                # questa fase (vedi 'totale'): un OP con più componenti che passano
+                # dalla stessa macchina fa sommare 'totale' più volte, mentre questo
+                # resta il numero di unità finite che l'OP deve produrre.
+                'qta_pianificata': o.qta_pianificata,
                 'componente': componente_param, 'componente_finale': componente_finale,
                 'codice_lavorato': codice_comp,
                 'descrizione': o.descrizione or '',
@@ -230,6 +235,7 @@ def _raggruppa_per_op(righe):
                 'op_id': r['op_id'], 'op_codice': r['op_codice'], 'commessa': r['commessa'],
                 'codice_articolo': r['codice_articolo'], 'priorita': r['priorita'],
                 'posizione_manuale': r['posizione_manuale'], 'descrizione': r['descrizione'],
+                'qta_pianificata': r['qta_pianificata'],
                 'componenti': [], 'saldo_totale': 0, 'totale_totale': 0,
             })
         g = gruppi[indice_per_op[r['op_id']]]
@@ -290,8 +296,17 @@ def totem_macchina(cid):
     for g in gruppi:
         g['foto_id'] = foto_per_codice.get(g['codice_articolo'])
 
+    # Su queste macchine, sotto la riga dei totali, va mostrato anche il
+    # dettaglio dei singoli codici lavorati con i parametri di default
+    # impostati in Parametri di Lavorazione (velocità std, scarto max) —
+    # richiesto perché qui i pezzi di una stessa commessa spesso passano
+    # come più codici/componenti diversi con parametri propri.
+    nome_l = centro.nome.lower()
+    mostra_dettaglio_codici = any(k in nome_l for k in ('curva', 'piega', 'sgola'))
+
     return render_template('monitor/totem_tabella.html', centro=centro, gruppi=gruppi,
         righe_terminati=righe['terminati'][:8], macchine=get_macchine_monitor(),
+        mostra_dettaglio_codici=mostra_dettaglio_codici,
         now=datetime.now().strftime('%d/%m/%Y'))
 
 
