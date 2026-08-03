@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LIVE {{ centro.nome|upper }} — MES Carpenteria</title>
+<style>
+  :root{
+    --bg:#07090d; --surf:#0e1117; --surf2:#141920; --border:#1e2a38;
+    --text:#d4e0f0; --muted:#4a6080; --accent:#00b4d8;
+    --ok:#22c55e; --warn:#f59e0b; --danger:#ef4444;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',Arial,sans-serif;min-height:100vh;padding:18px}
+  .header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--border);padding-bottom:12px;margin-bottom:16px}
+  .titolo{font-size:1.5rem;font-weight:800;color:var(--accent);display:flex;align-items:center;gap:10px;text-transform:uppercase;letter-spacing:.5px}
+  .titolo .dot{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok);animation:blink 2s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+  #clock{font-size:1.3rem;font-family:'Consolas',monospace;color:var(--text)}
+  .nav-macchine{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:16px}
+  .nav-macchine a{padding:6px 14px;border-radius:7px;border:1px solid var(--border);color:var(--muted);text-decoration:none;font-size:.8rem}
+  .nav-macchine a.attivo{border-color:var(--accent);color:var(--accent)}
+
+  table.tabella-totem{width:100%;border-collapse:collapse;background:var(--surf);border-radius:12px;overflow:hidden}
+  table.tabella-totem th{background:var(--surf2);color:var(--muted);text-transform:uppercase;font-size:.72rem;letter-spacing:.5px;padding:12px 10px;text-align:left;border-bottom:2px solid var(--border)}
+  table.tabella-totem td{padding:12px 10px;border-bottom:1px solid var(--border);vertical-align:middle}
+  table.tabella-totem tr.completa{opacity:.45}
+  tr.materiale-ok{box-shadow:inset 0 0 0 2px var(--warn);animation:lampeggio-giallo 1s infinite}
+  @keyframes lampeggio-giallo{0%,100%{box-shadow:inset 0 0 0 2px var(--warn)}50%{box-shadow:inset 0 0 0 2px transparent}}
+  .prio-badge{font-size:1.3rem;font-weight:800;color:var(--muted)}
+  .commessa{font-family:'Consolas',monospace;font-size:.95rem;color:var(--text)}
+  .num-grande{font-size:1.4rem;font-weight:800;color:var(--text)}
+  .codice-img{display:flex;align-items:center;gap:12px}
+  .foto-box{width:150px;height:80px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .foto-box img{width:100%;height:100%;object-fit:contain;background:#fff}
+  .foto-box.vuota{background:var(--surf2);border:1px dashed var(--border);color:var(--muted);font-size:1.3rem}
+  .dettaglio-codici{background:var(--surf2)}
+  .dettaglio-codici td{padding:0 10px 12px 46px;border-bottom:1px solid var(--border)}
+  table.tabella-dettaglio{width:100%;border-collapse:collapse}
+  table.tabella-dettaglio th{color:var(--muted);text-transform:uppercase;font-size:.65rem;letter-spacing:.4px;text-align:left;padding:6px 8px}
+  table.tabella-dettaglio td{padding:6px 8px;font-size:.85rem;color:var(--text);border-top:1px solid var(--border)}
+  table.tabella-dettaglio .codice-cell{font-weight:700}
+  table.tabella-dettaglio .muted{color:var(--muted)}
+  .codice-nome{font-size:1.15rem;font-weight:800;color:var(--text)}
+  .codice-desc{font-size:.8rem;color:var(--muted)}
+  .pct-bar{background:var(--surf2);border-radius:8px;height:20px;overflow:hidden;position:relative;min-width:110px}
+  .pct-fill{background:linear-gradient(90deg,var(--ok),#16a34a);height:100%}
+  .pct-label{position:absolute;top:0;left:0;right:0;text-align:center;font-size:.8rem;line-height:20px;color:#fff;font-weight:700}
+  .terminati-box{margin-top:20px;background:var(--surf);border:1px solid var(--border);border-radius:12px;padding:14px}
+  .terminati-titolo{font-size:.85rem;font-weight:700;color:var(--ok);text-transform:uppercase;margin-bottom:8px}
+  .tag-name{display:inline-block;background:var(--surf2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:.78rem;margin:3px}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="titolo"><span class="dot"></span> LIVE {{ centro.nome }}</div>
+  <div id="clock">{{ now }}</div>
+</div>
+
+<div class="nav-macchine">
+  {% for m in macchine %}
+  <a href="/totem/macchina/{{ m.id }}" class="{{ 'attivo' if m.id == centro.id else '' }}">{{ m.nome }}</a>
+  {% endfor %}
+</div>
+
+<table class="tabella-totem">
+  <thead><tr>
+    <th>Priority</th><th>N° Commessa</th><th>N° pz in produzione</th><th>Codice e Immagine</th>
+    <th>Pz da Fare</th><th>Pz Fatti</th><th>Saldo</th><th>% Avanzamento</th>
+  </tr></thead>
+  <tbody>
+    {% for g in gruppi %}
+    <tr class="{{ 'completa' if g.saldo_totale <= 0 else ('materiale-ok' if g.materiale_disponibile else '') }}">
+      <td><span class="prio-badge">{{ g.priorita }}</span></td>
+      <td><span class="commessa">{{ g.commessa or g.op_codice }}</span></td>
+      <td><span class="num-grande">{{ g.qta_pianificata }}</span></td>
+      <td>
+        <div class="codice-img">
+          {% if g.foto_id %}
+          <div class="foto-box"><img src="/api/foto_articolo/file/{{ g.foto_id }}" alt=""></div>
+          {% else %}
+          <div class="foto-box vuota" title="Nessuna foto caricata per questo articolo">📷</div>
+          {% endif %}
+          <div>
+            <div class="codice-nome">{{ g.codice_articolo }}</div>
+            <div class="codice-desc">{{ g.descrizione or '' }}</div>
+          </div>
+        </div>
+      </td>
+      <td><span class="num-grande">{{ g.totale_totale }}</span></td>
+      <td><span class="num-grande">{{ g.totale_totale - g.saldo_totale }}</span></td>
+      <td><span class="num-grande">{{ g.saldo_totale }}</span></td>
+      <td>
+        <div class="pct-bar"><div class="pct-fill" style="width:{{ g.pct_aggregato }}%"></div><span class="pct-label">{{ g.pct_aggregato }}%</span></div>
+      </td>
+    </tr>
+    {% if colonne_parametri and g.componenti %}
+    <tr class="dettaglio-codici">
+      <td colspan="8">
+        <table class="tabella-dettaglio">
+          <thead><tr>
+            <th>Codice lavorato</th><th>Da fare</th><th>Fatti</th><th>Saldo</th>
+            {% for col in colonne_parametri %}<th>{{ col.etichetta }}</th>{% endfor %}
+          </tr></thead>
+          <tbody>
+            {% for c in g.componenti %}
+            <tr>
+              <td class="codice-cell">{{ c.codice_lavorato }}{{ ' (prodotto finito)' if c.componente_finale else '' }}</td>
+              <td>{{ c.totale }}</td>
+              <td>{{ c.totale - c.saldo }}</td>
+              <td>{{ c.saldo }}</td>
+              {% for col in colonne_parametri %}<td>{{ c.parametri[col.chiave] or '—' }}</td>{% endfor %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </td>
+    </tr>
+    {% endif %}
+    {% else %}
+    <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Nessuna commessa in coda su questa macchina.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if righe_terminati %}
+<div class="terminati-box">
+  <div class="terminati-titolo">✅ Appena terminati (questa fase)</div>
+  {% for r in righe_terminati %}
+  <span class="tag-name">{{ r.op_codice }} — {{ r.codice_lavorato }}</span>
+  {% endfor %}
+</div>
+{% endif %}
+
+<script>
+setInterval(() => {
+  const d = new Date();
+  document.getElementById('clock').textContent = d.toLocaleDateString('it-IT') + ' ' + d.toLocaleTimeString('it-IT');
+}, 1000);
+// Sola lettura: nessuna dichiarazione da qui — i pezzi fatti arrivano da
+// Dichiarazione di Produzione. Aggiorno la pagina da sola ogni tanto per
+// restare live senza bisogno di un pulsante.
+setInterval(() => window.location.reload(), 60000);
+</script>
+</body>
+</html>
