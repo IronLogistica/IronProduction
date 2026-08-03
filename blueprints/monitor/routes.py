@@ -129,6 +129,18 @@ def _righe_macchina(centro):
     def _pezzi_fase_cached(op_code, nome_centro, componente=None):
         return somma_pezzi.get((op_code, (nome_centro or '').lower(), componente), 0)
 
+    # Disponibilità materiale per OP — stesso motore di "Situazione Ordini di
+    # Produzione" (_residuo_giacenza_progressivo: un solo giro in ordine di
+    # priorità, non una simulazione da zero per ogni OP). Alimenta l'evidenza
+    # gialla lampeggiante in LIVE: l'operaio vede subito su quale commessa può
+    # mettere le mani ORA perché il materiale c'è già tutto.
+    residuo_per_op, residuo_finale = _residuo_giacenza_progressivo(op_aperti=ordini, mappa=mappa_distinta)
+    materiale_disponibile_per_op = {
+        o.id: _materiale_disponibile(o, giacenza_residua=residuo_per_op.get(o.id, residuo_finale),
+                                      mappa_distinta=mappa_distinta)
+        for o in ordini
+    }
+
     righe = {k: [] for k in SEZIONI}
     for o in ordini:
         for comp in componenti_per_op[o.id]:
@@ -176,6 +188,7 @@ def _righe_macchina(centro):
                 # dalla stessa macchina fa sommare 'totale' più volte, mentre questo
                 # resta il numero di unità finite che l'OP deve produrre.
                 'qta_pianificata': o.qta_pianificata,
+                'materiale_disponibile': materiale_disponibile_per_op[o.id],
                 'componente': componente_param, 'componente_finale': componente_finale,
                 'codice_lavorato': codice_comp,
                 'descrizione': o.descrizione or '',
@@ -235,7 +248,7 @@ def _raggruppa_per_op(righe):
                 'op_id': r['op_id'], 'op_codice': r['op_codice'], 'commessa': r['commessa'],
                 'codice_articolo': r['codice_articolo'], 'priorita': r['priorita'],
                 'posizione_manuale': r['posizione_manuale'], 'descrizione': r['descrizione'],
-                'qta_pianificata': r['qta_pianificata'],
+                'qta_pianificata': r['qta_pianificata'], 'materiale_disponibile': r['materiale_disponibile'],
                 'componenti': [], 'saldo_totale': 0, 'totale_totale': 0,
             })
         g = gruppi[indice_per_op[r['op_id']]]
@@ -287,6 +300,11 @@ def totem_macchina(cid):
     righe_tabella.sort(key=lambda r: (r['posizione_manuale'] if r['posizione_manuale'] is not None else 999, r['priorita'], r['op_id']))
 
     gruppi = _raggruppa_per_op(righe_tabella)
+    # Chi ha già tutto il materiale va in cima (evidenza gialla lampeggiante
+    # in LIVE): gli altri lavori, anche se aperti, restano in coda a questi —
+    # ordine di priorità già calcolato preservato dentro ciascun sottogruppo
+    # (sort stabile).
+    gruppi.sort(key=lambda g: 0 if g['materiale_disponibile'] else 1)
 
     codici_prodotto_finito = {g['codice_articolo'] for g in gruppi}
     foto_per_codice = {}
