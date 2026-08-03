@@ -365,9 +365,22 @@ def totem_macchina(cid):
                         valori[chiave] = getattr(s, chiave, '') if s else ''
                 c['parametri'] = valori
 
+    # Saldatura assembla insieme PIÙ semilavorati/materie prime diversi in
+    # UN prodotto finito: sommarli come fa _raggruppa_per_op per le altre
+    # macchine (dove un solo componente passa più volte) qui gonfia "Pz da
+    # Fare" contando ogni pezzo da unire invece dei pezzi finiti da saldare.
+    # Qui SOLO il valore di "N° pz in produzione" (prodotto finito) ha senso.
+    saldatura_nota = 'salda' in nome_l
+    if saldatura_nota:
+        for g in gruppi:
+            g['totale_totale'] = g['qta_pianificata']
+            finale = next((c for c in g['componenti'] if c['componente_finale']), None)
+            g['saldo_totale'] = finale['saldo'] if finale else g['qta_pianificata']
+            g['pct_aggregato'] = round(100 * (g['totale_totale'] - g['saldo_totale']) / g['totale_totale']) if g['totale_totale'] else 0
+
     return render_template('monitor/totem_tabella.html', centro=centro, gruppi=gruppi,
         righe_terminati=righe['terminati'][:8], macchine=get_macchine_monitor(),
-        colonne_parametri=colonne_parametri,
+        colonne_parametri=colonne_parametri, saldatura_nota=saldatura_nota,
         now=datetime.now().strftime('%d/%m/%Y'))
 
 
