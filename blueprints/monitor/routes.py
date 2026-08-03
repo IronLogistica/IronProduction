@@ -264,11 +264,13 @@ def macchina(cid):
 @monitor_bp.route('/totem/macchina/<int:cid>')
 def totem_macchina(cid):
     """
-    Totem Live in Carpenteria — tabella, non più scheda con cronometro: i
-    tempi ormai arrivano da MasterWork (inizio/fine lavoro, tempo per fase),
-    qui si dichiara SOLO la quantità (il saldatore per sé, o Alessandro per
-    tutti). Una riga per ogni componente ancora da fare o in corso su questa
-    macchina, in ordine di priorità.
+    Totem Live in Carpenteria — tabella in SOLA LETTURA: una riga per
+    COMMESSA (non per singolo codice/figlio/nipote — tutti i pezzi da fare
+    su questa macchina per quella commessa sono sommati insieme), col
+    prodotto finito e la sua immagine di riferimento. I tempi arrivano da
+    MasterWork; i pezzi fatti sono quelli già dichiarati altrove (dal
+    saldatore o da Alessandro) in Dichiarazione di Produzione — qui non si
+    dichiara nulla, si legge soltanto.
     """
     centro = CentroCostoWood.query.get_or_404(cid)
     if centro.esterno or centro.escluso_da_monitor_produzione:
@@ -278,15 +280,17 @@ def totem_macchina(cid):
     righe_tabella = righe['da_iniziare'] + righe['lavorazione']
     righe_tabella.sort(key=lambda r: (r['posizione_manuale'] if r['posizione_manuale'] is not None else 999, r['priorita'], r['op_id']))
 
-    codici = {r['codice_lavorato'] for r in righe_tabella}
-    foto_per_codice = {}
-    if codici:
-        for f in FotoArticolo.query.filter(FotoArticolo.codice_articolo.in_(codici)).order_by(FotoArticolo.caricato_il.desc()).all():
-            foto_per_codice.setdefault(f.codice_articolo, f.id)
-    for r in righe_tabella:
-        r['foto_id'] = foto_per_codice.get(r['codice_lavorato'])
+    gruppi = _raggruppa_per_op(righe_tabella)
 
-    return render_template('monitor/totem_tabella.html', centro=centro, righe_tabella=righe_tabella,
+    codici_prodotto_finito = {g['codice_articolo'] for g in gruppi}
+    foto_per_codice = {}
+    if codici_prodotto_finito:
+        for f in FotoArticolo.query.filter(FotoArticolo.codice_articolo.in_(codici_prodotto_finito)).order_by(FotoArticolo.caricato_il.desc()).all():
+            foto_per_codice.setdefault(f.codice_articolo, f.id)
+    for g in gruppi:
+        g['foto_id'] = foto_per_codice.get(g['codice_articolo'])
+
+    return render_template('monitor/totem_tabella.html', centro=centro, gruppi=gruppi,
         righe_terminati=righe['terminati'][:8], macchine=get_macchine_monitor(),
         now=datetime.now().strftime('%d/%m/%Y'))
 
@@ -294,9 +298,9 @@ def totem_macchina(cid):
 @monitor_bp.route('/api/totem_tabella/<int:cid>/dichiara', methods=['POST'])
 def api_totem_tabella_dichiara(cid):
     """
-    Dichiarazione di quantità dalla tabella Totem — SOLO pezzi, tempo=0
-    (il tempo arriva da MasterWork separatamente): i due canali si sommano
-    senza sovrapporsi, mai un doppio conteggio dello stesso lavoro.
+    ⚠️ Endpoint NON più usato dal Totem (diventato sola lettura, la
+    dichiarazione avviene solo in Dichiarazione di Produzione) — lasciato
+    per compatibilità in caso qualche chiamata residua lo usasse ancora.
     """
     centro = CentroCostoWood.query.get_or_404(cid)
     d = request.get_json(force=True)
