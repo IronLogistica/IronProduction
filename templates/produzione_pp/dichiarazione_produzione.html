@@ -76,6 +76,7 @@
 {% block scripts %}
 let _centroCorrente = null;
 let _opInDichiarazione = null;
+let _componenteInDichiarazione = null;
 let _pinCapoAttivo = null;
 
 async function caricaCentri(){
@@ -93,18 +94,36 @@ async function caricaOpAperti(){
   if(!cid){ box.innerHTML = 'Seleziona un centro di costo per vedere gli Ordini di Produzione aperti.'; return; }
   box.innerHTML = 'Caricamento...';
   const r = await fetch(`/api/dichiarazione-produzione/${cid}/op-aperti`);
-  const ops = await r.json();
-  if(!ops.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun Ordine di Produzione aperto su questo centro di costo.</p>'; return; }
-  box.innerHTML = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>OP</th><th>Articolo</th><th>Commessa</th><th>Pian. · Buoni · Scarto</th><th>Saldo</th><th></th></tr></thead><tbody>' +
-    ops.map(o => `<tr><td class="codice">${o.codice}</td><td>${o.codice_articolo}<br><small>${o.descrizione||''}</small></td><td>${o.commessa||'—'}</td>` +
-      `<td>${o.qta_pianificata} · ${o.qta_buona} · ${o.qta_scarto}</td><td style="font-weight:700">${o.saldo}</td>` +
-      `<td><button class="btn btn-primary" onclick='apriDichiarazione(${JSON.stringify(o)})'>✅ Dichiara</button></td></tr>`).join('') +
-    '</tbody></table></div>';
+  const gruppi = await r.json();
+  if(!gruppi.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun codice dichiarabile su questo centro di costo.</p>'; return; }
+  box.innerHTML = gruppi.map((g, i) => {
+    const righeComponenti = g.componenti.map(c => {
+      const etichetta = c.componente_finale ? `${g.codice_articolo} (prodotto finito)` : c.codice_lavorato;
+      return `<tr><td class="codice">${etichetta}</td><td>${c.qta_necessaria} · ${c.fatti}</td><td style="font-weight:700">${c.saldo}</td>` +
+        `<td><button class="btn btn-primary" onclick='apriDichiarazione(${JSON.stringify(g)}, ${JSON.stringify(c)})'>✅ Dichiara</button></td></tr>`;
+    }).join('');
+    return `<div class="mon-section" style="margin-bottom:10px">` +
+      `<div style="padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleGruppoOp(${i})">` +
+      `<div><b>${g.commessa || g.codice}</b> — ${g.codice_articolo} <small style="color:var(--text-dim)">${g.descrizione||''}</small></div>` +
+      `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px;color:var(--text-dim)">${g.componenti.length} codice/i da dichiarare</span> <span id="freccia-${i}">▶</span></div></div>` +
+      `<div id="gruppo-${i}" style="display:none;padding:0 14px 12px;overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Nec. · Fatti</th><th>Saldo</th><th></th></tr></thead><tbody>${righeComponenti}</tbody></table></div>` +
+      `</div>`;
+  }).join('');
 }
 
-function apriDichiarazione(o){
-  _opInDichiarazione = o.codice;
-  document.getElementById('dich-titolo').textContent = `${o.codice} — ${o.codice_articolo}`;
+function toggleGruppoOp(i){
+  const el = document.getElementById(`gruppo-${i}`);
+  const freccia = document.getElementById(`freccia-${i}`);
+  const aperto = el.style.display !== 'none';
+  el.style.display = aperto ? 'none' : 'block';
+  freccia.textContent = aperto ? '▶' : '▼';
+}
+
+function apriDichiarazione(g, c){
+  _opInDichiarazione = g.codice;
+  _componenteInDichiarazione = c.componente_finale ? null : c.codice_lavorato;
+  const etichetta = c.componente_finale ? `${g.codice_articolo} (prodotto finito)` : c.codice_lavorato;
+  document.getElementById('dich-titolo').textContent = `${g.codice} — ${etichetta}`;
   document.getElementById('dich-buoni').value = 0;
   document.getElementById('dich-scarto').value = 0;
   document.getElementById('dich-tempo').value = 0;
@@ -115,7 +134,7 @@ function apriDichiarazione(o){
 async function salvaDichiarazione(){
   const esito = document.getElementById('dich-esito');
   const payload = {
-    op_code: _opInDichiarazione, centro_id: _centroCorrente,
+    op_code: _opInDichiarazione, centro_id: _centroCorrente, componente: _componenteInDichiarazione,
     pezzi_buoni: document.getElementById('dich-buoni').value,
     pezzi_scarto: document.getElementById('dich-scarto').value,
     tempo_minuti: document.getElementById('dich-tempo').value,
