@@ -29,9 +29,16 @@
   .commessa{font-family:'Consolas',monospace;font-size:.95rem;color:var(--text)}
   .num-grande{font-size:1.4rem;font-weight:800;color:var(--text)}
   .codice-img{display:flex;align-items:center;gap:12px}
-  .foto-box{width:56px;height:56px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .foto-box{width:150px;height:80px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
   .foto-box img{width:100%;height:100%;object-fit:contain;background:#fff}
   .foto-box.vuota{background:var(--surf2);border:1px dashed var(--border);color:var(--muted);font-size:1.3rem}
+  .dettaglio-codici{background:var(--surf2)}
+  .dettaglio-codici td{padding:0 10px 12px 46px;border-bottom:1px solid var(--border)}
+  table.tabella-dettaglio{width:100%;border-collapse:collapse}
+  table.tabella-dettaglio th{color:var(--muted);text-transform:uppercase;font-size:.65rem;letter-spacing:.4px;text-align:left;padding:6px 8px}
+  table.tabella-dettaglio td{padding:6px 8px;font-size:.85rem;color:var(--text);border-top:1px solid var(--border)}
+  table.tabella-dettaglio .codice-cell{font-weight:700}
+  table.tabella-dettaglio .muted{color:var(--muted)}
   .codice-nome{font-size:1.15rem;font-weight:800;color:var(--text)}
   .codice-desc{font-size:.8rem;color:var(--muted)}
   .pct-bar{background:var(--surf2);border-radius:8px;height:20px;overflow:hidden;position:relative;min-width:110px}
@@ -65,7 +72,7 @@
     <tr class="{{ 'completa' if g.saldo_totale <= 0 else '' }}">
       <td><span class="prio-badge">{{ g.priorita }}</span></td>
       <td><span class="commessa">{{ g.commessa or g.op_codice }}</span></td>
-      <td><span class="num-grande">{{ g.totale_totale }}</span></td>
+      <td><span class="num-grande">{{ g.qta_pianificata }}</span></td>
       <td>
         <div class="codice-img">
           {% if g.foto_id %}
@@ -86,6 +93,31 @@
         <div class="pct-bar"><div class="pct-fill" style="width:{{ g.pct_aggregato }}%"></div><span class="pct-label">{{ g.pct_aggregato }}%</span></div>
       </td>
     </tr>
+    {% if mostra_dettaglio_codici and g.componenti %}
+    <tr class="dettaglio-codici">
+      <td colspan="8">
+        <table class="tabella-dettaglio">
+          <thead><tr>
+            <th>Codice lavorato</th><th>Da fare</th><th>Fatti</th><th>Saldo</th>
+            <th>Velocità std</th><th>Scarto max %</th><th>Scarto max pz</th>
+          </tr></thead>
+          <tbody>
+            {% for c in g.componenti %}
+            <tr>
+              <td class="codice-cell">{{ c.codice_lavorato }}{{ ' (prodotto finito)' if c.componente_finale else '' }}</td>
+              <td>{{ c.totale }}</td>
+              <td>{{ c.totale - c.saldo }}</td>
+              <td>{{ c.saldo }}</td>
+              <td>{{ (c.tempo_standard_min_pz ~ ' min/pz') if c.tempo_standard_min_pz else '—' }}</td>
+              <td>{{ c.scarto_max_pct if c.scarto_max_pct is not none else '—' }}</td>
+              <td>{{ c.scarto_max_pezzi if c.scarto_max_pezzi is not none else '—' }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </td>
+    </tr>
+    {% endif %}
     {% else %}
     <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Nessuna commessa in coda su questa macchina.</td></tr>
     {% endfor %}
