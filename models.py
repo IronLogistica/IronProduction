@@ -1586,6 +1586,9 @@ def init_db():
         "ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS componente VARCHAR(50)",
         "ALTER TABLE sessioni_lavoro_macchina ADD COLUMN IF NOT EXISTS componente VARCHAR(50)",
         "ALTER TABLE schede_lavorazione_wood ADD COLUMN IF NOT EXISTS spessore_mm DOUBLE PRECISION",
+        # ── Dichiarazione di Produzione: approvazione Direzione ──
+        "ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS approvato_direzione BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS approvato_il TIMESTAMP",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
@@ -1663,6 +1666,12 @@ class EventoConsuntivoPP(db.Model):
     pezzi_scarto = db.Column(db.Integer, nullable=False, default=0)
     tempo_minuti = db.Column(db.Integer, nullable=False, default=0)
     ricevuto_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    # Approvazione Direzione (PIN separato da quello del capo reparto) — la
+    # dichiarazione viene SEMPRE registrata subito negli ordini/giacenza
+    # (comportamento invariato), questo flag è solo un controllo successivo
+    # che la Direzione deve dare: non blocca né ritarda la produzione.
+    approvato_direzione = db.Column(db.Boolean, nullable=False, default=False)
+    approvato_il = db.Column(db.DateTime, nullable=True)
 
 class AuditPP(db.Model):
     __tablename__ = "pp_audit"
