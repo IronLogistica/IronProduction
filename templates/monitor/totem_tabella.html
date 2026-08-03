@@ -70,7 +70,7 @@
 <table class="tabella-totem">
   <thead><tr>
     <th>Priority</th><th>N° Commessa</th><th>N° pz in produzione</th><th>Codice e Immagine</th>
-    <th>Pz da Fare</th><th>Pz Fatti</th><th>Saldo</th><th>% Avanzamento</th>
+    <th>Pz da Fare{{ '*' if saldatura_nota else '' }}</th><th>Pz Fatti</th><th>Saldo</th><th>% Avanzamento</th>
   </tr></thead>
   <tbody>
     {% for g in gruppi %}
@@ -91,9 +91,9 @@
           </div>
         </div>
       </td>
-      <td><span class="num-grande">{{ g.totale_totale }}</span></td>
-      <td><span class="num-grande">{{ g.totale_totale - g.saldo_totale }}</span></td>
-      <td><span class="num-grande">{{ g.saldo_totale }}</span></td>
+      <td><span class="num-grande">{{ g.totale_totale | round | int }}{{ '*' if saldatura_nota else '' }}</span></td>
+      <td><span class="num-grande">{{ (g.totale_totale - g.saldo_totale) | round | int }}</span></td>
+      <td><span class="num-grande">{{ g.saldo_totale | round | int }}</span></td>
       <td>
         <div class="pct-bar"><div class="pct-fill" style="width:{{ g.pct_aggregato }}%"></div><span class="pct-label">{{ g.pct_aggregato }}%</span></div>
       </td>
@@ -110,9 +110,9 @@
             {% for c in g.componenti %}
             <tr>
               <td class="codice-cell">{{ c.codice_lavorato }}{{ ' (prodotto finito)' if c.componente_finale else '' }}</td>
-              <td>{{ c.totale }}</td>
-              <td>{{ c.totale - c.saldo }}</td>
-              <td>{{ c.saldo }}</td>
+              <td>{{ c.totale | round | int }}</td>
+              <td>{{ (c.totale - c.saldo) | round | int }}</td>
+              <td>{{ c.saldo | round | int }}</td>
               {% for col in colonne_parametri %}<td>{{ c.parametri[col.chiave] or '—' }}</td>{% endfor %}
             </tr>
             {% endfor %}
@@ -133,6 +133,13 @@
   {% for r in righe_terminati %}
   <span class="tag-name">{{ r.op_codice }} — {{ r.codice_lavorato }}</span>
   {% endfor %}
+</div>
+{% endif %}
+
+{% if saldatura_nota %}
+<div class="terminati-box" style="border-color:var(--warn)">
+  <div class="terminati-titolo" style="color:var(--warn)">* Nota per Alessandro</div>
+  <div style="font-size:.85rem;color:var(--text)">ATTENZIONE: SOLO IN QUESTO CASO TI HO MESSO LA QUANTITÀ DEI PRODOTTI FINITI.</div>
 </div>
 {% endif %}
 
