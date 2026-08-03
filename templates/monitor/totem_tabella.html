@@ -29,17 +29,14 @@
   .commessa{font-family:'Consolas',monospace;font-size:.95rem;color:var(--text)}
   .num-grande{font-size:1.4rem;font-weight:800;color:var(--text)}
   .codice-img{display:flex;align-items:center;gap:12px}
-  .codice-img img{width:56px;height:56px;object-fit:contain;background:#fff;border-radius:6px;padding:3px}
+  .foto-box{width:56px;height:56px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .foto-box img{width:100%;height:100%;object-fit:contain;background:#fff}
+  .foto-box.vuota{background:var(--surf2);border:1px dashed var(--border);color:var(--muted);font-size:1.3rem}
   .codice-nome{font-size:1.15rem;font-weight:800;color:var(--text)}
   .codice-desc{font-size:.8rem;color:var(--muted)}
-  .input-pz{width:80px;padding:8px;font-size:1.1rem;font-weight:700;text-align:center;background:var(--surf2);border:2px solid var(--border);border-radius:8px;color:var(--text)}
-  .input-pz:focus{outline:none;border-color:var(--accent)}
-  .btn-salva{background:var(--ok);color:#04250f;border:none;border-radius:8px;padding:9px 16px;font-weight:800;cursor:pointer;font-size:.85rem}
-  .btn-salva:active{transform:scale(.96)}
-  .pct-bar{background:var(--surf2);border-radius:8px;height:16px;overflow:hidden;position:relative;min-width:100px}
+  .pct-bar{background:var(--surf2);border-radius:8px;height:20px;overflow:hidden;position:relative;min-width:110px}
   .pct-fill{background:linear-gradient(90deg,var(--ok),#16a34a);height:100%}
-  .pct-label{position:absolute;top:0;left:0;right:0;text-align:center;font-size:.72rem;line-height:16px;color:#fff;font-weight:700}
-  .esito-riga{font-size:.72rem;margin-top:4px}
+  .pct-label{position:absolute;top:0;left:0;right:0;text-align:center;font-size:.8rem;line-height:20px;color:#fff;font-weight:700}
   .terminati-box{margin-top:20px;background:var(--surf);border:1px solid var(--border);border-radius:12px;padding:14px}
   .terminati-titolo{font-size:.85rem;font-weight:700;color:var(--ok);text-transform:uppercase;margin-bottom:8px}
   .tag-name{display:inline-block;background:var(--surf2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:.78rem;margin:3px}
@@ -64,34 +61,33 @@
     <th>Pz da Fare</th><th>Pz Fatti</th><th>Saldo</th><th>% Avanzamento</th>
   </tr></thead>
   <tbody>
-    {% for r in righe_tabella %}
-    <tr id="riga-{{ r.op_id }}-{{ r.componente or '' }}" class="{{ 'completa' if r.saldo <= 0 else '' }}">
-      <td><span class="prio-badge">{{ r.priorita }}</span></td>
-      <td><span class="commessa">{{ r.commessa or r.op_codice }}</span></td>
-      <td><span class="num-grande">{{ r.totale }}</span></td>
+    {% for g in gruppi %}
+    <tr class="{{ 'completa' if g.saldo_totale <= 0 else '' }}">
+      <td><span class="prio-badge">{{ g.priorita }}</span></td>
+      <td><span class="commessa">{{ g.commessa or g.op_codice }}</span></td>
+      <td><span class="num-grande">{{ g.totale_totale }}</span></td>
       <td>
         <div class="codice-img">
-          {% if r.foto_id %}<img src="/api/foto_articolo/file/{{ r.foto_id }}" alt="">{% endif %}
+          {% if g.foto_id %}
+          <div class="foto-box"><img src="/api/foto_articolo/file/{{ g.foto_id }}" alt=""></div>
+          {% else %}
+          <div class="foto-box vuota" title="Nessuna foto caricata per questo articolo">📷</div>
+          {% endif %}
           <div>
-            <div class="codice-nome">{{ r.codice_lavorato }}</div>
-            <div class="codice-desc">{{ r.descrizione or '' }}</div>
+            <div class="codice-nome">{{ g.codice_articolo }}</div>
+            <div class="codice-desc">{{ g.descrizione or '' }}</div>
           </div>
         </div>
       </td>
-      <td><span class="num-grande">{{ r.totale }}</span></td>
+      <td><span class="num-grande">{{ g.totale_totale }}</span></td>
+      <td><span class="num-grande">{{ g.totale_totale - g.saldo_totale }}</span></td>
+      <td><span class="num-grande">{{ g.saldo_totale }}</span></td>
       <td>
-        <input class="input-pz" type="number" min="0" id="input-{{ r.op_id }}-{{ r.componente or '' }}" value="{{ r.totale - r.saldo }}">
-      </td>
-      <td><span class="num-grande" id="saldo-{{ r.op_id }}-{{ r.componente or '' }}">{{ r.saldo }}</span></td>
-      <td>
-        <div class="pct-bar"><div class="pct-fill" style="width:{{ r.pct }}%"></div><span class="pct-label">{{ r.pct }}%</span></div>
-        <button class="btn-salva" style="margin-top:6px"
-                onclick="dichiaraPezzi({{ r.op_id }}, {{ (r.componente|tojson) if r.componente else 'null' }}, {{ r.totale }})">💾 Salva</button>
-        <div class="esito-riga" id="esito-{{ r.op_id }}-{{ r.componente or '' }}"></div>
+        <div class="pct-bar"><div class="pct-fill" style="width:{{ g.pct_aggregato }}%"></div><span class="pct-label">{{ g.pct_aggregato }}%</span></div>
       </td>
     </tr>
     {% else %}
-    <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Nessun componente in coda su questa macchina.</td></tr>
+    <tr><td colspan="8" style="text-align:center;color:var(--muted);padding:30px">Nessuna commessa in coda su questa macchina.</td></tr>
     {% endfor %}
   </tbody>
 </table>
@@ -110,29 +106,10 @@ setInterval(() => {
   const d = new Date();
   document.getElementById('clock').textContent = d.toLocaleDateString('it-IT') + ' ' + d.toLocaleTimeString('it-IT');
 }, 1000);
-
-async function dichiaraPezzi(opId, componente, totale){
-  const key = opId + '-' + (componente || '');
-  const input = document.getElementById('input-' + key);
-  const esito = document.getElementById('esito-' + key);
-  const nuovoValore = parseInt(input.value, 10);
-  if(isNaN(nuovoValore) || nuovoValore < 0){ esito.innerHTML = '<span style="color:var(--danger)">⚠️ Valore non valido</span>'; return; }
-  const valorePrecedente = totale - parseInt(document.getElementById('saldo-' + key).textContent, 10);
-  const delta = nuovoValore - valorePrecedente;
-  if(delta === 0){ esito.textContent = ''; return; }
-  try{
-    const r = await fetch('/api/totem_tabella/{{ centro.id }}/dichiara', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({op_id: opId, componente: componente, pezzi_buoni: delta, pezzi_scarto: 0})
-    });
-    const d2 = await r.json();
-    if(!d2.ok){ esito.innerHTML = '<span style="color:var(--danger)">⚠️ ' + d2.error + '</span>'; return; }
-    esito.innerHTML = '<span style="color:var(--ok)">✓ Salvato</span>';
-    setTimeout(() => window.location.reload(), 900);
-  }catch(e){
-    esito.innerHTML = '<span style="color:var(--danger)">❌ Errore di rete</span>';
-  }
-}
+// Sola lettura: nessuna dichiarazione da qui — i pezzi fatti arrivano da
+// Dichiarazione di Produzione. Aggiorno la pagina da sola ogni tanto per
+// restare live senza bisogno di un pulsante.
+setInterval(() => window.location.reload(), 60000);
 </script>
 </body>
 </html>
