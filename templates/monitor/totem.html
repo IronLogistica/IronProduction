@@ -184,8 +184,8 @@
 
 <div class="bottom-section">
   <div class="footer-card" style="border:2px solid var(--danger);background:rgba(239,68,68,.05)">
-    <div class="title-footer" style="color:var(--danger)">🛬 IN ATTESA — Materiale / Fase precedente</div>
-    {% for r in righe.in_attesa %}
+    <div class="title-footer" style="color:var(--danger)">🛬 IN ATTESA / DA INIZIARE</div>
+    {% for r in righe.da_iniziare %}
       <span class="tag-name" style="border-color:var(--danger);color:var(--danger)">{{ r.op_codice }} — {{ r.codice_articolo }}</span>
     {% else %}
       <span style="color:var(--muted)">Nessuno in attesa</span>

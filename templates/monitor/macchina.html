@@ -32,7 +32,7 @@
 </div>
 
 <div class="monitor-grid">
-{% for col_sezioni in [['in_attesa','da_iniziare'],['lavorazione','terminati']] %}
+{% for col_sezioni in [['da_iniziare','lavorazione'],['terminati']] %}
 <div>
 {% for sezione in col_sezioni %}
 {% set label, hdr_class = sezioni_map[sezione] %}
