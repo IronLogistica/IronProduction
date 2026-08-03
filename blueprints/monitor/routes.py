@@ -5,7 +5,7 @@ from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo,
-                    NumeroListaLavoroWood)
+                    NumeroListaLavoroWood, SchedaLavorazioneWood)
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
                     _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo,
                     _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO)
@@ -296,17 +296,49 @@ def totem_macchina(cid):
     for g in gruppi:
         g['foto_id'] = foto_per_codice.get(g['codice_articolo'])
 
-    # Su queste macchine, sotto la riga dei totali, va mostrato anche il
-    # dettaglio dei singoli codici lavorati con i parametri di default
-    # impostati in Parametri di Lavorazione (velocità std, scarto max) —
-    # richiesto perché qui i pezzi di una stessa commessa spesso passano
-    # come più codici/componenti diversi con parametri propri.
+    # Su Curvatubi, Satinatrice e Sgolatrice, sotto la riga dei totali va
+    # mostrato anche il dettaglio dei singoli codici lavorati con i
+    # parametri di IMPOSTAZIONE MACCHINA già compilati in Parametri di
+    # Lavorazione (SchedaLavorazioneWood) — non le stesse colonne per tutte:
+    # ogni macchina ha i suoi parametri fisici di setup.
     nome_l = centro.nome.lower()
-    mostra_dettaglio_codici = any(k in nome_l for k in ('curva', 'piega', 'sgola'))
+    if 'curva' in nome_l:
+        colonne_parametri = [{'chiave': 'sviluppo', 'etichetta': 'Sviluppo'},
+                             {'chiave': 'matrice', 'etichetta': 'Matrice'},
+                             {'chiave': 'punto_zero', 'etichetta': 'Punto Zero'},
+                             {'chiave': 'indice_assorbimento', 'etichetta': 'Indice Assorbimento'}]
+    elif 'satin' in nome_l:
+        colonne_parametri = [{'chiave': 'punto_zero', 'etichetta': 'Punto Zero'}]
+    elif 'sgola' in nome_l:
+        colonne_parametri = [{'chiave': 'sviluppo', 'etichetta': 'Sviluppo'},
+                             {'chiave': 'punto_zero', 'etichetta': 'Punto Zero'},
+                             {'chiave': 'rullo', 'etichetta': 'Rullo Sgolatrice'}]
+    else:
+        colonne_parametri = []
+
+    if colonne_parametri:
+        codici_lavorati = {c['codice_lavorato'] for g in gruppi for c in g['componenti']}
+        scheda_per_codice = {}
+        if codici_lavorati:
+            for s in SchedaLavorazioneWood.query.filter(SchedaLavorazioneWood.codice_padre.in_(codici_lavorati)).all():
+                scheda_per_codice.setdefault(s.codice_padre, s)  # una scheda per codice: basta la prima trovata
+        for g in gruppi:
+            for c in g['componenti']:
+                s = scheda_per_codice.get(c['codice_lavorato'])
+                valori = {}
+                for col in colonne_parametri:
+                    chiave = col['chiave']
+                    if chiave == 'matrice':
+                        valori[chiave] = s.matrice.codice if (s and s.matrice) else ''
+                    elif chiave == 'rullo':
+                        valori[chiave] = s.rullo.codice if (s and s.rullo) else ''
+                    else:
+                        valori[chiave] = getattr(s, chiave, '') if s else ''
+                c['parametri'] = valori
 
     return render_template('monitor/totem_tabella.html', centro=centro, gruppi=gruppi,
         righe_terminati=righe['terminati'][:8], macchine=get_macchine_monitor(),
-        mostra_dettaglio_codici=mostra_dettaglio_codici,
+        colonne_parametri=colonne_parametri,
         now=datetime.now().strftime('%d/%m/%Y'))
 
 
