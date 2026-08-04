@@ -74,6 +74,28 @@
       <button class="btn btn-primary" onclick="caricaAlbero()">🔍 Cerca</button>
     </div>
     <div id="alb-stato" style="font-size:12px;color:var(--text-dim);margin-top:8px"></div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="apriModalImportDB()">📥 Caricamento massivo Distinta Base (da Zucchetti Ad Hoc)</button>
+      <span style="font-size:11px;color:var(--text-dim)">Aggiorna/crea le righe padre-figlio del file — NON tocca gruppo alternativa, preferita, pezzi per barra, sviluppo, ciclo di lavoro o gli altri parametri già impostati a mano.</span>
+    </div>
+  </div>
+</div>
+
+<div id="modal-import-db" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999;align-items:center;justify-content:center">
+  <div style="background:var(--dark2,#1b1f27);border:1px solid var(--border);border-radius:10px;max-width:520px;width:92%;padding:20px">
+    <div style="font-size:15px;font-weight:800;margin-bottom:10px">📥 Caricamento massivo Distinta Base</div>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
+      Seleziona l'export della Distinta Base da Zucchetti Ad Hoc Revolution (.xls/.xlsx/.csv).
+      Il caricamento crea le coppie padre/figlio mancanti e aggiorna quantità/livello/note di quelle esistenti.
+      Gruppo alternativa, preferita, pezzi per barra, sviluppo e il ciclo di lavoro impostati a mano
+      <b>non vengono mai cancellati</b> da questo import.
+    </p>
+    <input id="import-db-file" type="file" accept=".xls,.xlsx,.csv" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);margin-bottom:14px">
+    <div id="import-db-esito" style="font-size:12px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="chiudiModalImportDB()">Annulla</button>
+      <button class="btn btn-primary" id="btn-conferma-import-db" onclick="eseguiImportDB()">⬆️ Carica</button>
+    </div>
   </div>
 </div>
 
@@ -145,6 +167,46 @@
 let RADICI = [];
 let INDICE_RADICE = -1;
 let RADICE_ATTIVA = null;
+
+// ── IMPORT MASSIVO DISTINTA BASE (export Zucchetti Ad Hoc Revolution) ──
+function apriModalImportDB(){
+  document.getElementById('import-db-file').value = '';
+  document.getElementById('import-db-esito').innerHTML = '';
+  document.getElementById('modal-import-db').style.display = 'flex';
+}
+function chiudiModalImportDB(){
+  document.getElementById('modal-import-db').style.display = 'none';
+}
+async function eseguiImportDB(){
+  const fileInput = document.getElementById('import-db-file');
+  const esito = document.getElementById('import-db-esito');
+  const btn = document.getElementById('btn-conferma-import-db');
+  if(!fileInput.files.length){ esito.innerHTML = '<span style="color:#ff6b6b">⚠️ Seleziona prima un file.</span>'; return; }
+  const fd = new FormData();
+  fd.append('file_excel', fileInput.files[0]);
+  btn.disabled = true; btn.textContent = '⏳ Caricamento...';
+  esito.innerHTML = '<span style="color:var(--text-dim)">Caricamento in corso...</span>';
+  try{
+    const r = await fetch('/api/distinta_base_wood/importa', {method:'POST', body: fd});
+    const d = await r.json();
+    if(d.errore){
+      esito.innerHTML = '<span style="color:#ff6b6b">⚠️ ' + d.messaggio + '</span>';
+    } else {
+      let html = '<span style="color:#2a9d5c">✅ Import completato — ' + d.nuovi + ' nuove, ' + d.aggiornati + ' aggiornate' +
+                 (d.scartate ? ', ' + d.scartate + ' scartate' : '') + '.</span>';
+      if(d.righe_scartate && d.righe_scartate.length){
+        html += '<div style="margin-top:8px;max-height:140px;overflow-y:auto;font-size:11px;color:var(--text-dim)">' +
+                d.righe_scartate.map(x => '• ' + x).join('<br>') + '</div>';
+      }
+      esito.innerHTML = html;
+      if(RADICE_ATTIVA) caricaAlbero();
+    }
+  } catch(e){
+    esito.innerHTML = '<span style="color:#ff6b6b">⚠️ Errore di rete: ' + e + '</span>';
+  } finally {
+    btn.disabled = false; btn.textContent = '⬆️ Carica';
+  }
+}
 
 function toggleSottoparametro(nome){
   const box = document.getElementById('box-' + nome);
