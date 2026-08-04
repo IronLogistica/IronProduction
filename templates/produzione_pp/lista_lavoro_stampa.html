@@ -70,21 +70,25 @@
 <div class="sheet"><h1>Ordine di Produzione non trovato</h1><p style="text-align:center">Codice cercato: {{ codice }}</p></div>
 {% else %}
 <div class="sheet">
-  <div class="numero-lista">N° {{ dati.numero_lista }}</div>
+  <div class="numero-lista" style="text-align:center;line-height:1.5">
+    <div style="font-size:10px;font-weight:800;letter-spacing:1px">ORDINE PRODUZIONE</div>
+    <div style="font-size:13px;font-weight:800;margin-bottom:3px">{{ dati.op_codice }}</div>
+    <div style="border-top:1px solid #222;padding-top:3px">N° {{ dati.numero_lista }}</div>
+  </div>
   <h1>Ordine Lavoro {{ centro.nome }}</h1>
 
   <div class="hdr-grid">
     <div class="hdr-box">
       <div class="hdr-row" style="border-bottom:1px solid #222">
-        <div><div class="lbl">Prodotto</div></div>
+        <div><div class="lbl">Codice</div></div>
         <div><div class="lbl">Da Produrre</div></div>
       </div>
       <div class="hdr-row">
-        <div><div class="val big">{{ dati.descrizione or dati.codice_articolo }}</div></div>
+        <div><div class="val big giallo">{{ dati.codice_articolo }}</div></div>
         <div><div class="val big giallo">{{ dati.qta_pianificata }}</div></div>
       </div>
       <div class="hdr-row" style="border-top:1px solid #222">
-        <div><div class="lbl">Codice</div><div class="val">{{ dati.codice_articolo }}</div></div>
+        <div><div class="lbl">Descrizione</div><div class="val">{{ dati.descrizione or dati.codice_articolo }}</div></div>
       </div>
     </div>
     <div class="hdr-box">
@@ -93,14 +97,23 @@
         <div><div class="lbl">Nr Commessa</div><div class="val giallo">{{ dati.commessa or '—' }}</div></div>
         <div><div class="lbl">Data</div><div class="val">{{ dati.data_inizio or '—' }}</div></div>
       </div>
-      <div class="hdr-row" style="border-top:1px solid #222">
-        <div><div class="lbl">Ordine Produzione</div><div class="val">{{ dati.op_codice }}</div></div>
-        <div><div class="lbl">Stato</div><div class="val">{{ dati.stato }}</div></div>
-      </div>
     </div>
   </div>
 
   {% for g in dati.gruppi %}
+  <table class="materiale-info">
+    <thead><tr><th>Materiale</th>{% if g.ha_barra %}<th>Nr Barre</th>{% endif %}<th>Quantità necessaria</th><th>Controllo Materiale</th><th>Note</th></tr></thead>
+    <tbody>
+      <tr>
+        <td>{{ g.materiale }}</td>
+        {% if g.ha_barra %}<td>{{ g.nr_barre_totale }}</td>{% endif %}
+        <td>{{ g.quantita_necessaria }} {{ g.unita_misura }}</td>
+        <td class="stato-{{ 'ok' if g.stato_materiale.stato=='disponibile' else ('ordinato' if g.stato_materiale.stato=='ordinato' else 'mancante') }}">{{ g.stato_materiale.label }}</td>
+        <td>-</td>
+      </tr>
+    </tbody>
+  </table>
+
   <div class="gruppo-titolo">Ordine Lavoro {{ centro.nome }}: <b>{{ g.materiale }}</b>{% if g.ha_barra and g.righe[0].lunghezza_barra_mm %} — barra da {{ (g.righe[0].lunghezza_barra_mm/1000)|round(2) }} METRI{% endif %}</div>
   <table class="lavoro">
     <thead><tr>
@@ -139,19 +152,6 @@
         {% if g.ha_barra %}<td></td><td>Tot. Barre: {{ g.nr_barre_totale }}</td>{% endif %}
       </tr>
     </tfoot>
-  </table>
-
-  <table class="materiale-info">
-    <thead><tr><th>Materiale</th>{% if g.ha_barra %}<th>Nr Barre</th>{% endif %}<th>Quantità necessaria</th><th>Controllo Materiale</th><th>Note</th></tr></thead>
-    <tbody>
-      <tr>
-        <td>{{ g.materiale }}</td>
-        {% if g.ha_barra %}<td>{{ g.nr_barre_totale }}</td>{% endif %}
-        <td>{{ g.quantita_necessaria }} {{ g.unita_misura }}</td>
-        <td class="stato-{{ 'ok' if g.stato_materiale.stato=='disponibile' else ('ordinato' if g.stato_materiale.stato=='ordinato' else 'mancante') }}">{{ g.stato_materiale.label }}</td>
-        <td>-</td>
-      </tr>
-    </tbody>
   </table>
   {% endfor %}
 
