@@ -537,6 +537,26 @@ class LunghezzaBarraWood(db.Model):
     creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class AvvisoScostamentoWood(db.Model):
+    """
+    Avviso alla Direzione quando una commessa si chiude fuori tolleranza
+    quantità — sopra-produzione rilevata in automatico appena la si supera
+    (soglia 10%, oltre la quale è quasi certamente un errore di
+    dichiarazione), sotto-produzione rilevata solo quando la commessa viene
+    chiusa deliberatamente sotto target (soglia 3%, tolleranza commerciale).
+    """
+    __tablename__ = 'avviso_scostamento_wood'
+    id                = db.Column(db.Integer, primary_key=True)
+    op_code           = db.Column(db.String(20), nullable=False)
+    codice_articolo   = db.Column(db.String(100), nullable=False)
+    tipo              = db.Column(db.String(20), nullable=False)   # 'SOPRA_PRODUZIONE' / 'SOTTO_PRODUZIONE'
+    qta_pianificata   = db.Column(db.Float, nullable=False)
+    qta_buona         = db.Column(db.Float, nullable=False)
+    percentuale       = db.Column(db.Float, nullable=False)        # scostamento %, sempre positivo
+    letto             = db.Column(db.Boolean, default=False)
+    creato_il         = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class SchedaLavorazioneWood(db.Model):
     """
     Scheda di lavorazione Iron Wood UNIFICATA — una riga per coppia
