@@ -8,6 +8,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood,
                     CostoStandardVersioneDettaglioWood, CostoStandardVersioneFaseWood,
                     MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood,
+                    DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
@@ -355,6 +356,14 @@ def api_distinta_base_wood(codice):
     except Exception:
         db.session.rollback()
 
+    # Riserva locale (da caricamento massivo Zucchetti, colonna DESCOM) per i
+    # codici che ArticoloML non conosce ancora — mai in sovrascrittura.
+    codici_senza_descr = tutti_codici - set(descr_map.keys())
+    if codici_senza_descr:
+        for d in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici_senza_descr)).all():
+            if d.descrizione:
+                descr_map[d.codice] = {'descrizione': d.descrizione, 'stock': None, 'fornitore': None}
+
     fasi_map = {}
     for f in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_codici))
               .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()):
@@ -646,6 +655,7 @@ def api_importa_distinta_wood():
             db.session.flush()
 
             esistenti = {(r.codice_padre, r.codice_figlio): r for r in DistintaBaseWood.query.all()}
+            descrizioni_da_salvare = {}
 
             root_corrente = None
             stack = {}
@@ -661,6 +671,17 @@ def api_importa_distinta_wood():
                     numlev = int(row['numlev'])
                 except (ValueError, TypeError):
                     continue
+
+                # DESCOM è la descrizione del codice di QUESTA riga (radice
+                # compresa, quando numlev==0) — salvata a parte nella riserva
+                # locale, mai in ArticoloML (magazzino condiviso di un'altra
+                # azienda, mai scritto da qui).
+                descom_raw = str(row.get('descom', '')).strip()
+                if descom_raw and descom_raw.lower() != 'nan':
+                    codice_di_questa_riga = codart if numlev == 0 else None  # il figlio si calcola sotto
+                    if codice_di_questa_riga:
+                        descrizioni_da_salvare[codice_di_questa_riga] = descom_raw
+
                 if numlev == 0:
                     continue  # riga di intestazione del prodotto, non un componente
 
@@ -670,6 +691,8 @@ def api_importa_distinta_wood():
                     scartate += 1
                     righe_scartate.append(f"riga {i+2}: componente illeggibile in CODCOM ('{codcom_raw}')")
                     continue
+                if descom_raw and descom_raw.lower() != 'nan':
+                    descrizioni_da_salvare[child] = descom_raw
 
                 padre = root_corrente if numlev == 1 else stack.get(numlev - 1, root_corrente)
                 if padre == child:
@@ -701,10 +724,20 @@ def api_importa_distinta_wood():
 
                 stack[numlev] = child
 
+            if descrizioni_da_salvare:
+                esistenti_descr = {d.codice: d for d in
+                                   DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(descrizioni_da_salvare.keys())).all()}
+                for cod, descr in descrizioni_da_salvare.items():
+                    if cod in esistenti_descr:
+                        esistenti_descr[cod].descrizione = descr
+                    else:
+                        db.session.add(DescrizioneCodiceWood(codice=cod, descrizione=descr))
+
             db.session.commit()
             return jsonify({
                 'ok': True, 'nuovi': nuovi, 'aggiornati': aggiornati,
                 'cancellate': righe_cancellate, 'radici_sostituite': sorted(radici_nel_file),
+                'descrizioni_salvate': len(descrizioni_da_salvare),
                 'scartate': scartate, 'righe_scartate': righe_scartate[:30]
             })
 
