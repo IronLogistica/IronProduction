@@ -103,13 +103,14 @@
       <td colspan="8">
         <table class="tabella-dettaglio">
           <thead><tr>
-            <th>Codice lavorato</th><th>Da fare</th><th>Fatti</th><th>Saldo</th>
+            <th>Codice lavorato</th><th>Descrizione</th><th>Da fare</th><th>Fatti</th><th>Saldo</th>
             {% for col in colonne_parametri %}<th>{{ col.etichetta }}</th>{% endfor %}
           </tr></thead>
           <tbody>
             {% for c in g.componenti %}
             <tr>
               <td class="codice-cell">{{ c.codice_lavorato }}{{ ' (prodotto finito)' if c.componente_finale else '' }}</td>
+              <td class="muted">{{ c.descrizione_lavorata or '—' }}</td>
               <td>{{ c.totale | round | int }}</td>
               <td>{{ (c.totale - c.saldo) | round | int }}</td>
               <td>{{ c.saldo | round | int }}</td>
