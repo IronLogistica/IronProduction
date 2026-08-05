@@ -56,6 +56,21 @@
 </div>
 
 
+<!-- ══ MODAL: ANTEPRIMA CARICO/SCARICO (prima di confermare) ═══════════════ -->
+<div class="modal-overlay" id="modal-anteprima">
+  <div class="modal-box" style="width:520px;max-width:96vw">
+    <h3>📦 Conferma movimenti di magazzino</h3>
+    <div id="ant-carica" style="margin:10px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:rgba(26,158,92,.08)"></div>
+    <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin:10px 0 6px">📤 Scarica da magazzino (correggi se serve)</div>
+    <div id="ant-componenti" style="max-height:260px;overflow-y:auto"></div>
+    <button class="btn btn-primary" style="margin-top:14px" onclick="confermaAnteprima()">✅ Conferma e registra</button>
+    <span id="ant-esito" style="font-size:12px;margin-left:8px"></span>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-anteprima')">Annulla</button>
+    </div>
+  </div>
+</div>
+
 <!-- ══ MODAL: DICHIARA PRODUZIONE ══════════════════════════════════════════ -->
 <div class="modal-overlay" id="modal-dichiara">
   <div class="modal-box" style="width:420px;max-width:96vw">
@@ -120,22 +135,63 @@ async function caricaOpAperti(){
   }).join('');
 }
 
+let _anteprimaCorrente = null;
+
 async function dichiaraInline(g, c, idInput){
   const input = document.getElementById(idInput);
   const buoni = parseInt(input.value, 10);
   if(isNaN(buoni) || buoni <= 0){ input.style.borderColor = '#c0392b'; input.focus(); return; }
-  input.disabled = true;
-  const payload = {
+
+  const componente = c.componente_finale ? '' : c.codice_lavorato;
+  const url = `/api/dichiarazione-produzione/anteprima?op_code=${encodeURIComponent(g.codice)}&componente=${encodeURIComponent(componente)}&pezzi_buoni=${buoni}`;
+  let anteprima;
+  try{
+    const r = await fetch(url);
+    anteprima = await r.json();
+    if(!anteprima.ok){ alert('⚠️ ' + anteprima.error); return; }
+  }catch(e){ alert('❌ Errore di rete.'); return; }
+
+  _anteprimaCorrente = {
     op_code: g.codice, centro_id: _centroCorrente, componente: c.componente_finale ? null : c.codice_lavorato,
-    pezzi_buoni: buoni, pezzi_scarto: 0, tempo_minuti: 0,
+    pezzi_buoni: buoni, idInput,
   };
+
+  const car = anteprima.carica;
+  document.getElementById('ant-carica').innerHTML =
+    `<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-bottom:4px">📥 Carica a magazzino</div>` +
+    `<div style="display:flex;justify-content:space-between;align-items:center">` +
+    `<div><b class="codice">${car.codice}</b> <span style="color:var(--text-dim)">${car.descrizione||''}</span></div>` +
+    `<div style="font-weight:800;font-size:16px;color:#1a9e5c">× ${car.quantita}</div></div>`;
+
+  const box = document.getElementById('ant-componenti');
+  if(!anteprima.componenti.length){
+    box.innerHTML = '<p style="color:var(--text-dim);font-style:italic;font-size:12px">Nessun componente da scaricare (distinta base non trovata per questo codice).</p>';
+  } else {
+    box.innerHTML = '<table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>Quantità</th></tr></thead><tbody>' +
+      anteprima.componenti.map((comp, k) =>
+        `<tr><td class="codice">${comp.codice}</td><td style="font-size:11px;color:var(--text-dim)">${comp.descrizione||'—'}</td>` +
+        `<td><input id="ant-qta-${k}" type="number" step="0.01" min="0" value="${comp.quantita}" data-codice="${comp.codice}" style="width:90px;padding:5px 7px;border-radius:5px;border:1px solid var(--border)"></td></tr>`
+      ).join('') + '</tbody></table>';
+  }
+  document.getElementById('ant-esito').textContent = '';
+  openModal('modal-anteprima');
+}
+
+async function confermaAnteprima(){
+  const esito = document.getElementById('ant-esito');
+  const inputsQta = document.querySelectorAll('#ant-componenti input[data-codice]');
+  const consumi = {};
+  inputsQta.forEach(inp => { consumi[inp.dataset.codice] = parseFloat(inp.value) || 0; });
+
+  const payload = { ..._anteprimaCorrente, pezzi_scarto: 0, tempo_minuti: 0, consumi };
   try{
     const r = await fetch('/api/dichiarazione-produzione', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const d = await r.json();
-    if(!d.ok){ alert('⚠️ ' + d.error); input.disabled = false; return; }
+    if(!d.ok){ esito.style.color='#c0392b'; esito.textContent = '⚠️ ' + d.error; return; }
+    closeModal('modal-anteprima');
     caricaOpAperti();
   }catch(e){
-    alert('❌ Errore di rete.'); input.disabled = false;
+    esito.style.color='#c0392b'; esito.textContent = '❌ Errore di rete.';
   }
 }
 
