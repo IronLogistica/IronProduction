@@ -446,6 +446,20 @@ class MovimentoContabileWood(db.Model):
     creato_il           = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class DescrizioneCodiceWood(db.Model):
+    """
+    Descrizione LOCALE di un codice Iron Wood — alimentata dalla colonna
+    DESCOM degli export Zucchetti Ad Hoc, usata SOLO come riserva quando
+    ArticoloML (il magazzino condiviso di MasterLogistic, di un'altra
+    azienda) non ha già una descrizione per quel codice. Non scrive né
+    modifica mai ArticoloML.
+    """
+    __tablename__ = 'descrizione_codice_wood'
+    codice      = db.Column(db.String(100), primary_key=True)
+    descrizione = db.Column(db.String(300), nullable=False, default='')
+    aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class DistintaBaseWood(db.Model):
     """
     Distinta base (BOM) di Iron Wood — COPIA LOCALE, nel database di
