@@ -552,15 +552,42 @@ def _e_prima_fase_del_ciclo(codice_lavorato, fase_nome):
 
 
 def _calcola_consumi_standard(o, componente_finale, componente, good):
-    """Consumi standard (da distinta base) per GOOD pezzi buoni — stessa logica
-    usata sia per la registrazione vera sia per l'anteprima pre-conferma."""
-    if componente_finale:
-        componenti_esplosi = _esplodi_bom_wood(o.codice_articolo, qta=good)
-        consumi = {}
-        _flatten_componenti(componenti_esplosi, consumi)
-    else:
-        consumi = {rb.codice_figlio: rb.quantita * good for rb in _righe_bom_attive_wood(componente)}
+    """
+    Consumi standard (da distinta base) per GOOD pezzi buoni — stessa logica
+    usata sia per la registrazione vera sia per l'anteprima pre-conferma.
+
+    Riesplode la distinta SOLO fino ai figli che NON hanno un proprio Ciclo
+    di Lavoro (materie prime/componenti d'acquisto puri, mai dichiarabili da
+    soli): un figlio CON un proprio ciclo può essere stato dichiarato
+    separatamente come semilavorato (scaricando già le SUE materie prime in
+    quel momento) — consumarlo di nuovo qui vorrebbe dire scaricare le
+    stesse materie prime due volte, e in più scaricare a sua volta il
+    semilavorato appena caricato. Si consuma quindi LUI (il semilavorato,
+    dal magazzino), non si riesplode sotto di lui.
+    """
+    codice_base = o.codice_articolo if componente_finale else componente
+    consumi = {}
+    _esplodi_fino_a_semilavorati_dichiarabili(codice_base, good, consumi)
     return consumi
+
+
+def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, _visitati=None):
+    _visitati = _visitati if _visitati is not None else set()
+    if codice in _visitati:
+        return  # mai un ciclo infinito su una distinta configurata male per errore
+    _visitati.add(codice)
+    for rb in _righe_bom_attive_wood(codice):
+        qta_figlio = rb.quantita * qta
+        ha_proprio_ciclo = CicloLavoroWood.query.filter_by(codice=rb.codice_figlio).first() is not None
+        figli_del_figlio = _righe_bom_attive_wood(rb.codice_figlio)
+        if ha_proprio_ciclo or not figli_del_figlio:
+            # Ci si ferma qui: o è un semilavorato con un proprio ciclo (può
+            # essere stato dichiarato a parte, si consuma lui), oppure è una
+            # foglia vera — materia prima/componente d'acquisto senza altra
+            # distinta sotto — e va comunque consumata a questo livello.
+            consumi[rb.codice_figlio] = consumi.get(rb.codice_figlio, 0) + qta_figlio
+        else:
+            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, _visitati)
 
 
 def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None):
