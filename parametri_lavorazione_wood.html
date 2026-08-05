@@ -1,0 +1,616 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  #alb-tabella tr.riga-attiva td{background:rgba(37,137,199,.22) !important;
+    border-top:2px solid var(--accent2,#2589c7) !important;border-bottom:2px solid var(--accent2,#2589c7) !important}
+  #alb-tabella tr.riga-attiva td:first-child{border-left:4px solid var(--accent2,#2589c7) !important}
+  #alb-tabella tr.riga-attiva td.codice{color:#fff;font-weight:800}
+  #alb-tabella input:focus, #alb-tabella select:focus{border-color:var(--accent2,#2589c7) !important;outline:none;
+    box-shadow:0 0 0 2px rgba(37,137,199,.3)}
+</style>
+<div class="page-toolbar">
+  <div class="page-title">⚙️ Parametri di Lavorazione</div>
+  <a class="btn btn-primary" href="/esploratore-prodotto" style="margin-left:auto">🌳 Vista Visiva (BOM + Ciclo)</a>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim)">
+      Parametri di IMPOSTAZIONE INIZIALE di materia prima e macchine (lunghezza barra, matrice, rullo sgolatrice,
+      punto zero, indice assorbimento, satinatura) — precedono la produzione vera e propria: senza questi non si
+      possono mandare ordini precisi agli operai. Vanno compilati una volta per ogni coppia padre/figlio della
+      Distinta Base, poi restano lì stabili finché la lavorazione non cambia.
+    </p>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div style="padding:14px;display:flex;gap:10px;flex-wrap:wrap">
+    <button class="btn btn-primary" onclick="toggleSottoparametro('barra')">📏 Gestisci sottoparametri: Lunghezza Barra</button>
+    <button class="btn btn-primary" onclick="toggleSottoparametro('matrice')">🔧 Gestisci sottoparametri: Matrice</button>
+    <button class="btn btn-primary" onclick="toggleSottoparametro('rullo')">🎯 Gestisci sottoparametri: Rullo Sgolatrice</button>
+  </div>
+
+  <div id="box-barra" style="padding:0 14px 14px;display:none">
+    <div style="border-top:1px solid var(--border);padding-top:14px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input id="brr-mm" type="number" step="1" min="1" placeholder="Valore in mm (es. 6000)" style="width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="brr-etichetta" type="text" placeholder="Etichetta (es. 6 mt)" style="width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="creaLunghezzaBarra()">➕ Aggiungi</button>
+      </div>
+      <div id="brr-lista" style="font-size:13px;color:#666">Caricamento...</div>
+    </div>
+  </div>
+
+  <div id="box-matrice" style="padding:0 14px 14px;display:none">
+    <div style="border-top:1px solid var(--border);padding-top:14px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input id="mtx-codice" type="text" placeholder="Codice matrice (es. ø32 R.112)" style="width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="mtx-desc" type="text" placeholder="Descrizione" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="creaMatrice()">➕ Aggiungi</button>
+      </div>
+      <div id="mtx-lista" style="font-size:13px;color:#666">Caricamento...</div>
+    </div>
+  </div>
+
+  <div id="box-rullo" style="padding:0 14px 14px;display:none">
+    <div style="border-top:1px solid var(--border);padding-top:14px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input id="rul-codice" type="text" placeholder="Codice rullo (es. ø1&quot; (33,7))" style="width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="rul-desc" type="text" placeholder="Descrizione" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="creaRullo()">➕ Aggiungi</button>
+      </div>
+      <div id="rul-lista" style="font-size:13px;color:#666">Caricamento...</div>
+    </div>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div style="padding:14px">
+    <div style="display:flex;gap:8px;align-items:center;max-width:600px">
+      <button class="btn btn-ghost" onclick="vaiRadice(-1)">◀</button>
+      <input id="inp-radice" type="text" placeholder="Codice padre generale (es. T200DT)" style="flex:1;padding:9px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);font-weight:700;text-align:center"
+             onkeydown="if(event.key==='Enter') caricaAlbero()">
+      <button class="btn btn-ghost" onclick="vaiRadice(1)">▶</button>
+      <button class="btn btn-primary" onclick="caricaAlbero()">🔍 Cerca</button>
+    </div>
+    <div id="alb-stato" style="font-size:12px;color:var(--text-dim);margin-top:8px"></div>
+    <div style="margin-top:14px;padding-top:14px;border-top:1px solid var(--border);display:flex;gap:10px;align-items:center;flex-wrap:wrap">
+      <button class="btn btn-primary" onclick="apriModalImportDB()">📥 Caricamento massivo Distinta Base (da Zucchetti Ad Hoc)</button>
+      <span style="font-size:11px;color:var(--text-dim)">Aggiorna/crea le righe padre-figlio del file — NON tocca gruppo alternativa, preferita, pezzi per barra, sviluppo, ciclo di lavoro o gli altri parametri già impostati a mano.</span>
+    </div>
+  </div>
+</div>
+
+<div id="modal-import-db" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:999;align-items:center;justify-content:center">
+  <div style="background:var(--dark2,#1b1f27);border:1px solid var(--border);border-radius:10px;max-width:520px;width:92%;padding:20px">
+    <div style="font-size:15px;font-weight:800;margin-bottom:10px">📥 Caricamento massivo Distinta Base</div>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
+      Seleziona l'export della Distinta Base da Zucchetti Ad Hoc Revolution (.xls/.xlsx/.csv).
+      Il caricamento crea le coppie padre/figlio mancanti e aggiorna quantità/livello/note di quelle esistenti.
+      Gruppo alternativa, preferita, pezzi per barra, sviluppo e il ciclo di lavoro impostati a mano
+      <b>non vengono mai cancellati</b> da questo import.
+    </p>
+    <input id="import-db-file" type="file" accept=".xls,.xlsx,.csv" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);margin-bottom:14px">
+    <div id="import-db-esito" style="font-size:12px;margin-bottom:12px"></div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="chiudiModalImportDB()">Annulla</button>
+      <button class="btn btn-primary" id="btn-conferma-import-db" onclick="eseguiImportDB()">⬆️ Carica</button>
+    </div>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div class="section-hdr postazione-hdr" style="background:#1e5fa8">🧭 Esploso BOM + Ciclo di Lavoro di quest'albero</div>
+  <div style="padding:14px">
+    <div id="riepilogo-cicli" style="font-size:13px">Cerca un codice padre generale per vedere l'albero.</div>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div class="section-hdr postazione-hdr" style="display:flex;justify-content:space-between;align-items:center">
+    <span>📋 Tabella di lavorazione — <span id="titolo-radice">—</span></span>
+    <span id="riga-in-modifica" style="font-size:11px;background:rgba(0,0,0,.25);padding:4px 10px;border-radius:6px;display:none">Riga in modifica: <b></b></span>
+  </div>
+  <div style="padding:14px;overflow-x:auto">
+    <div id="alb-tabella" style="font-size:13px;color:#666">Cerca un codice padre generale per iniziare.</div>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div class="section-hdr postazione-hdr" style="background:#1e5fa8">🛠️ Imposta Ciclo di Lavoro — <span id="cl-codice-corrente">—</span></div>
+  <div style="padding:14px">
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <label style="font-size:12px;color:var(--text-dim)">Codice:</label>
+      <select id="cl-select-codice" style="min-width:200px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)" onchange="selezionaCodiceCiclo(this.value)">
+        <option value="">— seleziona un codice dell'albero —</option>
+      </select>
+    </div>
+
+    <div id="cl-box-approvvigionamento" style="display:none;padding:10px;margin-bottom:14px;border:1px solid var(--border);border-radius:7px;background:var(--dark3)">
+      <div style="font-size:12px;font-weight:700;margin-bottom:7px">📦 Classificazione approvvigionamento</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end">
+        <div style="flex:1;min-width:210px"><label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Tipo articolo</label>
+          <select id="cl-tipo-approvvigionamento" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border)">
+            <option value="DA_CLASSIFICARE">Da classificare</option>
+            <option value="MATERIA_PRIMA_FORNITORE">Materia prima da fornitore</option>
+            <option value="COMPONENTE_ACQUISTO">Componente d'acquisto</option>
+            <option value="LASERATO">Laserato</option>
+          </select>
+        </div>
+        <div style="width:90px"><label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Unità di misura</label><input id="cl-unita-misura" type="text" maxlength="20" placeholder="PZ, KG…" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border)"></div>
+        <div style="width:145px"><label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Lead time fornitore</label>
+          <input id="cl-lead-time-fornitura" type="number" min="0" step="0.5" placeholder="Giorni" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <div style="width:150px"><label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Costo acquisto €/pz</label>
+          <input id="cl-costo-acquisto" type="number" min="0" step="0.01" placeholder="0.00" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <button class="btn btn-primary" onclick="salvaApprovvigionamento()">💾 Salva</button>
+      </div>
+      <div id="cl-approvvigionamento-esito" style="font-size:11px;margin-top:6px;color:var(--text-dim)"></div>
+    </div>
+
+    <div id="cl-box-fasi" style="display:none">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input id="cl-sequenza" type="number" step="1" min="1" value="1" placeholder="Sequenza" style="width:85px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <select id="cl-reparto" style="min-width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)"><option value="">Reparto...</option></select>
+        <input id="cl-produttivita" type="number" step="0.01" min="0" placeholder="Pezzi/ora" style="width:100px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="cl-scarto-max" type="number" step="0.1" min="0" max="100" placeholder="Scarto max %" style="width:110px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="cl-note" type="text" placeholder="Note" style="flex:1;min-width:120px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="aggiungiFaseCiclo()">➕ Aggiungi fase</button>
+      </div>
+      <div id="cl-lista-fasi" style="font-size:13px;color:#666">—</div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+let RADICI = [];
+let INDICE_RADICE = -1;
+let RADICE_ATTIVA = null;
+
+// ── IMPORT MASSIVO DISTINTA BASE (export Zucchetti Ad Hoc Revolution) ──
+function apriModalImportDB(){
+  document.getElementById('import-db-file').value = '';
+  document.getElementById('import-db-esito').innerHTML = '';
+  document.getElementById('modal-import-db').style.display = 'flex';
+}
+function chiudiModalImportDB(){
+  document.getElementById('modal-import-db').style.display = 'none';
+}
+async function eseguiImportDB(){
+  const fileInput = document.getElementById('import-db-file');
+  const esito = document.getElementById('import-db-esito');
+  const btn = document.getElementById('btn-conferma-import-db');
+  if(!fileInput.files.length){ esito.innerHTML = '<span style="color:#ff6b6b">⚠️ Seleziona prima un file.</span>'; return; }
+  const fd = new FormData();
+  fd.append('file_excel', fileInput.files[0]);
+  btn.disabled = true; btn.textContent = '⏳ Caricamento...';
+  esito.innerHTML = '<span style="color:var(--text-dim)">Caricamento in corso...</span>';
+  try{
+    const r = await fetch('/api/distinta_base_wood/importa', {method:'POST', body: fd});
+    const d = await r.json();
+    if(d.errore){
+      esito.innerHTML = '<span style="color:#ff6b6b">⚠️ ' + d.messaggio + '</span>';
+    } else {
+      let html = '<span style="color:#2a9d5c">✅ Import completato — ' + d.nuovi + ' nuove, ' + d.aggiornati + ' aggiornate' +
+                 (d.scartate ? ', ' + d.scartate + ' scartate' : '') + '.</span>';
+      if(d.righe_scartate && d.righe_scartate.length){
+        html += '<div style="margin-top:8px;max-height:140px;overflow-y:auto;font-size:11px;color:var(--text-dim)">' +
+                d.righe_scartate.map(x => '• ' + x).join('<br>') + '</div>';
+      }
+      esito.innerHTML = html;
+      if(RADICE_ATTIVA) caricaAlbero();
+    }
+  } catch(e){
+    esito.innerHTML = '<span style="color:#ff6b6b">⚠️ Errore di rete: ' + e + '</span>';
+  } finally {
+    btn.disabled = false; btn.textContent = '⬆️ Carica';
+  }
+}
+
+function toggleSottoparametro(nome){
+  const box = document.getElementById('box-' + nome);
+  box.style.display = box.style.display === 'none' ? '' : 'none';
+}
+
+// ── LUNGHEZZE BARRA ──────────────────────────────────────────────────────
+async function caricaLunghezzeBarra(){
+  const r = await fetch('/api/lunghezze_barra_wood'); const righe = await r.json();
+  document.getElementById('brr-lista').innerHTML = righe.length ? (
+    '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Valore (mm)</th><th>Etichetta</th><th></th></tr></thead><tbody>' +
+    righe.map(m => `<tr><td class="num">${m.valore_mm}</td><td>${m.etichetta}</td><td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaLunghezzaBarra(${m.id})">🗑️</button></td></tr>`).join('') +
+    '</tbody></table></div>'
+  ) : '<p style="color:#aaa;font-style:italic">Nessuna lunghezza barra inserita ancora.</p>';
+  window._LUNGHEZZE_BARRA = righe;
+}
+async function creaLunghezzaBarra(){
+  const payload = {valore_mm: document.getElementById('brr-mm').value, etichetta: document.getElementById('brr-etichetta').value.trim()};
+  const r = await fetch('/api/lunghezze_barra_wood', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  const d = await r.json();
+  if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+  document.getElementById('brr-mm').value=''; document.getElementById('brr-etichetta').value='';
+  caricaLunghezzeBarra();
+}
+async function eliminaLunghezzaBarra(id){
+  if(!confirm('Eliminare questa lunghezza barra?')) return;
+  await fetch('/api/lunghezze_barra_wood/' + id, {method:'DELETE'});
+  caricaLunghezzeBarra(); if(RADICE_ATTIVA) caricaAlbero();
+}
+
+// ── MATRICI ────────────────────────────────────────────────────────────
+async function caricaMatrici(){
+  const r = await fetch('/api/matrici_wood'); const righe = await r.json();
+  document.getElementById('mtx-lista').innerHTML = righe.length ? (
+    '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th></th></tr></thead><tbody>' +
+    righe.map(m => `<tr><td class="codice">${m.codice}</td><td>${m.descrizione||'—'}</td><td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaMatrice(${m.id})">🗑️</button></td></tr>`).join('') +
+    '</tbody></table></div>'
+  ) : '<p style="color:#aaa;font-style:italic">Nessuna matrice inserita ancora.</p>';
+  window._MATRICI = righe;
+}
+async function creaMatrice(){
+  const payload = {codice: document.getElementById('mtx-codice').value.trim(), descrizione: document.getElementById('mtx-desc').value.trim()};
+  const r = await fetch('/api/matrici_wood', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  const d = await r.json();
+  if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+  document.getElementById('mtx-codice').value=''; document.getElementById('mtx-desc').value='';
+  caricaMatrici();
+}
+async function eliminaMatrice(id){
+  if(!confirm('Eliminare questa matrice?')) return;
+  await fetch('/api/matrici_wood/' + id, {method:'DELETE'});
+  caricaMatrici(); if(RADICE_ATTIVA) caricaAlbero();
+}
+
+// ── RULLI ──────────────────────────────────────────────────────────────
+async function caricaRulli(){
+  const r = await fetch('/api/rulli_wood'); const righe = await r.json();
+  document.getElementById('rul-lista').innerHTML = righe.length ? (
+    '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th></th></tr></thead><tbody>' +
+    righe.map(m => `<tr><td class="codice">${m.codice}</td><td>${m.descrizione||'—'}</td><td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaRullo(${m.id})">🗑️</button></td></tr>`).join('') +
+    '</tbody></table></div>'
+  ) : '<p style="color:#aaa;font-style:italic">Nessun rullo inserito ancora.</p>';
+  window._RULLI = righe;
+}
+async function creaRullo(){
+  const payload = {codice: document.getElementById('rul-codice').value.trim(), descrizione: document.getElementById('rul-desc').value.trim()};
+  const r = await fetch('/api/rulli_wood', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  const d = await r.json();
+  if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+  document.getElementById('rul-codice').value=''; document.getElementById('rul-desc').value='';
+  caricaRulli();
+}
+async function eliminaRullo(id){
+  if(!confirm('Eliminare questo rullo?')) return;
+  await fetch('/api/rulli_wood/' + id, {method:'DELETE'});
+  caricaRulli(); if(RADICE_ATTIVA) caricaAlbero();
+}
+
+// ── NAVIGAZIONE RADICI (Codice padre generale) ──────────────────────────
+async function caricaRadici(){
+  try{
+    const r = await fetch('/api/schede_lavorazione_wood/radici');
+    RADICI = await r.json();
+  }catch(e){ RADICI = []; }
+}
+
+function vaiRadice(delta){
+  if(!RADICI.length){ return; }
+  if(INDICE_RADICE === -1){ INDICE_RADICE = 0; }
+  else{ INDICE_RADICE = (INDICE_RADICE + delta + RADICI.length) % RADICI.length; }
+  document.getElementById('inp-radice').value = RADICI[INDICE_RADICE];
+  caricaAlbero();
+}
+
+function optionsMatrici(selezionata){
+  return '<option value="">—</option>' + (window._MATRICI||[]).map(m =>
+    `<option value="${m.id}" ${m.id===selezionata?'selected':''}>${m.codice}</option>`).join('');
+}
+function optionsRulli(selezionata){
+  return '<option value="">—</option>' + (window._RULLI||[]).map(m =>
+    `<option value="${m.id}" ${m.id===selezionata?'selected':''}>${m.codice}</option>`).join('');
+}
+function optionsLunghezzaBarra(selezionata){
+  return '<option value="">—</option>' + (window._LUNGHEZZE_BARRA||[]).map(m =>
+    `<option value="${m.valore_mm}" ${String(selezionata||'')===String(m.valore_mm)?'selected':''}>${m.etichetta}</option>`).join('');
+}
+
+async function caricaAlbero(){
+  const codice = document.getElementById('inp-radice').value.trim().toUpperCase();
+  if(!codice){ return; }
+  RADICE_ATTIVA = codice;
+  document.getElementById('titolo-radice').textContent = codice;
+  const idx = RADICI.indexOf(codice);
+  if(idx >= 0) INDICE_RADICE = idx;
+
+  const box = document.getElementById('alb-tabella');
+  const stato = document.getElementById('alb-stato');
+  box.innerHTML = 'Caricamento...'; stato.textContent = '';
+  document.getElementById('riga-in-modifica').style.display = 'none';
+  try{
+    const r = await fetch('/api/schede_lavorazione_wood/albero/' + encodeURIComponent(codice));
+    const d = await r.json();
+    if(!d.trovato){
+      box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna distinta base trovata per questo codice — verifica che sia un codice padre valido in Distinta Base Iron Wood.</p>';
+      return;
+    }
+    stato.textContent = `${d.righe.length} righe (padre/figlio) trovate nell'albero di ${codice}.`;
+    box.innerHTML = renderTabellaAlbero(d.righe);
+    renderRiepilogoCicli(codice);
+    popolaSelectCodiciCiclo(d.righe);
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+function renderApprovvigionamentoInline(approvvigionamento){
+  const a = approvvigionamento || {};
+  const etichette = {
+    MATERIA_PRIMA_FORNITORE: 'Materia prima da fornitore',
+    COMPONENTE_ACQUISTO: "Componente d'acquisto",
+    LASERATO: 'Laserato'
+  };
+  const testo = etichette[a.tipo_approvvigionamento];
+  if(!testo) return '';
+  const lead = a.lead_time_fornitura_giorni !== null && a.lead_time_fornitura_giorni !== undefined
+    ? ` · Lead time: ${a.lead_time_fornitura_giorni} gg` : '';
+  return `<div style="margin:3px 0 3px 10px;font-size:11px;color:#1e5fa8;font-weight:700">📦 ${testo}${lead}</div>`;
+}
+
+function renderCicloLavoroInline(cicli, approvvigionamento){
+  if(cicli === undefined) return '';
+  if(!cicli || !cicli.length){
+    if(approvvigionamento && approvvigionamento.tipo_approvvigionamento !== 'DA_CLASSIFICARE') return '';
+    return '<div style="margin:3px 0 3px 10px;font-size:11px;color:#b8860b">⚠️ Nessun ciclo di lavoro registrato per questo codice</div>';
+  }
+  const fasi = cicli.map(f => `${f.sequenza}) ${f.centro_costo_nome}${f.centro_costo_esterno?' 🚚':''} — ${f.produttivita_oraria} pz/h`).join('&nbsp;&nbsp;→&nbsp;&nbsp;');
+  return `<div style="margin:3px 0 3px 10px;font-size:11px;color:#2a9d5c">🔧 Ciclo di lavoro: ${fasi}</div>`;
+}
+
+function renderBOMLista(componenti){
+  if(!componenti || !componenti.length) return '';
+  return '<ul style="margin:4px 0 4px 18px;padding:0;list-style:none">' + componenti.map(c => `
+    <li style="padding:4px 0;border-left:2px solid var(--border);padding-left:10px;margin-bottom:2px">
+      ${c.livello_effettivo!==undefined ? `<span style="font-size:10px;color:#1e5fa8;font-weight:700;margin-right:6px">SOTTOGRUPPO ${c.livello_effettivo}° LIVELLO</span>` : ''}
+      <span class="cod" style="font-weight:700">${c.codice}</span>
+      <span style="color:var(--text-dim)"> — ${c.descrizione||'(senza descrizione)'}</span>
+      <span style="margin-left:8px;font-weight:600">× ${c.quantita_totale}</span>
+      ${c.stock!==null && c.stock!==undefined ? `<span style="margin-left:8px;font-size:11px;color:${c.stock<=0?'#c0392b':'#2a9d5c'}">(stock ${c.stock})</span>` : ''}
+      ${c.note ? `<span style="margin-left:8px;font-size:11px;color:#999">${c.note}</span>` : ''}
+      ${renderApprovvigionamentoInline(c.approvvigionamento)}
+      ${renderCicloLavoroInline(c.cicli_lavoro, c.approvvigionamento)}
+      ${renderBOMLista(c.figli)}
+    </li>`).join('') + '</ul>';
+}
+
+async function renderRiepilogoCicli(codice){
+  const box = document.getElementById('riepilogo-cicli');
+  box.innerHTML = 'Caricamento…';
+  try{
+    const r = await fetch('/api/distinta_base_wood/' + encodeURIComponent(codice));
+    const d = await r.json();
+    if(!d.trovato){
+      box.innerHTML = `<p style="color:#999">Articolo <b>${codice}</b> non trovato in Distinta Base.</p>`;
+      return;
+    }
+    if(!d.ha_bom){
+      box.innerHTML = `<p style="color:#999">Nessuna distinta Iron Wood definita per <b>${codice}</b> (${d.descrizione||'—'}).</p>` +
+        renderApprovvigionamentoInline(d.approvvigionamento) + renderCicloLavoroInline(d.cicli_lavoro, d.approvvigionamento);
+      return;
+    }
+    box.innerHTML = `<p style="margin-bottom:6px"><b>${codice}</b> — ${d.descrizione||'—'} <span style="font-size:10px;color:#1e5fa8;font-weight:700">CODICE PADRE</span></p>` +
+      renderApprovvigionamentoInline(d.approvvigionamento) + renderCicloLavoroInline(d.cicli_lavoro, d.approvvigionamento) + renderBOMLista(d.componenti);
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento dell\'albero.</p>';
+  }
+}
+
+function popolaSelectCodiciCiclo(righe){
+  const sel = document.getElementById('cl-select-codice');
+  const codici = [...new Set(righe.flatMap(x => [x.codice_padre, x.codice_figlio]))].sort();
+  sel.innerHTML = '<option value="">— seleziona un codice dell\'albero —</option>' +
+    codici.map(c => `<option value="${c}">${c}</option>`).join('');
+}
+
+function evidenziaRiga(indice, padre, figlio){
+  document.querySelectorAll('.riga-attiva').forEach(tr => tr.classList.remove('riga-attiva'));
+  const tr = document.getElementById('riga-' + indice);
+  if(tr){
+    tr.classList.add('riga-attiva');
+    tr.scrollIntoView({behavior:'smooth', block:'nearest'});
+  }
+  const etichetta = document.getElementById('riga-in-modifica');
+  etichetta.style.display = '';
+  etichetta.querySelector('b').textContent = `${padre} → ${figlio}`;
+}
+
+function renderTabellaAlbero(righe){
+  let html = '<table class="kanban-table"><thead><tr>' +
+    '<th>Padre</th><th>Figlio</th><th>Tipo / U.M.<br>(figlio)</th><th>Ciclo di<br>Lavoro (figlio)</th><th>Lunghezza<br>Barra</th><th>Spessore<br>(mm)</th><th>pz/Barra</th><th>Sviluppo</th>' +
+    '<th>Matrice</th><th>Punto 0</th><th>Indice<br>assorbimento</th><th>Rullo<br>Sgolatrice</th>' +
+    '<th>Impostazione<br>Satinatrice</th><th>Note</th></tr></thead><tbody>';
+  righe.forEach((x, i) => {
+    const nFasiFiglio = x.n_fasi_ciclo_lavoro_figlio || 0;
+    const badgeCiclo = nFasiFiglio > 0
+      ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#2a9d5c" onclick="selezionaCodiceCicloTabella('${x.codice_figlio}')">✅ ${nFasiFiglio} fasi</button>`
+      : `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#c0392b" onclick="selezionaCodiceCicloTabella('${x.codice_figlio}')">⚠️ Nessuno</button>`;
+    const a = x.approvvigionamento_figlio || {};
+    const tipoInline = `<select style="width:150px;font-size:10px" onchange="salvaApprovvigionamentoRiga('${x.codice_figlio}',this.value,null)"><option value="DA_CLASSIFICARE" ${a.tipo_approvvigionamento==='DA_CLASSIFICARE'?'selected':''}>Da classificare</option><option value="MATERIA_PRIMA_FORNITORE" ${a.tipo_approvvigionamento==='MATERIA_PRIMA_FORNITORE'?'selected':''}>Materia prima</option><option value="COMPONENTE_ACQUISTO" ${a.tipo_approvvigionamento==='COMPONENTE_ACQUISTO'?'selected':''}>Componente acquisto</option><option value="LASERATO" ${a.tipo_approvvigionamento==='LASERATO'?'selected':''}>Laserato</option></select><input style="width:55px;margin-top:3px" placeholder="U.M." value="${a.unita_misura||''}" onchange="salvaApprovvigionamentoRiga('${x.codice_figlio}',null,this.value)">`; 
+    const f = `onfocus="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')"`;
+    html += `<tr id="riga-${i}" onclick="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')">      <td class="codice">${x.codice_padre}</td>
+      <td class="codice">${x.codice_figlio}</td>
+      <td>${tipoInline}</td>
+      <td>${badgeCiclo}</td>
+      <td><select style="width:80px" ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
+      <td><input type="number" step="0.1" min="0" value="${x.spessore_mm??''}" style="width:65px" ${f} onchange="salvaCella(${i},'spessore_mm',this.value)"></td>
+      <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
+      <td><input type="text" value="${x.sviluppo||''}" style="width:100px" ${f} onchange="salvaCella(${i},'sviluppo',this.value)"></td>
+      <td><select style="width:90px" ${f} onchange="salvaCella(${i},'matrice_id',this.value)">${optionsMatrici(x.matrice_id)}</select></td>
+      <td><input type="text" value="${x.punto_zero||''}" style="width:70px" ${f} onchange="salvaCella(${i},'punto_zero',this.value)"></td>
+      <td><input type="text" value="${x.indice_assorbimento||''}" style="width:80px" ${f} onchange="salvaCella(${i},'indice_assorbimento',this.value)"></td>
+      <td><select style="width:90px" ${f} onchange="salvaCella(${i},'rullo_id',this.value)">${optionsRulli(x.rullo_id)}</select></td>
+      <td><input type="text" value="${x.impostazione_satinatrice||''}" style="width:110px" ${f} onchange="salvaCella(${i},'impostazione_satinatrice',this.value)"></td>
+      <td><input type="text" value="${x.note||''}" style="width:140px" ${f} onchange="salvaCella(${i},'note',this.value)"></td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  window._RIGHE_ALBERO = righe;
+  return html;
+}
+
+function selezionaCodiceCicloTabella(codice){
+  document.getElementById('cl-select-codice').value = codice;
+  selezionaCodiceCiclo(codice);
+  document.getElementById('cl-select-codice').scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+async function salvaCella(indice, campo, valore){
+  const riga = window._RIGHE_ALBERO[indice];
+  const payload = {
+    codice_padre: riga.codice_padre, codice_figlio: riga.codice_figlio,
+    lunghezza_barra_mm: riga.lunghezza_barra_mm, spessore_mm: riga.spessore_mm, pezzi_per_barra: riga.pezzi_per_barra,
+    sviluppo: riga.sviluppo, matrice_id: riga.matrice_id, punto_zero: riga.punto_zero,
+    indice_assorbimento: riga.indice_assorbimento, rullo_id: riga.rullo_id,
+    impostazione_satinatrice: riga.impostazione_satinatrice, note: riga.note,
+  };
+  payload[campo] = valore;
+  try{
+    const r = await fetch('/api/schede_lavorazione_wood', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    riga[campo] = (campo === 'matrice_id' || campo === 'rullo_id') ? (valore ? parseInt(valore) : null) : valore;
+    riga.id = d.id;
+    showToast('✅ Salvato');
+  }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
+}
+
+async function salvaApprovvigionamentoRiga(codice, tipo, unita){
+  try{
+    const corrente = await (await fetch('/api/articoli/' + encodeURIComponent(codice) + '/approvvigionamento')).json();
+    const payload = {tipo_approvvigionamento: tipo || corrente.tipo_approvvigionamento, lead_time_fornitura_giorni: corrente.lead_time_fornitura_giorni, costo_acquisto_standard: corrente.costo_acquisto_standard, unita_misura: unita === null ? (corrente.unita_misura || '') : unita};
+    const r = await fetch('/api/articoli/' + encodeURIComponent(codice) + '/approvvigionamento', {method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!(await r.json()).ok) throw new Error();
+    if(RADICE_ATTIVA) caricaAlbero();
+  }catch(e){ alert('❌ Impossibile salvare tipo/unità di misura.'); }
+}
+
+// ── EDITOR CICLO DI LAVORO (sotto la tabella) ───────────────────────────
+let CODICE_CICLO_ATTIVO = null;
+
+async function selezionaCodiceCiclo(codice){
+  CODICE_CICLO_ATTIVO = codice || null;
+  document.getElementById('cl-codice-corrente').textContent = codice || '—';
+  const boxApp = document.getElementById('cl-box-approvvigionamento');
+  const boxFasi = document.getElementById('cl-box-fasi');
+  if(!codice){ boxApp.style.display = 'none'; boxFasi.style.display = 'none'; return; }
+  boxApp.style.display = ''; boxFasi.style.display = '';
+  await popolaRepartiCiclo();
+  await caricaApprovvigionamento();
+  await caricaFasiCiclo();
+}
+
+async function caricaApprovvigionamento(){
+  const esito = document.getElementById('cl-approvvigionamento-esito');
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Caricamento classificazione…';
+  try{
+    const r = await fetch('/api/articoli/' + encodeURIComponent(CODICE_CICLO_ATTIVO) + '/approvvigionamento');
+    const d = await r.json();
+    if(!r.ok || !d.ok) throw new Error(d.error || 'Caricamento non riuscito');
+    document.getElementById('cl-tipo-approvvigionamento').value = d.tipo_approvvigionamento || 'DA_CLASSIFICARE';
+    document.getElementById('cl-lead-time-fornitura').value = d.lead_time_fornitura_giorni ?? '';
+    document.getElementById('cl-costo-acquisto').value = d.costo_acquisto_standard || '';
+    document.getElementById('cl-unita-misura').value = d.unita_misura || '';
+    esito.textContent = 'La classificazione è indipendente dal ciclo di lavoro.';
+  }catch(e){ esito.textContent = 'Impossibile caricare la classificazione.'; }
+}
+
+async function salvaApprovvigionamento(){
+  const esito = document.getElementById('cl-approvvigionamento-esito');
+  const payload = {
+    tipo_approvvigionamento: document.getElementById('cl-tipo-approvvigionamento').value,
+    lead_time_fornitura_giorni: document.getElementById('cl-lead-time-fornitura').value,
+    costo_acquisto_standard: document.getElementById('cl-costo-acquisto').value,
+    unita_misura: document.getElementById('cl-unita-misura').value.trim(),
+  };
+  try{
+    const r = await fetch('/api/articoli/' + encodeURIComponent(CODICE_CICLO_ATTIVO) + '/approvvigionamento', {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!r.ok || !d.ok) throw new Error(d.error || 'Salvataggio non riuscito');
+    esito.style.color = '#2a9d5c'; esito.textContent = '✓ Classificazione salvata.';
+  }catch(e){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ ' + e.message; }
+}
+
+async function popolaRepartiCiclo(){
+  const sel = document.getElementById('cl-reparto');
+  try{
+    const r = await fetch('/api/centri_costo_wood'); const righe = await r.json();
+    sel.innerHTML = '<option value="">Reparto...</option>' +
+      righe.map(c => `<option value="${c.id}">${c.nome}${c.esterno?' (esterno)':''}</option>`).join('');
+    if(!righe.length) sel.innerHTML = '<option value="">Nessun reparto — crealo in Centri di Costo</option>';
+  }catch(e){ sel.innerHTML = '<option value="">Errore caricamento reparti</option>'; }
+}
+
+async function caricaFasiCiclo(){
+  const box = document.getElementById('cl-lista-fasi');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/ciclo_lavoro_wood?codice=' + encodeURIComponent(CODICE_CICLO_ATTIVO));
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna fase inserita ancora per questo codice.</p>'; return; }
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Seq.</th><th>Reparto</th><th>Pezzi/ora</th><th>Scarto max %</th><th>Note</th><th></th></tr></thead><tbody>';
+    righe.forEach(f=>{
+      html += `<tr><td class="num">${f.sequenza}</td><td>${f.centro_costo_nome}${f.centro_costo_esterno?' <span class="badge badge-warn" style="font-size:10px">esterno</span>':''}</td>` +
+        `<td class="num">${f.produttivita_oraria}</td><td class="num">${f.scarto_max_pct??'—'}</td><td class="lav-td">${f.note||'—'}</td>` +
+        `<td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaFaseCiclo(${f.id})">🗑️</button></td></tr>`;
+    });
+    html += '</tbody></table></div>';
+    box.innerHTML = html;
+  }catch(e){ box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>'; }
+}
+
+async function aggiungiFaseCiclo(){
+  const payload = {
+    codice: CODICE_CICLO_ATTIVO,
+    sequenza: document.getElementById('cl-sequenza').value,
+    centro_costo_id: document.getElementById('cl-reparto').value,
+    produttivita_oraria: document.getElementById('cl-produttivita').value,
+    scarto_max_pct: document.getElementById('cl-scarto-max').value,
+    note: document.getElementById('cl-note').value.trim(),
+  };
+  try{
+    const r = await fetch('/api/ciclo_lavoro_wood', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    document.getElementById('cl-produttivita').value = '';
+    document.getElementById('cl-scarto-max').value = '';
+    document.getElementById('cl-note').value = '';
+    caricaFasiCiclo();
+    if(RADICE_ATTIVA) caricaAlbero();  // aggiorna anche il badge/conteggio nella tabella e nel riepilogo
+  }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
+}
+
+async function eliminaFaseCiclo(id){
+  if(!confirm('Eliminare questa fase del ciclo di lavoro?')) return;
+  try{
+    await fetch('/api/ciclo_lavoro_wood/' + id, {method:'DELETE'});
+    caricaFasiCiclo();
+    if(RADICE_ATTIVA) caricaAlbero();
+  }catch(e){ alert('❌ Errore di rete durante la cancellazione.'); }
+}
+
+caricaLunghezzeBarra();
+caricaMatrici();
+caricaRulli();
+caricaRadici();
+
+// Arrivo da un link incrociato (es. da Magazzino/Distinta Base): ?radice=CODICE apre subito l'albero.
+(function apriDaQueryString(){
+  const radice = new URLSearchParams(window.location.search).get('radice');
+  if(radice){
+    document.getElementById('inp-radice').value = radice.toUpperCase();
+    setTimeout(() => caricaAlbero(), 0);
+  }
+})();
+{% endblock %}
