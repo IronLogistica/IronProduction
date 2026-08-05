@@ -58,7 +58,7 @@
 
 <!-- ══ MODAL: ANTEPRIMA CARICO/SCARICO (prima di confermare) ═══════════════ -->
 <div class="modal-overlay" id="modal-anteprima">
-  <div class="modal-box" style="width:800px;max-width:96vw">
+  <div class="modal-box" style="width:1100px;max-width:98vw">
     <h3>📦 Conferma movimenti di magazzino</h3>
     <div id="ant-carica" style="margin:10px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:rgba(26,158,92,.08)"></div>
     <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin:10px 0 6px">📤 Scarica da magazzino (correggi se serve)</div>
@@ -143,7 +143,7 @@ async function dichiaraInline(g, c, idInput){
   if(isNaN(buoni) || buoni <= 0){ input.style.borderColor = '#c0392b'; input.focus(); return; }
 
   const componente = c.componente_finale ? '' : c.codice_lavorato;
-  const url = `/api/dichiarazione-produzione/anteprima?op_code=${encodeURIComponent(g.codice)}&componente=${encodeURIComponent(componente)}&pezzi_buoni=${buoni}`;
+  const url = `/api/dichiarazione-produzione/anteprima?op_code=${encodeURIComponent(g.codice)}&componente=${encodeURIComponent(componente)}&pezzi_buoni=${buoni}&centro_id=${encodeURIComponent(_centroCorrente)}`;
   let anteprima;
   try{
     const r = await fetch(url);
@@ -157,21 +157,32 @@ async function dichiaraInline(g, c, idInput){
   };
 
   const car = anteprima.carica;
-  document.getElementById('ant-carica').innerHTML =
-    `<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-bottom:4px">📥 Carica a magazzino</div>` +
-    `<div style="display:flex;justify-content:space-between;align-items:center">` +
-    `<div><b class="codice">${car.codice}</b> <span style="color:var(--text-dim)">${car.descrizione||''}</span></div>` +
-    `<div style="font-weight:800;font-size:16px;color:#1a9e5c">× ${car.quantita}</div></div>`;
-
-  const box = document.getElementById('ant-componenti');
-  if(!anteprima.componenti.length){
-    box.innerHTML = '<p style="color:var(--text-dim);font-style:italic;font-size:12px">Nessun componente da scaricare (distinta base non trovata per questo codice).</p>';
+  if(anteprima.gia_caricato){
+    document.getElementById('ant-carica').innerHTML =
+      `<div style="display:flex;gap:8px;align-items:flex-start">
+        <span style="font-size:18px">ℹ️</span>
+        <div style="font-size:13px;line-height:1.5">${anteprima.messaggio}</div>
+      </div>`;
+    document.getElementById('ant-componenti').innerHTML = '';
   } else {
-    box.innerHTML = '<table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>Quantità</th></tr></thead><tbody>' +
-      anteprima.componenti.map((comp, k) =>
-        `<tr><td class="codice">${comp.codice}</td><td style="font-size:11px;color:var(--text-dim)">${comp.descrizione||'—'}</td>` +
-        `<td><input id="ant-qta-${k}" type="number" step="0.01" min="0" value="${comp.quantita}" data-codice="${comp.codice}" style="width:90px;padding:5px 7px;border-radius:5px;border:1px solid var(--border)"></td></tr>`
-      ).join('') + '</tbody></table>';
+    document.getElementById('ant-carica').innerHTML =
+      `<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-bottom:4px">📥 Carica a magazzino</div>` +
+      `<div style="display:flex;justify-content:space-between;align-items:center">` +
+      `<div><b class="codice">${car.codice}</b> <span style="color:var(--text-dim)">${car.descrizione||''}</span></div>` +
+      `<div style="font-weight:800;font-size:16px;color:#1a9e5c">× ${car.quantita}</div></div>`;
+
+    const box = document.getElementById('ant-componenti');
+    if(!anteprima.componenti.length){
+      box.innerHTML = '<p style="color:var(--text-dim);font-style:italic;font-size:12px">Nessun componente da scaricare (distinta base non trovata per questo codice).</p>';
+    } else {
+      box.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed"><colgroup><col style="width:22%"><col style="width:58%"><col style="width:20%"></colgroup>' +
+        '<thead><tr><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Codice</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Descrizione</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Quantità</th></tr></thead><tbody>' +
+        anteprima.componenti.map((comp, k) =>
+          `<tr><td class="codice" style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${comp.codice}</td>` +
+          `<td style="padding:4px 6px;color:var(--text-dim);overflow-wrap:break-word">${comp.descrizione||'—'}</td>` +
+          `<td style="padding:4px 6px"><input id="ant-qta-${k}" type="number" step="0.01" min="0" value="${comp.quantita}" data-codice="${comp.codice}" style="width:85px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px"></td></tr>`
+        ).join('') + '</tbody></table>';
+    }
   }
   document.getElementById('ant-esito').textContent = '';
   openModal('modal-anteprima');
