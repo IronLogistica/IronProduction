@@ -551,14 +551,49 @@ def api_modifica_distinta_wood(id_riga):
         return jsonify({'errore': True, 'messaggio': str(e)}), 500
 
 
+def _sostituisci_sottoalbero_distinta(radici):
+    """
+    Cancella TUTTE le righe di distinta base (DistintaBaseWood) che
+    discendono da una di queste radici — attraversando ricorsivamente
+    padre→figlio, non solo il primo livello — così un caricamento massivo
+    SOSTITUISCE davvero la struttura vecchia invece di accumularsi sopra
+    (che lasciava rami con la vecchia numerazione appesi per sempre quando
+    Zucchetti rinominava i codici intermedi).
+
+    NON tocca SchedaLavorazioneWood (i "Parametri" impostati a mano) — è una
+    tabella separata, indicizzata per la STESSA coppia padre/figlio: se la
+    coppia ricompare identica nel nuovo file, i suoi parametri restano
+    collegati automaticamente; se non ricompare più, restano semplicemente
+    orfani (mai cancellati, per non perdere dati per errore).
+
+    Ritorna il numero di righe cancellate.
+    """
+    da_visitare = list(radici)
+    visitati = set()
+    cancellate = 0
+    while da_visitare:
+        padre = da_visitare.pop()
+        if padre in visitati:
+            continue
+        visitati.add(padre)
+        figli = [r.codice_figlio for r in DistintaBaseWood.query.filter_by(codice_padre=padre).all()]
+        if figli:
+            cancellate += DistintaBaseWood.query.filter_by(codice_padre=padre).delete(synchronize_session=False)
+            da_visitare.extend(figli)
+    return cancellate
+
+
 @magazzino_bp.route('/api/distinta_base_wood/importa', methods=['POST'])
 def api_importa_distinta_wood():
     """
     Caricamento massivo da file Excel/CSV per la distinta Iron Wood.
-    Stesso principio del caricamento massivo articoli di MasterLogistic
-    (route /importazione_massiva): colonne lette PER NOME (non per
-    posizione fissa, quindi nessun rischio di sfasamento se il file
-    cambia struttura), UPSERT riga per riga — mai un replace/DROP.
+    SOSTITUISCE la distinta base delle radici (CODART / codice_padre di primo
+    livello) presenti nel file — cancella l'intero sottoalbero vecchio di ogni
+    radice PRIMA di ricaricare quello nuovo, così una ristrutturazione dei
+    codici intermedi lato Zucchetti (es. rinominati PINX1-x → PINX100-x) non
+    lascia i rami vecchi appesi accanto ai nuovi. I Parametri di Lavorazione
+    (SchedaLavorazioneWood) NON vengono mai toccati da questa cancellazione —
+    tabella separata, indicizzata per la stessa coppia padre/figlio.
     """
     file = request.files.get('file_excel')
     if not file:
@@ -604,6 +639,12 @@ def api_importa_distinta_wood():
         if {'codart', 'codcom', 'numlev', 'qtamov'}.issubset(set(df.columns)):
             nuovi = aggiornati = scartate = 0
             righe_scartate = []
+
+            radici_nel_file = {str(v).strip().upper() for v in df['codart'].dropna().unique()
+                               if str(v).strip() and str(v).strip().lower() != 'nan'}
+            righe_cancellate = _sostituisci_sottoalbero_distinta(radici_nel_file)
+            db.session.flush()
+
             esistenti = {(r.codice_padre, r.codice_figlio): r for r in DistintaBaseWood.query.all()}
 
             root_corrente = None
@@ -663,6 +704,7 @@ def api_importa_distinta_wood():
             db.session.commit()
             return jsonify({
                 'ok': True, 'nuovi': nuovi, 'aggiornati': aggiornati,
+                'cancellate': righe_cancellate, 'radici_sostituite': sorted(radici_nel_file),
                 'scartate': scartate, 'righe_scartate': righe_scartate[:30]
             })
 
@@ -675,6 +717,11 @@ def api_importa_distinta_wood():
         col_qta    = next((c for c in ['quantita', 'quantità', 'qta'] if c in df.columns), None)
         col_liv    = next((c for c in ['livello', 'liv'] if c in df.columns), None)
         col_note   = next((c for c in ['note', 'nota'] if c in df.columns), None)
+
+        radici_nel_file_b = {str(v).strip().upper() for v in df[col_padre].dropna().unique()
+                             if str(v).strip() and str(v).strip().lower() != 'nan'}
+        righe_cancellate_b = _sostituisci_sottoalbero_distinta(radici_nel_file_b)
+        db.session.flush()
 
         nuovi = aggiornati = scartate = 0
         righe_scartate = []
@@ -719,6 +766,7 @@ def api_importa_distinta_wood():
         db.session.commit()
         return jsonify({
             'ok': True, 'nuovi': nuovi, 'aggiornati': aggiornati,
+            'cancellate': righe_cancellate_b, 'radici_sostituite': sorted(radici_nel_file_b),
             'scartate': scartate, 'righe_scartate': righe_scartate[:30]
         })
     except Exception as e:
