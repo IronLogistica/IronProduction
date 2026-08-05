@@ -50,6 +50,7 @@
         <span id="direzione-esito" style="font-size:12px"></span>
       </div>
     </div>
+    <div id="direzione-avvisi" style="margin-top:14px"></div>
     <div id="direzione-lista" style="margin-top:14px"></div>
   </div>
 </div>
@@ -97,18 +98,45 @@ async function caricaOpAperti(){
   const gruppi = await r.json();
   if(!gruppi.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun codice dichiarabile su questo centro di costo.</p>'; return; }
   box.innerHTML = gruppi.map((g, i) => {
-    const righeComponenti = g.componenti.map(c => {
+    const righeComponenti = g.componenti.map((c, j) => {
       const etichetta = c.componente_finale ? `${g.codice_articolo} (prodotto finito)` : c.codice_lavorato;
-      return `<tr><td class="codice">${etichetta}</td><td>${c.qta_necessaria} · ${c.fatti}</td><td style="font-weight:700">${c.saldo}</td>` +
-        `<td><button class="btn btn-primary" onclick='apriDichiarazione(${JSON.stringify(g)}, ${JSON.stringify(c)})'>✅ Dichiara</button></td></tr>`;
+      const idInput = `dich-inline-${i}-${j}`;
+      return `<tr>
+        <td class="codice">${etichetta}</td>
+        <td class="muted" style="font-size:11px">${c.descrizione || '—'}</td>
+        <td>${c.qta_necessaria}</td>
+        <td>${c.fatti}</td>
+        <td style="font-weight:700">${c.saldo}</td>
+        <td><input id="${idInput}" type="number" min="0" placeholder="0" style="width:70px;padding:5px 7px;border-radius:5px;border:1px solid var(--border)"></td>
+        <td><button class="btn btn-primary" style="padding:5px 10px;font-size:11px" onclick='dichiaraInline(${JSON.stringify(g)}, ${JSON.stringify(c)}, "${idInput}")'>✅ Dichiara</button></td>
+      </tr>`;
     }).join('');
     return `<div class="mon-section" style="margin-bottom:10px">` +
       `<div style="padding:10px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleGruppoOp(${i})">` +
       `<div><b>${g.commessa || g.codice}</b> — ${g.codice_articolo} <small style="color:var(--text-dim)">${g.descrizione||''}</small></div>` +
       `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px;color:var(--text-dim)">${g.componenti.length} codice/i da dichiarare</span> <span id="freccia-${i}">▶</span></div></div>` +
-      `<div id="gruppo-${i}" style="display:none;padding:0 14px 12px;overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Nec. · Fatti</th><th>Saldo</th><th></th></tr></thead><tbody>${righeComponenti}</tbody></table></div>` +
+      `<div id="gruppo-${i}" style="display:none;padding:0 14px 12px;overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>Necessari</th><th>Fatti</th><th>Saldo</th><th>Dichiaro</th><th></th></tr></thead><tbody>${righeComponenti}</tbody></table></div>` +
       `</div>`;
   }).join('');
+}
+
+async function dichiaraInline(g, c, idInput){
+  const input = document.getElementById(idInput);
+  const buoni = parseInt(input.value, 10);
+  if(isNaN(buoni) || buoni <= 0){ input.style.borderColor = '#c0392b'; input.focus(); return; }
+  input.disabled = true;
+  const payload = {
+    op_code: g.codice, centro_id: _centroCorrente, componente: c.componente_finale ? null : c.codice_lavorato,
+    pezzi_buoni: buoni, pezzi_scarto: 0, tempo_minuti: 0,
+  };
+  try{
+    const r = await fetch('/api/dichiarazione-produzione', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ alert('⚠️ ' + d.error); input.disabled = false; return; }
+    caricaOpAperti();
+  }catch(e){
+    alert('❌ Errore di rete.'); input.disabled = false;
+  }
 }
 
 function toggleGruppoOp(i){
@@ -261,7 +289,39 @@ async function sbloccaDirezione(){
   if(r.status === 403){ esito.style.color='#c0392b'; esito.textContent='⚠️ PIN non valido.'; return; }
   _pinDirezioneAttivo = pin;
   esito.style.color = '#2a9d5c'; esito.textContent = '🔓 Sbloccato.';
+  caricaAvvisiScostamento();
   caricaApprovazioni();
+}
+
+async function caricaAvvisiScostamento(){
+  if(!_pinDirezioneAttivo) return;
+  const box = document.getElementById('direzione-avvisi');
+  box.innerHTML = 'Caricamento...';
+  const r = await fetch(`/api/dichiarazione-produzione/avvisi-scostamento?pin=${encodeURIComponent(_pinDirezioneAttivo)}`);
+  const d = await r.json();
+  if(!d.ok){ box.innerHTML = `<p style="color:#c0392b">⚠️ ${d.error}</p>`; return; }
+  if(!d.avvisi.length){ box.innerHTML = ''; return; }
+  let html = '<div style="font-weight:700;font-size:13px;color:#e67e22;margin-bottom:6px">⚠️ Scostamenti quantità da rivedere</div>';
+  html += '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Quando</th><th>OP</th><th>Articolo</th><th>Tipo</th><th>Pianificata</th><th>Prodotta</th><th>Scostamento</th><th></th></tr></thead><tbody>';
+  d.avvisi.forEach(a=>{
+    const colore = a.tipo === 'SOPRA_PRODUZIONE' ? '#c0392b' : '#e67e22';
+    const label = a.tipo === 'SOPRA_PRODUZIONE' ? '🔺 Sopra' : '🔻 Sotto';
+    html += `<tr><td>${a.creato_il}</td><td class="codice">${a.op_code}</td><td>${a.codice_articolo}</td>` +
+      `<td style="color:${colore};font-weight:700">${label}</td><td>${a.qta_pianificata}</td><td>${a.qta_buona}</td>` +
+      `<td style="color:${colore};font-weight:700">${a.percentuale}%</td>` +
+      `<td><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="segnaAvvisoLetto(${a.id})">✓ Letto</button></td></tr>`;
+  });
+  html += '</tbody></table></div>';
+  box.innerHTML = html;
+}
+
+async function segnaAvvisoLetto(aid){
+  const r = await fetch(`/api/dichiarazione-produzione/avvisi-scostamento/${aid}/letto`, {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin:_pinDirezioneAttivo})
+  });
+  const d = await r.json();
+  if(!d.ok){ alert('⚠️ ' + d.error); return; }
+  caricaAvvisiScostamento();
 }
 
 async function caricaApprovazioni(){
