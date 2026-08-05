@@ -531,7 +531,19 @@ def api_ordini_attivi():
     rows = [o for o in rows if _is_carpenteria(o.asa)]
     return jsonify(orders=[_ordine(o) for o in sorted(rows, key=lambda o: (o.data_prevista is None, o.data_prevista, o.priorita, o.codice))])
 
-def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None):
+def _calcola_consumi_standard(o, componente_finale, componente, good):
+    """Consumi standard (da distinta base) per GOOD pezzi buoni — stessa logica
+    usata sia per la registrazione vera sia per l'anteprima pre-conferma."""
+    if componente_finale:
+        componenti_esplosi = _esplodi_bom_wood(o.codice_articolo, qta=good)
+        consumi = {}
+        _flatten_componenti(componenti_esplosi, consumi)
+    else:
+        consumi = {rb.codice_figlio: rb.quantita * good for rb in _righe_bom_attive_wood(componente)}
+    return consumi
+
+
+def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None):
     """
     Nucleo di registrazione di un consuntivo per l'OP o (già lockato con
     with_for_update dal chiamante): crea l'EventoConsuntivoPP, aggiorna
@@ -551,6 +563,11 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     lo carica a magazzino come semilavorato pronto, e registra la sua
     varianza separatamente — l'assemblaggio finale (componente=None)
     continua a esplodere l'intera distinta come sempre.
+    'consumi_override': dict {codice: quantità} opzionale — se il capo
+    reparto ha corretto le quantità nella maschera di anteprima prima di
+    confermare, si scarica QUESTO invece di ricalcolare dalla distinta
+    standard (stesso principio della maschera "Evasione articoli composti"
+    di Zucchetti: valori standard proposti, modificabili prima di confermare).
     ⚠️ LIMITE NOTO: l'esplosione dell'assemblaggio finale non fa ancora
     netting contro lo stock di semilavorati creato qui — se si consuntivano
     ENTRAMBI i livelli per le stesse unità, il consumo di materia prima può
@@ -595,12 +612,7 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     # del Ciclo di Lavoro del codice appena lavorato.
     if good > 0:
         try:
-            if componente_finale:
-                componenti_esplosi = _esplodi_bom_wood(o.codice_articolo, qta=good)
-                consumi = {}
-                _flatten_componenti(componenti_esplosi, consumi)
-            else:
-                consumi = {rb.codice_figlio: rb.quantita * good for rb in _righe_bom_attive_wood(componente)}
+            consumi = consumi_override if consumi_override is not None else _calcola_consumi_standard(o, componente_finale, componente, good)
             for cod, qta_consumata in consumi.items():
                 if qta_consumata:
                     costo_corrente = _calcola_costo_standard(cod)['costo_totale']
@@ -1607,7 +1619,10 @@ def api_dichiarazione_op_aperti(cid):
 def api_dichiarazione_crea():
     """Il capo reparto dichiara: crea SOLO, nessun accesso a modifica/storico.
     'componente' opzionale: quale codice della distinta base si sta
-    dichiarando (None/assente = prodotto finito dell'OP)."""
+    dichiarando (None/assente = prodotto finito dell'OP).
+    'consumi' opzionale: {codice: quantità} — se il capo ha corretto le
+    quantità nella maschera di anteprima, si scarica quello invece dello
+    standard di distinta (vedi _registra_evento_consuntivo)."""
     d = request.get_json(force=True)
     o = OrdineProduzione.query.filter_by(codice=(d.get('op_code') or '').strip()).first()
     if not o:
@@ -1624,10 +1639,66 @@ def api_dichiarazione_crea():
         return jsonify(ok=False, error=str(exc)), 400
     if good <= 0 and scrap <= 0:
         return jsonify(ok=False, error='Dichiara almeno un pezzo buono o di scarto'), 400
+    consumi_override = None
+    if 'consumi' in d and isinstance(d['consumi'], dict):
+        consumi_override = {}
+        for cod, qta in d['consumi'].items():
+            try:
+                qta_f = float(qta)
+            except (TypeError, ValueError):
+                continue
+            if qta_f > 0:
+                consumi_override[cod] = qta_f
     event_id = str(uuid.uuid4())
-    _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id, componente=componente)
+    _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id,
+                                 componente=componente, consumi_override=consumi_override)
     db.session.commit()
     return jsonify(ok=True, event_id=event_id, ordine=_ordine(o))
+
+
+@pp_bp.get('/api/dichiarazione-produzione/anteprima')
+def api_dichiarazione_anteprima():
+    """
+    Maschera di anteprima pre-conferma (stesso principio di "Evasione
+    articoli composti" di Zucchetti): cosa si CARICA a magazzino (il
+    prodotto — finito o semilavorato, secondo il componente dichiarato) e
+    cosa si SCARICA (i suoi componenti diretti, quantità standard di
+    distinta) — proposti come default, modificabili prima di confermare.
+    """
+    op_code = (request.args.get('op_code') or '').strip()
+    componente = (request.args.get('componente') or '').strip() or None
+    try:
+        good = _integer(request.args.get('pezzi_buoni', 0), 'Pezzi buoni')
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    o = OrdineProduzione.query.filter_by(codice=op_code).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+    if good <= 0:
+        return jsonify(ok=True, carica=None, componenti=[])
+
+    componente_finale = not componente or componente == o.codice_articolo
+    codice_caricato = o.codice_articolo if componente_finale else componente
+    consumi = _calcola_consumi_standard(o, componente_finale, componente, good)
+
+    tutti_codici = {codice_caricato} | set(consumi.keys())
+    descr_map = {}
+    try:
+        for a in ArticoloML.query.filter(ArticoloML.sku.in_(tutti_codici)).all():
+            if a.descrizione:
+                descr_map[a.sku] = a.descrizione
+    except Exception:
+        db.session.rollback()
+    codici_senza = tutti_codici - set(descr_map.keys())
+    if codici_senza:
+        for dsc in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici_senza)).all():
+            if dsc.descrizione:
+                descr_map[dsc.codice] = dsc.descrizione
+
+    return jsonify(ok=True,
+        carica={'codice': codice_caricato, 'descrizione': descr_map.get(codice_caricato, ''), 'quantita': good},
+        componenti=[{'codice': cod, 'descrizione': descr_map.get(cod, ''), 'quantita': round(qta, 4)}
+                    for cod, qta in consumi.items()])
 
 
 def _verifica_pin_capo(d):
