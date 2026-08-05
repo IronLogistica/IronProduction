@@ -1996,13 +1996,22 @@ def api_dichiarazione_movimenti(cid):
         giorno = datetime.strptime(data_str, '%Y-%m-%d').date()
     except ValueError:
         return jsonify(ok=False, error='Data non valida'), 400
-    op_codici = {op_code for (op_code,) in db.session.query(EventoConsuntivoPP.op_code)
-                 .filter(db.func.lower(EventoConsuntivoPP.fase) == centro.nome.lower(),
-                         db.func.date(EventoConsuntivoPP.timestamp_evento) == giorno).distinct().all()}
+    # AuditPP (mai cancellato, nemmeno dallo storno) invece di
+    # EventoConsuntivoPP (che lo storno CANCELLA): usare quest'ultimo per
+    # decidere quali OP mostrare faceva sparire e poi RIAPPARIRE i movimenti
+    # già stornati, appena l'OP tornava ad avere un evento attivo per un
+    # altro motivo (es. una nuova dichiarazione) — il movimento vecchio non
+    # era mai stato cancellato, solo temporaneamente nascosto dal filtro.
+    fase_pattern = f'fase={centro.nome};'
+    righe_audit = (AuditPP.query
+                   .filter(AuditPP.azione.in_(('EVENTO_CONSUNTIVO', 'ANNULLO_CONSUNTIVO')),
+                           AuditPP.dettaglio.ilike(f'%{fase_pattern}%'),
+                           db.func.date(AuditPP.creato_il) == giorno).all())
+    op_codici = {a.op_code for a in righe_audit if a.op_code}
     if not op_codici:
         return jsonify(ok=True, movimenti=[])
     movimenti = (MovimentoGiacenzaWood.query
-                 .filter(MovimentoGiacenzaWood.tipo.in_(('carico_produzione', 'scarico_produzione')),
+                 .filter(MovimentoGiacenzaWood.tipo.in_(('carico_produzione', 'scarico_produzione', 'rettifica_import')),
                          MovimentoGiacenzaWood.riferimento.in_(op_codici),
                          db.func.date(MovimentoGiacenzaWood.creato_il) == giorno)
                  .order_by(MovimentoGiacenzaWood.creato_il.desc()).all())
