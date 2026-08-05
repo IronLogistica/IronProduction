@@ -23,3 +23,8 @@ class Config:
 
     # Token Bearer obbligatorio per le API PP; lasciare vuoto disabilita le API.
     PP_API_TOKEN = os.environ.get('PP_API_TOKEN', '')
+
+    # PIN del CAPO REPARTO per sbloccare "Storico Correzioni" in Dichiarazione
+    # di Produzione — cambialo impostando la variabile Railway CAPO_PIN se
+    # vuoi un valore diverso da quello di default.
+    CAPO_PIN = os.environ.get('CAPO_PIN', '1234')
