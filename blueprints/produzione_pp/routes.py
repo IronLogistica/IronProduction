@@ -1697,6 +1697,7 @@ def api_dichiarazione_anteprima():
     """
     op_code = (request.args.get('op_code') or '').strip()
     componente = (request.args.get('componente') or '').strip() or None
+    centro_id = request.args.get('centro_id')
     try:
         good = _integer(request.args.get('pezzi_buoni', 0), 'Pezzi buoni')
     except ValueError as exc:
@@ -1709,6 +1710,19 @@ def api_dichiarazione_anteprima():
 
     componente_finale = not componente or componente == o.codice_articolo
     codice_caricato = o.codice_articolo if componente_finale else componente
+
+    # Se questa NON è la prima fase del Ciclo di Lavoro di questo codice
+    # (es. un pezzo già piegato che passa ora in foratura), il magazzino non
+    # verrà toccato — vedi _e_prima_fase_del_ciclo — quindi l'anteprima deve
+    # dirlo chiaramente invece di mostrare un carico/scarico che poi non
+    # avverrà davvero: mostrarlo comunque confonde e allarma inutilmente.
+    centro = CentroCostoWood.query.get(centro_id) if centro_id else None
+    if centro and not _e_prima_fase_del_ciclo(codice_caricato, centro.nome):
+        return jsonify(ok=True, carica=None, componenti=[], gia_caricato=True,
+            messaggio=(f'"{codice_caricato}" è già stato caricato a magazzino alla prima fase del suo '
+                       f'ciclo di lavoro — questa è una fase successiva sullo STESSO pezzo: nessun materiale '
+                       f'verrà scaricato né ricaricato, si registrano solo i pezzi fatti e il tempo.'))
+
     consumi = _calcola_consumi_standard(o, componente_finale, componente, good)
 
     tutti_codici = {codice_caricato} | set(consumi.keys())
