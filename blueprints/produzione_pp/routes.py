@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime, date
 from flask import Blueprint, current_app, jsonify, render_template, request, Response
 from sqlalchemy.exc import IntegrityError
-from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
+from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     STATI_ORDINE_PP, ASA_MASTERWORK, prossimo_codice_ordine_pp,
                     prossimo_numero_commessa, GiacenzaWood, MovimentoGiacenzaWood, CicloLavoroWood,
                     CentroCostoWood, VarianzaProduzioneWood, ArticoloApprovvigionamento,
@@ -1952,6 +1952,12 @@ def api_dichiarazione_annulla(eid):
 
     prima_fase_originale = _e_prima_fase_del_ciclo(codice_lavorato, e.fase)
     if e.pezzi_buoni > 0 and prima_fase_originale:
+        # NESSUN except-pass qui: se il ripristino del magazzino fallisce
+        # per qualunque motivo, TUTTA l'operazione deve fallire — mai
+        # cancellare l'evento lasciando intendere "storno riuscito" mentre
+        # in realtà la giacenza non è stata corretta. Nessun commit fatto
+        # finora in questa richiesta, quindi un errore qui non lascia stato
+        # parziale: il rollback che segue riporta tutto come prima.
         try:
             # Stessa identica logica di esplosione usata per dichiarare —
             # fondamentale che coincidano: se dichiaro consumando SOLO il
@@ -1967,13 +1973,12 @@ def api_dichiarazione_annulla(eid):
                 if qta_consumata:
                     _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',
                                                   riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
-        except Exception:
-            pass
-        try:
             _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
                                           riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
-        except Exception:
-            pass
+        except Exception as exc:
+            db.session.rollback()
+            log(f"⚠️ STORNO FALLITO per evento {e.event_id} (OP {o.codice}): {exc}")
+            return jsonify(ok=False, error=f'Storno non riuscito, nessuna modifica applicata: {exc}'), 500
 
     db.session.delete(e)
     db.session.commit()
