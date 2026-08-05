@@ -1948,6 +1948,18 @@ def pagina_parametri_lavorazione():
     return render_template('parametri_lavorazione_wood.html', active='parametri_lavorazione')
 
 
+@magazzino_bp.route('/esploratore-prodotto')
+def pagina_esploratore_prodotto():
+    """
+    Vista visiva alternativa dello stesso esploso BOM + Ciclo di Lavoro già
+    disponibile in Parametri di Lavorazione — stesso endpoint dati
+    (/api/distinta_base_wood/<codice>), nessun nuovo calcolo lato server:
+    solo una presentazione più immediata a colpo d'occhio (card, colori,
+    nodi apribili/richiudibili) per chi deve leggerla al volo, non editarla.
+    """
+    return render_template('esploratore_prodotto.html', active='esploratore_prodotto')
+
+
 @magazzino_bp.route('/schede-lavorazione-wood')
 def pagina_schede_lavorazione():
     """Vecchio indirizzo — redirect di cortesia verso la pagina rinominata."""
