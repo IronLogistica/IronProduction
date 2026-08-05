@@ -1,3 +1,4 @@
+import os
 import uuid
 from datetime import datetime, date
 from flask import Blueprint, current_app, jsonify, render_template, request, Response
@@ -1711,7 +1712,7 @@ def _verifica_pin_capo(d):
 # dichiarazione resta comunque registrata subito in OP/giacenza appena il
 # capo la dichiara: l'approvazione Direzione è un controllo successivo, non
 # un blocco.
-PIN_DIREZIONE = '12234'
+PIN_DIREZIONE = os.environ.get('PIN_DIREZIONE', '1234')
 
 def _verifica_pin_direzione(d):
     pin = (d.get('pin') or '').strip()
