@@ -1,0 +1,158 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .esp-search{display:flex;gap:10px;align-items:center;margin-bottom:18px}
+  .esp-search input{flex:1;padding:12px 16px;font-size:16px;border-radius:8px;border:1px solid var(--border);background:var(--surf,#141920);color:inherit}
+  .esp-search button{padding:12px 22px;border-radius:8px;border:none;background:var(--accent2,#2589c7);color:#fff;font-weight:700;cursor:pointer;font-size:14px}
+
+  .esp-root{display:flex;gap:16px;align-items:center;background:var(--dark3);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:20px}
+  .esp-root-foto{width:90px;height:90px;border-radius:10px;background:#fff;display:flex;align-items:center;justify-content:center;overflow:hidden;flex-shrink:0}
+  .esp-root-foto img{width:100%;height:100%;object-fit:contain}
+  .esp-root-foto.vuota{background:var(--surf2,#1a2230);color:var(--text-dim);font-size:28px}
+  .esp-root-codice{font-size:26px;font-weight:900;color:#fff}
+  .esp-root-descr{font-size:14px;color:var(--text-dim);margin-top:2px}
+
+  .esp-albero{position:relative}
+  .esp-nodo{position:relative;margin-left:26px;padding-left:22px;border-left:2px solid var(--border)}
+  .esp-nodo:last-child{border-left-color:transparent}
+  .esp-nodo::before{content:'';position:absolute;left:0;top:24px;width:20px;height:2px;background:var(--border)}
+  .esp-nodo-radice{margin-left:0;padding-left:0;border-left:none}
+  .esp-nodo-radice::before{display:none}
+
+  .esp-card{display:flex;align-items:flex-start;gap:10px;background:var(--dark3);border:1px solid var(--border);border-left:5px solid var(--border);border-radius:10px;padding:12px 14px;margin:8px 0;cursor:default;transition:box-shadow .15s}
+  .esp-card:hover{box-shadow:0 2px 14px rgba(0,0,0,.4)}
+  .esp-card.tipo-ok{border-left-color:#1a9e5c}
+  .esp-card.tipo-manca-ciclo{border-left-color:#e6b800}
+  .esp-card.tipo-acquisto{border-left-color:#2589c7}
+  .esp-toggle{cursor:pointer;background:none;border:none;color:var(--text-dim);font-size:14px;width:22px;height:22px;flex-shrink:0;margin-top:2px}
+  .esp-toggle.vuoto{visibility:hidden}
+  .esp-card-body{flex:1;min-width:0}
+  .esp-riga1{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .esp-codice{font-size:15px;font-weight:800;color:#fff}
+  .esp-descr{font-size:12px;color:var(--text-dim)}
+  .esp-qta{font-size:12px;font-weight:700;background:rgba(255,255,255,.08);padding:2px 8px;border-radius:999px}
+  .esp-stock{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .esp-livello{font-size:9px;font-weight:800;letter-spacing:.4px;color:var(--accent2,#2589c7);text-transform:uppercase}
+  .esp-badge-acquisto{display:inline-block;margin-top:5px;font-size:11px;color:#2589c7;font-weight:700}
+  .esp-ciclo{display:flex;gap:4px;flex-wrap:wrap;align-items:center;margin-top:6px}
+  .esp-fase{font-size:11px;background:rgba(26,158,92,.15);color:#1a9e5c;padding:3px 9px;border-radius:999px;font-weight:700;white-space:nowrap}
+  .esp-fase.esterna{background:rgba(184,134,11,.15);color:#b8860b}
+  .esp-freccia{color:var(--text-dim);font-size:11px}
+  .esp-manca-ciclo{font-size:11px;color:#e6b800;font-weight:700;margin-top:5px}
+  .esp-figli{transition:max-height .2s}
+  .esp-figli.chiuso{display:none}
+</style>
+
+<div class="page-toolbar">
+  <div class="page-title">🌳 Esploratore Prodotto — BOM + Ciclo di Lavoro</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
+      Stessi dati di "Parametri di Lavorazione", vista pensata per leggere al volo distinta base multilivello
+      e ciclo di lavoro insieme — clicca sul triangolino per aprire/chiudere un ramo.
+    </p>
+    <div class="esp-search">
+      <input id="esp-input" type="text" placeholder="Cerca codice prodotto..." onkeydown="if(event.key==='Enter') cercaProdotto()">
+      <button onclick="cercaProdotto()">🔍 Cerca</button>
+    </div>
+    <div id="esp-risultato">
+      <p style="color:var(--text-dim);font-style:italic">Cerca un codice per vedere la sua struttura.</p>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+async function cercaProdotto(){
+  const codice = document.getElementById('esp-input').value.trim();
+  const box = document.getElementById('esp-risultato');
+  if(!codice) return;
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/distinta_base_wood/' + encodeURIComponent(codice));
+    const d = await r.json();
+    if(!d.trovato){
+      box.innerHTML = `<p style="color:#c0392b">Articolo <b>${codice}</b> non trovato.</p>`;
+      return;
+    }
+
+    let fotoHtml = `<div class="esp-root-foto vuota">📷</div>`;
+    try{
+      const rf = await fetch('/api/foto_articolo/' + encodeURIComponent(codice));
+      const foto = await rf.json();
+      if(foto && foto.length) fotoHtml = `<div class="esp-root-foto"><img src="/api/foto_articolo/file/${foto[0].id}"></div>`;
+    }catch(e){}
+
+    let html = `<div class="esp-root">${fotoHtml}
+      <div><div class="esp-root-codice">${d.codice_articolo || codice}</div>
+      <div class="esp-root-descr">${d.descrizione || '(senza descrizione)'}</div></div>
+    </div>`;
+
+    if(!d.ha_bom){
+      html += renderCard({codice: d.codice_articolo || codice, descrizione: d.descrizione,
+        quantita_totale: 1, approvvigionamento: d.approvvigionamento, cicli_lavoro: d.cicli_lavoro}, true);
+    } else {
+      html += `<div class="esp-albero">` + (d.componenti||[]).map(c => renderNodo(c, true)).join('') + `</div>`;
+    }
+    box.innerHTML = html;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function renderCard(c, radice){
+  const approvv = c.approvvigionamento || {};
+  const etichette = {MATERIA_PRIMA_FORNITORE:'📦 Materia prima', COMPONENTE_ACQUISTO:"🔩 Componente d'acquisto", LASERATO:'⚡ Laserato'};
+  const acquistabile = etichette[approvv.tipo_approvvigionamento];
+  const haCicli = c.cicli_lavoro && c.cicli_lavoro.length;
+  const nonAcquistabile = !acquistabile;
+  let classeTipo = 'tipo-acquisto';
+  if(nonAcquistabile) classeTipo = haCicli ? 'tipo-ok' : 'tipo-manca-ciclo';
+
+  const stockHtml = (c.stock !== null && c.stock !== undefined)
+    ? `<span class="esp-stock" style="background:${c.stock<=0?'rgba(192,57,43,.18)':'rgba(26,158,92,.18)'};color:${c.stock<=0?'#c0392b':'#1a9e5c'}">stock ${c.stock}</span>` : '';
+
+  const cicloHtml = haCicli
+    ? `<div class="esp-ciclo">${c.cicli_lavoro.map((f,i) => (i>0?'<span class="esp-freccia">→</span>':'') +
+        `<span class="esp-fase ${f.centro_costo_esterno?'esterna':''}">${f.sequenza}) ${f.centro_costo_nome}${f.centro_costo_esterno?' 🚚':''} — ${f.produttivita_oraria} pz/h</span>`).join('')}</div>`
+    : (nonAcquistabile ? `<div class="esp-manca-ciclo">⚠️ Nessun ciclo di lavoro registrato</div>` : '');
+
+  return `<div class="esp-card ${classeTipo}">
+    <button class="esp-toggle vuoto">▸</button>
+    <div class="esp-card-body">
+      <div class="esp-riga1">
+        ${c.livello_effettivo!==undefined ? `<span class="esp-livello">Livello ${c.livello_effettivo}</span>` : (radice?'':'')}
+        <span class="esp-codice">${c.codice}</span>
+        <span class="esp-descr">${c.descrizione || '(senza descrizione)'}</span>
+        <span class="esp-qta">× ${c.quantita_totale}</span>
+        ${stockHtml}
+      </div>
+      ${acquistabile ? `<div class="esp-badge-acquisto">${acquistabile}${approvv.lead_time_fornitura_giorni!=null?' · Lead time: '+approvv.lead_time_fornitura_giorni+' gg':''}</div>` : ''}
+      ${cicloHtml}
+    </div>
+  </div>`;
+}
+
+function renderNodo(c, radice){
+  const haFigli = c.figli && c.figli.length;
+  const cardHtml = renderCard(c, radice);
+  let out = `<div class="esp-nodo ${radice?'esp-nodo-radice':''}">`;
+  if(haFigli){
+    // Rende il triangolino cliccabile: lo stesso markup di renderCard ma con onclick sul bottone.
+    out += cardHtml.replace('<button class="esp-toggle vuoto">▸</button>', '<button class="esp-toggle" onclick="toggleNodo(this)">▾</button>');
+    out += `<div class="esp-figli">` + c.figli.map(f => renderNodo(f, false)).join('') + `</div>`;
+  } else {
+    out += cardHtml;
+  }
+  out += `</div>`;
+  return out;
+}
+
+function toggleNodo(btn){
+  const figli = btn.closest('.esp-nodo').querySelector(':scope > .esp-figli');
+  if(!figli) return;
+  const chiuso = figli.classList.toggle('chiuso');
+  btn.textContent = chiuso ? '▸' : '▾';
+}
+{% endblock %}
