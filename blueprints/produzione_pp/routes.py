@@ -532,6 +532,25 @@ def api_ordini_attivi():
     rows = [o for o in rows if _is_carpenteria(o.asa)]
     return jsonify(orders=[_ordine(o) for o in sorted(rows, key=lambda o: (o.data_prevista is None, o.data_prevista, o.priorita, o.codice))])
 
+def _e_prima_fase_del_ciclo(codice_lavorato, fase_nome):
+    """
+    Vero se fase_nome è la PRIMA fase del Ciclo di Lavoro di questo codice —
+    quella che lo crea per la prima volta a partire dai suoi materiali
+    diretti. Le fasi SUCCESSIVE (es. un pezzo prima piegato e poi forato)
+    lavorano ulteriormente lo STESSO semilavorato già esistente: non devono
+    scaricare di nuovo i materiali né ricaricare il semilavorato a
+    magazzino, altrimenti lo stesso pezzo fisico verrebbe contato una volta
+    per ogni fase dichiarata (es. 3 fasi = caricato/scaricato 3 volte).
+    Se il codice non ha nessun Ciclo di Lavoro configurato, non possiamo
+    saperlo: non blocchiamo, si comporta come prima (comportamento storico).
+    """
+    prima = (CicloLavoroWood.query.filter_by(codice=codice_lavorato)
+             .order_by(CicloLavoroWood.sequenza).first())
+    if not prima or not prima.centro_costo:
+        return True
+    return prima.centro_costo.nome.strip().lower() == (fase_nome or '').strip().lower()
+
+
 def _calcola_consumi_standard(o, componente_finale, componente, good):
     """Consumi standard (da distinta base) per GOOD pezzi buoni — stessa logica
     usata sia per la registrazione vera sia per l'anteprima pre-conferma."""
@@ -603,15 +622,20 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     _audit(o, 'EVENTO_CONSUNTIVO', f'componente={codice_lavorato}; fase={fase_nome}; buoni={good}; scarto={scrap}; minuti={tempo}', event_id)
 
     # Scarico automatico giacenza Iron Wood in proporzione ai pezzi buoni
-    # appena consuntivati. Per il prodotto finito: esplode l'INTERA distinta
-    # (nessun netting qui, solo la quantità reale consumata) e scarica ogni
-    # componente toccato, poi carica il PRODOTTO FINITO a magazzino. Per un
-    # componente intermedio: scarica solo la SUA distinta diretta (un
-    # livello) e carica LUI STESSO a magazzino come semilavorato pronto.
-    # In entrambi i casi si registra anche la varianza di lavorazione (tempo
-    # reale vs standard) quando la fase è abbinabile per nome a un reparto
-    # del Ciclo di Lavoro del codice appena lavorato.
-    if good > 0:
+    # appena consuntivati — SOLO alla PRIMA fase del ciclo di questo codice
+    # (vedi _e_prima_fase_del_ciclo): un pezzo che passa da più fasi (es.
+    # prima piegato poi forato) esiste come semilavorato UNA volta sola, non
+    # una volta per ogni fase dichiarata. Per il prodotto finito: esplode
+    # l'INTERA distinta (nessun netting qui, solo la quantità reale
+    # consumata) e scarica ogni componente toccato, poi carica il PRODOTTO
+    # FINITO a magazzino. Per un componente intermedio: scarica solo la SUA
+    # distinta diretta (un livello) e carica LUI STESSO a magazzino come
+    # semilavorato pronto. In entrambi i casi si registra comunque la
+    # varianza di lavorazione (tempo reale vs standard) per OGNI fase
+    # dichiarata — quella è per costruzione specifica di ogni singola fase,
+    # non va mai saltata.
+    prima_fase = _e_prima_fase_del_ciclo(codice_lavorato, fase_nome)
+    if good > 0 and prima_fase:
         try:
             consumi = consumi_override if consumi_override is not None else _calcola_consumi_standard(o, componente_finale, componente, good)
             for cod, qta_consumata in consumi.items():
@@ -636,6 +660,11 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
         except Exception:
             pass  # il carico a magazzino non deve mai bloccare la registrazione del consuntivo
 
+    # Varianza di lavorazione: SEMPRE per ogni fase dichiarata (tempo
+    # reale vs standard), indipendentemente da _e_prima_fase_del_ciclo — a
+    # differenza di scarico/carico materiali, ogni fase ha il proprio tempo
+    # standard e va sempre tracciata, anche quella successiva alla prima.
+    if good > 0:
         try:
             riga_ciclo = (CicloLavoroWood.query.filter_by(codice=codice_lavorato)
                           .join(CicloLavoroWood.centro_costo)
