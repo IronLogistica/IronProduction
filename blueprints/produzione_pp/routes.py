@@ -1950,14 +1950,19 @@ def api_dichiarazione_annulla(eid):
     _audit(o, 'ANNULLO_CONSUNTIVO', f'storno evento {e.event_id}: componente={codice_lavorato}; '
            f'buoni={e.pezzi_buoni}; scarto={e.pezzi_scarto}; minuti={e.tempo_minuti}')
 
-    if e.pezzi_buoni > 0:
+    prima_fase_originale = _e_prima_fase_del_ciclo(codice_lavorato, e.fase)
+    if e.pezzi_buoni > 0 and prima_fase_originale:
         try:
-            if componente_finale:
-                componenti_esplosi = _esplodi_bom_wood(o.codice_articolo, qta=e.pezzi_buoni)
-                consumi = {}
-                _flatten_componenti(componenti_esplosi, consumi)
-            else:
-                consumi = {rb.codice_figlio: rb.quantita * e.pezzi_buoni for rb in _righe_bom_attive_wood(e.componente)}
+            # Stessa identica logica di esplosione usata per dichiarare —
+            # fondamentale che coincidano: se dichiaro consumando SOLO il
+            # semilavorato (perché ha un ciclo proprio) ma stornassi
+            # esplodendo fino alle materie prime, ripristinerei i codici
+            # sbagliati, lasciando il magazzino disallineato. E se la
+            # dichiarazione originale era una fase SUCCESSIVA alla prima
+            # (non aveva toccato il magazzino — vedi _e_prima_fase_del_ciclo
+            # nella dichiarazione), lo storno non deve inventarsi un
+            # ripristino di qualcosa che non era mai stato scaricato.
+            consumi = _calcola_consumi_standard(o, componente_finale, e.componente, e.pezzi_buoni)
             for cod, qta_consumata in consumi.items():
                 if qta_consumata:
                     _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',
