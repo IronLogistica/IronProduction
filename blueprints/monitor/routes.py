@@ -5,7 +5,7 @@ from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo,
-                    NumeroListaLavoroWood, SchedaLavorazioneWood)
+                    NumeroListaLavoroWood, SchedaLavorazioneWood, ArticoloML, DescrizioneCodiceWood)
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
                     _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo,
                     _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO)
@@ -356,6 +356,29 @@ def totem_macchina(cid):
                              {'chiave': 'pezzi_per_barra', 'etichetta': 'Pz/Barra'}]
     else:
         colonne_parametri = []
+
+    # Descrizione di ogni codice lavorato (non quella del prodotto finito
+    # dell'OP, che è un'altra cosa) — stessa fonte con riserva già usata
+    # nell'Esploratore Prodotto: ArticoloML (magazzino condiviso di
+    # MasterLogistic) prima, la tabella locale (da import Zucchetti/DESCOM)
+    # solo per i codici che ArticoloML non conosce ancora.
+    tutti_codici_lavorati = {c['codice_lavorato'] for g in gruppi for c in g['componenti']}
+    descrizione_per_codice = {}
+    if tutti_codici_lavorati:
+        try:
+            for a in ArticoloML.query.filter(ArticoloML.sku.in_(tutti_codici_lavorati)).all():
+                if a.descrizione:
+                    descrizione_per_codice[a.sku] = a.descrizione
+        except Exception:
+            db.session.rollback()
+        codici_senza_descr = tutti_codici_lavorati - set(descrizione_per_codice.keys())
+        if codici_senza_descr:
+            for d in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici_senza_descr)).all():
+                if d.descrizione:
+                    descrizione_per_codice[d.codice] = d.descrizione
+    for g in gruppi:
+        for c in g['componenti']:
+            c['descrizione_lavorata'] = descrizione_per_codice.get(c['codice_lavorato'], '')
 
     if colonne_parametri:
         codici_lavorati = {c['codice_lavorato'] for g in gruppi for c in g['componenti']}
