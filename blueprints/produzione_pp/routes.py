@@ -11,7 +11,7 @@ from models import (db, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     CostoStandardVersioneFaseWood, ManodoperaRealeWood,
                     SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
-                    NumeroListaLavoroWood)
+                    NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -568,6 +568,18 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
         if o.stato == 'Rilasciato': o.stato = 'In esecuzione'
         if o.qta_pianificata and o.qta_buona >= o.qta_pianificata:
             o.stato, o.data_completamento = 'Tecnicamente completato', datetime.utcnow()
+        # Sopra-produzione: si vede in tempo reale appena si supera la
+        # tolleranza (10%), non serve aspettare una chiusura esplicita — un
+        # 3-4% in più è normale, oltre il 10% è quasi certamente un errore
+        # di dichiarazione da rivedere. Un avviso per OP: non ne accumula
+        # altri se il primo non è stato ancora letto dalla Direzione.
+        if o.qta_pianificata:
+            pct_sopra = (o.qta_buona - o.qta_pianificata) / o.qta_pianificata * 100
+            if pct_sopra > 10 and not AvvisoScostamentoWood.query.filter_by(
+                    op_code=o.codice, tipo='SOPRA_PRODUZIONE', letto=False).first():
+                db.session.add(AvvisoScostamentoWood(
+                    op_code=o.codice, codice_articolo=o.codice_articolo, tipo='SOPRA_PRODUZIONE',
+                    qta_pianificata=o.qta_pianificata, qta_buona=o.qta_buona, percentuale=round(pct_sopra, 1)))
     elif o.stato == 'Rilasciato':
         o.stato = 'In esecuzione'   # un componente ha iniziato la lavorazione: l'OP non è più solo "rilasciato"
     _audit(o, 'EVENTO_CONSUNTIVO', f'componente={codice_lavorato}; fase={fase_nome}; buoni={good}; scarto={scrap}; minuti={tempo}', event_id)
@@ -1543,6 +1555,23 @@ def api_dichiarazione_op_aperti(cid):
                 .group_by(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente).all()):
             fatti_per_componente[(op_code, componente)] = tot or 0
 
+    # Descrizione di ogni codice dichiarabile — ArticoloML (magazzino
+    # condiviso MasterLogistic) prima, riserva locale (da import
+    # Zucchetti/DESCOM) solo per i codici che ArticoloML non conosce.
+    descrizione_per_codice = {}
+    if tutti_i_codici:
+        try:
+            for a in ArticoloML.query.filter(ArticoloML.sku.in_(tutti_i_codici)).all():
+                if a.descrizione:
+                    descrizione_per_codice[a.sku] = a.descrizione
+        except Exception:
+            db.session.rollback()
+        codici_senza_descr = tutti_i_codici - set(descrizione_per_codice.keys())
+        if codici_senza_descr:
+            for d in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici_senza_descr)).all():
+                if d.descrizione:
+                    descrizione_per_codice[d.codice] = d.descrizione
+
     risultato = []
     for o in ordini:
         gruppo_componenti = []
@@ -1559,7 +1588,7 @@ def api_dichiarazione_op_aperti(cid):
                 continue  # già completato su questo centro: non dichiarabile
             gruppo_componenti.append({
                 'componente': componente_param, 'componente_finale': componente_finale,
-                'codice_lavorato': codice_comp,
+                'codice_lavorato': codice_comp, 'descrizione': descrizione_per_codice.get(codice_comp, ''),
                 'qta_necessaria': qta_necessaria, 'fatti': fatti, 'saldo': saldo,
             })
         if not gruppo_componenti:
@@ -1647,6 +1676,66 @@ def api_dichiarazione_storico(cid):
         'approvato_direzione': e.approvato_direzione,
         'approvato_il': e.approvato_il.strftime('%d/%m/%Y %H:%M') if e.approvato_il else None,
     } for e in eventi])
+
+
+@pp_bp.post('/api/dichiarazione-produzione/ordini/<codice>/chiudi-forzato')
+def api_chiudi_commessa_forzato(codice):
+    """
+    Chiusura DELIBERATA di una commessa sotto target (tolleranza commerciale)
+    — riservata alla Direzione (stesso PIN). A differenza della chiusura
+    tecnica automatica (che scatta da sola quando qta_buona raggiunge il
+    pianificato), questa serve per i casi in cui si accetta di consegnare
+    meno del previsto: se lo scostamento supera il 3%, genera comunque un
+    avviso — la chiusura avviene lo stesso, l'avviso è solo un controllo
+    successivo, mai un blocco.
+    """
+    d = request.get_json(force=True)
+    if not _verifica_pin_direzione(d):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    o = OrdineProduzione.query.filter_by(codice=codice).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+    if o.stato == 'Tecnicamente completato':
+        return jsonify(ok=False, error='Commessa già chiusa'), 400
+
+    o.stato, o.data_completamento = 'Tecnicamente completato', datetime.utcnow()
+    _audit(o, 'CHIUSURA_FORZATA_DIREZIONE', f'chiusa sotto target: qta_buona={o.qta_buona}/{o.qta_pianificata}')
+
+    avviso_creato = False
+    if o.qta_pianificata:
+        pct_sotto = (o.qta_pianificata - o.qta_buona) / o.qta_pianificata * 100
+        if pct_sotto > 3:
+            db.session.add(AvvisoScostamentoWood(
+                op_code=o.codice, codice_articolo=o.codice_articolo, tipo='SOTTO_PRODUZIONE',
+                qta_pianificata=o.qta_pianificata, qta_buona=o.qta_buona, percentuale=round(pct_sotto, 1)))
+            avviso_creato = True
+    db.session.commit()
+    return jsonify(ok=True, avviso_creato=avviso_creato)
+
+
+@pp_bp.get('/api/dichiarazione-produzione/avvisi-scostamento')
+def api_avvisi_scostamento():
+    """Avvisi di scostamento quantità non ancora letti — richiede il PIN Direzione."""
+    if not _verifica_pin_direzione(request.args):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    avvisi = (AvvisoScostamentoWood.query.filter_by(letto=False)
+              .order_by(AvvisoScostamentoWood.creato_il.desc()).all())
+    return jsonify(ok=True, avvisi=[{
+        'id': a.id, 'op_code': a.op_code, 'codice_articolo': a.codice_articolo, 'tipo': a.tipo,
+        'qta_pianificata': a.qta_pianificata, 'qta_buona': a.qta_buona, 'percentuale': a.percentuale,
+        'creato_il': a.creato_il.strftime('%d/%m/%Y %H:%M'),
+    } for a in avvisi])
+
+
+@pp_bp.post('/api/dichiarazione-produzione/avvisi-scostamento/<int:aid>/letto')
+def api_avviso_scostamento_letto(aid):
+    d = request.get_json(force=True)
+    if not _verifica_pin_direzione(d):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    a = AvvisoScostamentoWood.query.get_or_404(aid)
+    a.letto = True
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 @pp_bp.get('/api/dichiarazione-produzione/verifica-pin-direzione')
