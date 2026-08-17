@@ -24,6 +24,13 @@ class Config:
     # Token Bearer obbligatorio per le API PP; lasciare vuoto disabilita le API.
     PP_API_TOKEN = os.environ.get('PP_API_TOKEN', '')
 
+    # Token Bearer per l'integrazione con MasterLedger (Iron Segnaletica):
+    # riceve qui il carico magazzino per i materiali "da officina interna"
+    # (ferro, filo di saldatura, DPI...) quando arriva un'Entrata Merci.
+    # Separato da PP_API_TOKEN apposta: integrazioni diverse, chiavi diverse,
+    # revocabili indipendentemente. Vuoto = endpoint disabilitato.
+    MASTERLEDGER_API_TOKEN = os.environ.get('MASTERLEDGER_API_TOKEN', '')
+
     # PIN del CAPO REPARTO per sbloccare "Storico Correzioni" in Dichiarazione
     # di Produzione — cambialo impostando la variabile Railway CAPO_PIN se
     # vuoi un valore diverso da quello di default.

@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, jsonify, request, redirect
+from flask import Blueprint, render_template, jsonify, request, redirect, current_app
 from datetime import datetime, date
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
@@ -2205,4 +2205,83 @@ def api_elimina_scheda_lavorazione(rid):
     db.session.delete(r); db.session.commit()
     return jsonify({'ok': True})
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  INTEGRAZIONE MASTERLEDGER (Iron Segnaletica) — carico magazzino per i
+#  materiali "da officina interna" (ferro per lavorazioni, filo di saldatura,
+#  DPI/consumabili...) quando MasterLedger registra un'Entrata Merci per un
+#  articolo classificato come tale (non destinato a MasterLogistic-WMS).
+#  Endpoint SEPARATI da quelli usati dall'interfaccia di questa app (che
+#  restano aperti, uso interno): qui serve sempre il token
+#  MASTERLEDGER_API_TOKEN, stesso schema Bearer già usato per l'integrazione
+#  PP (vedi blueprints/produzione_pp/routes.py::_api_auth) ma con una chiave
+#  indipendente — così le due integrazioni si possono revocare separatamente.
+#  Riusa _registra_movimento_giacenza già definita sopra in questo file:
+#  stesso magazzino (GiacenzaWood), stesso storico movimenti
+#  (MovimentoGiacenzaWood), nessuna tabella nuova.
+# ══════════════════════════════════════════════════════════════════════════════
+def _auth_masterledger():
+    token = current_app.config.get('MASTERLEDGER_API_TOKEN', '')
+    if not token:
+        return jsonify(ok=False, error="API MasterLedger disabilitata: configurare MASTERLEDGER_API_TOKEN"), 503
+    bearer = request.headers.get('Authorization', '')
+    got = bearer[7:].strip() if bearer.lower().startswith('bearer ') else request.headers.get('X-MasterLedger-Token', '')
+    if got != token:
+        return jsonify(ok=False, error="non autorizzato"), 401
+
+
+@magazzino_bp.route('/api/masterledger/carico_magazzino_produzione', methods=['POST'])
+def api_masterledger_carico():
+    """
+    Notifica di arrivo merce da un'Entrata Merci di MasterLedger. Applica un
+    carico (quantita positiva) alla giacenza del codice indicato — stesso
+    motore di _registra_movimento_giacenza usato dalla rettifica manuale,
+    ma con tipo movimento distinto ('carico_masterledger') per restare
+    tracciabile nello storico come arrivato dall'integrazione, non da un
+    click umano. Non crea l'articolo in ArticoloApprovvigionamento se manca:
+    la classificazione (tipo/unità di misura) resta responsabilità di questa
+    app, MasterLedger manda solo il movimento fisico.
+    """
+    auth = _auth_masterledger()
+    if auth:
+        return auth
+    d = request.get_json(force=True) or {}
+    sku = (d.get('sku') or '').strip()
+    if not sku:
+        return jsonify(ok=False, error='sku obbligatorio'), 400
+    try:
+        quantita = float(d.get('quantita'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='quantita non valida'), 400
+    if quantita <= 0:
+        return jsonify(ok=False, error='quantita deve essere positiva (questo endpoint carica soltanto, non scarica)'), 400
+
+    riferimento = (d.get('doc_riferimento') or '').strip()
+    note = (d.get('note') or '').strip()
+    _registra_movimento_giacenza(sku, quantita, 'carico_masterledger', riferimento=riferimento, note=note)
+    db.session.commit()
+    g = GiacenzaWood.query.get(sku)
+    return jsonify(ok=True, sku=sku, quantita_totale=g.quantita if g else quantita)
+
+
+@magazzino_bp.route('/api/masterledger/giacenza', methods=['GET'])
+def api_masterledger_giacenza():
+    """
+    Lettura giacenza attuale, stesso formato semplice {sku: {stock,
+    scorta_minima, unita_misura}} già usato da MasterLogistic-WMS
+    (get_magazzino_wms) — così il client MasterLedger può riusare la stessa
+    forma di parsing per entrambe le integrazioni.
+    """
+    auth = _auth_masterledger()
+    if auth:
+        return auth
+    scorte_minime = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.all()}
+    approvvigionamenti = {a.codice: a.unita_misura for a in ArticoloApprovvigionamento.query.all()}
+    return jsonify({
+        g.codice: {
+            'stock': g.quantita or 0,
+            'scorta_minima': scorte_minime.get(g.codice, 0),
+            'unita_misura': approvvigionamenti.get(g.codice, ''),
+        } for g in GiacenzaWood.query.all()
+    })
 
