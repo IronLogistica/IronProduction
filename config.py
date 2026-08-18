@@ -31,6 +31,17 @@ class Config:
     # revocabili indipendentemente. Vuoto = endpoint disabilitato.
     MASTERLEDGER_API_TOKEN = os.environ.get('MASTERLEDGER_API_TOKEN', '')
 
+    # URL + token per notificare a MasterLogistic-WMS il carico di prodotto
+    # finito (es. transenne appena verniciate, pronte alla vendita) — vedi
+    # services/masterlogistic_client.py, chiamato da blueprints/kanban/
+    # routes.py quando 'verniciati' aumenta. Diverso da
+    # MASTERLOGISTIC_DATABASE_URL qui sopra: quello è un bind diretto al DB
+    # (sola lettura, mai scrittura); questo è l'endpoint HTTP di WMS che fa
+    # l'incremento atomico e ricalcola gli stati fascicoli — la scrittura
+    # passa sempre da lì, mai dal bind diretto.
+    MASTERLOGISTIC_URL = os.environ.get('MASTERLOGISTIC_URL', '')
+    MASTERLOGISTIC_API_TOKEN = os.environ.get('MASTERLOGISTIC_API_TOKEN', '')
+
     # PIN del CAPO REPARTO per sbloccare "Storico Correzioni" in Dichiarazione
     # di Produzione — cambialo impostando la variabile Railway CAPO_PIN se
     # vuoi un valore diverso da quello di default.

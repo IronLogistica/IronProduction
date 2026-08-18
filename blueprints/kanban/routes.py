@@ -4,6 +4,7 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     kanban_to_dict, log, get_kanban_gruppi,
                     registra_ciclo_se_necessario, calcola_analisi_takt, PIN_ADMIN,
                     TIPI_APPROVVIGIONAMENTO)
+from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
 from datetime import datetime
 import re
 
@@ -127,12 +128,12 @@ def api_aggiorna(kid):
         verniciati_prima = p.verniciati
         for campo in ['lotto','riserva','riservato','grezzi','verniciati','in_vern','in_prod']:
             if campo in d: setattr(p, campo, int(d[campo]))
+        delta_verniciati = p.verniciati - verniciati_prima
         # Solo dal 01/07/2026 in poi (data go-live accumulo automatico)
         ora_now = datetime.utcnow()
         go_live = datetime(2026, 7, 1)
-        if ora_now >= go_live and p.verniciati > verniciati_prima:
-            delta = p.verniciati - verniciati_prima
-            storico_aggiungi_auto(p.id, delta)
+        if ora_now >= go_live and delta_verniciati > 0:
+            storico_aggiungi_auto(p.id, delta_verniciati)
         if 'val_medio'   in d: p.val_medio   = float(d['val_medio'])
         if 'lavorazioni' in d: p.lavorazioni = d['lavorazioni']
         if 'tipo_approvvigionamento' in d:
@@ -149,7 +150,27 @@ def api_aggiorna(kid):
         registra_ciclo_se_necessario(p, stato_prima, stato_dopo)
         log(f'Kanban: aggiornato {p.prodotto}')
         db.session.commit()
-        return jsonify({'ok': True, **kanban_to_dict(p)})
+
+        # ── Notifica a MasterLogistic-WMS il prodotto finito pronto alla
+        # vendita — DOPO il commit: il Kanban (fonte di verità della
+        # produzione) resta registrato anche se WMS non risponde. Non
+        # bloccante: se fallisce, l'utente viene avvisato nella risposta
+        # ma l'aggiornamento Kanban non viene annullato — niente retry
+        # automatico, l'endpoint di WMS non è idempotente (un retry alla
+        # cieca rischierebbe di caricare la stessa produzione due volte).
+        avviso_wms = None
+        if delta_verniciati > 0:
+            sku = sku_da_nome_prodotto(p.prodotto)
+            try:
+                carica_produzione(sku, delta_verniciati)
+            except MasterLogisticError as e:
+                avviso_wms = str(e)
+                log(f'WARN: carico produzione NON notificato a MasterLogistic-WMS per {sku}: {e}')
+
+        risposta = {'ok': True, **kanban_to_dict(p)}
+        if avviso_wms:
+            risposta['avviso_wms'] = avviso_wms
+        return jsonify(risposta)
     except Exception as e:
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
