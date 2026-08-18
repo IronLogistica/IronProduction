@@ -73,7 +73,7 @@
       <th style="background:rgba(230,184,0,.08);color:#f0c040;border-right:1px solid rgba(230,184,0,.2)">Vern./<br>Zinc.</th>
       <th style="background:rgba(26,158,92,.08);color:#5debb0">Finiti<br>IW</th>
       <th style="background:rgba(26,158,92,.12);color:#5debb0;border-right:2px solid rgba(26,158,92,.25)">Finiti<br>IS</th>
-      <th colspan="5" style="background:rgba(255,255,255,.03);color:var(--text-dim);border-right:1px solid var(--border)">Saldi</th>
+      <th colspan="3" style="background:rgba(255,255,255,.03);color:var(--text-dim);border-right:1px solid var(--border)">Saldi</th>
       <th style="background:rgba(30,111,165,.06)">⏱</th>
       <th style="width:32px;background:rgba(255,255,255,.02)">⚙️</th>
     </tr>
@@ -89,9 +89,7 @@
       <th style="background:rgba(26,158,92,.08);color:#5debb0;border-right:2px solid rgba(26,158,92,.2)" title="Prodotti finiti da IronLogistic (spediti/pronti)">IS Stock</th>
       <th style="font-size:9px;color:var(--text-dim)" title="Saldo Contabile a Lungo Termine (SCLT) = Grezzi + In Tratt. + IW + IS + Residuo da Produrre − Impegni">SC (LT)</th>
       <th style="font-size:9px;color:#e0eefc" title="Saldo Contabile a Breve Termine (SCBT) = Grezzi + In Tratt. + IW + IS − Impegni (sterilizza il Residuo da Produrre: solo quello già fisicamente in magazzino)">SC (BT)</th>
-      <th style="font-size:9px;color:var(--text-dim)" title="Saldo Disponibile = Finiti IW + Finiti IS − Impegni: quello evadibile subito">Disp.</th>
-      <th style="font-size:9px;color:#f0c040" title="Saldo Post-Verniciatura = IW + IS + Residuo da Produrre − Impegni">PV</th>
-      <th style="font-size:9px;color:var(--steel2);border-right:1px solid var(--border)" title="Saldo Grezzi+Post-Verniciatura = Grezzi + In Tratt. + IW + IS + Residuo da Produrre − Impegni">GPV</th>
+      <th style="font-size:9px;color:var(--text-dim);border-right:1px solid var(--border)" title="Saldo Disponibile = Finiti IW + Finiti IS − Impegni: quello evadibile subito">Disp.</th>
       <th title="Analisi Takt Time">Takt</th>
       <th style="width:32px"></th>
     </tr>
@@ -101,8 +99,6 @@
   {% set saldo_sc  = p.grezzi + p.in_vern + p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
   {% set saldo_scbt = p.grezzi + p.in_vern + p.verniciati + p.finiti_is - p.riservato %}
   {% set saldo_disp = p.verniciati + p.finiti_is - p.riservato %}
-  {% set saldo_pv  = p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
-  {% set saldo_gpv = p.grezzi + p.in_vern + p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
   {% set buf = p.buffer_colore %}
   {% set nc  = p.n_cicli_chiusi %}
 
@@ -172,17 +168,10 @@
         style="font-weight:700">{{ saldo_scbt }}</td>
 
     {# Col 10: Saldo Disponibile #}
-    <td class="num {% if saldo_disp < 0 %}num-neg{% elif saldo_disp > 0 %}num-pos{% endif %}">{{ saldo_disp }}</td>
+    <td class="num {% if saldo_disp < 0 %}num-neg{% elif saldo_disp > 0 %}num-pos{% endif %}"
+        style="border-right:1px solid var(--border)">{{ saldo_disp }}</td>
 
-    {# Col 11: Saldo Post-Verniciatura PV #}
-    <td class="num {% if saldo_pv < 0 %}num-neg{% else %}num-pos{% endif %}"
-        style="color:{% if saldo_pv < 0 %}#f07070{% else %}#f0c040{% endif %}">{{ saldo_pv }}</td>
-
-    {# Col 12: Saldo Grezzi+Post-Verniciatura GPV #}
-    <td class="num {% if saldo_gpv < 0 %}num-neg{% else %}num-pos{% endif %}"
-        style="border-right:1px solid var(--border)">{{ saldo_gpv }}</td>
-
-    {# Col 13: Takt #}
+    {# Col 11: Takt #}
     <td style="text-align:center;white-space:nowrap">
       <button class="btn-takt" onclick="apriAnalisiTakt({{ p.id }}, '{{ p.prodotto|replace("'","\\'")|e }}')"
         title="Analisi Takt Time — {{ nc }} cicli accumulati">
@@ -228,7 +217,7 @@
       <td class="num {% if tot_sc < 0 %}num-neg{% else %}num-pos{% endif %}" style="font-weight:900">{{ tot_sc }}</td>
       {% set tot_scbt = prodotti|sum(attribute='grezzi') + prodotti|sum(attribute='in_vern') + prodotti|sum(attribute='verniciati') + prodotti|sum(attribute='finiti_is') - prodotti|sum(attribute='riservato') %}
       <td class="num {% if tot_scbt < 0 %}num-neg{% else %}num-pos{% endif %}" style="font-weight:900">{{ tot_scbt }}</td>
-      <td colspan="3" style="border-right:1px solid var(--border)"></td>
+      <td colspan="1" style="border-right:1px solid var(--border)"></td>
       <td colspan="2"></td>
     </tr>
   </tfoot>
@@ -684,16 +673,7 @@ function _aggiornaSaldi(row, d) {
   const sc  = grezzi + in_vern + verniciati + finiti_is + in_prod - riservato;
   const scbt= grezzi + in_vern + verniciati + finiti_is - riservato;   // SCLT senza il Residuo da Produrre
   const disp= verniciati + finiti_is - riservato;   // Finiti IW + Finiti IS − Impegni: evadibile subito
-  const pv  = verniciati + finiti_is + in_prod - riservato;
-  const gpv = grezzi + in_vern + verniciati + finiti_is + in_prod - riservato;
 
-  const setCell = (cls, val) => {
-    const el = row.querySelector(cls);
-    if (!el) return;
-    el.textContent = val;
-    el.className = el.className.replace(/num-neg|num-pos/g, '').trim()
-                  + (val < 0 ? ' num-neg' : val > 0 ? ' num-pos' : '');
-  };
   // SC (LT)
   const scEl = row.querySelector('.saldo-sc');
   if (scEl) { scEl.textContent = sc; scEl.className = 'num saldo-td saldo-sc ' + (sc < 0 ? 'num-neg' : 'num-pos'); }
