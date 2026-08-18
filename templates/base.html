@@ -647,7 +647,9 @@ function confermCreaKanban(){
       // (se presente) — la scheda parte già coi numeri reali di magazzino
       // invece che 0/0/0 da inserire a mano.
       grezzi:     _ultimoWmsTrovato ? (_ultimoWmsTrovato.stock_grezzi||0) : 0,
-      verniciati: _ultimoWmsTrovato ? (_ultimoWmsTrovato.stock_iron_segnaletica||0) : 0,
+      // stock_iron_segnaletica dell'interrogazione = stock reale su MasterLogistic-WMS,
+      // cioè "Finiti IS" — non "Finiti IW" (quello sale solo dai rientri DDT terzisti).
+      finiti_is:  _ultimoWmsTrovato ? (_ultimoWmsTrovato.stock_iron_segnaletica||0) : 0,
       riservato:  _ultimoWmsTrovato ? (_ultimoWmsTrovato.riservato_clienti||0) : 0,
     })})
   .then(r=>r.json()).then(d=>{

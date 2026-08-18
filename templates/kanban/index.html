@@ -97,10 +97,10 @@
   </thead>
   <tbody>
   {% for p in prodotti %}
-  {% set saldo_sc  = p.grezzi + p.in_vern + p.verniciati + p.in_prod - p.riservato %}
+  {% set saldo_sc  = p.grezzi + p.in_vern + p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
   {% set saldo_disp = saldo_sc - p.riserva %}
-  {% set saldo_pv  = p.verniciati + p.in_prod - p.riservato %}
-  {% set saldo_gpv = p.grezzi + p.in_vern + p.verniciati + p.in_prod - p.riservato %}
+  {% set saldo_pv  = p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
+  {% set saldo_gpv = p.grezzi + p.in_vern + p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
   {% set buf = p.buffer_colore %}
   {% set nc  = p.n_cicli_chiusi %}
 
@@ -149,16 +149,16 @@
       {{ p.in_vern }}
     </td>
 
-    {# Col 7: Finiti IW — verniciati a magazzino IronWarehouse (campo verniciati) #}
-    <td class="num editable" data-field="verniciati" data-pid="{{ p.id }}"
+    {# Col 7: Finiti IW — automatico, sale solo a un rientro DDT terzista confermato #}
+    <td class="num" title="Calcolato in automatico dai rientri DDT terzisti confermati — non modificabile a mano"
         style="background:rgba(26,158,92,.04);color:#5debb0">
       {{ p.verniciati }}
     </td>
 
-    {# Col 8: Finiti IS — da IronLogistic (campo riservato usato come proxy, editabile) #}
-    <td class="num editable" data-field="riserva" data-pid="{{ p.id }}"
+    {# Col 8: Finiti IS — automatico, stock reale da MasterLogistic-WMS (campo dedicato finiti_is) #}
+    <td class="num" title="Stock reale da MasterLogistic-WMS — non modificabile a mano"
         style="background:rgba(26,158,92,.07);color:#5debb0;font-weight:700;border-right:2px solid rgba(26,158,92,.2)">
-      {{ p.riserva }}
+      {{ p.finiti_is }}
     </td>
 
     {# Col 9: Saldo Contabile SC #}
@@ -216,9 +216,9 @@
         {{ prodotti|sum(attribute='verniciati') }}
       </td>
       <td class="num" style="background:rgba(26,158,92,.1);color:#5debb0;font-weight:900;border-right:2px solid rgba(26,158,92,.2)">
-        {{ prodotti|sum(attribute='riserva') }}
+        {{ prodotti|sum(attribute='finiti_is') }}
       </td>
-      {% set tot_sc  = prodotti|sum(attribute='grezzi') + prodotti|sum(attribute='in_vern') + prodotti|sum(attribute='verniciati') + prodotti|sum(attribute='in_prod') - prodotti|sum(attribute='riservato') %}
+      {% set tot_sc  = prodotti|sum(attribute='grezzi') + prodotti|sum(attribute='in_vern') + prodotti|sum(attribute='verniciati') + prodotti|sum(attribute='finiti_is') + prodotti|sum(attribute='in_prod') - prodotti|sum(attribute='riservato') %}
       <td class="num {% if tot_sc < 0 %}num-neg{% else %}num-pos{% endif %}" style="font-weight:900">{{ tot_sc }}</td>
       <td colspan="4" style="border-right:1px solid var(--border)"></td>
       <td colspan="2"></td>
@@ -645,14 +645,15 @@ function _aggiornaSaldi(row, d) {
   const grezzi    = d.grezzi    || 0;
   const in_vern   = d.in_vern   || 0;
   const verniciati= d.verniciati|| 0;
+  const finiti_is = d.finiti_is || 0;
   const in_prod   = d.in_prod   || 0;
   const riservato = d.riservato || 0;
   const riserva   = d.riserva   || 0;
 
-  const sc  = grezzi + in_vern + verniciati + in_prod - riservato;
+  const sc  = grezzi + in_vern + verniciati + finiti_is + in_prod - riservato;
   const disp= sc - riserva;
-  const pv  = verniciati + in_prod - riservato;
-  const gpv = grezzi + in_vern + verniciati + in_prod - riservato;
+  const pv  = verniciati + finiti_is + in_prod - riservato;
+  const gpv = grezzi + in_vern + verniciati + finiti_is + in_prod - riservato;
 
   const setCell = (cls, val) => {
     const el = row.querySelector(cls);

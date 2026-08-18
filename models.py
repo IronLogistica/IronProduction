@@ -903,6 +903,23 @@ def assicura_unita_misura_articoli():
             db.session.execute(text("ALTER TABLE articoli_approvvigionamento ADD COLUMN unita_misura VARCHAR(20) NOT NULL DEFAULT ''"))
             db.session.commit()
 
+def assicura_finiti_is_kanban():
+    """Migrazione compatibile con DB già esistenti: aggiunge la colonna
+    kanban_prodotti.finiti_is (stock reale MasterLogistic-WMS, separato dal
+    buffer 'riserva') senza ricreare tabelle."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS finiti_is INTEGER NOT NULL DEFAULT 0"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('kanban_prodotti')}
+        if 'finiti_is' not in colonne:
+            db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN finiti_is INTEGER NOT NULL DEFAULT 0"))
+            db.session.commit()
+
 class KanbanProdotto(db.Model):
     __tablename__ = "kanban_prodotti"
     id           = db.Column(db.Integer, primary_key=True)
@@ -917,6 +934,13 @@ class KanbanProdotto(db.Model):
     verniciati   = db.Column(db.Integer, default=0)
     in_vern      = db.Column(db.Integer, default=0)
     in_prod      = db.Column(db.Integer, default=0)
+    # Stock reale su MasterLogistic-WMS per questo SKU ("Finiti IS") — campo
+    # DEDICATO, separato da 'riserva' apposta: 'riserva' resta il buffer di
+    # sicurezza del Kanban (usato da .stato/.buffer_pct più sotto), non va
+    # mai confuso con uno stock. Aggiornato in automatico a ogni apertura
+    # board (blueprints/kanban/routes.py::_aggiorna_finiti_is_da_wms), mai
+    # a mano.
+    finiti_is    = db.Column(db.Integer, default=0)
     val_medio    = db.Column(db.Float,   default=0.0)
     lavorazioni  = db.Column(db.String(300), default="")
     sort_order   = db.Column(db.Integer, default=0)
@@ -933,7 +957,9 @@ class KanbanProdotto(db.Model):
 
     @property
     def saldo_contabile(self):
-        return (self.verniciati + self.in_vern) - self.riservato
+        # Grezzi + In Trattamento + Finiti IW + Finiti IS − Riservato clienti
+        # (stessa formula mostrata nel tooltip della Scheda WMS completa).
+        return (self.grezzi + self.in_vern + self.verniciati + self.finiti_is) - self.riservato
 
     @property
     def stato(self):
@@ -1318,7 +1344,7 @@ def kanban_to_dict(p):
         'id': p.id, 'prodotto': p.prodotto, 'categoria': p.categoria,
         'sheet_key': p.sheet_key, 'icona': p.icona,
         'lotto': p.lotto, 'riserva': p.riserva, 'riservato': p.riservato,
-        'grezzi': p.grezzi, 'verniciati': p.verniciati,
+        'grezzi': p.grezzi, 'verniciati': p.verniciati, 'finiti_is': p.finiti_is,
         'in_vern': p.in_vern, 'in_prod': p.in_prod, 'val_medio': p.val_medio,
         'saldo': saldo, 'stato': p.stato, 'val_pv': p.val_pv,
         'lavorazioni': p.lavorazioni or '',

@@ -79,17 +79,13 @@ def _aggiorna_grezzi_e_trattamento(p):
 
 def _aggiorna_finiti_is_da_wms(p):
     """
-    ATTENZIONE — NON ANCORA COLLEGATA (vedi chiamata commentata sotto in
-    index()): 'Finiti IS' nel tabellone oggi è visualizzato leggendo il
-    campo 'riserva', ma quel campo è GIÀ il buffer di sicurezza vero e
-    proprio del Kanban — usato da KanbanProdotto.stato ("PROGRAMMARE
-    PRODUZIONE" se saldo < riserva) e da buffer_pct/saldo_disponibile
-    (models.py, templates/kanban/index.html riga 101). Scriverci sopra lo
-    stock WMS romperebbe l'allarme OK/PROGRAMMARE PRODUZIONE su OGNI
-    prodotto. Serve prima un campo DEDICATO (es. una nuova colonna
-    KanbanProdotto.finiti_is, con relativa migrazione) prima di collegare
-    questa funzione — lasciata pronta ma inerte finché non si decide come
-    risolvere la sovrapposizione.
+    'Finiti IS' — stock reale che MasterLogistic-WMS ha per questo SKU
+    (stesso dato di 'stock_verniciati' dell'endpoint /api/kanban-stock),
+    scritto sul campo DEDICATO KanbanProdotto.finiti_is (mai su 'riserva',
+    che è il buffer di sicurezza del Kanban — vedi models.py). Timeout
+    breve apposta: gira per OGNI prodotto a ogni apertura board, non deve
+    bloccare la pagina se WMS è lento — un fallimento qui lascia il valore
+    precedente invariato, non lo azzera.
     """
     sku = sku_da_nome_prodotto(p.prodotto)
     if not sku:
@@ -98,7 +94,7 @@ def _aggiorna_finiti_is_da_wms(p):
         wms = ottieni_scheda_kanban(sku, timeout=3)
     except MasterLogisticError:
         return
-    return int(wms.get('stock_verniciati') or 0)   # valore pronto, non ancora scritto da nessuna parte
+    p.finiti_is = int(wms.get('stock_verniciati') or 0)
 
 
 def _url_key_from_label(label):
@@ -182,12 +178,11 @@ def index(url_key):
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
 
     # Campi calcolati in automatico a ogni apertura della board — non più da
-    # inserire a mano (vedi le funzioni sopra per le fonti dati). Finiti IS
-    # resta ESCLUSA di proposito: vedi il commento in _aggiorna_finiti_is_da_wms,
-    # scrive sul campo 'riserva' che oggi è il buffer di sicurezza del Kanban.
+    # inserire a mano (vedi le funzioni sopra per le fonti dati).
     for p in prodotti:
         _aggiorna_residuo_produzione(p)
         _aggiorna_grezzi_e_trattamento(p)
+        _aggiorna_finiti_is_da_wms(p)
     db.session.commit()
 
     tot    = len(prodotti)
@@ -249,7 +244,7 @@ def api_kanban_scheda(pid):
     risultato = {
         'sku': sku,
         'stock_verniciati': p.verniciati, 'stock_grezzi': p.grezzi, 'in_vern': p.in_vern,
-        'stock_is': p.verniciati,
+        'stock_is': p.finiti_is,
         'riservato_clienti': p.riservato,
         'ordini_clienti': [], 'ultimi_evasi': [],
         'saldo_contabile': p.saldo_contabile,
@@ -259,12 +254,13 @@ def api_kanban_scheda(pid):
     if sku:
         try:
             wms = ottieni_scheda_kanban(sku)
-            risultato['stock_verniciati'] = wms['stock_verniciati']
-            risultato['stock_grezzi'] = wms['stock_grezzi']
+            risultato['stock_verniciati'] = p.verniciati   # Finiti IW resta il dato locale (DDT), mai sovrascritto da WMS qui
+            risultato['stock_grezzi'] = p.grezzi           # idem Grezzi: locale (Dichiarazioni + DDT), non da WMS
+            risultato['stock_is'] = wms['stock_verniciati']  # Finiti IS = stock reale WMS, questo sì
             risultato['riservato_clienti'] = wms['riservato_clienti']
             risultato['ordini_clienti'] = wms['ordini_clienti']
             risultato['ultimi_evasi'] = wms['ultimi_evasi']
-            risultato['saldo_disponibile'] = risultato['stock_verniciati'] - wms['riservato_clienti']
+            risultato['saldo_disponibile'] = risultato['saldo_contabile'] - wms['riservato_clienti']
         except MasterLogisticError as e:
             risultato['wms_errore'] = str(e)
 
@@ -296,12 +292,13 @@ def api_aggiorna(kid):
         # inserito a mano verrebbe sovrascritto al primo refresh — vedi
         # anche templates/kanban/index.html dove quella cella non è più
         # editabile.
-        # 'grezzi' e 'in_vern' NON sono più qui: ricalcolati in automatico
-        # a ogni apertura board (_aggiorna_grezzi_e_trattamento) da
-        # Dichiarazioni di Produzione + DDT terzisti. 'riserva' resta
-        # editabile: è il buffer di sicurezza del Kanban, non ancora libero
-        # per diventare "Finiti IS" (vedi _aggiorna_finiti_is_da_wms).
-        for campo in ['lotto','riserva','riservato','verniciati']:
+        # 'grezzi'/'in_vern' ricalcolati in automatico da Dichiarazioni di
+        # Produzione + DDT terzisti; 'verniciati' (Finiti IW) sale da solo a
+        # ogni rientro DDT confermato (_aggiorna_kanban_da_rientro_ddt);
+        # niente in questa lista è più "Finiti IS" (campo dedicato
+        # finiti_is, mai manuale, pescato da WMS). 'riserva' resta
+        # editabile: è il buffer di sicurezza del Kanban.
+        for campo in ['lotto','riserva','riservato']:
             if campo in d: setattr(p, campo, int(d[campo]))
         delta_verniciati = p.verniciati - verniciati_prima
         # Solo dal 01/07/2026 in poi (data go-live accumulo automatico)
@@ -353,15 +350,16 @@ def api_aggiorna(kid):
 @kanban_bp.route('/api/kanban/<int:kid>/risincronizza-wms', methods=['POST'])
 def api_risincronizza_wms(kid):
     """
-    Riallinea grezzi/verniciati/riservato di UNA scheda già esistente con i
-    valori attuali di MasterLogistic-WMS — stessa istantanea presa in
-    automatico solo al momento della creazione (vedi api_crea), qui invece
-    richiamabile in qualunque momento per le schede create PRIMA che
-    quell'automatismo esistesse (restavano ferme a 0/0/0) o quando i numeri
-    di WMS sono cambiati nel frattempo e si vuole risincronizzare senza
-    editarli a mano uno per uno. Nessun PIN richiesto: stesso livello di
-    fiducia della modifica manuale inline sul tabellone (PUT /api/kanban/<id>),
-    di cui questa è solo una scorciatoia automatica.
+    Riallinea in blocco UNA scheda già esistente: riservato + Finiti IS da
+    MasterLogistic-WMS, grezzi/in trattamento da Dichiarazioni di Produzione
+    + DDT terzisti, residuo da produrre dalle Commesse aperte — stessa
+    identica logica automatica usata a ogni apertura board (vedi le
+    funzioni _aggiorna_* sopra), richiamabile qui a comando per una singola
+    scheda (utile appena dopo un test, senza aspettare il prossimo giro).
+    'Finiti IW' (verniciati) apposta NON viene toccato qui: sale solo
+    all'evento di un rientro DDT confermato (_aggiorna_kanban_da_rientro_ddt)
+    — ririchiamarlo da un valore raw WMS rischierebbe di contare due volte
+    la stessa quantità.
     """
     p = KanbanProdotto.query.get_or_404(kid)
     sku = sku_da_nome_prodotto(p.prodotto)
@@ -371,13 +369,13 @@ def api_risincronizza_wms(kid):
         wms = ottieni_scheda_kanban(sku)
     except MasterLogisticError as e:
         return jsonify({'ok': False, 'error': str(e)}), 502
-    p.grezzi = int(wms.get('stock_grezzi') or 0)
-    p.verniciati = int(wms.get('stock_verniciati') or 0)
     p.riservato = int(wms.get('riservato_clienti') or 0)
+    p.finiti_is = int(wms.get('stock_verniciati') or 0)
+    _aggiorna_grezzi_e_trattamento(p)
     _aggiorna_residuo_produzione(p)
     p.aggiornato_il = datetime.utcnow()
-    log(f'Kanban: risincronizzato {p.prodotto} da MasterLogistic-WMS '
-        f'(grezzi={p.grezzi}, verniciati={p.verniciati}, riservato={p.riservato})')
+    log(f'Kanban: risincronizzato {p.prodotto} — grezzi={p.grezzi}, in_vern={p.in_vern}, '
+        f'riservato={p.riservato}, finiti_is={p.finiti_is}, in_prod={p.in_prod}')
     db.session.commit()
     return jsonify({'ok': True, **kanban_to_dict(p)})
 
@@ -410,15 +408,17 @@ def api_crea():
             tipo_approvvigionamento=tipo_approvvigionamento,
             lead_time_fornitura_giorni=float(lead_time_fornitura) if lead_time_fornitura not in (None, '') else None,
             # Istantanea WMS presa dall'interrogazione automatica al momento
-            # della creazione (vedi templates/base.html::interrogaCodiceEsistente) —
-            # così la scheda parte già con i numeri reali invece che 0/0/0 da
-            # correggere subito a mano. Da qui in poi restano contatori
-            # locali modificabili sul tabellone (PUT /api/kanban/<id>), non
-            # più risincronizzati automaticamente: la produzione li cambia
-            # ogni giorno, non ha senso che ogni interrogazione li sovrascriva.
+            # della creazione (vedi templates/base.html::interrogaCodiceEsistente)
+            # — così la scheda parte già con i numeri reali. 'riservato' e
+            # 'finiti_is' sono dati diretti da WMS (stock reale, impegni);
+            # 'grezzi'/'in_vern'/'in_prod' verranno comunque ricalcolati al
+            # primo caricamento della board dalle fonti locali (Dichiarazioni
+            # di Produzione, DDT terzisti, Commesse aperte) — 'verniciati'
+            # (Finiti IW) NON si inizializza da WMS: sale solo a un rientro
+            # DDT confermato, mai da uno stock generico.
             grezzi=int(d.get('grezzi', 0) or 0),
-            verniciati=int(d.get('verniciati', 0) or 0),
             riservato=int(d.get('riservato', 0) or 0),
+            finiti_is=int(d.get('finiti_is', d.get('verniciati', 0)) or 0),
         )
         db.session.add(p)
         log(f'Kanban: creato prodotto {prodotto} (PIN autorizzato)')
