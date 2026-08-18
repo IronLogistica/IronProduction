@@ -32,6 +32,7 @@
       <button class="btn btn-ghost periodo-btn" data-periodo="ieri" onclick="impostaPeriodoCapo('ieri')">Ieri</button>
       <button class="btn btn-ghost periodo-btn" data-periodo="settimana" onclick="impostaPeriodoCapo('settimana')">Una settimana</button>
       <button class="btn btn-ghost periodo-btn" data-periodo="mese" onclick="impostaPeriodoCapo('mese')">Un mese</button>
+      <button class="btn btn-ghost periodo-btn" data-periodo="tutto" onclick="impostaPeriodoCapo('tutto')">Tutto lo storico</button>
       <span style="display:flex;gap:6px;align-items:center;font-size:12px;color:var(--text-dim)">
         dal <input id="capo-data-da" type="date" style="padding:7px 9px;border-radius:6px;border:1px solid var(--border)" onchange="impostaPeriodoCapo('custom')">
         al <input id="capo-data-a" type="date" style="padding:7px 9px;border-radius:6px;border:1px solid var(--border)" onchange="impostaPeriodoCapo('custom')">
@@ -43,7 +44,7 @@
         <div id="capo-filtro-codice-sugg" style="display:none;position:absolute;top:100%;left:0;z-index:20;background:#fff;color:#222;border:1px solid #ccd5df;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;width:220px"></div>
       </span>
       <span style="margin-left:auto">
-        <button class="btn btn-danger" style="padding:7px 12px;font-size:12px" onclick="azzeraMovimentiOggi()">🗑️ Azzera movimenti di oggi</button>
+        <button class="btn btn-danger" style="padding:7px 12px;font-size:12px" onclick="azzeraMovimentiPeriodo()">🗑️ Azzera movimenti del periodo</button>
       </span>
     </div>
     <div id="capo-storico" style="margin-top:14px"></div>
@@ -261,6 +262,7 @@ function impostaPeriodoCapo(periodo){
   if(periodo === 'ieri'){ da.setDate(da.getDate()-1); a.setDate(a.getDate()-1); }
   else if(periodo === 'settimana'){ da.setDate(da.getDate()-6); }
   else if(periodo === 'mese'){ da.setDate(da.getDate()-29); }
+  else if(periodo === 'tutto'){ da = new Date(2000,0,1); }
   else if(periodo === 'custom'){
     const vDa = document.getElementById('capo-data-da').value;
     const vA = document.getElementById('capo-data-a').value;
@@ -393,16 +395,21 @@ async function eliminaMovimento(mid){
   caricaMovimentiCapo();
 }
 
-async function azzeraMovimentiOggi(){
-  if(!confirm('Eliminare TUTTI i movimenti di carico/scarico registrati OGGI su tutti i centri?\n\nLa giacenza verrà corretta di conseguenza per ognuno. NON verranno toccate le dichiarazioni di produzione, gli Ordini di Produzione né altro — solo i movimenti di magazzino di oggi.')) return;
+async function azzeraMovimentiPeriodo(){
+  const dataDa = document.getElementById('capo-data-da').value;
+  const dataA = document.getElementById('capo-data-a').value;
+  if(!dataDa || !dataA){ alert('Seleziona prima un periodo.'); return; }
+  const periodoLabel = `dal ${dataDa.split('-').reverse().join('/')} al ${dataA.split('-').reverse().join('/')}`;
+  if(!confirm(`Eliminare TUTTI i movimenti di carico/scarico ${periodoLabel} su tutti i centri?\n\nLa giacenza verrà corretta di conseguenza per ognuno. NON verranno toccate le dichiarazioni di produzione, gli Ordini di Produzione né altro — solo i movimenti di magazzino nel periodo selezionato.`)) return;
   if(!confirm('Conferma definitiva: operazione irreversibile. Procedere?')) return;
-  const r = await fetch('/api/dichiarazione-produzione/movimenti/azzera-oggi', {
-    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin:_pinCapoAttivo})
+  const r = await fetch('/api/dichiarazione-produzione/movimenti/azzera-periodo', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({pin:_pinCapoAttivo, data_da:dataDa, data_a:dataA})
   });
   const d = await r.json();
   if(!d.ok){ alert('⚠️ ' + d.error); return; }
-  alert(`✓ Eliminati ${d.eliminati} movimenti di oggi.`);
-  impostaPeriodoCapo('oggi');
+  alert(`✓ Eliminati ${d.eliminati} movimenti ${periodoLabel}.`);
+  caricaStoricoCapo();
 }
 
 async function annullaDichiarazione(eid){

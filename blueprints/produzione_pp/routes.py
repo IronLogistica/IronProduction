@@ -2099,24 +2099,33 @@ def api_dichiarazione_movimento_elimina(mid):
     return jsonify(ok=True)
 
 
-@pp_bp.post('/api/dichiarazione-produzione/movimenti/azzera-oggi')
-def api_dichiarazione_movimenti_azzera_oggi():
+@pp_bp.post('/api/dichiarazione-produzione/movimenti/azzera-periodo')
+def api_dichiarazione_movimenti_azzera_periodo():
     """
     Azzeramento massivo dei movimenti di carico/scarico giacenza (Movimento-
     GiacenzaWood, tipi carico_produzione/scarico_produzione/rettifica_import)
-    creati OGGI — SOLO PIN capo. Stessa identica logica dell'eliminazione
-    singola, ripetuta riga per riga: ogni movimento viene riportato indietro
-    sulla giacenza (g.quantita -= m.quantita) prima di essere cancellato, poi
-    tolto. Non tocca EventoConsuntivoPP, OrdineProduzione, AuditPP pregresso
-    né altro — solo le righe di movimento di magazzino odierne.
+    nel periodo indicato (data_da/data_a, default oggi) — SOLO PIN capo.
+    Stessa identica logica dell'eliminazione singola, ripetuta riga per riga:
+    ogni movimento viene riportato indietro sulla giacenza (g.quantita -=
+    m.quantita) prima di essere cancellato, poi tolto. Non tocca
+    EventoConsuntivoPP, OrdineProduzione, AuditPP pregresso né altro — solo
+    le righe di movimento di magazzino nel range scelto.
     """
     d = request.get_json(force=True)
     if not _verifica_pin_capo(d):
         return jsonify(ok=False, error='PIN capo non valido'), 403
-    oggi = datetime.utcnow().date()
+    oggi_str = datetime.utcnow().strftime('%Y-%m-%d')
+    data_da_str = (d.get('data_da') or oggi_str)
+    data_a_str = (d.get('data_a') or data_da_str)
+    try:
+        giorno_da = datetime.strptime(data_da_str, '%Y-%m-%d').date()
+        giorno_a = datetime.strptime(data_a_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify(ok=False, error='Data non valida'), 400
     movimenti = (MovimentoGiacenzaWood.query
                  .filter(MovimentoGiacenzaWood.tipo.in_(('carico_produzione', 'scarico_produzione', 'rettifica_import')),
-                         db.func.date(MovimentoGiacenzaWood.creato_il) == oggi)
+                         db.func.date(MovimentoGiacenzaWood.creato_il) >= giorno_da,
+                         db.func.date(MovimentoGiacenzaWood.creato_il) <= giorno_a)
                  .all())
     n = len(movimenti)
     for m in movimenti:
@@ -2125,8 +2134,8 @@ def api_dichiarazione_movimenti_azzera_oggi():
             g.quantita = (g.quantita or 0) - m.quantita
             g.aggiornato_il = datetime.utcnow()
         db.session.delete(m)
-    db.session.add(AuditPP(op_code='', azione='AZZERA_MOVIMENTI_OGGI',
-                            dettaglio=f'azzerati {n} movimenti di carico/scarico di oggi ({oggi.isoformat()})'))
+    db.session.add(AuditPP(op_code='', azione='AZZERA_MOVIMENTI_PERIODO',
+                            dettaglio=f'azzerati {n} movimenti di carico/scarico dal {giorno_da.isoformat()} al {giorno_a.isoformat()}'))
     db.session.commit()
     return jsonify(ok=True, eliminati=n)
 
