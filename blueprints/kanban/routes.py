@@ -4,11 +4,11 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     kanban_to_dict, log, get_kanban_gruppi,
                     registra_ciclo_se_necessario, calcola_analisi_takt, PIN_ADMIN,
                     TIPI_APPROVVIGIONAMENTO, ArticoloApprovvigionamento,
-                    GiacenzaWood, OrdineProduzione)
+                    GiacenzaWood, OrdineProduzione, LavorazioneTerzista)
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, ottieni_stock_kanban, ottieni_scheda_kanban, MasterLogisticError
 from masterledgerlight_client import cerca_articolo, MasterLedgerLightError
 from datetime import datetime
-import re
+import re, json
 
 kanban_bp = Blueprint('kanban', __name__)
 
@@ -31,6 +31,74 @@ def _aggiorna_residuo_produzione(p):
                          OrdineProduzione.stato.in_(['Creato', 'Rilasciato', 'In esecuzione']))
                  .all())
     p.in_prod = int(sum(max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0) for o in op_aperti))
+
+
+def _aggiorna_grezzi_e_trattamento(p):
+    """
+    'Grezzi' e 'In Trattamento' (VERN./ZINC.) NON sono più campi da inserire
+    a mano: derivano da dati che IronProduction ha già.
+    - Grezzi = totale prodotto dalle Dichiarazioni di Produzione (somma
+      qta_buona su TUTTI gli Ordini di Produzione, aperti e chiusi, di
+      questo codice — non solo quelli ancora aperti come in_prod) MENO
+      quanto è già stato spedito a un terzista per il trattamento esterno
+      (LavorazioneTerzista.qta, DDT uscita) — quello che è partito non è
+      più "grezzo in casa", è "in trattamento".
+    - In Trattamento = quanto di quello spedito NON è ancora rientrato
+      (qta − qta_rientrata sulle lavorazioni non RIENTRATA), dagli stessi
+      DDT (blueprints/terzisti — vedi _aggiorna_kanban_da_rientro_ddt per il
+      lato "rientro" che alza invece 'verniciati'/Finiti IW).
+    """
+    sku = sku_da_nome_prodotto(p.prodotto)
+    if not sku:
+        return
+    sku_upper = sku.upper()
+
+    tutti_op = OrdineProduzione.query.filter(
+        db.func.upper(OrdineProduzione.codice_articolo) == sku_upper).all()
+    totale_prodotto = int(sum(o.qta_buona or 0 for o in tutti_op))
+
+    lavorazioni = (LavorazioneTerzista.query
+                   .filter(LavorazioneTerzista.note.ilike(f'%"codice": "{sku}"%'))
+                   .all())
+    totale_spedito = 0
+    totale_in_viaggio = 0
+    for lav in lavorazioni:
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            continue
+        if (note_j.get('codice') or '').strip().upper() != sku_upper:
+            continue
+        totale_spedito += lav.qta or 0
+        if lav.stato != 'RIENTRATA':
+            totale_in_viaggio += max((lav.qta or 0) - int(note_j.get('qta_rientrata', 0)), 0)
+
+    p.grezzi = max(totale_prodotto - totale_spedito, 0)
+    p.in_vern = totale_in_viaggio
+
+
+def _aggiorna_finiti_is_da_wms(p):
+    """
+    ATTENZIONE — NON ANCORA COLLEGATA (vedi chiamata commentata sotto in
+    index()): 'Finiti IS' nel tabellone oggi è visualizzato leggendo il
+    campo 'riserva', ma quel campo è GIÀ il buffer di sicurezza vero e
+    proprio del Kanban — usato da KanbanProdotto.stato ("PROGRAMMARE
+    PRODUZIONE" se saldo < riserva) e da buffer_pct/saldo_disponibile
+    (models.py, templates/kanban/index.html riga 101). Scriverci sopra lo
+    stock WMS romperebbe l'allarme OK/PROGRAMMARE PRODUZIONE su OGNI
+    prodotto. Serve prima un campo DEDICATO (es. una nuova colonna
+    KanbanProdotto.finiti_is, con relativa migrazione) prima di collegare
+    questa funzione — lasciata pronta ma inerte finché non si decide come
+    risolvere la sovrapposizione.
+    """
+    sku = sku_da_nome_prodotto(p.prodotto)
+    if not sku:
+        return
+    try:
+        wms = ottieni_scheda_kanban(sku, timeout=3)
+    except MasterLogisticError:
+        return
+    return int(wms.get('stock_verniciati') or 0)   # valore pronto, non ancora scritto da nessuna parte
 
 
 def _url_key_from_label(label):
@@ -113,11 +181,13 @@ def index(url_key):
     ).order_by(KanbanProdotto.sort_order, KanbanProdotto.prodotto).all()
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
 
-    # 'Residuo da produrre' ricalcolato in automatico a ogni apertura della
-    # board, dalle Commesse di Produzione aperte in IronProduction — non è
-    # più un campo da inserire a mano (vedi _aggiorna_residuo_produzione).
+    # Campi calcolati in automatico a ogni apertura della board — non più da
+    # inserire a mano (vedi le funzioni sopra per le fonti dati). Finiti IS
+    # resta ESCLUSA di proposito: vedi il commento in _aggiorna_finiti_is_da_wms,
+    # scrive sul campo 'riserva' che oggi è il buffer di sicurezza del Kanban.
     for p in prodotti:
         _aggiorna_residuo_produzione(p)
+        _aggiorna_grezzi_e_trattamento(p)
     db.session.commit()
 
     tot    = len(prodotti)
@@ -226,7 +296,12 @@ def api_aggiorna(kid):
         # inserito a mano verrebbe sovrascritto al primo refresh — vedi
         # anche templates/kanban/index.html dove quella cella non è più
         # editabile.
-        for campo in ['lotto','riserva','riservato','grezzi','verniciati','in_vern']:
+        # 'grezzi' e 'in_vern' NON sono più qui: ricalcolati in automatico
+        # a ogni apertura board (_aggiorna_grezzi_e_trattamento) da
+        # Dichiarazioni di Produzione + DDT terzisti. 'riserva' resta
+        # editabile: è il buffer di sicurezza del Kanban, non ancora libero
+        # per diventare "Finiti IS" (vedi _aggiorna_finiti_is_da_wms).
+        for campo in ['lotto','riserva','riservato','verniciati']:
             if campo in d: setattr(p, campo, int(d[campo]))
         delta_verniciati = p.verniciati - verniciati_prima
         # Solo dal 01/07/2026 in poi (data go-live accumulo automatico)

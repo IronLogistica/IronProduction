@@ -137,14 +137,14 @@
       {{ p.in_prod }}
     </td>
 
-    {# Col 5: Grezzi #}
-    <td class="num editable" data-field="grezzi" data-pid="{{ p.id }}"
+    {# Col 5: Grezzi — automatico (produzione da Dichiarazioni meno spedito a terzista) #}
+    <td class="num" title="Calcolato in automatico: prodotto da Dichiarazioni di Produzione meno spedito a terzista (DDT uscita) — non modificabile a mano"
         style="background:rgba(30,111,165,.04);color:var(--steel2)">
       {{ p.grezzi }}
     </td>
 
-    {# Col 6: In Verniciatura/Zincatura (in_vern) #}
-    <td class="num editable" data-field="in_vern" data-pid="{{ p.id }}"
+    {# Col 6: In Verniciatura/Zincatura — automatico (residuo spedito non ancora rientrato via DDT) #}
+    <td class="num" title="Calcolato in automatico dai DDT terzisti: spedito non ancora rientrato — non modificabile a mano"
         style="background:rgba(230,184,0,.04);color:#f0c040;border-right:1px solid rgba(230,184,0,.15)">
       {{ p.in_vern }}
     </td>

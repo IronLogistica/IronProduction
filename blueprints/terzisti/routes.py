@@ -2,12 +2,44 @@ from flask import Blueprint, render_template, jsonify, request, current_app
 from models import (
     db, Terzista, LavorazioneTerzista, RigaCommessa, FaseRiga, log,
     SchedaTrattamento, TIPI_TRATTAMENTO_SCHEDA, FORNITORI_SCHEDA_DEFAULT,
+    KanbanProdotto, storico_aggiungi_auto,
 )
+from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
 from datetime import datetime, date
 import os, re, json, shutil
 import PyPDF2
 
 terzisti_bp = Blueprint('terzisti', __name__)
+
+
+def _aggiorna_kanban_da_rientro_ddt(codice, qta_rientrata_ora):
+    """
+    Aggancio automatico: un rientro DDT confermato per un codice che ha una
+    scheda Kanban aumenta 'Finiti IW' (verniciati) della stessa quantità —
+    stessa logica (delta + notifica a MasterLogistic-WMS + storico
+    produzione) già usata per la modifica manuale in blueprints/kanban/
+    routes.py::api_aggiorna, qui scatenata dal DDT invece che da un click.
+    Non bloccante: se il codice non ha una scheda Kanban, o la notifica a
+    WMS fallisce, il DDT resta comunque confermato — solo loggato.
+    """
+    if not codice or qta_rientrata_ora <= 0:
+        return
+    p = (KanbanProdotto.query
+         .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{codice.strip().upper()}%'))
+         .first())
+    if not p:
+        return
+    p.verniciati = (p.verniciati or 0) + qta_rientrata_ora
+    ora_now = datetime.utcnow()
+    if ora_now >= datetime(2026, 7, 1):
+        storico_aggiungi_auto(p.id, qta_rientrata_ora)
+    sku = sku_da_nome_prodotto(p.prodotto)
+    try:
+        carica_produzione(sku, qta_rientrata_ora)
+    except MasterLogisticError as e:
+        log(f'WARN: rientro DDT per {codice} NON notificato a MasterLogistic-WMS: {e}')
+    log(f'Kanban: +{qta_rientrata_ora} "Finiti IW" su {p.prodotto} da rientro DDT terzista')
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  CARTELLE — aggiungere in app.config:
@@ -701,6 +733,10 @@ def conferma_ddt_rientro():
             note_j['qta_rientrata'] = nuova_rientrata
             note_j['ddt_rientri']   = ddt_list
             lav.note = json.dumps(note_j)
+
+            # Aggancio automatico Kanban Gruppi: questo rientro alza "Finiti
+            # IW" del codice corrispondente, se ha una scheda (vedi sopra).
+            _aggiorna_kanban_da_rientro_ddt(note_j.get('codice', ''), qta_conf)
 
             # Aggiorna stato
             if nuova_rientrata >= lav.qta:
