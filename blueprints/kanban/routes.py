@@ -3,7 +3,8 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
                     registra_ciclo_se_necessario, calcola_analisi_takt, PIN_ADMIN,
-                    TIPI_APPROVVIGIONAMENTO)
+                    TIPI_APPROVVIGIONAMENTO, ArticoloML, ArticoloApprovvigionamento,
+                    GiacenzaWood, OrdineProduzione)
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
 from datetime import datetime
 import re
@@ -211,6 +212,84 @@ def api_crea():
     except Exception as e:
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+@kanban_bp.route('/api/kanban/interroga-codice')
+def api_interroga_codice():
+    """
+    Interroga in automatico gli altri programmi dell'ecosistema per un
+    codice che si sta per inserire in Kanban Gruppi — così chi crea la
+    scheda non deve andare a controllare a mano MasterLogistic-WMS e
+    IronProduction. Cerca il codice (case-insensitive) su:
+    1) MasterLogistic-WMS — bind 'masterlogistic' già esistente e in sola
+       lettura (ArticoloML): stock, ordinati, incoming, fornitore.
+    2) IronProduction stesso: classificazione già fatta in Approvvigionamento
+       (tipo, lead time, costo standard, UoM), giacenza Iron Wood locale, e
+       Ordini di Produzione ancora aperti su questo codice_articolo.
+    3) MasterLedgerLight — non ancora collegato: placeholder pronto per
+       quando ci sarà un bind o un endpoint dedicato.
+    Nessuna interrogazione è bloccante: se un sistema non risponde (bind
+    non configurato, errore di rete) quella sezione torna vuota con
+    l'errore, senza far fallire le altre.
+    """
+    codice = (request.args.get('codice') or '').strip()
+    if not codice:
+        return jsonify(ok=False, error='Codice mancante'), 400
+    cod_upper = codice.upper()
+    trovato = False
+
+    # 1) MasterLogistic-WMS
+    wms = None
+    try:
+        art = ArticoloML.query.filter(
+            db.or_(db.func.upper(ArticoloML.sku) == cod_upper,
+                   db.func.upper(ArticoloML.codice_esterno) == cod_upper)).first()
+        if art:
+            wms = {'sku': art.sku, 'descrizione': art.descrizione, 'stock': art.stock,
+                   'ordinati': art.ordinati, 'incoming': art.incoming,
+                   'fornitore': art.fornitore, 'scorta_minima': art.scorta_minima,
+                   'stato': art.stato}
+            trovato = True
+    except Exception as e:
+        wms = {'errore': f'MasterLogistic-WMS non raggiungibile: {e}'}
+
+    # 2) IronProduction stesso
+    approvv = ArticoloApprovvigionamento.query.filter(
+        db.func.upper(ArticoloApprovvigionamento.codice) == cod_upper).first()
+    giacenza = GiacenzaWood.query.filter(
+        db.func.upper(GiacenzaWood.codice) == cod_upper).first()
+    op_aperti = (OrdineProduzione.query
+                 .filter(db.func.upper(OrdineProduzione.codice_articolo) == cod_upper,
+                         OrdineProduzione.stato.in_(['Creato', 'Rilasciato', 'In esecuzione']))
+                 .order_by(OrdineProduzione.data_prevista).all())
+    ironproduction = {
+        'tipo_approvvigionamento': approvv.tipo_approvvigionamento if approvv else None,
+        'lead_time_fornitura_giorni': approvv.lead_time_fornitura_giorni if approvv else None,
+        'costo_acquisto_standard': approvv.costo_acquisto_standard if approvv else None,
+        'unita_misura': approvv.unita_misura if approvv else None,
+        'giacenza_wood': giacenza.quantita if giacenza else None,
+        'ordini_produzione_aperti': [{'codice': o.codice, 'stato': o.stato,
+                                       'qta_pianificata': o.qta_pianificata,
+                                       'qta_buona': o.qta_buona} for o in op_aperti],
+    }
+    if approvv or giacenza or op_aperti:
+        trovato = True
+
+    # 3) MasterLedgerLight — non ancora collegato
+    masterledgerlight = {'collegato': False,
+        'nota': 'Integrazione non ancora disponibile — verrà aggiunta quando MasterLedgerLight sarà collegato.'}
+
+    # Schede Kanban già esistenti con questo codice — utile per evitare doppioni
+    kanban_esistenti = (KanbanProdotto.query
+                        .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{cod_upper}%')).all())
+    if kanban_esistenti:
+        trovato = True
+
+    return jsonify(ok=True, codice=codice, trovato=trovato,
+                    masterlogistic_wms=wms, ironproduction=ironproduction,
+                    masterledgerlight=masterledgerlight,
+                    kanban_esistenti=[{'id': k.id, 'prodotto': k.prodotto, 'categoria': k.categoria}
+                                      for k in kanban_esistenti])
+
 
 @kanban_bp.route('/api/kanban/<int:kid>', methods=['DELETE'])
 def api_elimina(kid):

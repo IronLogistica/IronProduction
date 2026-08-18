@@ -291,10 +291,11 @@
     <input type="hidden" id="creaKanbanSheetKey">
     <label class="modal-label">Nome prodotto / codice</label>
     <div style="position:relative">
-      <input class="modal-input" id="creaKanbanNome" type="text" placeholder="es. TTD101INOX — inizia a digitare..." maxlength="200" autocomplete="off" oninput="cercaArticoloWms(this.value)">
+      <input class="modal-input" id="creaKanbanNome" type="text" placeholder="es. TTD101INOX — inizia a digitare..." maxlength="200" autocomplete="off" oninput="cercaArticoloWms(this.value);pianificaInterrogazioneCodice(this.value)">
       <div id="wmsDropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:var(--dark3);border:1px solid var(--accent);border-radius:0 0 6px 6px;z-index:600;max-height:200px;overflow-y:auto;box-shadow:0 8px 24px rgba(0,0,0,.5)"></div>
     </div>
     <div style="font-size:10px;color:var(--text-dim);margin-top:4px" id="wmsHint">💡 Suggerisce automaticamente i codici da MasterLogistic</div>
+    <div id="interrogaCodicePanel" style="display:none;margin-top:8px;padding:10px;border-radius:6px;border:1px solid var(--accent2);background:rgba(37,137,199,.08);font-size:11px;line-height:1.6"></div>
     <div class="modal-row" style="margin-top:10px">
       <div style="flex:1">
         <label class="modal-label" style="margin-top:0">Lotto produzione</label>
@@ -439,6 +440,69 @@ function selezionaArticolo(sku, desc) {
   document.getElementById('wmsDropdown').style.display = 'none';
   document.getElementById('wmsHint').textContent = '✅ ' + sku + ' selezionato da MasterLogistic';
   document.getElementById('wmsHint').style.color = '#5debb0';
+  interrogaCodiceEsistente(sku);
+}
+
+// ── INTERROGAZIONE AUTOMATICA ALTRI PROGRAMMI (WMS + IronProduction) ─────────
+let _interrogaTimer = null;
+function _codiceDaNomeKanban(nome){
+  return (nome || '').split(' — ')[0].trim();
+}
+function pianificaInterrogazioneCodice(nome){
+  clearTimeout(_interrogaTimer);
+  const codice = _codiceDaNomeKanban(nome);
+  if (codice.length < 3) { document.getElementById('interrogaCodicePanel').style.display = 'none'; return; }
+  _interrogaTimer = setTimeout(() => interrogaCodiceEsistente(codice), 500);
+}
+function interrogaCodiceEsistente(codice){
+  const panel = document.getElementById('interrogaCodicePanel');
+  panel.style.display = 'block';
+  panel.innerHTML = '🔎 Interrogo MasterLogistic-WMS e IronProduction su "' + codice + '"...';
+  fetch('/api/kanban/interroga-codice?codice=' + encodeURIComponent(codice))
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok) { panel.style.display = 'none'; return; }
+      if (!d.trovato) {
+        panel.innerHTML = 'ℹ️ Nessun riscontro su "' + codice + '" negli altri programmi — codice nuovo, compila a mano.';
+        return;
+      }
+      let righe = [];
+      if (d.masterlogistic_wms && !d.masterlogistic_wms.errore) {
+        const w = d.masterlogistic_wms;
+        righe.push(`<b>📦 MasterLogistic-WMS</b> — stock ${w.stock}, ordinati ${w.ordinati}, in arrivo ${w.incoming}` +
+          (w.fornitore && w.fornitore !== 'N/D' ? `, fornitore ${w.fornitore}` : '') + ` (${w.stato})`);
+      } else if (d.masterlogistic_wms && d.masterlogistic_wms.errore) {
+        righe.push(`<span style="color:#e6b800">⚠️ MasterLogistic-WMS: ${d.masterlogistic_wms.errore}</span>`);
+      }
+      const ip = d.ironproduction;
+      if (ip && (ip.tipo_approvvigionamento || ip.giacenza_wood !== null || ip.ordini_produzione_aperti.length)) {
+        let dettIp = [];
+        if (ip.tipo_approvvigionamento) dettIp.push(`tipo ${ip.tipo_approvvigionamento}`);
+        if (ip.costo_acquisto_standard != null) dettIp.push(`costo standard €${ip.costo_acquisto_standard}`);
+        if (ip.giacenza_wood != null) dettIp.push(`giacenza Wood ${ip.giacenza_wood}`);
+        if (ip.ordini_produzione_aperti.length) dettIp.push(`${ip.ordini_produzione_aperti.length} OP aperti (${ip.ordini_produzione_aperti.map(o=>o.codice).join(', ')})`);
+        righe.push(`<b>🏭 IronProduction</b> — ${dettIp.join(', ')}`);
+        // Auto-compila il tipo di approvvigionamento se già classificato altrove
+        if (ip.tipo_approvvigionamento && ip.tipo_approvvigionamento !== 'DA_CLASSIFICARE') {
+          const sel = document.getElementById('creaKanbanTipoApprovvigionamento');
+          if (sel) { sel.value = ip.tipo_approvvigionamento; aggiornaEtichettaLeadTimeFornitura(); }
+        }
+        if (ip.lead_time_fornitura_giorni != null) {
+          const lt = document.getElementById('creaKanbanLeadTimeFornitura');
+          if (lt) lt.value = ip.lead_time_fornitura_giorni;
+        }
+        if (ip.costo_acquisto_standard != null) {
+          const val = document.getElementById('creaKanbanVal');
+          if (val) val.value = ip.costo_acquisto_standard;
+        }
+      }
+      if (d.kanban_esistenti && d.kanban_esistenti.length) {
+        righe.push(`<span style="color:#e6b800">⚠️ Già presente in Kanban: ${d.kanban_esistenti.map(k=>`${k.prodotto} (${k.categoria})`).join(', ')}</span>`);
+      }
+      righe.push(`<span style="color:var(--text-dim)">📒 MasterLedgerLight: ${d.masterledgerlight.nota}</span>`);
+      panel.innerHTML = righe.join('<br>');
+    })
+    .catch(() => { panel.innerHTML = '❌ Errore di rete durante l\'interrogazione.'; });
 }
 
 // Chiudi dropdown clic fuori
@@ -498,6 +562,7 @@ function openModalCreaKanban(sheetKey){
   aggiornaEtichettaLeadTimeFornitura();
   document.getElementById('creaKanbanSS').value      = '15';
   document.getElementById('pinCreaKanban').value     = '';
+  document.getElementById('interrogaCodicePanel').style.display = 'none';
   openModal('modalCreaKanban');
   setTimeout(()=>document.getElementById('creaKanbanNome').focus(),100);
 }
