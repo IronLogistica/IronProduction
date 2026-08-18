@@ -957,12 +957,21 @@ class KanbanProdotto(db.Model):
 
     @property
     def saldo_contabile(self):
-        # Grezzi + In Trattamento + Finiti IW + Finiti IS + Residuo da
-        # Produrre − Riservato clienti — stessa formula già usata nella riga
-        # del tabellone principale (templates/kanban/index.html, saldo_sc):
-        # deve dare lo stesso numero ovunque compaia "Saldo Contabile",
-        # board o Scheda WMS che sia.
+        # SCLT — Saldo Contabile a Lungo Termine: Grezzi + In Trattamento +
+        # Finiti IW + Finiti IS + Residuo da Produrre − Riservato clienti.
+        # Stessa formula già usata nella riga del tabellone principale
+        # (templates/kanban/index.html, saldo_sc): deve dare lo stesso
+        # numero ovunque compaia "Saldo Contabile", board o Scheda WMS.
         return (self.grezzi + self.in_vern + self.verniciati + self.finiti_is + self.in_prod) - self.riservato
+
+    @property
+    def saldo_contabile_breve_termine(self):
+        # SCBT — Saldo Contabile a Breve Termine: come saldo_contabile
+        # (SCLT) ma SENZA il Residuo da Produrre — sterilizza le commesse
+        # di produzione ancora aperte, guarda solo cosa c'è già fisicamente
+        # (grezzo, in trattamento, o finito) in magazzino, non quello che
+        # deve ancora essere fabbricato da zero.
+        return (self.grezzi + self.in_vern + self.verniciati + self.finiti_is) - self.riservato
 
     @property
     def stato(self):
@@ -1352,7 +1361,7 @@ def kanban_to_dict(p):
         'lotto': p.lotto, 'riserva': p.riserva, 'riservato': p.riservato,
         'grezzi': p.grezzi, 'verniciati': p.verniciati, 'finiti_is': p.finiti_is,
         'in_vern': p.in_vern, 'in_prod': p.in_prod, 'val_medio': p.val_medio,
-        'saldo': saldo, 'stato': p.stato, 'val_pv': p.val_pv,
+        'saldo': saldo, 'saldo_breve_termine': p.saldo_contabile_breve_termine, 'stato': p.stato, 'val_pv': p.val_pv,
         'lavorazioni': p.lavorazioni or '',
         'buffer_pct': p.buffer_pct, 'buffer_colore': p.buffer_colore,
         'scorta_sicurezza': p.scorta_sicurezza,

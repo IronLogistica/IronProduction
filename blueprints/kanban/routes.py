@@ -248,6 +248,7 @@ def api_kanban_scheda(pid):
         'riservato_clienti': p.riservato,
         'ordini_clienti': [], 'ultimi_evasi': [],
         'saldo_contabile': p.saldo_contabile,
+        'saldo_contabile_breve_termine': p.saldo_contabile_breve_termine,
         # Saldo Disponibile = Finiti IW + Finiti IS − Impegni: quello che si
         # può evadere SUBITO forzando il sistema, non tutto il saldo
         # contabile (che include anche grezzi/in trattamento, non ancora
@@ -264,6 +265,8 @@ def api_kanban_scheda(pid):
             risultato['riservato_clienti'] = wms['riservato_clienti']
             risultato['ordini_clienti'] = wms['ordini_clienti']
             risultato['ultimi_evasi'] = wms['ultimi_evasi']
+            risultato['saldo_contabile_breve_termine'] = (
+                p.grezzi + p.in_vern + p.verniciati + risultato['stock_is'] - wms['riservato_clienti'])
             risultato['saldo_disponibile'] = p.verniciati + risultato['stock_is'] - wms['riservato_clienti']
         except MasterLogisticError as e:
             risultato['wms_errore'] = str(e)
