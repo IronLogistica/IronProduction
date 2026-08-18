@@ -6,6 +6,7 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     TIPI_APPROVVIGIONAMENTO, ArticoloML, ArticoloApprovvigionamento,
                     GiacenzaWood, OrdineProduzione)
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
+from masterledgerlight_client import cerca_articolo, MasterLedgerLightError
 from datetime import datetime
 import re
 
@@ -225,8 +226,9 @@ def api_interroga_codice():
     2) IronProduction stesso: classificazione già fatta in Approvvigionamento
        (tipo, lead time, costo standard, UoM), giacenza Iron Wood locale, e
        Ordini di Produzione ancora aperti su questo codice_articolo.
-    3) MasterLedgerLight — non ancora collegato: placeholder pronto per
-       quando ci sarà un bind o un endpoint dedicato.
+    3) MasterLedgerLight — anagrafica articolo (costo standard, prezzo
+       vendita, tipo/classificazione) via masterledgerlight_client.py,
+       stesso schema Bearer già usato dalle altre integrazioni.
     Nessuna interrogazione è bloccante: se un sistema non risponde (bind
     non configurato, errore di rete) quella sezione torna vuota con
     l'errore, senza far fallire le altre.
@@ -274,9 +276,22 @@ def api_interroga_codice():
     if approvv or giacenza or op_aperti:
         trovato = True
 
-    # 3) MasterLedgerLight — non ancora collegato
-    masterledgerlight = {'collegato': False,
-        'nota': 'Integrazione non ancora disponibile — verrà aggiunta quando MasterLedgerLight sarà collegato.'}
+    # 3) MasterLedgerLight
+    try:
+        ml = cerca_articolo(codice)
+        if ml.get('trovato'):
+            masterledgerlight = {'collegato': True, 'trovato': True,
+                'codice': ml.get('codice'), 'descrizione': ml.get('descrizione'),
+                'tipo_label': ml.get('tipo_label'), 'uom': ml.get('uom'),
+                'costo_standard': ml.get('costo_standard'), 'prezzo_vendita': ml.get('prezzo_vendita'),
+                'carpenteria_propria': ml.get('carpenteria_propria'),
+                'destinazione_acquisto': ml.get('destinazione_acquisto')}
+            trovato = True
+        else:
+            masterledgerlight = {'collegato': True, 'trovato': False,
+                'nota': f'Nessun riscontro per "{codice}" in anagrafica MasterLedgerLight.'}
+    except MasterLedgerLightError as e:
+        masterledgerlight = {'collegato': False, 'nota': str(e)}
 
     # Schede Kanban già esistenti con questo codice — utile per evitare doppioni
     kanban_esistenti = (KanbanProdotto.query

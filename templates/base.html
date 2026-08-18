@@ -499,7 +499,24 @@ function interrogaCodiceEsistente(codice){
       if (d.kanban_esistenti && d.kanban_esistenti.length) {
         righe.push(`<span style="color:#e6b800">⚠️ Già presente in Kanban: ${d.kanban_esistenti.map(k=>`${k.prodotto} (${k.categoria})`).join(', ')}</span>`);
       }
-      righe.push(`<span style="color:var(--text-dim)">📒 MasterLedgerLight: ${d.masterledgerlight.nota}</span>`);
+      const ml = d.masterledgerlight;
+      if (ml && ml.trovato) {
+        let dettMl = [];
+        if (ml.tipo_label) dettMl.push(ml.tipo_label);
+        if (ml.costo_standard != null) dettMl.push(`costo standard €${ml.costo_standard}`);
+        if (ml.prezzo_vendita != null) dettMl.push(`prezzo vendita €${ml.prezzo_vendita}`);
+        if (ml.destinazione_acquisto) dettMl.push(`acquisto → ${ml.destinazione_acquisto}`);
+        righe.push(`<b>📒 MasterLedgerLight</b> — ${dettMl.join(', ')}`);
+        // Se manca ancora un costo/val_medio e MasterLedgerLight ce l'ha, lo propone
+        const valInput = document.getElementById('creaKanbanVal');
+        if (valInput && (!valInput.value || parseFloat(valInput.value) === 0) && ml.costo_standard != null) {
+          valInput.value = ml.costo_standard;
+        }
+      } else if (ml && ml.collegato === false) {
+        righe.push(`<span style="color:var(--text-dim)">📒 MasterLedgerLight: ${ml.nota}</span>`);
+      } else if (ml && ml.nota) {
+        righe.push(`<span style="color:var(--text-dim)">📒 MasterLedgerLight: ${ml.nota}</span>`);
+      }
       panel.innerHTML = righe.join('<br>');
     })
     .catch(() => { panel.innerHTML = '❌ Errore di rete durante l\'interrogazione.'; });

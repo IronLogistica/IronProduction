@@ -42,6 +42,13 @@ class Config:
     MASTERLOGISTIC_URL = os.environ.get('MASTERLOGISTIC_URL', '')
     MASTERLOGISTIC_API_TOKEN = os.environ.get('MASTERLOGISTIC_API_TOKEN', '')
 
+    # URL + token per interrogare in sola lettura MasterLedgerLight
+    # dall'interrogazione automatica del Kanban Gruppi (masterledgerlight_client.py,
+    # chiamato da blueprints/kanban/routes.py::api_interroga_codice). Il
+    # token deve combaciare con KANBAN_API_TOKEN impostato lato MasterLedgerLight.
+    MASTERLEDGERLIGHT_URL = os.environ.get('MASTERLEDGERLIGHT_URL', '')
+    MASTERLEDGERLIGHT_API_TOKEN = os.environ.get('MASTERLEDGERLIGHT_API_TOKEN', '')
+
     # PIN del CAPO REPARTO per sbloccare "Storico Correzioni" in Dichiarazione
     # di Produzione — cambialo impostando la variabile Railway CAPO_PIN se
     # vuoi un valore diverso da quello di default.
