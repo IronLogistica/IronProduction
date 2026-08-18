@@ -242,6 +242,36 @@ def api_aggiorna(kid):
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
 
+@kanban_bp.route('/api/kanban/<int:kid>/risincronizza-wms', methods=['POST'])
+def api_risincronizza_wms(kid):
+    """
+    Riallinea grezzi/verniciati/riservato di UNA scheda già esistente con i
+    valori attuali di MasterLogistic-WMS — stessa istantanea presa in
+    automatico solo al momento della creazione (vedi api_crea), qui invece
+    richiamabile in qualunque momento per le schede create PRIMA che
+    quell'automatismo esistesse (restavano ferme a 0/0/0) o quando i numeri
+    di WMS sono cambiati nel frattempo e si vuole risincronizzare senza
+    editarli a mano uno per uno. Nessun PIN richiesto: stesso livello di
+    fiducia della modifica manuale inline sul tabellone (PUT /api/kanban/<id>),
+    di cui questa è solo una scorciatoia automatica.
+    """
+    p = KanbanProdotto.query.get_or_404(kid)
+    sku = sku_da_nome_prodotto(p.prodotto)
+    if not sku:
+        return jsonify({'ok': False, 'error': 'Impossibile ricavare lo SKU dal nome prodotto'}), 400
+    try:
+        wms = ottieni_scheda_kanban(sku)
+    except MasterLogisticError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 502
+    p.grezzi = int(wms.get('stock_grezzi') or 0)
+    p.verniciati = int(wms.get('stock_verniciati') or 0)
+    p.riservato = int(wms.get('riservato_clienti') or 0)
+    p.aggiornato_il = datetime.utcnow()
+    log(f'Kanban: risincronizzato {p.prodotto} da MasterLogistic-WMS '
+        f'(grezzi={p.grezzi}, verniciati={p.verniciati}, riservato={p.riservato})')
+    db.session.commit()
+    return jsonify({'ok': True, **kanban_to_dict(p)})
+
 @kanban_bp.route('/api/kanban', methods=['POST'])
 def api_crea():
     """Crea nuovo prodotto Kanban — richiede PIN autorizzativo."""

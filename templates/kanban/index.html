@@ -127,6 +127,7 @@
     {# Col 3: WMS button #}
     <td style="text-align:center;border-right:1px solid var(--border)">
       <button class="btn-wms" onclick="apriSchedaWms({{ p.id }}, '{{ p.prodotto|replace("'","\\'")|e }}')" title="Scheda WMS completa">📊</button>
+      <button class="btn-wms" onclick="risincronizzaWms({{ p.id }}, this)" title="Risincronizza grezzi/verniciati/riservato da MasterLogistic-WMS">🔄</button>
     </td>
 
     {# Col 4: Residuo da produrre (in_prod = ordini in produzione aperti) #}
@@ -834,6 +835,21 @@ function apriSchedaWms(pid, nome) {
   document.getElementById('wmsErrore').style.display = 'none';
   openModal('modalWmsScheda');
   _caricaSchedaWms(pid);
+}
+
+function risincronizzaWms(pid, btn) {
+  const originale = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳';
+  fetch(`/api/kanban/${pid}/risincronizza-wms`, {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (!d.ok) { showToast('❌ ' + (d.error || 'Errore risincronizzazione WMS'), true); return; }
+      showToast(`✅ Risincronizzato: grezzi ${d.grezzi}, verniciati ${d.verniciati}, riservato ${d.riservato}`);
+      setTimeout(() => location.reload(), 700);
+    })
+    .catch(() => showToast('❌ Errore di rete', true))
+    .finally(() => { btn.disabled = false; btn.textContent = originale; });
 }
 
 function _caricaSchedaWms(pid) {
