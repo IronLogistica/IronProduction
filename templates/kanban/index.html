@@ -98,7 +98,7 @@
   <tbody>
   {% for p in prodotti %}
   {% set saldo_sc  = p.grezzi + p.in_vern + p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
-  {% set saldo_disp = saldo_sc - p.riserva %}
+  {% set saldo_disp = p.verniciati + p.finiti_is - p.riservato %}
   {% set saldo_pv  = p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
   {% set saldo_gpv = p.grezzi + p.in_vern + p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
   {% set buf = p.buffer_colore %}
@@ -282,7 +282,7 @@
       <div class="wms-saldo-box" style="border-top-color:var(--steel2)">
         <div class="wms-saldo-lbl">SALDO DISPONIBILE</div>
         <div class="wms-saldo-val" id="wsSaldo2">—</div>
-        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">SC − Riservato clienti</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">SALDO PRONTO IMMEDIATAMENTE DISPONIBILE</div>
       </div>
 
       {# Finiti IW — vicino a IS #}
@@ -651,7 +651,7 @@ function _aggiornaSaldi(row, d) {
   const riserva   = d.riserva   || 0;
 
   const sc  = grezzi + in_vern + verniciati + finiti_is + in_prod - riservato;
-  const disp= sc - riserva;
+  const disp= verniciati + finiti_is - riservato;   // Finiti IW + Finiti IS − Impegni: evadibile subito
   const pv  = verniciati + finiti_is + in_prod - riservato;
   const gpv = grezzi + in_vern + verniciati + finiti_is + in_prod - riservato;
 
