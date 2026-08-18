@@ -496,8 +496,14 @@ function interrogaCodiceEsistente(codice){
       let righe = [];
       if (d.masterlogistic_wms && !d.masterlogistic_wms.errore) {
         const w = d.masterlogistic_wms;
-        righe.push(`<b>📦 MasterLogistic-WMS</b> — stock ${w.stock}, ordinati ${w.ordinati}, in arrivo ${w.incoming}` +
-          (w.fornitore && w.fornitore !== 'N/D' ? `, fornitore ${w.fornitore}` : '') + ` (${w.stato})`);
+        let dettWms = [`magazzino Iron Segnaletica ${w.stock_iron_segnaletica}`];
+        if (w.stock_grezzi) dettWms.push(`grezzi ${w.stock_grezzi}`);
+        dettWms.push(`riservato clienti (impegni) ${w.riservato_clienti}`);
+        righe.push(`<b>📦 MasterLogistic-WMS</b> — ${dettWms.join(', ')}`);
+        if (w.ultimi_evasi && w.ultimi_evasi.length) {
+          const evasiTxt = w.ultimi_evasi.map(e => `${e.data} — ${e.cliente} (${e.qta} pz)`).join('<br>&nbsp;&nbsp;');
+          righe.push(`&nbsp;&nbsp;<span style="color:var(--text-dim)">Ultimi evasi:<br>&nbsp;&nbsp;${evasiTxt}</span>`);
+        }
       } else if (d.masterlogistic_wms && d.masterlogistic_wms.errore) {
         righe.push(`<span style="color:#e6b800">⚠️ MasterLogistic-WMS: ${d.masterlogistic_wms.errore}</span>`);
       }

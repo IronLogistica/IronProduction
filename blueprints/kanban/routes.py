@@ -3,9 +3,9 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
                     registra_ciclo_se_necessario, calcola_analisi_takt, PIN_ADMIN,
-                    TIPI_APPROVVIGIONAMENTO, ArticoloML, ArticoloApprovvigionamento,
+                    TIPI_APPROVVIGIONAMENTO, ArticoloApprovvigionamento,
                     GiacenzaWood, OrdineProduzione)
-from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
+from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, ottieni_stock_kanban, MasterLogisticError
 from masterledgerlight_client import cerca_articolo, MasterLedgerLightError
 from datetime import datetime
 import re
@@ -221,8 +221,12 @@ def api_interroga_codice():
     codice che si sta per inserire in Kanban Gruppi — così chi crea la
     scheda non deve andare a controllare a mano MasterLogistic-WMS e
     IronProduction. Cerca il codice (case-insensitive) su:
-    1) MasterLogistic-WMS — bind 'masterlogistic' già esistente e in sola
-       lettura (ArticoloML): stock, ordinati, incoming, fornitore.
+    1) MasterLogistic-WMS — endpoint dedicato /api/kanban-stock (già pensato
+       lì per popolare la scheda Kanban): SOLO magazzino Iron Segnaletica
+       (stock verniciato/grezzo), riservato clienti (impegni) e ultimi
+       evasi. Niente ordinati/fornitore/incoming — quella è roba di
+       acquisto a fornitore, fuori scopo qui: saldo disponibile e saldo
+       contabile restano calcolati da IronProduction stesso.
     2) IronProduction stesso: classificazione già fatta in Approvvigionamento
        (tipo, lead time, costo standard, UoM), giacenza Iron Wood locale, e
        Ordini di Produzione ancora aperti su questo codice_articolo.
@@ -239,20 +243,16 @@ def api_interroga_codice():
     cod_upper = codice.upper()
     trovato = False
 
-    # 1) MasterLogistic-WMS
+    # 1) MasterLogistic-WMS — solo magazzino/impegni/evasi, mai acquisti
     wms = None
     try:
-        art = ArticoloML.query.filter(
-            db.or_(db.func.upper(ArticoloML.sku) == cod_upper,
-                   db.func.upper(ArticoloML.codice_esterno) == cod_upper)).first()
-        if art:
-            wms = {'sku': art.sku, 'descrizione': art.descrizione, 'stock': art.stock,
-                   'ordinati': art.ordinati, 'incoming': art.incoming,
-                   'fornitore': art.fornitore, 'scorta_minima': art.scorta_minima,
-                   'stato': art.stato}
+        stock_kanban = ottieni_stock_kanban(codice)
+        if (stock_kanban['stock_iron_segnaletica'] or stock_kanban['stock_grezzi']
+                or stock_kanban['riservato_clienti'] or stock_kanban['ultimi_evasi']):
+            wms = stock_kanban
             trovato = True
-    except Exception as e:
-        wms = {'errore': f'MasterLogistic-WMS non raggiungibile: {e}'}
+    except MasterLogisticError as e:
+        wms = {'errore': str(e)}
 
     # 2) IronProduction stesso
     approvv = ArticoloApprovvigionamento.query.filter(

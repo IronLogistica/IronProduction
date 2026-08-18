@@ -53,6 +53,46 @@ def sku_da_nome_prodotto(nome_prodotto):
     return nome_prodotto.split(" — ")[0].strip()
 
 
+def ottieni_stock_kanban(sku_vern, sku_grezzo="", timeout=8):
+    """
+    Interroga l'endpoint dedicato di WMS pensato apposta per popolare la
+    scheda Kanban (GET /api/kanban-stock) — SOLO i campi di magazzino Iron
+    Segnaletica che servono qui: stock (verniciato/grezzo), riservato
+    clienti (impegni) e gli ultimi evasi. Deliberatamente NON usa la tabella
+    articoli via bind diretto (ArticoloML), che espone anche ordinati/
+    incoming/fornitore — dati di acquisto a fornitore, irrilevanti per
+    questa interrogazione: saldo disponibile e contabile restano calcolati
+    da IronProduction stesso.
+    Non solleva errore se il codice semplicemente non esiste in WMS (torna
+    tutto a zero, comportamento normale dell'endpoint) — solo per problemi
+    veri di configurazione/rete.
+    """
+    if not sku_vern:
+        raise MasterLogisticError("SKU mancante per l'interrogazione stock Kanban.")
+    url = f"{_base_url()}/api/kanban-stock"
+    params = {"sku_vern": sku_vern}
+    if sku_grezzo:
+        params["sku_grezzo"] = sku_grezzo
+    try:
+        resp = requests.get(url, params=params, timeout=timeout)
+    except requests.exceptions.RequestException as e:
+        raise MasterLogisticError(f"MasterLogistic-WMS non raggiungibile ({url}): {e}")
+    if resp.status_code != 200:
+        raise MasterLogisticError(f"MasterLogistic-WMS ha risposto {resp.status_code} su /api/kanban-stock")
+    try:
+        dati = resp.json()
+    except ValueError:
+        raise MasterLogisticError("MasterLogistic-WMS ha risposto in un formato inatteso (non JSON).")
+    if isinstance(dati, dict) and dati.get('error'):
+        raise MasterLogisticError(f"MasterLogistic-WMS: {dati['error']}")
+    return {
+        'stock_iron_segnaletica': dati.get('stock_verniciati', 0),
+        'stock_grezzi': dati.get('stock_grezzi', 0),
+        'riservato_clienti': dati.get('riservato_clienti', 0),
+        'ultimi_evasi': dati.get('ultimi_evasi', []),
+    }
+
+
 def carica_produzione(sku, quantita, timeout=8):
     """
     Notifica un carico di prodotto finito (quantita positiva) per lo SKU
