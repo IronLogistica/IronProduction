@@ -130,8 +130,9 @@
       <button class="btn-wms" onclick="risincronizzaWms({{ p.id }}, this)" title="Risincronizza grezzi/verniciati/riservato da MasterLogistic-WMS">🔄</button>
     </td>
 
-    {# Col 4: Residuo da produrre (in_prod = ordini in produzione aperti) #}
-    <td class="num editable" data-field="in_prod" data-pid="{{ p.id }}"
+    {# Col 4: Residuo da produrre — automatico dalle Commesse di Produzione
+       aperte in IronProduction (_aggiorna_residuo_produzione), non più editabile #}
+    <td class="num" title="Calcolato in automatico dalle Commesse di Produzione aperte — non modificabile a mano"
         style="background:rgba(240,112,112,.04);color:{% if p.in_prod > 0 %}#f07070{% else %}var(--text-dim){% endif %};font-weight:{% if p.in_prod > 0 %}700{% else %}400{% endif %}">
       {{ p.in_prod }}
     </td>

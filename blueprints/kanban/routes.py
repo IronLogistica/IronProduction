@@ -12,6 +12,27 @@ import re
 
 kanban_bp = Blueprint('kanban', __name__)
 
+def _aggiorna_residuo_produzione(p):
+    """
+    'Residuo da produrre' (KanbanProdotto.in_prod) NON è più un campo da
+    inserire a mano: è sempre calcolabile da IronProduction stesso — somma
+    di (qta_pianificata − qta_buona) sugli Ordini di Produzione ancora
+    aperti (Creato/Rilasciato/In esecuzione) per il codice di questa scheda.
+    Stessa fonte dati già usata per 'Commesse di Produzione Aperte' nella
+    Scheda WMS (api_kanban_scheda) — qui si aggiorna il campo salvato così
+    resta corretto ovunque venga letto (board, API, val_pv), non solo nella
+    scheda di dettaglio.
+    """
+    sku = sku_da_nome_prodotto(p.prodotto)
+    if not sku:
+        return
+    op_aperti = (OrdineProduzione.query
+                 .filter(db.func.upper(OrdineProduzione.codice_articolo) == sku.upper(),
+                         OrdineProduzione.stato.in_(['Creato', 'Rilasciato', 'In esecuzione']))
+                 .all())
+    p.in_prod = int(sum(max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0) for o in op_aperti))
+
+
 def _url_key_from_label(label):
     key = re.sub(r'[^\w\s⌀]', '', label).strip()
     key = re.sub(r'\s+', '_', key)
@@ -91,6 +112,13 @@ def index(url_key):
                KanbanProdotto.sheet_key == url_key)
     ).order_by(KanbanProdotto.sort_order, KanbanProdotto.prodotto).all()
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
+
+    # 'Residuo da produrre' ricalcolato in automatico a ogni apertura della
+    # board, dalle Commesse di Produzione aperte in IronProduction — non è
+    # più un campo da inserire a mano (vedi _aggiorna_residuo_produzione).
+    for p in prodotti:
+        _aggiorna_residuo_produzione(p)
+    db.session.commit()
 
     tot    = len(prodotti)
     ok     = sum(1 for p in prodotti if p.stato == 'OK')
@@ -193,7 +221,12 @@ def api_aggiorna(kid):
         d = request.get_json(force=True)
         # ── Accumulo storico produzione: intercetta aumento di verniciati ──
         verniciati_prima = p.verniciati
-        for campo in ['lotto','riserva','riservato','grezzi','verniciati','in_vern','in_prod']:
+        # 'in_prod' NON è più qui: è sempre ricalcolato in automatico
+        # all'apertura della board (_aggiorna_residuo_produzione), un valore
+        # inserito a mano verrebbe sovrascritto al primo refresh — vedi
+        # anche templates/kanban/index.html dove quella cella non è più
+        # editabile.
+        for campo in ['lotto','riserva','riservato','grezzi','verniciati','in_vern']:
             if campo in d: setattr(p, campo, int(d[campo]))
         delta_verniciati = p.verniciati - verniciati_prima
         # Solo dal 01/07/2026 in poi (data go-live accumulo automatico)
@@ -266,6 +299,7 @@ def api_risincronizza_wms(kid):
     p.grezzi = int(wms.get('stock_grezzi') or 0)
     p.verniciati = int(wms.get('stock_verniciati') or 0)
     p.riservato = int(wms.get('riservato_clienti') or 0)
+    _aggiorna_residuo_produzione(p)
     p.aggiornato_il = datetime.utcnow()
     log(f'Kanban: risincronizzato {p.prodotto} da MasterLogistic-WMS '
         f'(grezzi={p.grezzi}, verniciati={p.verniciati}, riservato={p.riservato})')
