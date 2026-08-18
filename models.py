@@ -957,9 +957,12 @@ class KanbanProdotto(db.Model):
 
     @property
     def saldo_contabile(self):
-        # Grezzi + In Trattamento + Finiti IW + Finiti IS − Riservato clienti
-        # (stessa formula mostrata nel tooltip della Scheda WMS completa).
-        return (self.grezzi + self.in_vern + self.verniciati + self.finiti_is) - self.riservato
+        # Grezzi + In Trattamento + Finiti IW + Finiti IS + Residuo da
+        # Produrre − Riservato clienti — stessa formula già usata nella riga
+        # del tabellone principale (templates/kanban/index.html, saldo_sc):
+        # deve dare lo stesso numero ovunque compaia "Saldo Contabile",
+        # board o Scheda WMS che sia.
+        return (self.grezzi + self.in_vern + self.verniciati + self.finiti_is + self.in_prod) - self.riservato
 
     @property
     def stato(self):
@@ -1001,7 +1004,10 @@ class KanbanProdotto(db.Model):
 
     @property
     def val_pv(self):
-        return round((self.saldo_contabile + self.in_prod) * self.val_medio, 2)
+        # in_prod è già dentro saldo_contabile — non va sommato una seconda
+        # volta qui, altrimenti il residuo da produrre pesa doppio sul
+        # valore di magazzino.
+        return round(self.saldo_contabile * self.val_medio, 2)
 
     def calcola_n_kanban(self):
         """Formula N = D × RT × (1+SS) / C — ritorna float o None se dati mancanti."""
