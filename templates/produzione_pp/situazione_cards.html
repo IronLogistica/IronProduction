@@ -261,6 +261,13 @@ function renderTabellaCategoria(righe, mostraMonitor){
     let arrivo;
     if(r.mancante <= 0){
       arrivo = '<span style="color:#2a9d5c">✅ Disponibile — copre tutto il fabbisogno</span>';
+    } else if(mostraMonitor){
+      // Semilavorati prodotti internamente: mai un ordine a fornitore,
+      // lo stato va letto dagli Ordini di Lavoro interni (stessa fonte
+      // della dashboard "ORDINI DI LAVORO"), non dagli acquisti.
+      arrivo = r.avviato_produzione_interna
+        ? `<span style="color:#2589c7">🏭 In produzione interna — Ordine di Lavoro emesso${r.pezzi_fatti>0?` (${r.pezzi_fatti} pz già dichiarati)`:''}</span>`
+        : '<span style="color:#c0392b">⚠️ Non ancora avviato in produzione</span>';
     } else if(r.ordini_acquisto.length){
       arrivo = r.ordini_acquisto.map(oa => `🛒 OA n° ${oa.ordine_n} — ${oa.fornitore} — ${oa.qta_in_arrivo} in arrivo${oa.data_consegna?' per '+oa.data_consegna:''} (${oa.stato_label})`).join('<br>');
     } else {

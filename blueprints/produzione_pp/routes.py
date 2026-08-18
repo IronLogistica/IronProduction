@@ -508,6 +508,28 @@ def api_ordine_dettaglio_per_categoria(codice):
             base['reparti'] = [{'sequenza': f.sequenza, 'nome': f.centro_costo.nome}
                                for f in fasi if f.centro_costo]
             base['ciclo_configurato'] = len(base['reparti']) > 0
+            # Questi codici sono semilavorati che PRODUCIAMO internamente,
+            # mai comprati da un fornitore: 'ordini_acquisto' qui non ha
+            # senso (resta sempre vuoto) e faceva apparire "Non ancora
+            # ordinato" anche quando l'Ordine di Lavoro interno era già
+            # stato emesso/avviato al centro di costo. Lo stato va invece
+            # letto dagli Ordini di Lavoro interni (stessa fonte dati della
+            # dashboard "ORDINI DI LAVORO"): un Numero di Lista assegnato
+            # per OP+centro, o pezzi già dichiarati su questo componente,
+            # significano "avviato in produzione interna".
+            base['ordini_acquisto'] = []
+            centri_ids = [f.centro_costo_id for f in fasi]
+            base['lista_lavoro_emessa'] = bool(
+                centri_ids and NumeroListaLavoroWood.query.filter(
+                    NumeroListaLavoroWood.op_code == o.codice,
+                    NumeroListaLavoroWood.centro_costo_id.in_(centri_ids)).first())
+            componente_param = None if cod == o.codice_articolo else cod
+            base['pezzi_fatti'] = int((db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+                                       .filter(EventoConsuntivoPP.op_code == o.codice,
+                                               EventoConsuntivoPP.componente == componente_param if componente_param
+                                               else EventoConsuntivoPP.componente.is_(None))
+                                       .scalar()) or 0)
+            base['avviato_produzione_interna'] = base['lista_lavoro_emessa'] or base['pezzi_fatti'] > 0
             reparti.append(base)
 
     for lista in (reparti, laserati, acquisto, materie_prime):
