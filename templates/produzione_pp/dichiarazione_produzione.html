@@ -36,6 +36,15 @@
         dal <input id="capo-data-da" type="date" style="padding:7px 9px;border-radius:6px;border:1px solid var(--border)" onchange="impostaPeriodoCapo('custom')">
         al <input id="capo-data-a" type="date" style="padding:7px 9px;border-radius:6px;border:1px solid var(--border)" onchange="impostaPeriodoCapo('custom')">
       </span>
+      <span style="position:relative">
+        <input id="capo-filtro-codice" type="text" placeholder="🔎 Filtra per codice..." autocomplete="off"
+          style="padding:7px 9px;border-radius:6px;border:1px solid var(--border);width:200px"
+          oninput="suggerisciCodiceMovimenti()" onfocus="suggerisciCodiceMovimenti()">
+        <div id="capo-filtro-codice-sugg" style="display:none;position:absolute;top:100%;left:0;z-index:20;background:#fff;color:#222;border:1px solid #ccd5df;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;width:220px"></div>
+      </span>
+      <span style="margin-left:auto">
+        <button class="btn btn-danger" style="padding:7px 12px;font-size:12px" onclick="azzeraMovimentiOggi()">🗑️ Azzera movimenti di oggi</button>
+      </span>
     </div>
     <div id="capo-storico" style="margin-top:14px"></div>
     <div id="capo-movimenti" style="margin-top:14px"></div>
@@ -90,6 +99,8 @@ let _opInDichiarazione = null;
 let _componenteInDichiarazione = null;
 let _pinCapoAttivo = null;
 let _pinDirezioneAttivo = null;
+let _movimentiCapoRaw = [];
+const esc = v => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 
 async function caricaCentri(){
   const r = await fetch('/api/dichiarazione-produzione/centri');
@@ -311,27 +322,54 @@ async function caricaMovimentiCapo(){
   const box = document.getElementById('capo-movimenti');
   const dataDa = document.getElementById('capo-data-da').value;
   const dataA = document.getElementById('capo-data-a').value;
-  box.innerHTML = '<div style="font-weight:700;font-size:13px;margin:12px 0 6px">📦 Movimenti di carico/scarico</div>Caricamento...';
+  box.innerHTML = 'Caricamento movimenti...';
   const centri = await (await fetch('/api/dichiarazione-produzione/centri')).json();
-  let html = '<div style="font-weight:700;font-size:13px;margin:12px 0 6px">📦 Movimenti di carico/scarico</div>';
-  let righe = '';
+  _movimentiCapoRaw = [];
   for(const c of centri){
     const r = await fetch(`/api/dichiarazione-produzione/${c.id}/movimenti?pin=${encodeURIComponent(_pinCapoAttivo)}&data_da=${dataDa}&data_a=${dataA}`);
     const d = await r.json();
     if(!d.ok || !d.movimenti.length) continue;
-    d.movimenti.forEach(m=>{
-      righe += `<tr><td>${m.timestamp}</td><td class="codice">${m.codice}</td><td>${m.tipo}</td>` +
-        `<td style="font-weight:700;color:${m.quantita<0?'#c0392b':'#2a9d5c'}">${m.quantita}</td>` +
-        `<td>${m.riferimento||'—'}</td><td>${m.note||''}</td>` +
-        `<td style="white-space:nowrap"><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="modificaMovimento(${m.id},${m.quantita})">✏️</button> ` +
-        `<button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaMovimento(${m.id})">🗑️</button></td></tr>`;
-    });
+    _movimentiCapoRaw.push(...d.movimenti);
   }
+  renderMovimentiCapo();
+}
+
+function renderMovimentiCapo(){
+  const box = document.getElementById('capo-movimenti');
+  const filtro = (document.getElementById('capo-filtro-codice')?.value || '').trim().toUpperCase();
+  const lista = filtro ? _movimentiCapoRaw.filter(m => (m.codice||'').toUpperCase().includes(filtro)) : _movimentiCapoRaw;
+  let html = `<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;margin:12px 0 6px">
+    <div style="font-weight:700;font-size:13px">📦 Movimenti di carico/scarico ${filtro?`— filtrati su "${esc(filtro)}"`:''}</div>
+    ${filtro?`<button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="document.getElementById('capo-filtro-codice').value='';renderMovimentiCapo()">✕ Rimuovi filtro</button>`:''}
+  </div>`;
+  const righe = lista.map(m => `<tr><td>${m.timestamp}</td><td class="codice">${m.codice}</td><td>${m.tipo}</td>` +
+      `<td style="font-weight:700;color:${m.quantita<0?'#c0392b':'#2a9d5c'}">${m.quantita}</td>` +
+      `<td>${m.riferimento||'—'}</td><td>${m.note||''}</td>` +
+      `<td style="white-space:nowrap"><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px" onclick="modificaMovimento(${m.id},${m.quantita})">✏️</button> ` +
+      `<button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaMovimento(${m.id})">🗑️</button></td></tr>`).join('');
   html += righe
-    ? '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Ora</th><th>Codice</th><th>Tipo</th><th>Quantità</th><th>Rif. OP</th><th>Note</th><th></th></tr></thead><tbody>' + righe + '</tbody></table></div>'
-    : '<p style="color:#aaa;font-style:italic">Nessun movimento di carico/scarico in questo periodo.</p>';
+    ? `<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Ora</th><th>Codice</th><th>Tipo</th><th>Quantità</th><th>Rif. OP</th><th>Note</th><th></th></tr></thead><tbody>${righe}</tbody></table></div>`
+    : `<p style="color:#aaa;font-style:italic">${filtro ? 'Nessun movimento per questo codice nel periodo selezionato.' : 'Nessun movimento di carico/scarico in questo periodo.'}</p>`;
   box.innerHTML = html;
 }
+
+function suggerisciCodiceMovimenti(){
+  const input = document.getElementById('capo-filtro-codice');
+  const suggBox = document.getElementById('capo-filtro-codice-sugg');
+  const val = input.value.trim().toUpperCase();
+  const codici = [...new Set(_movimentiCapoRaw.map(m => m.codice).filter(Boolean))].sort();
+  const match = (val ? codici.filter(c => c.toUpperCase().includes(val)) : codici).slice(0, 30);
+  if(!match.length){ suggBox.style.display='none'; suggBox.innerHTML=''; renderMovimentiCapo(); return; }
+  suggBox.innerHTML = match.map(c => `<div style="padding:7px 10px;cursor:pointer;border-bottom:1px solid #eee"
+    onmousedown="document.getElementById('capo-filtro-codice').value='${esc(c)}';document.getElementById('capo-filtro-codice-sugg').style.display='none';renderMovimentiCapo();"
+    onmouseover="this.style.background='#f2f6fa'" onmouseout="this.style.background='#fff'">${esc(c)}</div>`).join('');
+  suggBox.style.display = 'block';
+  renderMovimentiCapo();
+}
+document.addEventListener('click', e=>{
+  const suggBox = document.getElementById('capo-filtro-codice-sugg');
+  if(suggBox && !e.target.closest('#capo-filtro-codice') && !e.target.closest('#capo-filtro-codice-sugg')) suggBox.style.display = 'none';
+});
 
 async function modificaMovimento(mid, attuale){
   const nuova = prompt('Nuova quantità (positivo=carico, negativo=scarico):', attuale);
@@ -353,6 +391,18 @@ async function eliminaMovimento(mid){
   const d = await r.json();
   if(!d.ok){ alert('⚠️ ' + d.error); return; }
   caricaMovimentiCapo();
+}
+
+async function azzeraMovimentiOggi(){
+  if(!confirm('Eliminare TUTTI i movimenti di carico/scarico registrati OGGI su tutti i centri?\n\nLa giacenza verrà corretta di conseguenza per ognuno. NON verranno toccate le dichiarazioni di produzione, gli Ordini di Produzione né altro — solo i movimenti di magazzino di oggi.')) return;
+  if(!confirm('Conferma definitiva: operazione irreversibile. Procedere?')) return;
+  const r = await fetch('/api/dichiarazione-produzione/movimenti/azzera-oggi', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin:_pinCapoAttivo})
+  });
+  const d = await r.json();
+  if(!d.ok){ alert('⚠️ ' + d.error); return; }
+  alert(`✓ Eliminati ${d.eliminati} movimenti di oggi.`);
+  impostaPeriodoCapo('oggi');
 }
 
 async function annullaDichiarazione(eid){

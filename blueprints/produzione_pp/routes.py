@@ -2097,3 +2097,36 @@ def api_dichiarazione_movimento_elimina(mid):
     db.session.delete(m)
     db.session.commit()
     return jsonify(ok=True)
+
+
+@pp_bp.post('/api/dichiarazione-produzione/movimenti/azzera-oggi')
+def api_dichiarazione_movimenti_azzera_oggi():
+    """
+    Azzeramento massivo dei movimenti di carico/scarico giacenza (Movimento-
+    GiacenzaWood, tipi carico_produzione/scarico_produzione/rettifica_import)
+    creati OGGI — SOLO PIN capo. Stessa identica logica dell'eliminazione
+    singola, ripetuta riga per riga: ogni movimento viene riportato indietro
+    sulla giacenza (g.quantita -= m.quantita) prima di essere cancellato, poi
+    tolto. Non tocca EventoConsuntivoPP, OrdineProduzione, AuditPP pregresso
+    né altro — solo le righe di movimento di magazzino odierne.
+    """
+    d = request.get_json(force=True)
+    if not _verifica_pin_capo(d):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    oggi = datetime.utcnow().date()
+    movimenti = (MovimentoGiacenzaWood.query
+                 .filter(MovimentoGiacenzaWood.tipo.in_(('carico_produzione', 'scarico_produzione', 'rettifica_import')),
+                         db.func.date(MovimentoGiacenzaWood.creato_il) == oggi)
+                 .all())
+    n = len(movimenti)
+    for m in movimenti:
+        g = GiacenzaWood.query.get(m.codice)
+        if g:
+            g.quantita = (g.quantita or 0) - m.quantita
+            g.aggiornato_il = datetime.utcnow()
+        db.session.delete(m)
+    db.session.add(AuditPP(op_code='', azione='AZZERA_MOVIMENTI_OGGI',
+                            dettaglio=f'azzerati {n} movimenti di carico/scarico di oggi ({oggi.isoformat()})'))
+    db.session.commit()
+    return jsonify(ok=True, eliminati=n)
+
