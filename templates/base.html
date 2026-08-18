@@ -399,14 +399,41 @@ function creaGruppo(){
 document.getElementById('inputNomeGruppo')?.addEventListener('keydown',e=>{if(e.key==='Enter')creaGruppo();});
 
 // ── AUTOCOMPLETE WMS ─────────────────────────────────────────────────────────
-let _wmsArticoli = null;  // cache
+let _wmsArticoli = null;   // cache SOLO in caso di successo
+let _wmsErrore = null;     // motivo vero dell'ultimo fallimento (mai nascosto)
 
 function _loadWmsArticoli(cb) {
   if (_wmsArticoli !== null) { cb(_wmsArticoli); return; }
   fetch('/api/wms-articoli')
   .then(r => r.json())
-  .then(data => { _wmsArticoli = Array.isArray(data) ? data : []; cb(_wmsArticoli); })
-  .catch(() => { _wmsArticoli = []; cb([]); });
+  .then(data => {
+    const lista = Array.isArray(data) ? data : (data.articoli || []);
+    if (data && data.errore) {
+      _wmsErrore = data.errore;
+      _wmsArticoli = null;   // NON cachare il fallimento: ritenta al prossimo giro
+      cb([]);
+    } else {
+      _wmsErrore = null;
+      _wmsArticoli = lista;
+      cb(lista);
+    }
+  })
+  .catch(e => { _wmsErrore = 'Errore di rete verso IronProduction: ' + e; _wmsArticoli = null; cb([]); });
+}
+
+function verificaConnessioneWms() {
+  const hint = document.getElementById('wmsHint');
+  hint.textContent = '🔎 Verifico connessione a MasterLogistic-WMS...';
+  hint.style.color = 'var(--text-dim)';
+  _loadWmsArticoli(articoli => {
+    if (articoli.length) {
+      hint.textContent = `✅ MasterLogistic-WMS connesso (${articoli.length} articoli disponibili)`;
+      hint.style.color = '#5debb0';
+    } else {
+      hint.textContent = '⚠️ ' + (_wmsErrore || 'MasterLogistic-WMS non connesso — inserisci manualmente');
+      hint.style.color = '#e6b800';
+    }
+  });
 }
 
 function cercaArticoloWms(q) {
@@ -415,8 +442,8 @@ function cercaArticoloWms(q) {
   if (!q || q.length < 2) { dd.style.display = 'none'; return; }
   _loadWmsArticoli(articoli => {
     if (!articoli.length) {
-      hint.textContent = '⚠️ MasterLogistic non connesso — inserisci manualmente';
-      hint.style.color = 'var(--text-dim)';
+      hint.textContent = '⚠️ ' + (_wmsErrore || 'MasterLogistic non connesso — inserisci manualmente');
+      hint.style.color = '#e6b800';
       dd.style.display = 'none';
       return;
     }
@@ -582,6 +609,7 @@ function openModalCreaKanban(sheetKey){
   document.getElementById('interrogaCodicePanel').style.display = 'none';
   openModal('modalCreaKanban');
   setTimeout(()=>document.getElementById('creaKanbanNome').focus(),100);
+  verificaConnessioneWms();
 }
 function aggiornaEtichettaLeadTimeFornitura(){
   const tipo = document.getElementById('creaKanbanTipoApprovvigionamento')?.value;

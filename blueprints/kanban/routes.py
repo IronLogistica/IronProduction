@@ -633,14 +633,27 @@ def api_storico_upload_csv():
 # ── API WMS ARTICOLI (autocomplete da MasterLogistic) ────────────────────────
 @kanban_bp.route('/api/wms-articoli')
 def api_wms_articoli():
+    """
+    Proxy verso MasterLogistic-WMS per l'autocomplete del form Kanban. A
+    differenza di prima, NON inghiotte più l'errore in una lista vuota:
+    ritorna sempre {articoli, errore} così il frontend può mostrare il
+    motivo vero (URL non configurato / WMS irraggiungibile / risposta
+    inattesa) invece del generico "non connesso" che nascondeva tutto.
+    """
     import os, requests as http_req
     base = os.environ.get('MASTERLOGISTIC_URL', '').rstrip('/')
     if not base:
-        return jsonify([])
+        return jsonify(articoli=[], errore='MASTERLOGISTIC_URL non configurato su IronProduction (Railway → Variables).')
     try:
         resp = http_req.get(f"{base}/api/articoli-lista", timeout=8)
-        if resp.status_code == 200:
-            return jsonify(resp.json())
-        return jsonify([])
-    except Exception:
-        return jsonify([])
+    except Exception as e:
+        return jsonify(articoli=[], errore=f'MasterLogistic-WMS non raggiungibile ({base}): {e}')
+    if resp.status_code != 200:
+        return jsonify(articoli=[], errore=f'MasterLogistic-WMS ha risposto {resp.status_code} su /api/articoli-lista')
+    try:
+        dati = resp.json()
+    except ValueError:
+        return jsonify(articoli=[], errore='MasterLogistic-WMS ha risposto in un formato inatteso (non JSON).')
+    if isinstance(dati, dict) and dati.get('error'):
+        return jsonify(articoli=[], errore=f'MasterLogistic-WMS: {dati["error"]}')
+    return jsonify(articoli=dati if isinstance(dati, list) else [], errore=None)
