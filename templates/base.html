@@ -472,6 +472,7 @@ function selezionaArticolo(sku, desc) {
 
 // ── INTERROGAZIONE AUTOMATICA ALTRI PROGRAMMI (WMS + IronProduction) ─────────
 let _interrogaTimer = null;
+let _ultimoWmsTrovato = null;   // stock_iron_segnaletica/stock_grezzi/riservato_clienti dell'ultima interrogazione riuscita
 function _codiceDaNomeKanban(nome){
   return (nome || '').split(' — ')[0].trim();
 }
@@ -485,6 +486,7 @@ function interrogaCodiceEsistente(codice){
   const panel = document.getElementById('interrogaCodicePanel');
   panel.style.display = 'block';
   panel.innerHTML = '🔎 Interrogo MasterLogistic-WMS e IronProduction su "' + codice + '"...';
+  _ultimoWmsTrovato = null;
   fetch('/api/kanban/interroga-codice?codice=' + encodeURIComponent(codice))
     .then(r => r.json())
     .then(d => {
@@ -496,10 +498,11 @@ function interrogaCodiceEsistente(codice){
       let righe = [];
       if (d.masterlogistic_wms && !d.masterlogistic_wms.errore) {
         const w = d.masterlogistic_wms;
+        _ultimoWmsTrovato = w;   // usato da confermCreaKanban() per partire con i numeri veri, non 0/0/0
         let dettWms = [`magazzino Iron Segnaletica ${w.stock_iron_segnaletica}`];
         if (w.stock_grezzi) dettWms.push(`grezzi ${w.stock_grezzi}`);
         dettWms.push(`riservato clienti (impegni) ${w.riservato_clienti}`);
-        righe.push(`<b>📦 MasterLogistic-WMS</b> — ${dettWms.join(', ')}`);
+        righe.push(`<b>📦 MasterLogistic-WMS</b> — ${dettWms.join(', ')} <span style="color:#5debb0">→ precompilati sulla scheda</span>`);
         if (w.ultimi_evasi && w.ultimi_evasi.length) {
           const evasiTxt = w.ultimi_evasi.map(e => `${e.data} — ${e.cliente} (${e.qta} pz)`).join('<br>&nbsp;&nbsp;');
           righe.push(`&nbsp;&nbsp;<span style="color:var(--text-dim)">Ultimi evasi:<br>&nbsp;&nbsp;${evasiTxt}</span>`);
@@ -613,6 +616,7 @@ function openModalCreaKanban(sheetKey){
   document.getElementById('creaKanbanSS').value      = '15';
   document.getElementById('pinCreaKanban').value     = '';
   document.getElementById('interrogaCodicePanel').style.display = 'none';
+  _ultimoWmsTrovato = null;
   openModal('modalCreaKanban');
   setTimeout(()=>document.getElementById('creaKanbanNome').focus(),100);
   verificaConnessioneWms();
@@ -639,6 +643,12 @@ function confermCreaKanban(){
       lead_time_fornitura_giorni: parseFloat(document.getElementById('creaKanbanLeadTimeFornitura').value)||7,
       lead_time_giorni: parseFloat(document.getElementById('creaKanbanLeadTimeFornitura').value)||7,
       scorta_sicurezza: (parseFloat(document.getElementById('creaKanbanSS').value)||15)/100,
+      // Istantanea WMS dell'ultima interrogazione riuscita su questo codice
+      // (se presente) — la scheda parte già coi numeri reali di magazzino
+      // invece che 0/0/0 da inserire a mano.
+      grezzi:     _ultimoWmsTrovato ? (_ultimoWmsTrovato.stock_grezzi||0) : 0,
+      verniciati: _ultimoWmsTrovato ? (_ultimoWmsTrovato.stock_iron_segnaletica||0) : 0,
+      riservato:  _ultimoWmsTrovato ? (_ultimoWmsTrovato.riservato_clienti||0) : 0,
     })})
   .then(r=>r.json()).then(d=>{
     if(d.ok){showToast('✅ Kanban "'+nome+'" creato');closeModal('modalCreaKanban');setTimeout(()=>location.reload(),700);}

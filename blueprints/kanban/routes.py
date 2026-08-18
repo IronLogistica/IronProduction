@@ -5,7 +5,7 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     registra_ciclo_se_necessario, calcola_analisi_takt, PIN_ADMIN,
                     TIPI_APPROVVIGIONAMENTO, ArticoloApprovvigionamento,
                     GiacenzaWood, OrdineProduzione)
-from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, ottieni_stock_kanban, MasterLogisticError
+from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, ottieni_stock_kanban, ottieni_scheda_kanban, MasterLogisticError
 from masterledgerlight_client import cerca_articolo, MasterLedgerLightError
 from datetime import datetime
 import re
@@ -120,6 +120,71 @@ def api_lista():
         prodotti = KanbanProdotto.query.order_by(KanbanProdotto.categoria, KanbanProdotto.prodotto).all()
     return jsonify([kanban_to_dict(p) for p in prodotti])
 
+
+@kanban_bp.route('/api/kanban-scheda/<int:pid>')
+def api_kanban_scheda(pid):
+    """
+    Dati per la Scheda WMS completa di un prodotto Kanban (modal "📊 Scheda
+    WMS completa" — vedi templates/kanban/index.html::_caricaSchedaWms).
+    Questo endpoint non esisteva ancora: il frontend lo chiamava già da
+    tempo ma otteneva sempre un 404, quindi la scheda risultava vuota anche
+    quando l'interrogazione WMS in fase di creazione funzionava — sono due
+    chiamate distinte, questa mancava del tutto.
+
+    Combina:
+    - MasterLogistic-WMS (ottieni_scheda_kanban, endpoint /api/kanban-stock):
+      stock verniciato/grezzo, riservato clienti CON l'elenco ordini per
+      cliente (non solo il totale), ultimi evasi.
+    - IronProduction stesso: 'In Trattamento' e 'Finiti IS' restano i
+      contatori locali già tenuti a mano sulla scheda Kanban (KanbanProdotto.
+      in_vern / .verniciati come fallback se WMS non risponde) — quei due
+      campi non hanno una fonte WMS dedicata.
+    - Commesse di Produzione APERTE su questo codice_articolo: dati
+      IronProduction (OrdineProduzione), non WMS.
+    Il saldo contabile riusa la property già esistente su KanbanProdotto
+    (stessa formula ovunque nell'app); il saldo disponibile è quello meno
+    il riservato clienti live da WMS, come indicato nel sottotitolo della card.
+    """
+    p = KanbanProdotto.query.get_or_404(pid)
+    sku = sku_da_nome_prodotto(p.prodotto)
+
+    risultato = {
+        'sku': sku,
+        'stock_verniciati': p.verniciati, 'stock_grezzi': p.grezzi, 'in_vern': p.in_vern,
+        'stock_is': p.verniciati,
+        'riservato_clienti': p.riservato,
+        'ordini_clienti': [], 'ultimi_evasi': [],
+        'saldo_contabile': p.saldo_contabile,
+        'saldo_disponibile': p.saldo_contabile - p.riservato,
+        'wms_errore': None,
+    }
+    if sku:
+        try:
+            wms = ottieni_scheda_kanban(sku)
+            risultato['stock_verniciati'] = wms['stock_verniciati']
+            risultato['stock_grezzi'] = wms['stock_grezzi']
+            risultato['riservato_clienti'] = wms['riservato_clienti']
+            risultato['ordini_clienti'] = wms['ordini_clienti']
+            risultato['ultimi_evasi'] = wms['ultimi_evasi']
+            risultato['saldo_disponibile'] = risultato['stock_verniciati'] - wms['riservato_clienti']
+        except MasterLogisticError as e:
+            risultato['wms_errore'] = str(e)
+
+    op_aperti = []
+    if sku:
+        op_aperti = (OrdineProduzione.query
+                     .filter(db.func.upper(OrdineProduzione.codice_articolo) == sku.upper(),
+                             OrdineProduzione.stato.in_(['Creato', 'Rilasciato', 'In esecuzione']))
+                     .order_by(OrdineProduzione.data_prevista).all())
+    risultato['commesse_produzione'] = [{
+        'numero': o.codice, 'qta_tot': o.qta_pianificata, 'qta_prod': o.qta_buona,
+        'saldo': max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0),
+        'stato': o.stato,
+        'data_consegna': o.data_prevista.strftime('%d/%m/%Y') if o.data_prevista else None,
+    } for o in op_aperti]
+
+    return jsonify(risultato)
+
 @kanban_bp.route('/api/kanban/<int:kid>', methods=['PUT'])
 def api_aggiorna(kid):
     try:
@@ -205,6 +270,16 @@ def api_crea():
             lead_time_giorni=float(d.get('lead_time_giorni',7.0)),
             tipo_approvvigionamento=tipo_approvvigionamento,
             lead_time_fornitura_giorni=float(lead_time_fornitura) if lead_time_fornitura not in (None, '') else None,
+            # Istantanea WMS presa dall'interrogazione automatica al momento
+            # della creazione (vedi templates/base.html::interrogaCodiceEsistente) —
+            # così la scheda parte già con i numeri reali invece che 0/0/0 da
+            # correggere subito a mano. Da qui in poi restano contatori
+            # locali modificabili sul tabellone (PUT /api/kanban/<id>), non
+            # più risincronizzati automaticamente: la produzione li cambia
+            # ogni giorno, non ha senso che ogni interrogazione li sovrascriva.
+            grezzi=int(d.get('grezzi', 0) or 0),
+            verniciati=int(d.get('verniciati', 0) or 0),
+            riservato=int(d.get('riservato', 0) or 0),
         )
         db.session.add(p)
         log(f'Kanban: creato prodotto {prodotto} (PIN autorizzato)')

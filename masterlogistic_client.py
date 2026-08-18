@@ -56,17 +56,47 @@ def sku_da_nome_prodotto(nome_prodotto):
 def ottieni_stock_kanban(sku_vern, sku_grezzo="", timeout=8):
     """
     Interroga l'endpoint dedicato di WMS pensato apposta per popolare la
-    scheda Kanban (GET /api/kanban-stock) — SOLO i campi di magazzino Iron
-    Segnaletica che servono qui: stock (verniciato/grezzo), riservato
-    clienti (impegni) e gli ultimi evasi. Deliberatamente NON usa la tabella
-    articoli via bind diretto (ArticoloML), che espone anche ordinati/
-    incoming/fornitore — dati di acquisto a fornitore, irrilevanti per
-    questa interrogazione: saldo disponibile e contabile restano calcolati
-    da IronProduction stesso.
+    scheda Kanban (GET /api/kanban-stock) — versione RIDOTTA per
+    l'interrogazione automatica in fase di creazione (vedi blueprints/
+    kanban/routes.py::api_interroga_codice): SOLO i campi di magazzino Iron
+    Segnaletica, mai acquisti a fornitore. Per la Scheda WMS completa (con
+    l'elenco degli ordini cliente aperti) usa invece _kanban_stock_grezzo(),
+    che ritorna la risposta di WMS senza tagli.
     Non solleva errore se il codice semplicemente non esiste in WMS (torna
     tutto a zero, comportamento normale dell'endpoint) — solo per problemi
     veri di configurazione/rete.
     """
+    dati = _kanban_stock_grezzo(sku_vern, sku_grezzo, timeout)
+    return {
+        'stock_iron_segnaletica': dati.get('stock_verniciati', 0),
+        'stock_grezzi': dati.get('stock_grezzi', 0),
+        'riservato_clienti': dati.get('riservato_clienti', 0),
+        'ultimi_evasi': dati.get('ultimi_evasi', []),
+    }
+
+
+def ottieni_scheda_kanban(sku_vern, sku_grezzo="", timeout=8):
+    """
+    Versione COMPLETA per la Scheda WMS del singolo prodotto Kanban (modal
+    '📊 Scheda WMS completa'): oltre a stock/riservato/ultimi evasi, include
+    anche l'elenco degli ordini cliente ancora aperti su questo SKU (per la
+    tabella 'Riservato a Clienti', riga per riga) — dato che l'interrogazione
+    in fase di creazione (ottieni_stock_kanban) tiene volutamente fuori
+    perché lì basta il totale.
+    """
+    dati = _kanban_stock_grezzo(sku_vern, sku_grezzo, timeout)
+    return {
+        'stock_verniciati': dati.get('stock_verniciati', 0),
+        'stock_grezzi': dati.get('stock_grezzi', 0),
+        'riservato_clienti': dati.get('riservato_clienti', 0),
+        'ordini_clienti': dati.get('ordini_clienti', []),
+        'ultimi_evasi': dati.get('ultimi_evasi', []),
+    }
+
+
+def _kanban_stock_grezzo(sku_vern, sku_grezzo="", timeout=8):
+    """Chiamata HTTP grezza a GET /api/kanban-stock — uso interno, condiviso
+    da ottieni_stock_kanban() e ottieni_scheda_kanban()."""
     if not sku_vern:
         raise MasterLogisticError("SKU mancante per l'interrogazione stock Kanban.")
     url = f"{_base_url()}/api/kanban-stock"
@@ -85,12 +115,7 @@ def ottieni_stock_kanban(sku_vern, sku_grezzo="", timeout=8):
         raise MasterLogisticError("MasterLogistic-WMS ha risposto in un formato inatteso (non JSON).")
     if isinstance(dati, dict) and dati.get('error'):
         raise MasterLogisticError(f"MasterLogistic-WMS: {dati['error']}")
-    return {
-        'stock_iron_segnaletica': dati.get('stock_verniciati', 0),
-        'stock_grezzi': dati.get('stock_grezzi', 0),
-        'riservato_clienti': dati.get('riservato_clienti', 0),
-        'ultimi_evasi': dati.get('ultimi_evasi', []),
-    }
+    return dati
 
 
 def carica_produzione(sku, quantita, timeout=8):
