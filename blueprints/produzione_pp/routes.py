@@ -1796,20 +1796,34 @@ def api_dichiarazione_verifica_pin():
     return jsonify(ok=True)
 
 
+@pp_bp.get('/api/dichiarazione-produzione/pin-interno')
+def api_dichiarazione_pin_interno():
+    """Area Capo e Area Direzione, in questa pagina, sono di fatto riservate
+    a chi già ha accesso alla pagina stessa (Angelo): niente più sblocco
+    manuale col PIN, la sezione resta sempre aperta. Il PIN continua però a
+    essere richiesto e verificato lato server su ogni chiamata — qui viene
+    solo fornito al frontend per auto-popolare le richieste successive."""
+    return jsonify(ok=True, capo=current_app.config.get('CAPO_PIN', ''), direzione=PIN_DIREZIONE)
+
+
 @pp_bp.get('/api/dichiarazione-produzione/<int:cid>/storico')
 def api_dichiarazione_storico(cid):
     """Visibile SOLO al capo — richiede il PIN come query param."""
     if not _verifica_pin_capo(request.args):
         return jsonify(ok=False, error='PIN capo non valido'), 403
     centro = CentroCostoWood.query.get_or_404(cid)
-    data_str = request.args.get('data') or datetime.utcnow().strftime('%Y-%m-%d')
+    oggi_str = datetime.utcnow().strftime('%Y-%m-%d')
+    data_da_str = request.args.get('data_da') or request.args.get('data') or oggi_str
+    data_a_str = request.args.get('data_a') or data_da_str
     try:
-        giorno = datetime.strptime(data_str, '%Y-%m-%d').date()
+        giorno_da = datetime.strptime(data_da_str, '%Y-%m-%d').date()
+        giorno_a = datetime.strptime(data_a_str, '%Y-%m-%d').date()
     except ValueError:
         return jsonify(ok=False, error='Data non valida'), 400
     eventi = (EventoConsuntivoPP.query
               .filter(db.func.lower(EventoConsuntivoPP.fase) == centro.nome.lower(),
-                      db.func.date(EventoConsuntivoPP.timestamp_evento) == giorno)
+                      db.func.date(EventoConsuntivoPP.timestamp_evento) >= giorno_da,
+                      db.func.date(EventoConsuntivoPP.timestamp_evento) <= giorno_a)
               .order_by(EventoConsuntivoPP.timestamp_evento.desc()).all())
     return jsonify(ok=True, eventi=[{
         'id': e.id, 'event_id': e.event_id, 'op_code': e.op_code, 'componente': e.componente,
@@ -1996,9 +2010,12 @@ def api_dichiarazione_movimenti(cid):
     if not _verifica_pin_capo(request.args):
         return jsonify(ok=False, error='PIN capo non valido'), 403
     centro = CentroCostoWood.query.get_or_404(cid)
-    data_str = request.args.get('data') or datetime.utcnow().strftime('%Y-%m-%d')
+    oggi_str = datetime.utcnow().strftime('%Y-%m-%d')
+    data_da_str = request.args.get('data_da') or request.args.get('data') or oggi_str
+    data_a_str = request.args.get('data_a') or data_da_str
     try:
-        giorno = datetime.strptime(data_str, '%Y-%m-%d').date()
+        giorno_da = datetime.strptime(data_da_str, '%Y-%m-%d').date()
+        giorno_a = datetime.strptime(data_a_str, '%Y-%m-%d').date()
     except ValueError:
         return jsonify(ok=False, error='Data non valida'), 400
     # AuditPP (mai cancellato, nemmeno dallo storno) invece di
@@ -2011,14 +2028,16 @@ def api_dichiarazione_movimenti(cid):
     righe_audit = (AuditPP.query
                    .filter(AuditPP.azione.in_(('EVENTO_CONSUNTIVO', 'ANNULLO_CONSUNTIVO')),
                            AuditPP.dettaglio.ilike(f'%{fase_pattern}%'),
-                           db.func.date(AuditPP.creato_il) == giorno).all())
+                           db.func.date(AuditPP.creato_il) >= giorno_da,
+                           db.func.date(AuditPP.creato_il) <= giorno_a).all())
     op_codici = {a.op_code for a in righe_audit if a.op_code}
     if not op_codici:
         return jsonify(ok=True, movimenti=[])
     movimenti = (MovimentoGiacenzaWood.query
                  .filter(MovimentoGiacenzaWood.tipo.in_(('carico_produzione', 'scarico_produzione', 'rettifica_import')),
                          MovimentoGiacenzaWood.riferimento.in_(op_codici),
-                         db.func.date(MovimentoGiacenzaWood.creato_il) == giorno)
+                         db.func.date(MovimentoGiacenzaWood.creato_il) >= giorno_da,
+                         db.func.date(MovimentoGiacenzaWood.creato_il) <= giorno_a)
                  .order_by(MovimentoGiacenzaWood.creato_il.desc()).all())
     return jsonify(ok=True, movimenti=[{
         'id': m.id, 'codice': m.codice, 'tipo': m.tipo, 'quantita': m.quantita,
