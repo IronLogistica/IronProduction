@@ -269,7 +269,7 @@
   <div id="wmsContent" style="display:none">
 
     {# ── RIGA 1: 4 saldi + stock fianco a fianco ── #}
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px;margin-top:38px">
 
       {# Saldo Contabile #}
       <div class="wms-saldo-box" style="border-top-color:var(--accent)">
@@ -278,11 +278,22 @@
         <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Grezzi+Tratt.+IW+IS−Imp.</div>
       </div>
 
-      {# Saldo Disponibile #}
-      <div class="wms-saldo-box" style="border-top-color:var(--steel2)">
+      {# Saldo Disponibile — freccia lampeggiante sopra: è QUESTO il numero
+         per rispondere a un cliente su una consegna urgente, non il Saldo
+         Contabile (che include grezzi/in trattamento, non spedibili subito).
+         Vedi setSaldo() più sotto per l'avviso extra quando i due saldi
+         sono in contraddizione (Contabile positivo, Disponibile negativo). #}
+      <div class="wms-saldo-box" id="boxSaldoDisp" style="border-top-color:var(--steel2);position:relative;overflow:visible">
+        <div class="freccia-urgenti">
+          <div class="freccia-testo">DISPONIBILE PER<br>RICHIESTE URGENTI /<br>PRONTA CONSEGNA</div>
+          <div class="freccia-arrow">⬇</div>
+        </div>
         <div class="wms-saldo-lbl">SALDO DISPONIBILE</div>
         <div class="wms-saldo-val" id="wsSaldo2">—</div>
         <div style="font-size:9px;color:var(--text-dim);margin-top:4px">SALDO PRONTO IMMEDIATAMENTE DISPONIBILE</div>
+        <div id="avvisoContraddizione" style="display:none;font-size:9px;font-weight:800;color:#ff3b3b;margin-top:5px;padding:3px 5px;background:rgba(255,59,59,.12);border-radius:4px">
+          ⚠️ Il Saldo Contabile è positivo ma NON è pronto alla consegna
+        </div>
       </div>
 
       {# Finiti IW — vicino a IS #}
@@ -590,6 +601,10 @@
 .btn-azioni{background:rgba(255,255,255,.06);border:1px solid var(--border);border-radius:5px;padding:3px 7px;cursor:pointer;font-size:12px;transition:all .15s;color:var(--text-dim)}
 .btn-azioni:hover{background:rgba(30,111,165,.25);border-color:var(--accent);color:var(--text)}
 .wms-saldo-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;border-top:3px solid var(--grey)}
+.freccia-urgenti{position:absolute;top:-40px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;z-index:5;animation:freccia-lampeggio 1s infinite;pointer-events:none}
+.freccia-testo{font-size:8px;font-weight:800;text-align:center;line-height:1.25;color:#ff3b3b;text-transform:uppercase;letter-spacing:.2px;white-space:nowrap;background:rgba(255,59,59,.15);border:1px solid #ff3b3b;border-radius:4px;padding:3px 6px}
+.freccia-arrow{font-size:18px;line-height:1;color:#ff3b3b;margin-top:1px}
+@keyframes freccia-lampeggio{0%,100%{opacity:1}50%{opacity:.2}}
 .wms-saldo-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-dim);margin-bottom:4px}
 .wms-saldo-val{font-size:22px;font-weight:900;color:#5debb0}
 .wms-saldo-val.neg{color:#f07070}
@@ -877,6 +892,14 @@ function _caricaSchedaWms(pid) {
       };
       setSaldo('wsSaldo1', d.saldo_contabile);
       setSaldo('wsSaldo2', d.saldo_disponibile);
+      // Avviso extra "idiot-proof": se il Saldo Contabile sembra a posto
+      // (positivo) ma il Disponibile è negativo, chi guarda solo il primo
+      // numero rischierebbe di promettere merce che in realtà non c'è
+      // pronta — lo scriviamo esplicitamente sotto la card.
+      const avviso = document.getElementById('avvisoContraddizione');
+      if (avviso) {
+        avviso.style.display = (d.saldo_contabile > 0 && d.saldo_disponibile < 0) ? 'block' : 'none';
+      }
     } else {
       // Calcola saldi dai campi Kanban locali (visibili nel tabellone)
       ['wsStockVern','wsStockGrezzi','wsInVern','wsStockIS'].forEach(id => {
