@@ -1435,8 +1435,16 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         moltiplicatore = moltiplicatore_per_codice[codice_comp]
         nr_pz_da_fare = round((o.qta_pianificata or 0) * moltiplicatore)
         componente_param = None if codice_comp == o.codice_articolo else codice_comp
+        # BUG REALE TROVATO E CORRETTO: mancava il filtro per fase — sommava
+        # i pezzi buoni dichiarati per questo componente su QUALUNQUE
+        # centro, non solo su QUESTO. Un codice che passa da più macchine
+        # (es. Segatrice poi Trapani) mostrava "già fatto" su Trapani non
+        # appena Segatrice aveva dichiarato la SUA parte — anche se Trapani
+        # non aveva ancora lavorato nulla. Ogni centro deve vedere SOLO
+        # quello che è stato dichiarato su di lui, indipendente dagli altri.
         pezzi_fatti = int((db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
                           .filter(EventoConsuntivoPP.op_code == o.codice,
+                                  db.func.lower(EventoConsuntivoPP.fase) == centro.nome.strip().lower(),
                                   EventoConsuntivoPP.componente == componente_param if componente_param
                                   else EventoConsuntivoPP.componente.is_(None))
                           .scalar()) or 0)
