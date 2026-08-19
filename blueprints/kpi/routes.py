@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, jsonify
 from models import db, Commessa, KanbanProdotto, RigaMonitor, calcola_kpi
 from datetime import datetime, date
+from blueprints.produzione_pp.avanzamento import calcola_avanzamento_commesse
 
 kpi_bp = Blueprint('kpi', __name__)
 
@@ -43,6 +44,10 @@ def index():
 @kpi_bp.route('/api/kpi')
 def api_kpi():
     return jsonify(calcola_kpi())
+
+@kpi_bp.route('/api/kpi/avanzamento-commesse')
+def api_avanzamento_commesse():
+    return jsonify(calcola_avanzamento_commesse())
 
 @kpi_bp.route('/api/kpi/storico')
 def api_storico():

@@ -91,6 +91,12 @@ class CentroCostoWood(db.Model):
     attivo                              = db.Column(db.Boolean, default=True)
     fornitore_esterno                   = db.Column(db.String(200), default='')   # solo se esterno=True
     tariffa_esterna                     = db.Column(db.Float, nullable=True)      # €/h o €/pz pattuito col fornitore esterno, se noto
+    # Giorni di lead time del fornitore esterno (es. verniciatura): tempo che
+    # passa tra "consegnato al fornitore" e "rientrato pronto" — usato dal
+    # Cruscotto KPI (Avanzamento Commesse) per stimare la data di consegna
+    # finale, sommandolo alla data di fine produzione interna. Solo se
+    # esterno=True; None = non configurato (il cruscotto lo segnala).
+    lead_time_esterno_giorni            = db.Column(db.Float, nullable=True)
     # ── Capacità e driver ──
     driver_attivita                     = db.Column(db.String(20), default='ora_reparto')  # vedi DRIVER_ATTIVITA_WOOD
     n_risorse_equivalenti               = db.Column(db.Float, default=1)          # es. 3 macchine identiche nello stesso centro
@@ -918,6 +924,24 @@ def assicura_finiti_is_kanban():
         colonne = {c['name'] for c in inspect(db.engine).get_columns('kanban_prodotti')}
         if 'finiti_is' not in colonne:
             db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN finiti_is INTEGER NOT NULL DEFAULT 0"))
+            db.session.commit()
+
+def assicura_lead_time_esterno_centri():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    centri_costo_wood.lead_time_esterno_giorni (lead time del fornitore
+    esterno, es. verniciatura — usato dal Cruscotto KPI per la data di
+    consegna stimata) senza ricreare tabelle."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS lead_time_esterno_giorni FLOAT"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('centri_costo_wood')}
+        if 'lead_time_esterno_giorni' not in colonne:
+            db.session.execute(text("ALTER TABLE centri_costo_wood ADD COLUMN lead_time_esterno_giorni FLOAT"))
             db.session.commit()
 
 class KanbanProdotto(db.Model):

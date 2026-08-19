@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from flask import Flask, redirect, url_for
 from config import Config
-from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate, assicura_lunghezze_barra_default, assicura_unita_misura_articoli, assicura_finiti_is_kanban
+from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate, assicura_lunghezze_barra_default, assicura_unita_misura_articoli, assicura_finiti_is_kanban, assicura_lead_time_esterno_centri
 
 def create_app():
     app = Flask(__name__)
@@ -49,6 +49,7 @@ def create_app():
         assicura_lunghezze_barra_default()
         assicura_unita_misura_articoli()
         assicura_finiti_is_kanban()
+        assicura_lead_time_esterno_centri()
 
     return app
 

@@ -28,4 +28,61 @@
     </tbody>
   </table>
 </div>
+
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-top:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-weight:800;font-size:14px;color:var(--dark)">🗓️ Avanzamento Commesse — stima fine produzione e consegna</div>
+    <button class="btn btn-ghost" style="font-size:11px" onclick="caricaAvanzamentoCommesse()">🔄 Aggiorna</button>
+  </div>
+  <p style="font-size:11px;color:var(--text-dim);margin-bottom:12px">
+    Stima gestionale calcolata incrociando priorità, Ciclo di Lavoro (tempi standard), giacenza/ordini di acquisto e
+    capacità dei centri di costo — non un impegno contrattuale: non tiene conto di assenze, urgenze last-minute o
+    imprevisti in produzione. Le righe con ⚠️ hanno usato una stima di default perché mancava un dato di configurazione.
+  </p>
+  <div id="avanzamento-commesse-box" style="overflow-x:auto">Caricamento...</div>
+</div>
+{% endblock %}
+{% block scripts %}
+async function caricaAvanzamentoCommesse(){
+  const box = document.getElementById('avanzamento-commesse-box');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/kpi/avanzamento-commesse');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di produzione aperto.</p>'; return; }
+    box.innerHTML = '<table class="kanban-table"><thead><tr>' +
+      '<th>PRIO</th><th>OP</th><th>Commessa</th><th>Codice</th><th>Descrizione</th><th>Saldo</th><th>%</th>' +
+      '<th>Materiale</th><th>Fine produzione interna (stima)</th><th>Lavorazione esterna</th><th>Consegna (stima)</th><th>Prevista</th><th>Avvisi</th>' +
+      '</tr></thead><tbody>' +
+      righe.map(o => {
+        const materiale = o.materiale_completo
+          ? '<span style="color:var(--green,#1a9e5c);font-weight:700">✅ OK</span>'
+          : '<span style="color:var(--red,#c0392b);font-weight:700">🔴 Mancante</span>';
+        const esterno = o.centro_esterno
+          ? `${o.centro_esterno}${o.lead_time_esterno_giorni ? ' (+' + o.lead_time_esterno_giorni + 'gg)' : ''}`
+          : '<span style="color:var(--text-dim)">—</span>';
+        const avvisi = o.avvisi && o.avvisi.length
+          ? `<span title="${o.avvisi.join(' | ').replace(/"/g,'&quot;')}" style="color:#e67e22;cursor:help">⚠️ ${o.avvisi.length}</span>`
+          : '';
+        return `<tr>
+          <td class="num">${o.priorita}</td>
+          <td class="codice">${o.op_codice}</td>
+          <td>${o.commessa || '—'}</td>
+          <td class="codice">${o.codice_articolo}</td>
+          <td class="descr-td">${o.descrizione || ''}</td>
+          <td class="num">${o.saldo}</td>
+          <td class="num">${o.pct}%</td>
+          <td>${materiale}</td>
+          <td style="font-weight:700">${o.data_fine_produzione_stimata}</td>
+          <td style="font-size:11px">${esterno}</td>
+          <td style="font-weight:800;color:var(--accent)">${o.data_consegna_stimata}</td>
+          <td style="font-size:11px;color:var(--text-dim)">${o.data_prevista || '—'}</td>
+          <td>${avvisi}</td>
+        </tr>`;
+      }).join('') + '</tbody></table>';
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+caricaAvanzamentoCommesse();
 {% endblock %}
