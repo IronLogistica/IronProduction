@@ -1265,7 +1265,14 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
     _visitati = _visitati | {codice}
 
     disponibile_prima = giacenza_residua.get(codice, 0.0)
-    usato = min(disponibile_prima, qta)
+    # BUG CORRETTO: se la giacenza di questo codice è NEGATIVA (es. da
+    # scorrettezze storiche pregresse), min(negativo, qta) restituiva un
+    # 'usato' negativo — che invece di ridurre il mancante lo FACEVA
+    # AUMENTARE oltre il fabbisogno reale (600 diventava 1060, poi 1200,
+    # raddoppiando via via scendendo nell'albero). Giacenza negativa deve
+    # sempre contare come "zero disponibile", mai come disponibilità
+    # negativa che si propaga amplificando il fabbisogno a valle.
+    usato = min(max(disponibile_prima, 0.0), qta)
     giacenza_residua[codice] = disponibile_prima - usato
     mancante = qta - usato
 
