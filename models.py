@@ -97,6 +97,11 @@ class CentroCostoWood(db.Model):
     # finale, sommandolo alla data di fine produzione interna. Solo se
     # esterno=True; None = non configurato (il cruscotto lo segnala).
     lead_time_esterno_giorni            = db.Column(db.Float, nullable=True)
+    # Come per produttivita_oraria_manuale sopra: True = valore inserito a
+    # mano, l'auto-apprendimento (quando disponibile una fonte di date reali
+    # di spedizione/rientro) non lo tocca.
+    lead_time_esterno_manuale           = db.Column(db.Boolean, default=False)
+    lead_time_esterno_n_osservazioni    = db.Column(db.Integer, default=0)
     # ── Capacità e driver ──
     driver_attivita                     = db.Column(db.String(20), default='ora_reparto')  # vedi DRIVER_ATTIVITA_WOOD
     n_risorse_equivalenti               = db.Column(db.Float, default=1)          # es. 3 macchine identiche nello stesso centro
@@ -148,6 +153,15 @@ class CicloLavoroWood(db.Model):
     sequenza            = db.Column(db.Integer, nullable=False)      # ordine del reparto nel ciclo (1,2,3...)
     centro_costo_id     = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
     produttivita_oraria = db.Column(db.Float, default=0)             # pezzi/ora per QUESTO codice in QUESTO reparto
+    # Auto-apprendimento: il sistema aggiorna da solo produttivita_oraria via
+    # media cumulativa (pezzi/minuti osservati) man mano che arrivano
+    # consuntivi reali da Dichiarazione Produzione — vedi
+    # _aggiorna_produttivita_da_consuntivo in produzione_pp/routes.py.
+    # produttivita_oraria_manuale=True congela il valore inserito a mano,
+    # l'auto-apprendimento lo salta.
+    produttivita_oraria_manuale    = db.Column(db.Boolean, default=False)
+    produttivita_pezzi_osservati   = db.Column(db.Integer, default=0)
+    produttivita_minuti_osservati  = db.Column(db.Float, default=0)
     # % massima di scarto fisiologicamente ammessa per QUESTO codice in QUESTO
     # reparto (es. 2.0 = 2%) — standard comunicato all'operatore sul totem,
     # non un vincolo bloccante: None = nessuno standard comunicato.
@@ -928,21 +942,43 @@ def assicura_finiti_is_kanban():
 
 def assicura_lead_time_esterno_centri():
     """Migrazione compatibile con DB già esistenti: aggiunge
-    centri_costo_wood.lead_time_esterno_giorni (lead time del fornitore
-    esterno, es. verniciatura — usato dal Cruscotto KPI per la data di
-    consegna stimata) senza ricreare tabelle."""
+    centri_costo_wood.lead_time_esterno_giorni (+ flag manuale/osservazioni
+    per il futuro auto-apprendimento) e ciclo_lavoro_wood.produttivita_oraria_manuale
+    /_pezzi_osservati/_minuti_osservati (auto-apprendimento tempi standard
+    già attivo) senza ricreare tabelle."""
     db_url = os.environ.get('DATABASE_URL', '')
+    ddl_centri = [
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS lead_time_esterno_giorni FLOAT",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS lead_time_esterno_manuale BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS lead_time_esterno_n_osservazioni INTEGER DEFAULT 0",
+    ]
+    ddl_ciclo = [
+        "ALTER TABLE ciclo_lavoro_wood ADD COLUMN IF NOT EXISTS produttivita_oraria_manuale BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE ciclo_lavoro_wood ADD COLUMN IF NOT EXISTS produttivita_pezzi_osservati INTEGER DEFAULT 0",
+        "ALTER TABLE ciclo_lavoro_wood ADD COLUMN IF NOT EXISTS produttivita_minuti_osservati FLOAT DEFAULT 0",
+    ]
     if 'postgresql' in db_url or 'postgres' in db_url:
-        try:
-            db.session.execute(text("ALTER TABLE centri_costo_wood ADD COLUMN IF NOT EXISTS lead_time_esterno_giorni FLOAT"))
-            db.session.commit()
-        except Exception:
-            db.session.rollback()
+        for ddl in ddl_centri + ddl_ciclo:
+            try:
+                db.session.execute(text(ddl))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
     else:
-        colonne = {c['name'] for c in inspect(db.engine).get_columns('centri_costo_wood')}
-        if 'lead_time_esterno_giorni' not in colonne:
-            db.session.execute(text("ALTER TABLE centri_costo_wood ADD COLUMN lead_time_esterno_giorni FLOAT"))
-            db.session.commit()
+        colonne_centri = {c['name'] for c in inspect(db.engine).get_columns('centri_costo_wood')}
+        for nome, ddl in [('lead_time_esterno_giorni', "ALTER TABLE centri_costo_wood ADD COLUMN lead_time_esterno_giorni FLOAT"),
+                           ('lead_time_esterno_manuale', "ALTER TABLE centri_costo_wood ADD COLUMN lead_time_esterno_manuale BOOLEAN DEFAULT 0"),
+                           ('lead_time_esterno_n_osservazioni', "ALTER TABLE centri_costo_wood ADD COLUMN lead_time_esterno_n_osservazioni INTEGER DEFAULT 0")]:
+            if nome not in colonne_centri:
+                db.session.execute(text(ddl))
+                db.session.commit()
+        colonne_ciclo = {c['name'] for c in inspect(db.engine).get_columns('ciclo_lavoro_wood')}
+        for nome, ddl in [('produttivita_oraria_manuale', "ALTER TABLE ciclo_lavoro_wood ADD COLUMN produttivita_oraria_manuale BOOLEAN DEFAULT 0"),
+                           ('produttivita_pezzi_osservati', "ALTER TABLE ciclo_lavoro_wood ADD COLUMN produttivita_pezzi_osservati INTEGER DEFAULT 0"),
+                           ('produttivita_minuti_osservati', "ALTER TABLE ciclo_lavoro_wood ADD COLUMN produttivita_minuti_osservati FLOAT DEFAULT 0")]:
+            if nome not in colonne_ciclo:
+                db.session.execute(text(ddl))
+                db.session.commit()
 
 class KanbanProdotto(db.Model):
     __tablename__ = "kanban_prodotti"

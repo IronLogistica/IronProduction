@@ -56,6 +56,14 @@
           <input id="cfg-fornitore" class="modal-input" type="text">
           <label class="modal-label" style="margin-top:6px">Tariffa esterna (€/h o €/pz)</label>
           <input id="cfg-tariffa-esterna" class="modal-input" type="number" step="0.01" min="0">
+          <label class="modal-label" style="margin-top:6px">Lead time fornitore (giorni)</label>
+          <input id="cfg-lead-time-esterno" class="modal-input" type="number" step="0.5" min="0"
+                 placeholder="es. 5 — usato dal Cruscotto KPI per la data di consegna stimata">
+          <label style="display:flex;align-items:center;gap:6px;font-size:11px;color:var(--text-dim);margin-top:6px"
+                 title="Se spuntato, il sistema non lo aggiorna da solo quando saranno tracciate le date reali di spedizione/rientro">
+            <input id="cfg-lead-time-manuale" type="checkbox" style="width:14px;height:14px"> 🔒 blocca (non aggiornare automaticamente)
+          </label>
+          <div id="cfg-lead-time-osservazioni" style="font-size:11px;color:var(--text-dim);margin-top:2px"></div>
         </div>
       </div>
 
@@ -250,6 +258,10 @@ async function caricaConfigurazioneCC(){
     document.getElementById('cfg-esterno-wrap').style.display = d.esterno ? 'block' : 'none';
     document.getElementById('cfg-fornitore').value = d.fornitore_esterno || '';
     document.getElementById('cfg-tariffa-esterna').value = d.tariffa_esterna ?? '';
+    document.getElementById('cfg-lead-time-esterno').value = d.lead_time_esterno_giorni ?? '';
+    document.getElementById('cfg-lead-time-manuale').checked = !!d.lead_time_esterno_manuale;
+    document.getElementById('cfg-lead-time-osservazioni').textContent = d.lead_time_esterno_n_osservazioni
+      ? `Auto-calcolato da ${d.lead_time_esterno_n_osservazioni} osservazioni.` : '';
     document.getElementById('cfg-driver').value = d.driver_attivita || 'ora_reparto';
     document.getElementById('cfg-n-risorse').value = d.n_risorse_equivalenti || 1;
     document.getElementById('cfg-periodo').value = d.periodo_riferimento || 'mensile';
@@ -303,6 +315,8 @@ async function salvaConfigurazioneCC(){
     escluso_da_monitor_produzione: document.getElementById('cfg-escluso-monitor').checked,
     fornitore_esterno: document.getElementById('cfg-fornitore').value.trim(),
     tariffa_esterna: document.getElementById('cfg-tariffa-esterna').value,
+    lead_time_esterno_giorni: document.getElementById('cfg-lead-time-esterno').value,
+    lead_time_esterno_manuale: document.getElementById('cfg-lead-time-manuale').checked,
     driver_attivita: document.getElementById('cfg-driver').value,
     n_risorse_equivalenti: document.getElementById('cfg-n-risorse').value,
     periodo_riferimento: document.getElementById('cfg-periodo').value,

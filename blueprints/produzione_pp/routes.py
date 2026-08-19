@@ -801,6 +801,18 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
                     varianza_tariffa_lavorazione=round(var_tariffa_lav, 4) if fase_congelata else 0,
                     varianza_tariffa_manodopera=round(var_tariffa_mdo, 4) if fase_congelata else 0,
                 ))
+
+                # Auto-apprendimento del tempo standard: media cumulativa
+                # pezzi/minuti osservati (non sovrascrive di colpo col dato
+                # di un solo evento, si stabilizza mano a mano che arrivano
+                # più consuntivi) — salta le righe che il capo ha bloccato
+                # a mano con produttivita_oraria_manuale.
+                if not riga_ciclo.produttivita_oraria_manuale and ore_reali > 0:
+                    riga_ciclo.produttivita_pezzi_osservati = (riga_ciclo.produttivita_pezzi_osservati or 0) + good
+                    riga_ciclo.produttivita_minuti_osservati = (riga_ciclo.produttivita_minuti_osservati or 0) + tempo
+                    if riga_ciclo.produttivita_minuti_osservati >= 15:  # almeno 15 minuti di storico prima di fidarsi
+                        riga_ciclo.produttivita_oraria = round(
+                            riga_ciclo.produttivita_pezzi_osservati / (riga_ciclo.produttivita_minuti_osservati / 60), 3)
         except Exception:
             pass  # nessuna varianza registrabile (fase non abbinabile) non deve bloccare il consuntivo
 

@@ -1536,6 +1536,9 @@ def api_centro_costo_configurazione(cid):
         'reparto_gruppo': c.reparto_gruppo, 'attivo': c.attivo,
         'escluso_da_monitor_produzione': c.escluso_da_monitor_produzione,
         'fornitore_esterno': c.fornitore_esterno, 'tariffa_esterna': c.tariffa_esterna,
+        'lead_time_esterno_giorni': c.lead_time_esterno_giorni,
+        'lead_time_esterno_manuale': bool(c.lead_time_esterno_manuale),
+        'lead_time_esterno_n_osservazioni': c.lead_time_esterno_n_osservazioni or 0,
         'driver_attivita': c.driver_attivita, 'n_risorse_equivalenti': c.n_risorse_equivalenti,
         'ore_teoriche_periodo': c.ore_teoriche_periodo, 'pct_efficienza': c.pct_efficienza,
         'periodo_riferimento': c.periodo_riferimento,
@@ -1576,6 +1579,13 @@ def api_centro_costo_configurazione_salva(cid):
             c.tariffa_esterna = float(v) if v not in (None, '') else None
             if c.tariffa_esterna is not None and c.tariffa_esterna < 0:
                 return jsonify({'errore': True, 'messaggio': 'La tariffa esterna non può essere negativa'}), 400
+        if 'lead_time_esterno_giorni' in d:
+            v = d.get('lead_time_esterno_giorni')
+            c.lead_time_esterno_giorni = float(v) if v not in (None, '') else None
+            if c.lead_time_esterno_giorni is not None and c.lead_time_esterno_giorni < 0:
+                return jsonify({'errore': True, 'messaggio': 'Il lead time non può essere negativo'}), 400
+        if 'lead_time_esterno_manuale' in d:
+            c.lead_time_esterno_manuale = bool(d['lead_time_esterno_manuale'])
         if 'driver_attivita' in d:
             driver = d.get('driver_attivita')
             if driver not in DRIVER_ATTIVITA_WOOD:
@@ -1677,6 +1687,8 @@ def _ciclo_riga(r):
         'centro_costo_nome': r.centro_costo.nome if r.centro_costo else '',
         'centro_costo_esterno': r.centro_costo.esterno if r.centro_costo else False,
         'produttivita_oraria': r.produttivita_oraria, 'scarto_max_pct': r.scarto_max_pct, 'note': r.note,
+        'produttivita_oraria_manuale': bool(r.produttivita_oraria_manuale),
+        'produttivita_pezzi_osservati': r.produttivita_pezzi_osservati or 0,
     }
 
 
@@ -1720,17 +1732,20 @@ def api_ciclo_lavoro_crea():
         return jsonify({'errore': True, 'messaggio': 'Lo scarto massimo deve essere un numero'}), 400
 
     esistente = CicloLavoroWood.query.filter_by(codice=codice, sequenza=sequenza).first()
+    manuale = bool(d.get('produttivita_oraria_manuale'))
     if esistente:
         # aggiorna la fase esistente invece di duplicarla (stesso codice+sequenza)
         esistente.centro_costo_id = centro_costo_id
         esistente.produttivita_oraria = produttivita
+        esistente.produttivita_oraria_manuale = manuale
         esistente.scarto_max_pct = scarto_max_pct
         esistente.note = (d.get('note') or '').strip()
         db.session.commit()
         return jsonify({'ok': True, 'id': esistente.id, 'aggiornata': True})
 
     r = CicloLavoroWood(codice=codice, sequenza=sequenza, centro_costo_id=centro_costo_id,
-                         produttivita_oraria=produttivita, scarto_max_pct=scarto_max_pct, note=(d.get('note') or '').strip())
+                         produttivita_oraria=produttivita, produttivita_oraria_manuale=manuale,
+                         scarto_max_pct=scarto_max_pct, note=(d.get('note') or '').strip())
     db.session.add(r)
     db.session.commit()
     return jsonify({'ok': True, 'id': r.id, 'aggiornata': False})
