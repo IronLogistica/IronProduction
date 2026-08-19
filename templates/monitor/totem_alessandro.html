@@ -68,15 +68,15 @@
   .doc-foto-grid{display:flex;flex-direction:column;gap:14px}
   #lista-foto img{width:100px;height:100px}
 
-  /* ── Monitor: griglia di macchine da scegliere, poi iframe a schermo pieno ── */
+  /* ── Ordini di Lavoro: griglia di macchine, poi card dei suoi OP inline (no iframe) ── */
   .macchine-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
   .macchina-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 10px;
                  text-align:center;font-size:14px;font-weight:700;color:var(--text);cursor:pointer}
   .macchina-card:active{background:rgba(30,111,165,.25)}
-  .monitor-iframe-wrap{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:200;display:none;flex-direction:column}
-  .monitor-iframe-wrap.aperto{display:flex}
-  .monitor-iframe-bar{flex-shrink:0;padding:10px 12px;background:var(--dark2);border-bottom:1px solid var(--border);display:flex;align-items:center}
-  .monitor-iframe-wrap iframe{flex:1;border:none;width:100%}
+  .ol-cards{display:flex;flex-direction:column;gap:12px;margin-top:14px}
+  .ol-card{background:var(--dark3);border:1px solid var(--border);border-radius:10px;padding:16px;box-shadow:var(--shadow)}
+  .ol-pct-bar{background:rgba(255,255,255,.08);border-radius:8px;height:10px;overflow:hidden;margin-top:8px}
+  .ol-pct-fill{background:linear-gradient(90deg,var(--accent2),var(--green));height:100%}
 </style>
 </head>
 <body>
@@ -88,8 +88,8 @@
   <button class="totem-tab" id="tab-documentazione" onclick="mostraPannello('documentazione')">
     <span class="ic">📚</span> Documentazione<br>Articolo
   </button>
-  <button class="totem-tab" id="tab-monitor" onclick="mostraPannello('monitor')">
-    <span class="ic">📺</span> Monitor<br>Macchine
+  <button class="totem-tab" id="tab-ordini" onclick="mostraPannello('ordini')">
+    <span class="ic">📋</span> Ordini<br>di Lavoro
   </button>
 </div>
 <div class="clock" id="clock"></div>
@@ -145,28 +145,33 @@
   </div>
 </div>
 
-<!-- ══════════════════════ PANNELLO 3 — MONITOR MACCHINE ══════════════════════ -->
-<div class="totem-panel" id="panel-monitor">
-  <div class="page-title">📺 Monitor — scegli la macchina</div>
-  {% if macchine %}
-  <div class="macchine-grid">
-    {% for m in macchine %}
-    <div class="macchina-card" onclick='apriMonitorMacchina({{ m.id }}, {{ m.nome|tojson }})'>{{ m.nome }}</div>
-    {% endfor %}
+<!-- ══════════════════════ PANNELLO 3 — ORDINI DI LAVORO PER CENTRO DI COSTO ══════════════════════ -->
+<div class="totem-panel" id="panel-ordini">
+  <div id="ordini-scelta-macchina">
+    <div class="page-title">📋 Ordini di Lavoro — scegli la macchina</div>
+    {% if macchine %}
+    <div class="macchine-grid">
+      {% for m in macchine %}
+      <div class="macchina-card" onclick='apriOrdiniLavoro({{ m.id }}, {{ m.nome|tojson }})'>{{ m.nome }}</div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">Nessuna macchina configurata.</p>
+    {% endif %}
   </div>
-  {% else %}
-  <p class="muted">Nessuna macchina configurata nel Monitor Produzione.</p>
-  {% endif %}
+
+  <div id="ordini-lista-wrap" style="display:none">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+      <button class="btn btn-ghost" onclick="chiudiOrdiniLavoro()">← Cambia macchina</button>
+      <div class="page-title" style="margin:0" id="ordini-titolo-macchina"></div>
+    </div>
+    <p class="muted" style="font-size:12px;margin-bottom:10px">
+      Una card per ogni commessa con operazioni su questa macchina. Tocca 🖨️ Stampa per aprire/stampare l'ordine di lavoro.
+    </p>
+    <div id="ordini-cards" class="ol-cards">Caricamento...</div>
+  </div>
 </div>
 
-<!-- Il Monitor si apre qui sopra a schermo pieno (stessa pagina, nessuna via d'uscita) -->
-<div class="monitor-iframe-wrap" id="monitor-iframe-wrap">
-  <div class="monitor-iframe-bar">
-    <button class="btn btn-ghost" onclick="chiudiMonitorMacchina()">← Cambia macchina</button>
-    <span id="monitor-iframe-titolo" style="margin-left:12px;font-weight:700"></span>
-  </div>
-  <iframe id="monitor-iframe" src=""></iframe>
-</div>
 
 <!-- ══ MODAL: ANTEPRIMA CARICO/SCARICO ══ -->
 <div class="modal-overlay" id="modal-anteprima">
@@ -471,18 +476,51 @@ async function eliminaFoto(id){
   caricaListaFoto();
 }
 
-// ═══════════════════════════ PANNELLO 3 — MONITOR MACCHINE ═══════════════════════════
-// Riusa la pagina Totem Live già esistente (centro di costo per centro di costo),
-// mostrata qui dentro a schermo pieno: da lì Alessandro può solo tornare a
-// "Cambia macchina", non uscire dal totem.
-function apriMonitorMacchina(cid, nome){
-  document.getElementById('monitor-iframe-titolo').textContent = nome;
-  document.getElementById('monitor-iframe').src = '/totem/macchina/' + cid;
-  document.getElementById('monitor-iframe-wrap').classList.add('aperto');
+// ═══════════════════════════ PANNELLO 3 — ORDINI DI LAVORO PER CENTRO DI COSTO ═══════════════════════════
+// Stessa API/card della pagina "Ordine Lavoro <macchina>" usata dall'ufficio
+// (/liste-lavoro/<cid>), ma renderizzata qui dentro — niente iframe, niente
+// pagina con sidebar: da qui Alessandro vede solo le card di questa macchina
+// e stampa/apre l'ordine di lavoro in una scheda a parte.
+let _centroOrdiniAttivo = null;
+
+function apriOrdiniLavoro(cid, nome){
+  _centroOrdiniAttivo = cid;
+  document.getElementById('ordini-titolo-macchina').textContent = nome;
+  document.getElementById('ordini-scelta-macchina').style.display = 'none';
+  document.getElementById('ordini-lista-wrap').style.display = '';
+  caricaOrdiniLavoro();
 }
-function chiudiMonitorMacchina(){
-  document.getElementById('monitor-iframe-wrap').classList.remove('aperto');
-  document.getElementById('monitor-iframe').src = '';
+function chiudiOrdiniLavoro(){
+  document.getElementById('ordini-lista-wrap').style.display = 'none';
+  document.getElementById('ordini-scelta-macchina').style.display = '';
+}
+
+async function caricaOrdiniLavoro(){
+  const box = document.getElementById('ordini-cards');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/liste-lavoro/' + _centroOrdiniAttivo);
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p class="muted" style="font-style:italic">Nessuna commessa con operazioni su questa macchina in corso.</p>'; return; }
+    box.innerHTML = righe.map(o => {
+      const pct = o.totale_pz > 0 ? Math.round((o.pz_effettuati / o.totale_pz) * 100) : 0;
+      const bordo = o.residuo_pz === 0 ? 'var(--green)' : (pct > 0 ? 'var(--accent2)' : 'var(--accent)');
+      return `<div class="ol-card" style="border-left:4px solid ${bordo}">
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:2px">${o.op_codice} · ${o.commessa||'—'} · ${o.stato}</div>
+        <div style="font-size:22px;font-weight:800;color:#e0eefc;margin-bottom:8px">${o.codice_articolo}</div>
+        <div style="display:flex;justify-content:space-between;text-align:center;margin-bottom:6px">
+          <div><div style="font-size:20px;font-weight:800">${o.totale_pz}</div><div style="font-size:10px;color:var(--text-dim)">PEZZI TOTALI</div></div>
+          <div><div style="font-size:20px;font-weight:800;color:#5debb0">${o.pz_effettuati}</div><div style="font-size:10px;color:var(--text-dim)">EFFETTUATI</div></div>
+          <div><div style="font-size:20px;font-weight:800;color:${o.residuo_pz>0?'var(--orange)':'#5debb0'}">${o.residuo_pz}</div><div style="font-size:10px;color:var(--text-dim)">SALDO</div></div>
+        </div>
+        <div class="ol-pct-bar"><div class="ol-pct-fill" style="width:${pct}%"></div></div>
+        <button onclick="window.open('/ordini-produzione/${o.op_codice}/lista-lavoro/${_centroOrdiniAttivo}?stampa=1','_blank')"
+                class="btn btn-primary" style="margin-top:12px;width:100%;justify-content:center">🖨️ Apri / Stampa ordine di lavoro</button>
+      </div>`;
+    }).join('');
+  }catch(e){
+    box.innerHTML = '<p style="color:#f07070">❌ Errore di rete durante il caricamento.</p>';
+  }
 }
 </script>
 </body>
