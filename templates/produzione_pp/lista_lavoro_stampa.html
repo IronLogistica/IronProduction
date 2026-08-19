@@ -100,7 +100,10 @@
     </div>
   </div>
 
+  {% set centri_senza_controllo_materiale = ['pressopiegatrice', 'punzonatrice', 'satinatrice', 'trapani', 'sgolatrice'] %}
+  {% set mostra_controllo_materiale = centro.nome.strip().lower() not in centri_senza_controllo_materiale %}
   {% for g in dati.gruppi %}
+  {% if mostra_controllo_materiale %}
   <table class="materiale-info">
     <thead><tr><th>Materiale</th>{% if g.ha_barra %}<th>Nr Barre</th>{% endif %}<th>Quantità necessaria</th><th>Controllo Materiale</th><th>Note</th></tr></thead>
     <tbody>
@@ -113,7 +116,7 @@
       </tr>
     </tbody>
   </table>
-
+  {% endif %}
   <div class="gruppo-titolo">Ordine Lavoro {{ centro.nome }}: <b>{{ g.materiale }}</b>{% if g.ha_barra and g.righe[0].lunghezza_barra_mm %} — barra da {{ (g.righe[0].lunghezza_barra_mm/1000)|round(2) }} METRI{% endif %}</div>
   <table class="lavoro">
     <thead><tr>
