@@ -1000,6 +1000,43 @@ def api_giacenza_lista():
     })
 
 
+@magazzino_bp.route('/api/giacenza_wood/<codice>/impegni-op')
+def api_giacenza_impegni_op(codice):
+    """
+    Per un codice specifico: QUALI Ordini di Produzione aperti generano
+    l'"Impegnato OP" mostrato nella pagina Materiali, e quanto ciascuno —
+    stesso popup pattern già presente in MasterLogistic-WMS per gli Impegni
+    Clienti, qui applicato agli OP invece che agli ordini di vendita.
+    Ripete la STESSA simulazione priorità-based di _giacenza_residua_dopo_impegni
+    (stessa giacenza condivisa, consumata in ordine di priorità), ma invece
+    di buttare via il dettaglio per-OP (che quella funzione scarta), lo
+    tiene: per ogni OP che tocca questo codice nella sua esplosione di
+    distinta, quanto ne ha effettivamente consumato dalla giacenza
+    (net_usato) prima che passasse al successivo.
+    """
+    codice = codice.strip()
+    giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
+    op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
+                 .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+    mappa = _carica_mappa_distinta_base_wood()
+    righe = []
+    for op in op_aperti:
+        saldo = (op.qta_pianificata or 0) - (op.qta_buona or 0)
+        if saldo <= 0:
+            continue
+        out = {}
+        _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua, out, mappa=mappa)
+        tocco = out.get(codice)
+        if tocco and tocco['usato'] > 0:
+            righe.append({
+                'op_code': op.codice, 'codice_articolo': op.codice_articolo,
+                'commessa': op.commessa or '', 'priorita': op.priorita,
+                'stato': op.stato, 'consumato': round(tocco['usato'], 4),
+            })
+    return jsonify(ok=True, codice=codice, impegni=righe,
+                    totale=round(sum(r['consumato'] for r in righe), 4))
+
+
 @magazzino_bp.route('/api/giacenza_wood/<codice>/scorta_minima', methods=['PUT'])
 def api_giacenza_scorta_minima(codice):
     d = request.get_json(force=True)
