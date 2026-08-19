@@ -1272,14 +1272,25 @@ GRUPPI_DEFAULT = [
 ]
 
 def get_kanban_gruppi():
+    """
+    Gruppi Kanban per la sidebar — mostrata in OGNI pagina di tutto il
+    programma (context_processor in app.py), quindi il costo di questa
+    funzione si paga a ogni click, non solo sulle pagine Kanban. Prima
+    faceva una query .count() per OGNI gruppo (N+1): con G gruppi erano
+    1+G query ad ogni cambio pagina in tutta l'app — probabile causa
+    principale della lentezza generale nel passare da una sezione
+    all'altra. Ora è sempre 2 query totali, indipendentemente da quanti
+    gruppi ci sono.
+    """
     gruppi = KanbanGruppo.query.order_by(KanbanGruppo.sort_order, KanbanGruppo.label).all()
+    conteggi = dict(
+        db.session.query(KanbanProdotto.sheet_key, db.func.count(KanbanProdotto.id))
+        .group_by(KanbanProdotto.sheet_key).all()
+    )
     result = []
     for g in gruppi:
         sheet_k = g.url_key.replace('_', ' ')
-        n = KanbanProdotto.query.filter(
-            db.or_(KanbanProdotto.sheet_key == sheet_k,
-                   KanbanProdotto.sheet_key == g.url_key)
-        ).count()
+        n = conteggi.get(sheet_k, 0) + (conteggi.get(g.url_key, 0) if g.url_key != sheet_k else 0)
         result.append({'id': g.id, 'label': g.label, 'icona': g.icona,
                        'url_key': g.url_key, 'n_prodotti': n})
     return result
