@@ -1071,6 +1071,38 @@ def api_diagnostica_esplosione_op(op_code):
                     qta_pianificata=o.qta_pianificata, qta_buona=o.qta_buona, saldo_op=saldo, nodi=nodi)
 
 
+@magazzino_bp.route('/api/distinta-base-wood/<codice_padre>/righe-grezze')
+def api_distinta_righe_grezze(codice_padre):
+    """
+    Righe GREZZE di DistintaBaseWood per un codice_padre, così come sono
+    salvate — nessuna esplosione, nessun netting, solo quello che c'è
+    scritto nel database. Con un parametro ?profondita=N (default 2) scende
+    anche nei figli, per vedere se lo STESSO codice compare come figlio di
+    PIÙ padri diversi lungo l'albero (possibile, per via del vincolo di
+    unicità su codice_padre+codice_figlio: non può essere una riga
+    duplicata, ma può essere raggiunto da due punti diversi dell'albero —
+    doppio conteggio nel fabbisogno se i due percorsi non sono davvero
+    entrambi reali).
+    """
+    profondita_max = min(int(request.args.get('profondita', 2)), 4)
+
+    def esplora(padre, liv):
+        righe = DistintaBaseWood.query.filter_by(codice_padre=padre).order_by(DistintaBaseWood.id).all()
+        out = []
+        for r in righe:
+            riga = {
+                'id': r.id, 'codice_figlio': r.codice_figlio, 'quantita': r.quantita, 'livello': r.livello,
+                'gruppo_alternativa': r.gruppo_alternativa, 'preferita': r.preferita, 'note': r.note or '',
+            }
+            if liv < profondita_max:
+                riga['figli'] = esplora(r.codice_figlio, liv + 1)
+            out.append(riga)
+        return out
+
+    albero = esplora(codice_padre.strip(), 0)
+    return jsonify(ok=True, codice_padre=codice_padre.strip(), albero=albero)
+
+
 @magazzino_bp.route('/api/giacenza_wood/<codice>/scorta_minima', methods=['PUT'])
 def api_giacenza_scorta_minima(codice):
     d = request.get_json(force=True)

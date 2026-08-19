@@ -60,6 +60,18 @@
       <button class="btn btn-primary" style="padding:7px 14px;font-size:12px" onclick="caricaDiagnosticaEsplosione()">🔎 Mostra albero</button>
     </div>
     <div id="diag-esp-risultato" style="margin-top:14px"></div>
+
+    <hr style="border-color:var(--border);margin:18px 0">
+    <p style="font-size:12px;color:var(--text-dim);margin:0 0 10px">
+      <b>Righe grezze della distinta base</b> — l'albero così come salvato nel database, nessuna elaborazione.
+      Se lo stesso codice compare evidenziato in giallo più di una volta nell'albero, vuol dire che viene
+      raggiunto da più di un percorso — possibile causa di doppio conteggio nel fabbisogno.
+    </p>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="diag-bom-codice" type="text" placeholder="Codice padre (es. S-14)" style="padding:7px 9px;border-radius:6px;border:1px solid var(--border);width:220px">
+      <button class="btn btn-primary" style="padding:7px 14px;font-size:12px" onclick="caricaRigheGrezzeBom()">🔎 Mostra righe grezze</button>
+    </div>
+    <div id="diag-bom-risultato" style="margin-top:14px;font-size:12px"></div>
   </div>
 </div>
 
@@ -151,6 +163,42 @@ async function caricaDiagnosticaEsplosione(){
       <div style="overflow-x:auto"><table class="kanban-table"><thead><tr>
         <th>Codice</th><th>Fabbisogno</th><th>Usato da giacenza</th><th>Sceso sotto (mancante)</th><th>Giacenza reale ora nel DB</th>
       </tr></thead><tbody>${righe}</tbody></table></div>`;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+async function caricaRigheGrezzeBom(){
+  const codice = document.getElementById('diag-bom-codice').value.trim();
+  const box = document.getElementById('diag-bom-risultato');
+  if(!codice){ alert('Inserisci un codice padre.'); return; }
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch(`/api/distinta-base-wood/${encodeURIComponent(codice)}/righe-grezze?profondita=3`);
+    const d = await r.json();
+    if(!d.ok){ box.innerHTML = `<p style="color:#c0392b">⚠️ ${d.error||'errore'}</p>`; return; }
+
+    // Conta quante volte compare ogni codice_figlio in TUTTO l'albero, per evidenziare i percorsi multipli
+    const conteggio = {};
+    (function conta(nodi){
+      (nodi||[]).forEach(n => { conteggio[n.codice_figlio] = (conteggio[n.codice_figlio]||0) + 1; conta(n.figli); });
+    })(d.albero);
+
+    function renderAlbero(nodi, indent){
+      if(!nodi || !nodi.length) return '';
+      return '<ul style="list-style:none;margin:0;padding-left:' + (indent?18:0) + 'px">' + nodi.map(n => {
+        const duplicato = conteggio[n.codice_figlio] > 1;
+        const altBadge = n.gruppo_alternativa ? ` <span style="font-size:9px;color:var(--text-dim)">[alt: ${esc(n.gruppo_alternativa)}${n.preferita?' • PREFERITA':''}]</span>` : '';
+        return `<li style="padding:3px 0">
+          <span class="codice" style="${duplicato?'background:rgba(230,184,0,.25);padding:1px 5px;border-radius:4px;font-weight:700':''}">${esc(n.codice_figlio)}</span>
+          <span style="color:var(--text-dim);font-size:11px"> × ${n.quantita}</span>${altBadge}
+          ${duplicato?`<span style="color:#e6b800;font-size:10px;font-weight:700"> ⚠️ compare ${conteggio[n.codice_figlio]} volte nell'albero</span>`:''}
+          ${renderAlbero(n.figli, 1)}
+        </li>`;
+      }).join('') + '</ul>';
+    }
+
+    box.innerHTML = `<div><b class="codice">${esc(d.codice_padre)}</b></div>` + renderAlbero(d.albero, 0);
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
   }
