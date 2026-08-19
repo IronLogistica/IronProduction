@@ -100,7 +100,7 @@
     </div>
   </div>
 
-  {% set centri_senza_controllo_materiale = ['pressopiegatrice', 'punzonatrice', 'satinatrice', 'trapani', 'sgolatrice'] %}
+  {% set centri_senza_controllo_materiale = ['pressopiegatrice', 'punzonatrice', 'satinatrice', 'trapani', 'sgolatrice', 'saldatura'] %}
   {% set mostra_controllo_materiale = centro.nome.strip().lower() not in centri_senza_controllo_materiale %}
   {% for g in dati.gruppi %}
   {% if mostra_controllo_materiale %}
