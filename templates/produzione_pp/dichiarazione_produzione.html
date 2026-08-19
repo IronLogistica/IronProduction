@@ -63,6 +63,19 @@
     </p>
     <button class="btn btn-primary" style="padding:7px 14px;font-size:12px" onclick="caricaDiagnosticaBugFasi()">🔎 Cerca OP colpiti</button>
     <div id="diagnostica-bug-fasi-risultato" style="margin-top:14px"></div>
+
+    <hr style="border-color:var(--border);margin:18px 0">
+    <p style="font-size:12px;color:var(--text-dim);margin:0 0 10px">
+      <b>Diagnostica grezza per un singolo OP</b> — mostra ogni dichiarazione registrata con la sua fase
+      ESATTA (senza nessuna elaborazione), affiancata all'elenco di tutti i centri di costo col loro nome
+      esatto. Utile per verificare a colpo d'occhio se una dichiarazione fatta su un centro sta comparendo
+      con la fase di un ALTRO centro — se càpita, il confronto carattere per carattere lo mostra subito.
+    </p>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="diag-op-code" type="text" placeholder="Codice OP (es. OP-2026-000004)" style="padding:7px 9px;border-radius:6px;border:1px solid var(--border);width:220px">
+      <button class="btn btn-primary" style="padding:7px 14px;font-size:12px" onclick="caricaDiagnosticaFasiOp()">🔎 Mostra dati grezzi</button>
+    </div>
+    <div id="diagnostica-fasi-op-risultato" style="margin-top:14px"></div>
   </div>
 </div>
 
@@ -486,6 +499,34 @@ async function azzeraMovimentiBugFasi(){
   if(!d.ok){ alert('⚠️ ' + d.error); return; }
   alert(`✓ Eliminati ${d.eliminati} movimenti di magazzino.`);
   caricaDiagnosticaBugFasi();
+}
+
+async function caricaDiagnosticaFasiOp(){
+  const opCode = document.getElementById('diag-op-code').value.trim();
+  const box = document.getElementById('diagnostica-fasi-op-risultato');
+  if(!opCode){ alert('Inserisci un codice OP.'); return; }
+  box.innerHTML = 'Caricamento...';
+  const r = await fetch(`/api/dichiarazione-produzione/diagnostica-fasi-op/${encodeURIComponent(opCode)}`);
+  const d = await r.json();
+  if(!d.ok){ box.innerHTML = `<p style="color:#c0392b">⚠️ ${d.error||'errore'}</p>`; return; }
+  const righeEventi = d.eventi.length
+    ? d.eventi.map(e => `<tr><td>${e.timestamp}</td><td class="codice" style="font-weight:700">"${e.fase_esatta}"</td>` +
+        `<td>${e.componente ? `"${e.componente}"` : '<i>NULL (prodotto finito)</i>'}</td>` +
+        `<td>${e.pezzi_buoni}</td><td>${e.pezzi_scarto}</td></tr>`).join('')
+    : '<tr><td colspan="5" style="color:#aaa;font-style:italic">Nessuna dichiarazione per questo OP.</td></tr>';
+  const righeCentri = d.centri.map(c => `<tr><td>${c.id}</td><td class="codice">"${c.nome_esatto}"</td></tr>`).join('');
+  box.innerHTML = `
+    <p style="font-size:12px;margin-bottom:10px"><b>${d.op_code}</b> — ${d.codice_articolo} — stato: ${d.stato} — qta_buona: ${d.qta_buona}</p>
+    <div style="display:flex;gap:16px;flex-wrap:wrap">
+      <div style="flex:2;min-width:320px">
+        <div style="font-weight:700;font-size:12px;margin-bottom:6px">Dichiarazioni registrate (fase esatta come salvata)</div>
+        <div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Quando</th><th>Fase</th><th>Componente</th><th>Buoni</th><th>Scarto</th></tr></thead><tbody>${righeEventi}</tbody></table></div>
+      </div>
+      <div style="flex:1;min-width:200px">
+        <div style="font-weight:700;font-size:12px;margin-bottom:6px">Centri di costo (nome esatto)</div>
+        <div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>ID</th><th>Nome</th></tr></thead><tbody>${righeCentri}</tbody></table></div>
+      </div>
+    </div>`;
 }
 
 caricaCentri();

@@ -1641,6 +1641,32 @@ def api_dichiarazione_centri():
     return jsonify([{'id': c.id, 'nome': c.nome} for c in centri])
 
 
+@pp_bp.get('/api/dichiarazione-produzione/diagnostica-fasi-op/<path:op_code>')
+def api_diagnostica_fasi_op(op_code):
+    """
+    Diagnostica GREZZA per un OP: ogni EventoConsuntivoPP registrato per
+    quell'OP con la sua 'fase' esatta (stringa così com'è nel database,
+    senza nessuna elaborazione), più l'elenco di tutti i Centri di Costo
+    (id, nome esatto). Serve per beccare sul fatto un caso in cui
+    dichiarare su un centro sembra far salire 'Fatti' anche su un altro —
+    se càpita di nuovo, questa pagina mostra la fase ESATTA con cui è stato
+    salvato ogni evento, per confrontarla carattere per carattere col nome
+    del centro su cui si pensava di dichiarare.
+    """
+    o = OrdineProduzione.query.filter_by(codice=op_code.strip()).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+    eventi = (EventoConsuntivoPP.query.filter_by(op_code=o.codice)
+              .order_by(EventoConsuntivoPP.timestamp_evento.desc()).all())
+    centri = CentroCostoWood.query.order_by(CentroCostoWood.nome).all()
+    return jsonify(ok=True,
+        op_code=o.codice, codice_articolo=o.codice_articolo, qta_buona=o.qta_buona, stato=o.stato,
+        eventi=[{'id': e.id, 'fase_esatta': e.fase, 'componente': e.componente,
+                 'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto,
+                 'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M:%S')} for e in eventi],
+        centri=[{'id': c.id, 'nome_esatto': c.nome} for c in centri])
+
+
 @pp_bp.get('/api/dichiarazione-produzione/<int:cid>/op-aperti')
 def api_dichiarazione_op_aperti(cid):
     """
