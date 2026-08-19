@@ -332,12 +332,20 @@ def index(url_key):
     # op_per_sku/lav_per_sku sono UNA query sola in tutto, condivisa da
     # tutti i prodotti — prima erano 2-3 query per OGNI prodotto (N+1),
     # il motivo principale per cui la board era lenta.
+    #
+    # 'Finiti IS' NON viene più aggiornato da WMS qui: anche con la cache
+    # di 3 minuti, ogni volta che scadeva la board tornava a fare fino a N
+    # chiamate HTTP sequenziali a WMS, bastava un attimo di lentezza della
+    # rete o di WMS per sembrare bloccata ('non funziona'). Ora la board
+    # apre SEMPRE istantanea con l'ultimo valore salvato — l'aggiornamento
+    # da WMS è un'azione a parte (pulsante '🔄 Aggiorna stock WMS' o la
+    # risincronizzazione su singola scheda), mai qualcosa che blocca la
+    # navigazione normale.
     op_per_sku = _mappa_op_per_sku()
     lav_per_sku = _mappa_lavorazioni_terzisti_per_sku()
     for p in prodotti:
         _aggiorna_residuo_produzione(p, op_per_sku)
         _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku)
-        _aggiorna_finiti_is_da_wms(p)
     db.session.commit()
 
     tot    = len(prodotti)
@@ -544,6 +552,36 @@ def api_risincronizza_wms(kid):
         f'riservato={p.riservato}, finiti_is={p.finiti_is}, in_prod={p.in_prod}')
     db.session.commit()
     return jsonify({'ok': True, **kanban_to_dict(p)})
+
+
+@kanban_bp.route('/api/kanban/sincronizza-wms-tutti', methods=['POST'])
+def api_sincronizza_wms_tutti():
+    """
+    Aggiorna 'Finiti IS' da MasterLogistic-WMS per TUTTI i prodotti di una
+    board (o di tutte, se sheet_key non passato) — azione ESPLICITA
+    richiamata dal pulsante '🔄 Aggiorna stock WMS', mai dal caricamento
+    normale della pagina (vedi index(): la board apre sempre istantanea
+    con l'ultimo valore salvato, WMS non deve mai bloccare la navigazione).
+    Qui invece l'utente ha scelto consapevolmente di aspettare, quindi le
+    chiamate WMS si possono fare — restano comunque soggette alla cache di
+    FINITI_IS_TTL_SECONDI, per non richiamare WMS su un prodotto già
+    aggiornato pochi minuti fa.
+    """
+    sheet_key = request.args.get('sheet_key', '')
+    q = KanbanProdotto.query
+    if sheet_key:
+        q = q.filter(db.or_(KanbanProdotto.sheet_key == sheet_key,
+                             KanbanProdotto.sheet_key == sheet_key.replace('_', ' ')))
+    prodotti = q.all()
+    aggiornati = 0
+    for p in prodotti:
+        prima = p.finiti_is
+        _aggiorna_finiti_is_da_wms(p)
+        if p.finiti_is != prima:
+            aggiornati += 1
+    db.session.commit()
+    log(f'Kanban: sincronizzazione WMS massiva — {aggiornati}/{len(prodotti)} prodotti aggiornati')
+    return jsonify({'ok': True, 'totale': len(prodotti), 'aggiornati': aggiornati})
 
 @kanban_bp.route('/api/kanban', methods=['POST'])
 def api_crea():

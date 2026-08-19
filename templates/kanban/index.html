@@ -6,6 +6,7 @@
   <div class="page-title">{{ info.icona }} {{ info.label }}</div>
   <input class="search-box" type="text" placeholder="🔍 Cerca prodotto..." oninput="filterTable(this.value)">
   <button class="btn btn-success" onclick="openModalCreaKanban('{{ sheet_key }}')">➕ Nuovo Kanban</button>
+  <button class="btn btn-ghost" id="btn-sync-wms" onclick="sincronizzaWmsTutti()">🔄 Aggiorna stock WMS</button>
   <button class="btn btn-primary" onclick="showToast('💾 Modifiche salvate automaticamente nel DB')">💾 Salvato</button>
 </div>
 
@@ -626,6 +627,28 @@
 {% endblock %}
 
 {% block scripts %}
+function sincronizzaWmsTutti() {
+  const btn = document.getElementById('btn-sync-wms');
+  const testoOrig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Aggiorno da WMS...';
+  fetch(`/api/kanban/sincronizza-wms-tutti?sheet_key=${encodeURIComponent('{{ sheet_key }}')}`, {method: 'POST'})
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        showToast(`✅ Stock aggiornato — ${d.aggiornati}/${d.totale} prodotti cambiati`);
+        setTimeout(() => location.reload(), 900);
+      } else {
+        showToast('❌ Errore durante la sincronizzazione', true);
+        btn.disabled = false; btn.textContent = testoOrig;
+      }
+    })
+    .catch(() => {
+      showToast('❌ Errore di rete', true);
+      btn.disabled = false; btn.textContent = testoOrig;
+    });
+}
+
 // ── Edit inline ──────────────────────────────────────────────────────────────
 document.querySelectorAll('td.editable').forEach(td => {
   td.addEventListener('click', function() {
