@@ -19,7 +19,7 @@
   h1{text-align:center;font-size:22px;font-weight:900;letter-spacing:1px;margin-bottom:50px;text-transform:uppercase}
 
   .hdr-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:18px}
-  .hdr-box{border:1px solid #222}
+  .hdr-box{border:1px solid #222;display:flex;flex-direction:column}
   .hdr-box .lbl{background:#f0f3f7;padding:5px 10px;font-size:11px;font-weight:700;border-bottom:1px solid #222}
   .hdr-box .val{padding:10px;font-size:15px;font-weight:800}
   .hdr-box .val.big{font-size:26px}
@@ -27,8 +27,12 @@
   .hdr-row{display:flex}
   .hdr-row > div{flex:1;border-right:1px solid #222}
   .hdr-row > div:last-child{border-right:none}
+  .foto-mini{flex:1;min-height:0;display:flex;align-items:center;justify-content:center;
+             padding:6px;border-top:1px solid #222;overflow:hidden}
+  .foto-mini img{max-width:100%;max-height:100%;object-fit:contain}
+  .foto-mini .no-foto{font-size:10px;color:#999;text-align:center}
 
-  table.lavoro{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:4px}
+  table.lavoro{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:4px;table-layout:fixed}
   table.lavoro th{background:#e3e7eb;text-align:center;padding:6px 4px;font-size:10px;font-weight:800;border:1px solid #222}
   table.lavoro td{padding:6px 4px;text-align:center;border:1px solid #222}
   table.lavoro td.check{width:26px}
@@ -38,7 +42,7 @@
 
   .gruppo-titolo{font-weight:800;font-size:13px;margin:18px 0 6px}
 
-  table.materiale-info{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:6px}
+  table.materiale-info{width:100%;border-collapse:collapse;font-size:11px;margin-bottom:6px;table-layout:fixed}
   table.materiale-info th{background:#f0f3f7;padding:5px;border:1px solid var(--border);font-size:10px}
   table.materiale-info td{padding:5px;border:1px solid var(--border);text-align:center}
   .stato-ok{color:#1a7a3c;font-weight:700}
@@ -92,10 +96,14 @@
       </div>
     </div>
     <div class="hdr-box">
-      <div class="lbl">Titolo Commessa / Lavoro</div>
-      <div class="hdr-row">
-        <div><div class="lbl">Nr Commessa</div><div class="val giallo">{{ dati.commessa or '—' }}</div></div>
-        <div><div class="lbl">Data</div><div class="val">{{ dati.data_inizio or '—' }}</div></div>
+      <div class="lbl">Nr Commessa</div>
+      <div class="val giallo">{{ dati.commessa or '—' }}</div>
+      <div class="foto-mini">
+        {% if dati.foto_id %}
+        <img src="/api/foto_articolo/file/{{ dati.foto_id }}" alt="Foto {{ dati.codice_articolo }}">
+        {% else %}
+        <span class="no-foto">Nessuna foto disponibile</span>
+        {% endif %}
       </div>
     </div>
   </div>
@@ -103,14 +111,42 @@
   {% set centri_senza_controllo_materiale = ['pressopiegatrice', 'punzonatrice', 'satinatrice', 'trapani', 'sgolatrice', 'saldatura'] %}
   {% set mostra_controllo_materiale = centro.nome.strip().lower() not in centri_senza_controllo_materiale %}
   {% set e_saldatura = centro.nome.strip().lower() == 'saldatura' %}
+  {# Colonne calcolate UNA VOLTA sull'intero documento (non per singolo gruppo)
+     così ogni tabella "Ordine Lavoro" condivide esattamente le stesse colonne
+     e le stesse larghezze — prima si usava g.ha_barra (per gruppo), che poteva
+     differire da un materiale all'altro e disallineava le tabelle. #}
+  {% set n_col_extra = 1 + (0 if e_saldatura else 1) + (4 if dati.ha_barra else 0)
+                        + (3 if dati.ha_piega else 0) + (1 if dati.ha_rullo else 0)
+                        + (1 if dati.ha_satinatura else 0) + 3 %}
+  {% set col_pct = (95 / n_col_extra)|round(3) %}
+  {% set colgroup_lavoro %}
+    <col style="width:5%">
+    <col style="width:{{ col_pct }}%">
+    {% if not e_saldatura %}<col style="width:{{ col_pct }}%">{% endif %}
+    {% if dati.ha_barra %}<col style="width:{{ col_pct }}%"><col style="width:{{ col_pct }}%">{% endif %}
+    {% if dati.ha_piega %}<col style="width:{{ col_pct }}%"><col style="width:{{ col_pct }}%"><col style="width:{{ col_pct }}%">{% endif %}
+    {% if dati.ha_rullo %}<col style="width:{{ col_pct }}%">{% endif %}
+    {% if dati.ha_satinatura %}<col style="width:{{ col_pct }}%">{% endif %}
+    <col style="width:{{ col_pct }}%"><col style="width:{{ col_pct }}%"><col style="width:{{ col_pct }}%">
+    {% if dati.ha_barra %}<col style="width:{{ col_pct }}%"><col style="width:{{ col_pct }}%">{% endif %}
+  {% endset %}
+  {% set n_col_materiale = 2 + (1 if dati.ha_barra else 0) %}
+  {% set col_pct_materiale = (100 / n_col_materiale)|round(3) %}
   {% for g in dati.gruppi %}
   {% if mostra_controllo_materiale %}
   <table class="materiale-info">
-    <thead><tr><th>Materiale</th>{% if g.ha_barra %}<th>Nr Barre</th>{% endif %}<th>Quantità necessaria</th><th>Controllo Materiale</th><th>Note</th></tr></thead>
+    <colgroup>
+      <col style="width:{{ col_pct_materiale }}%">
+      {% if dati.ha_barra %}<col style="width:{{ col_pct_materiale }}%">{% endif %}
+      <col style="width:{{ col_pct_materiale }}%">
+      <col style="width:{{ col_pct_materiale }}%">
+      <col style="width:{{ col_pct_materiale }}%">
+    </colgroup>
+    <thead><tr><th>Materiale</th>{% if dati.ha_barra %}<th>Nr Barre</th>{% endif %}<th>Quantità necessaria</th><th>Controllo Materiale</th><th>Note</th></tr></thead>
     <tbody>
       <tr>
         <td>{{ g.materiale }}</td>
-        {% if g.ha_barra %}<td>{{ g.nr_barre_totale }}</td>{% endif %}
+        {% if dati.ha_barra %}<td>{{ g.nr_barre_totale }}</td>{% endif %}
         <td>{{ g.quantita_necessaria }} {{ g.unita_misura }}</td>
         <td class="stato-{{ 'ok' if g.stato_materiale.stato=='disponibile' else ('ordinato' if g.stato_materiale.stato=='ordinato' else 'mancante') }}">{{ g.stato_materiale.label }}</td>
         <td>-</td>
@@ -126,14 +162,15 @@
   <div class="gruppo-titolo">Ordine Lavoro {{ centro.nome }}: <b>{{ g.materiale }}</b>{% if g.ha_barra and g.righe[0].lunghezza_barra_mm %} — barra da {{ (g.righe[0].lunghezza_barra_mm/1000)|round(2) }} METRI{% endif %}</div>
   {% endif %}
   <table class="lavoro">
+    <colgroup>{{ colgroup_lavoro }}</colgroup>
     <thead><tr>
       <th class="check">Check</th><th>Codice</th>{% if not e_saldatura %}<th>Materiale</th>{% endif %}
-      {% if g.ha_barra %}<th>Misura (mm)</th><th>Spessore (mm)</th>{% endif %}
+      {% if dati.ha_barra %}<th>Misura (mm)</th><th>Spessore (mm)</th>{% endif %}
       {% if dati.ha_piega %}<th>Matrice</th><th>Punto 0</th><th>Indice ass.</th>{% endif %}
       {% if dati.ha_rullo %}<th>Rullo</th>{% endif %}
       {% if dati.ha_satinatura %}<th>Satinatura</th>{% endif %}
       <th>Pz da fare</th><th>Fatti</th><th>Saldo</th>
-      {% if g.ha_barra %}<th>Pz x Barra</th><th>Nr Barre</th>{% endif %}
+      {% if dati.ha_barra %}<th>Pz x Barra</th><th>Nr Barre</th>{% endif %}
     </tr></thead>
     <tbody>
       {% for r in g.righe %}
@@ -141,25 +178,25 @@
         <td class="check">☐</td>
         <td class="codice-cell">{{ r.codice }}</td>
         {% if not e_saldatura %}<td>{{ r.materiale }}</td>{% endif %}
-        {% if g.ha_barra %}<td>{{ r.misura }}</td><td>{{ r.spessore_mm or '—' }}</td>{% endif %}
+        {% if dati.ha_barra %}<td>{{ r.misura }}</td><td>{{ r.spessore_mm or '—' }}</td>{% endif %}
         {% if dati.ha_piega %}<td>{{ r.matrice }}</td><td>{{ r.punto_zero }}</td><td>{{ r.indice_assorbimento }}</td>{% endif %}
         {% if dati.ha_rullo %}<td>{{ r.rullo }}</td>{% endif %}
         {% if dati.ha_satinatura %}<td>{{ r.impostazione_satinatrice }}</td>{% endif %}
         <td>{{ r.nr_pz_da_fare }}</td>
         <td>{{ r.pezzi_fatti }}</td>
         <td>{{ r.saldo }}</td>
-        {% if g.ha_barra %}<td>{{ r.pz_per_barra or '—' }}</td><td>{{ r.nr_barre if r.nr_barre is not none else '—' }}</td>{% endif %}
+        {% if dati.ha_barra %}<td>{{ r.pz_per_barra or '—' }}</td><td>{{ r.nr_barre if r.nr_barre is not none else '—' }}</td>{% endif %}
       </tr>
       {% if r.nota %}<tr><td></td><td colspan="99" class="nota-cell">{{ r.nota }}</td></tr>{% endif %}
       {% endfor %}
     </tbody>
     <tfoot>
       <tr>
-        <td colspan="{{ (2 if e_saldatura else 3) + (2 if g.ha_barra else 0) + (3 if dati.ha_piega else 0) + (1 if dati.ha_rullo else 0) + (1 if dati.ha_satinatura else 0) }}">Totale</td>
+        <td colspan="{{ (2 if e_saldatura else 3) + (2 if dati.ha_barra else 0) + (3 if dati.ha_piega else 0) + (1 if dati.ha_rullo else 0) + (1 if dati.ha_satinatura else 0) }}">Totale</td>
         <td>{{ g.righe|sum(attribute='nr_pz_da_fare') }}</td>
         <td>{{ g.righe|sum(attribute='pezzi_fatti') }}</td>
         <td>{{ g.righe|sum(attribute='saldo') }}</td>
-        {% if g.ha_barra %}<td></td><td>Tot. Barre: {{ g.nr_barre_totale }}</td>{% endif %}
+        {% if dati.ha_barra %}<td></td><td>Tot. Barre: {{ g.nr_barre_totale }}</td>{% endif %}
       </tr>
     </tfoot>
   </table>

@@ -12,7 +12,8 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     CostoStandardVersioneFaseWood, ManodoperaRealeWood,
                     SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
-                    NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood)
+                    NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
+                    FotoArticolo)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -1531,6 +1532,12 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         totale_pz += sum(r['nr_pz_da_fare'] for r in righe)
         totale_fatti += sum(r['pezzi_fatti'] for r in righe)
 
+    # Miniatura di riferimento del prodotto finito (la più recente caricata in
+    # Documentazione Articolo per questo codice) — mostrata in testa alla
+    # Lista di Lavoro al posto della Data commessa, poco utile qui.
+    foto = (FotoArticolo.query.filter_by(codice_articolo=o.codice_articolo)
+            .order_by(FotoArticolo.caricato_il.desc()).first())
+
     return {
         'centro_id': centro.id, 'centro_nome': centro.nome,
         'op_codice': o.codice, 'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
@@ -1538,6 +1545,7 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         'qta_pianificata': o.qta_pianificata,
         'data_inizio': o.data_inizio.strftime('%d/%m/%Y') if o.data_inizio else '',
         'numero_lista': _numero_lista_lavoro(o.codice, centro) if assegna_numero else None,
+        'foto_id': foto.id if foto else None,
         'gruppi': gruppi, 'ha_barra': mostra_barra, 'ha_piega': mostra_piega,
         'ha_rullo': mostra_rullo, 'ha_satinatura': mostra_satinatura,
         'totale_pz': totale_pz, 'pz_effettuati': totale_fatti,
