@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+
+<div class="page-toolbar">
+  <div class="page-title">🚨 Alert Scorte</div>
+  <input class="search-box" type="text" placeholder="🔍 Cerca prodotto..." oninput="filterAlertTable(this.value)">
+  <button class="btn btn-ghost" onclick="location.reload()">🔄 Aggiorna</button>
+</div>
+
+<p style="font-size:12px;color:var(--text-dim);max-width:900px;margin:0 0 16px">
+  Per ogni prodotto finito: stock pronto alla vendita ORA (Finiti IW + Finiti IS − riservato clienti) contro la
+  scorta minima (domanda × lead time di rimpiazzo × margine di sicurezza — stessi parametri Lean già usati per
+  suggerire i cartellini Kanban). La domanda è la più alta tra lo storico degli ultimi 90 giorni e il budget
+  commerciale mensile, se impostato. 🔴 = sotto scorta minima e si esaurirà prima che un rifornimento possa
+  arrivare. 🟡 = sotto scorta minima ma con margine. ⚪ = nessuno storico né budget, non calcolabile.
+</p>
+
+{% set n_rosso = righe|selectattr('livello','equalto','rosso')|list|length %}
+{% set n_giallo = righe|selectattr('livello','equalto','giallo')|list|length %}
+<div class="kanban-stats">
+  <div class="kstat kstat-total"><span class="kstat-num">{{ righe|length }}</span><span class="kstat-lbl">Prodotti</span></div>
+  <div class="kstat" style="background:linear-gradient(135deg,#791f1f,#c0392b)"><span class="kstat-num">{{ n_rosso }}</span><span class="kstat-lbl">🔴 Rischio a terra</span></div>
+  <div class="kstat" style="background:linear-gradient(135deg,#854f0b,#e6b800)"><span class="kstat-num">{{ n_giallo }}</span><span class="kstat-lbl">🟡 Sotto scorta minima</span></div>
+</div>
+
+<div class="mon-section">
+  <table class="kanban-table" id="alert-table">
+    <thead>
+      <tr>
+        <th></th>
+        <th style="text-align:left">Prodotto</th>
+        <th>Stock pronto</th>
+        <th>Scorta minima</th>
+        <th>Domanda/gg</th>
+        <th>Fonte</th>
+        <th>Giorni copertura</th>
+        <th>Lead time rifornimento</th>
+        <th>A terra il</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for r in righe %}
+      <tr class="alert-row" data-prodotto="{{ r.prodotto|lower }}"
+          style="border-left:3px solid {{ '#c0392b' if r.livello=='rosso' else ('#e6b800' if r.livello=='giallo' else ('#1a9e5c' if r.livello=='verde' else '#5f5e5a')) }}">
+        <td style="text-align:center">
+          {% if r.livello=='rosso' %}🔴{% elif r.livello=='giallo' %}🟡{% elif r.livello=='verde' %}🟢{% else %}⚪{% endif %}
+        </td>
+        <td class="codice">{{ r.prodotto }}</td>
+        <td class="num">{{ r.stock_pronto }}</td>
+        <td class="num">{{ r.scorta_minima_pz if r.scorta_minima_pz is not none else '—' }}</td>
+        <td class="num">{{ r.domanda_gg if r.domanda_gg else '—' }}</td>
+        <td style="font-size:11px;color:var(--text-dim)">{{ r.fonte_domanda }}</td>
+        <td class="num" style="font-weight:700">{{ r.giorni_copertura if r.giorni_copertura is not none else '—' }}</td>
+        <td class="num">{{ r.lead_time_giorni }}</td>
+        <td style="font-weight:700;color:{{ '#c0392b' if r.livello=='rosso' else 'var(--text)' }}">{{ r.data_a_terra or '—' }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endblock %}
+{% block scripts %}
+function filterAlertTable(q){
+  q = q.toLowerCase();
+  document.querySelectorAll('#alert-table .alert-row').forEach(function(tr){
+    tr.style.display = tr.dataset.prodotto.includes(q) ? '' : 'none';
+  });
+}
+{% endblock %}

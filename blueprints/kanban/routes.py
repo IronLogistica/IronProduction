@@ -7,12 +7,45 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     GiacenzaWood, OrdineProduzione, LavorazioneTerzista)
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, ottieni_stock_kanban, ottieni_scheda_kanban, MasterLogisticError
 from masterledgerlight_client import cerca_articolo, MasterLedgerLightError
-from datetime import datetime
+from datetime import datetime, timedelta
 import re, json
 
 kanban_bp = Blueprint('kanban', __name__)
 
-def _aggiorna_residuo_produzione(p):
+FINITI_IS_TTL_SECONDI = 180  # non richiamare WMS per lo stesso prodotto più spesso di così
+
+def _mappa_op_per_sku():
+    """Tutti gli Ordini di Produzione, raggruppati per codice_articolo
+    (upper) in un unico dict — UNA query sola invece di una query per
+    OGNI prodotto Kanban dentro il ciclo di index(). Era il principale
+    motivo di lentezza della board: con N prodotti si facevano N query
+    separate solo per questo dato."""
+    per_sku = {}
+    for o in OrdineProduzione.query.all():
+        per_sku.setdefault((o.codice_articolo or '').upper(), []).append(o)
+    return per_sku
+
+
+def _mappa_lavorazioni_terzisti_per_sku():
+    """Tutte le LavorazioneTerzista con un 'codice' leggibile dal campo
+    note, raggruppate per sku — UNA query invece di un LIKE con wildcard
+    iniziale ('%\"codice\": \"...\"%') ripetuto per ogni prodotto Kanban:
+    quel pattern non può usare nessun indice, quindi ogni chiamata era
+    una scansione completa della tabella — l'altro grosso motivo di
+    lentezza, che peggiora con la storia accumulata dei DDT."""
+    per_sku = {}
+    for lav in LavorazioneTerzista.query.all():
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            continue
+        sku = (note_j.get('codice') or '').strip().upper()
+        if sku:
+            per_sku.setdefault(sku, []).append((lav, note_j))
+    return per_sku
+
+
+def _aggiorna_residuo_produzione(p, op_per_sku=None):
     """
     'Residuo da produrre' (KanbanProdotto.in_prod) NON è più un campo da
     inserire a mano: è sempre calcolabile da IronProduction stesso — somma
@@ -22,18 +55,26 @@ def _aggiorna_residuo_produzione(p):
     Scheda WMS (api_kanban_scheda) — qui si aggiorna il campo salvato così
     resta corretto ovunque venga letto (board, API, val_pv), non solo nella
     scheda di dettaglio.
+
+    op_per_sku: se passato (da _mappa_op_per_sku, es. dal ciclo su tutta
+    la board), evita una query dedicata — altrimenti interroga il DB per
+    questo solo prodotto (uso singolo, es. risincronizza-wms).
     """
     sku = sku_da_nome_prodotto(p.prodotto)
     if not sku:
         return
-    op_aperti = (OrdineProduzione.query
-                 .filter(db.func.upper(OrdineProduzione.codice_articolo) == sku.upper(),
-                         OrdineProduzione.stato.in_(['Creato', 'Rilasciato', 'In esecuzione']))
-                 .all())
+    if op_per_sku is not None:
+        candidati = op_per_sku.get(sku.upper(), [])
+        op_aperti = [o for o in candidati if o.stato in ('Creato', 'Rilasciato', 'In esecuzione')]
+    else:
+        op_aperti = (OrdineProduzione.query
+                     .filter(db.func.upper(OrdineProduzione.codice_articolo) == sku.upper(),
+                             OrdineProduzione.stato.in_(['Creato', 'Rilasciato', 'In esecuzione']))
+                     .all())
     p.in_prod = int(sum(max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0) for o in op_aperti))
 
 
-def _aggiorna_grezzi_e_trattamento(p):
+def _aggiorna_grezzi_e_trattamento(p, op_per_sku=None, lav_per_sku=None):
     """
     'Grezzi' e 'In Trattamento' (VERN./ZINC.) NON sono più campi da inserire
     a mano: derivano da dati che IronProduction ha già.
@@ -47,28 +88,39 @@ def _aggiorna_grezzi_e_trattamento(p):
       (qta − qta_rientrata sulle lavorazioni non RIENTRATA), dagli stessi
       DDT (blueprints/terzisti — vedi _aggiorna_kanban_da_rientro_ddt per il
       lato "rientro" che alza invece 'verniciati'/Finiti IW).
+
+    op_per_sku/lav_per_sku: mappe precalcolate (vedi sopra) per evitare due
+    query per prodotto quando si scorre l'intera board — altrimenti
+    interroga il DB solo per questo prodotto (uso singolo).
     """
     sku = sku_da_nome_prodotto(p.prodotto)
     if not sku:
         return
     sku_upper = sku.upper()
 
-    tutti_op = OrdineProduzione.query.filter(
-        db.func.upper(OrdineProduzione.codice_articolo) == sku_upper).all()
+    if op_per_sku is not None:
+        tutti_op = op_per_sku.get(sku_upper, [])
+    else:
+        tutti_op = OrdineProduzione.query.filter(
+            db.func.upper(OrdineProduzione.codice_articolo) == sku_upper).all()
     totale_prodotto = int(sum(o.qta_buona or 0 for o in tutti_op))
 
-    lavorazioni = (LavorazioneTerzista.query
-                   .filter(LavorazioneTerzista.note.ilike(f'%"codice": "{sku}"%'))
-                   .all())
+    if lav_per_sku is not None:
+        lavorazioni_con_note = lav_per_sku.get(sku_upper, [])
+    else:
+        lavorazioni_con_note = []
+        for lav in (LavorazioneTerzista.query
+                    .filter(LavorazioneTerzista.note.ilike(f'%"codice": "{sku}"%')).all()):
+            try:
+                note_j = json.loads(lav.note or '{}')
+            except Exception:
+                continue
+            if (note_j.get('codice') or '').strip().upper() == sku_upper:
+                lavorazioni_con_note.append((lav, note_j))
+
     totale_spedito = 0
     totale_in_viaggio = 0
-    for lav in lavorazioni:
-        try:
-            note_j = json.loads(lav.note or '{}')
-        except Exception:
-            continue
-        if (note_j.get('codice') or '').strip().upper() != sku_upper:
-            continue
+    for lav, note_j in lavorazioni_con_note:
         totale_spedito += lav.qta or 0
         if lav.stato != 'RIENTRATA':
             totale_in_viaggio += max((lav.qta or 0) - int(note_j.get('qta_rientrata', 0)), 0)
@@ -77,16 +129,24 @@ def _aggiorna_grezzi_e_trattamento(p):
     p.in_vern = totale_in_viaggio
 
 
-def _aggiorna_finiti_is_da_wms(p):
+def _aggiorna_finiti_is_da_wms(p, forza=False):
     """
     'Finiti IS' — stock reale che MasterLogistic-WMS ha per questo SKU
     (stesso dato di 'stock_verniciati' dell'endpoint /api/kanban-stock),
     scritto sul campo DEDICATO KanbanProdotto.finiti_is (mai su 'riserva',
-    che è il buffer di sicurezza del Kanban — vedi models.py). Timeout
-    breve apposta: gira per OGNI prodotto a ogni apertura board, non deve
-    bloccare la pagina se WMS è lento — un fallimento qui lascia il valore
-    precedente invariato, non lo azzera.
+    che è il buffer di sicurezza del Kanban — vedi models.py).
+
+    Chiamata via HTTP a WMS per OGNI prodotto della board a OGNI apertura
+    pagina era il motivo più pesante di lentezza (N chiamate esterne
+    sequenziali, anche con timeout breve): ora si salta la chiamata se
+    già aggiornato negli ultimi FINITI_IS_TTL_SECONDI, il valore resta
+    comunque corretto per l'uso pratico (lo stock WMS non cambia al
+    secondo) e la board carica quasi subito dopo il primo giro.
+    Un fallimento qui lascia il valore precedente invariato, non lo azzera.
     """
+    ora = datetime.utcnow()
+    if not forza and p.finiti_is_aggiornato_il and (ora - p.finiti_is_aggiornato_il).total_seconds() < FINITI_IS_TTL_SECONDI:
+        return
     sku = sku_da_nome_prodotto(p.prodotto)
     if not sku:
         return
@@ -95,6 +155,7 @@ def _aggiorna_finiti_is_da_wms(p):
     except MasterLogisticError:
         return
     p.finiti_is = int(wms.get('stock_verniciati') or 0)
+    p.finiti_is_aggiornato_il = ora
 
 
 def _url_key_from_label(label):
@@ -114,19 +175,24 @@ def _wip_snapshot():
     - attivi     = N° articoli Kanban con quantità in quella fase
     - n_ordini   = somma delle quantità (quanti pezzi totali in quella fase)
     - ore_stimate= stima ore basata su takt_time_min medio dei prodotti in fase
+
+    Carica TUTTI i KanbanProdotto una volta sola (2 query totali) invece di
+    ripetere 'in_vern > 0' / 'in_prod > 0' per ogni fase — con N fasi erano
+    fino a 2×N query per la stessa manciata di righe.
     """
     fasi = FaseWip.query.order_by(FaseWip.id).all()
+    tutti_prodotti = KanbanProdotto.query.all()
+    in_vern_attivi = [p for p in tutti_prodotti if p.in_vern > 0]
+    in_prod_attivi = [p for p in tutti_prodotti if p.in_prod > 0]
     result = {}
     for fw in fasi:
         if fw.fase == 'collaudo':
             continue  # Collaudo rimosso dal monitor
         if fw.fase == 'verniciatura':
-            # Prodotti in trattamento esterno
-            prodotti_in_fase = KanbanProdotto.query.filter(KanbanProdotto.in_vern > 0).all()
+            prodotti_in_fase = in_vern_attivi
             n_ordini = sum(p.in_vern for p in prodotti_in_fase)
         else:
-            # Prodotti in produzione (taglio, sgola, piega, saldatura, finitura)
-            prodotti_in_fase = KanbanProdotto.query.filter(KanbanProdotto.in_prod > 0).all()
+            prodotti_in_fase = in_prod_attivi
             n_ordini = sum(p.in_prod for p in prodotti_in_fase)
 
         attivi = len(prodotti_in_fase)
@@ -162,6 +228,90 @@ def _wip_snapshot():
         }
     return result
 
+
+def _calcola_alert_scorte():
+    """
+    Per ogni prodotto Kanban (codice padre/prodotto finito), incrocia:
+    - scorta minima  = domanda_effettiva × lead_time_giorni × (1+scorta_sicurezza)
+      (stessa identica formula già usata per n_kanban_suggerito — 'scorte
+      minime' e RT/SS sono gli stessi parametri Lean già in uso altrove,
+      non un concetto nuovo)
+    - domanda_effettiva = il PIÙ ALTO tra domanda_giornaliera (storico
+      cicli chiusi ultimi 90gg) e budget_mensile_pz/30 (previsione
+      commerciale manuale, se impostata) — usare il massimo evita di
+      sottostimare il rischio quando il budget prevede più di quanto lo
+      storico racconti ancora
+    - stock pronto ora = saldo_disponibile (Finiti IW + Finiti IS − riservato
+      clienti — la stessa cifra già mostrata in Scheda WMS come "quello che
+      si può evadere SUBITO")
+    - tempo di attraversamento = lead_time_giorni (RT) — quanto ci vuole
+      storicamente a rimpiazzare lo stock
+
+    Ritorna una lista ordinata (rosso prima), con giorni di copertura
+    residui e la data presunta in cui si resterebbe a terra.
+    """
+    oggi = datetime.utcnow()
+    prodotti = KanbanProdotto.query.filter(
+        ~KanbanProdotto.prodotto.in_(['Totali'])).order_by(KanbanProdotto.prodotto).all()
+
+    risultati = []
+    for p in prodotti:
+        if p.prodotto.isdigit():
+            continue
+        domanda_storica = p.domanda_giornaliera or 0
+        domanda_budget = (p.budget_mensile_pz / 30) if p.budget_mensile_pz else 0
+        domanda_effettiva = max(domanda_storica, domanda_budget)
+
+        stock_pronto = max((p.verniciati or 0) + (p.finiti_is or 0) - (p.riservato or 0), 0)
+        rt = p.lead_time_giorni or 0
+        ss = p.scorta_sicurezza if p.scorta_sicurezza is not None else 0.15
+
+        if domanda_effettiva <= 0:
+            risultati.append({
+                'prodotto': p.prodotto, 'sheet_key': p.sheet_key, 'id': p.id,
+                'stock_pronto': stock_pronto, 'domanda_gg': 0, 'fonte_domanda': 'nessun dato',
+                'scorta_minima_pz': None, 'giorni_copertura': None, 'lead_time_giorni': rt,
+                'data_a_terra': None, 'livello': 'grigio',
+            })
+            continue
+
+        scorta_minima_pz = round(domanda_effettiva * rt * (1 + ss), 1)
+        giorni_copertura = round(stock_pronto / domanda_effettiva, 1)
+        data_a_terra = oggi + timedelta(days=giorni_copertura)
+
+        if stock_pronto < scorta_minima_pz and giorni_copertura <= rt:
+            livello = 'rosso'   # sotto scorta minima E si esaurirà prima che un rifornimento possa arrivare
+        elif stock_pronto < scorta_minima_pz:
+            livello = 'giallo'  # sotto scorta minima ma con margine prima di restare a terra
+        else:
+            livello = 'verde'
+
+        risultati.append({
+            'prodotto': p.prodotto, 'sheet_key': p.sheet_key, 'id': p.id,
+            'stock_pronto': stock_pronto, 'domanda_gg': round(domanda_effettiva, 2),
+            'fonte_domanda': 'budget' if domanda_budget > domanda_storica else 'storico',
+            'scorta_minima_pz': scorta_minima_pz, 'giorni_copertura': giorni_copertura,
+            'lead_time_giorni': rt, 'data_a_terra': data_a_terra.strftime('%d/%m/%Y'),
+            'livello': livello,
+        })
+
+    ordine_livello = {'rosso': 0, 'giallo': 1, 'verde': 2, 'grigio': 3}
+    risultati.sort(key=lambda r: (ordine_livello[r['livello']], r['giorni_copertura'] if r['giorni_copertura'] is not None else 9999))
+    return risultati
+
+
+# ── PAGINA ALERT SCORTE ──────────────────────────────────────────────────────
+@kanban_bp.route('/alert-scorte')
+def pagina_alert_scorte():
+    return render_template('kanban/alert_scorte.html', active='alert-scorte',
+                            topbar_title='🚨 Alert Scorte', righe=_calcola_alert_scorte())
+
+
+@kanban_bp.route('/api/alert-scorte')
+def api_alert_scorte():
+    return jsonify(_calcola_alert_scorte())
+
+
 # ── PAGINA KANBAN ────────────────────────────────────────────────────────────
 @kanban_bp.route('/kanban/<path:url_key>')
 def index(url_key):
@@ -178,10 +328,15 @@ def index(url_key):
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
 
     # Campi calcolati in automatico a ogni apertura della board — non più da
-    # inserire a mano (vedi le funzioni sopra per le fonti dati).
+    # inserire a mano (vedi le funzioni sopra per le fonti dati). Le mappe
+    # op_per_sku/lav_per_sku sono UNA query sola in tutto, condivisa da
+    # tutti i prodotti — prima erano 2-3 query per OGNI prodotto (N+1),
+    # il motivo principale per cui la board era lenta.
+    op_per_sku = _mappa_op_per_sku()
+    lav_per_sku = _mappa_lavorazioni_terzisti_per_sku()
     for p in prodotti:
-        _aggiorna_residuo_produzione(p)
-        _aggiorna_grezzi_e_trattamento(p)
+        _aggiorna_residuo_produzione(p, op_per_sku)
+        _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku)
         _aggiorna_finiti_is_da_wms(p)
     db.session.commit()
 
@@ -323,6 +478,9 @@ def api_aggiorna(kid):
         if 'lead_time_fornitura_giorni' in d:
             valore = d['lead_time_fornitura_giorni']
             p.lead_time_fornitura_giorni = float(valore) if valore not in (None, '') else None
+        if 'budget_mensile_pz' in d:
+            valore = d['budget_mensile_pz']
+            p.budget_mensile_pz = float(valore) if valore not in (None, '') else None
         p.aggiornato_il = datetime.utcnow()
         stato_dopo = p.stato
         # ── Accumulazione dati cicli per Takt Time ──
@@ -378,6 +536,7 @@ def api_risincronizza_wms(kid):
         return jsonify({'ok': False, 'error': str(e)}), 502
     p.riservato = int(wms.get('riservato_clienti') or 0)
     p.finiti_is = int(wms.get('stock_verniciati') or 0)
+    p.finiti_is_aggiornato_il = datetime.utcnow()
     _aggiorna_grezzi_e_trattamento(p)
     _aggiorna_residuo_produzione(p)
     p.aggiornato_il = datetime.utcnow()

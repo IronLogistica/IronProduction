@@ -924,13 +924,18 @@ def assicura_unita_misura_articoli():
             db.session.commit()
 
 def assicura_finiti_is_kanban():
-    """Migrazione compatibile con DB già esistenti: aggiunge la colonna
+    """Migrazione compatibile con DB già esistenti: aggiunge le colonne
     kanban_prodotti.finiti_is (stock reale MasterLogistic-WMS, separato dal
-    buffer 'riserva') senza ricreare tabelle."""
+    buffer 'riserva'), finiti_is_aggiornato_il (timestamp di staleness per
+    evitare chiamate WMS ripetute a ogni apertura board) e budget_mensile_pz
+    (previsione commerciale manuale per la pagina Alert Scorte) senza
+    ricreare tabelle."""
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
         try:
             db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS finiti_is INTEGER NOT NULL DEFAULT 0"))
+            db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS finiti_is_aggiornato_il TIMESTAMP"))
+            db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS budget_mensile_pz FLOAT"))
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -938,6 +943,12 @@ def assicura_finiti_is_kanban():
         colonne = {c['name'] for c in inspect(db.engine).get_columns('kanban_prodotti')}
         if 'finiti_is' not in colonne:
             db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN finiti_is INTEGER NOT NULL DEFAULT 0"))
+            db.session.commit()
+        if 'finiti_is_aggiornato_il' not in colonne:
+            db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN finiti_is_aggiornato_il TIMESTAMP"))
+            db.session.commit()
+        if 'budget_mensile_pz' not in colonne:
+            db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN budget_mensile_pz FLOAT"))
             db.session.commit()
 
 def assicura_lead_time_esterno_centri():
@@ -1001,6 +1012,12 @@ class KanbanProdotto(db.Model):
     # board (blueprints/kanban/routes.py::_aggiorna_finiti_is_da_wms), mai
     # a mano.
     finiti_is    = db.Column(db.Integer, default=0)
+    # Timestamp dell'ultimo aggiornamento di finiti_is da WMS — usato per
+    # evitare di richiamare MasterLogistic-WMS per lo stesso prodotto più
+    # spesso di FINITI_IS_TTL_SECONDI a ogni apertura board (era la causa
+    # principale di lentezza delle pagine Kanban: N chiamate HTTP esterne
+    # sequenziali a ogni caricamento).
+    finiti_is_aggiornato_il = db.Column(db.DateTime, nullable=True)
     val_medio    = db.Column(db.Float,   default=0.0)
     lavorazioni  = db.Column(db.String(300), default="")
     sort_order   = db.Column(db.Integer, default=0)
@@ -1014,6 +1031,13 @@ class KanbanProdotto(db.Model):
     takt_time_min       = db.Column(db.Float, default=None)   # minuti/pezzo — NULL=non impostato
     domanda_giornaliera = db.Column(db.Float, default=0.0)    # D — aggiornata automaticamente
     n_kanban_suggerito  = db.Column(db.Integer, default=0)    # N calcolato
+    # Previsione commerciale (manuale, opzionale): pezzi/mese attesi da
+    # budget vendite — usata dalla pagina Alert Scorte insieme a
+    # domanda_giornaliera (storico) per stimare il rischio di rimanere a
+    # terra: si usa la PIÙ ALTA delle due (storico vs budget), per non
+    # sottostimare il rischio se il budget prevede una crescita che lo
+    # storico non racconta ancora. None = usa solo lo storico.
+    budget_mensile_pz  = db.Column(db.Float, nullable=True)
 
     @property
     def saldo_contabile(self):
