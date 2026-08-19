@@ -79,13 +79,43 @@ def _capacita_giornaliera_ore(centro):
     return ore_totali / giorni_periodo if giorni_periodo else None
 
 
+FASI_STANDARD = [
+    ('taglio', ['sega', 'taglio', 'punzon', 'laser']),
+    ('sgola_sati', ['sgol', 'satin']),
+    ('piega', ['pieg', 'press']),
+    ('saldatura', ['sald']),
+]
+
+
+def _fasi_routing_op(cicli_per_codice, centri):
+    """
+    Per le 4 colonne standard della tabella (Taglio / Sgola-Sati / Piega /
+    Saldatura, come nel vecchio Gantt di Angelo): True se QUALCHE codice
+    del routing di questo OP passa da un centro il cui nome corrisponde a
+    quella fase (stesso riconoscimento per parola chiave già usato altrove
+    nell'app, es. get_macchine_monitor/totem_tabella), False se non gli
+    serve — non è "già fatto/da fare", è "gli serve o no questo reparto".
+    """
+    presenti = set()
+    for cicli in cicli_per_codice:
+        for ciclo in cicli:
+            centro = centri.get(ciclo.centro_costo_id)
+            if not centro or centro.esterno:
+                continue
+            nome_l = (centro.nome or '').lower()
+            for fase, parole in FASI_STANDARD:
+                if any(p in nome_l for p in parole):
+                    presenti.add(fase)
+    return {fase: (fase in presenti) for fase, _ in FASI_STANDARD}
+
+
 def calcola_avanzamento_commesse():
     """Ritorna una lista di dict, una per OP aperto, ordinata come la coda di
     priorità già usata nel resto dell'app (stessa priorità = stessa data di
     consegna stimata sarebbe fuorviante: qui l'ordine riflette chi viene
     servito per primo sui centri condivisi)."""
     from models import (db, OrdineProduzione, CicloLavoroWood, CentroCostoWood,
-                         EventoConsuntivoPP, ArticoloApprovvigionamento)
+                         EventoConsuntivoPP, ArticoloApprovvigionamento, FotoArticolo)
     from blueprints.magazzino.routes import (_esplodi_componenti_op, _carica_mappa_distinta_base_wood,
                          _residuo_giacenza_progressivo, _netta_e_esplodi_wood, STATI_CHE_IMPEGNANO)
 
@@ -99,6 +129,16 @@ def calcola_avanzamento_commesse():
     mappa_distinta = _carica_mappa_distinta_base_wood()
     residuo_per_op, _ = _residuo_giacenza_progressivo(op_aperti=ordini, mappa=mappa_distinta)
     centri = {c.id: c for c in CentroCostoWood.query.all()}
+
+    # Una sola query per TUTTE le miniature prodotto (la più recente per
+    # ogni codice_articolo) invece di una per OP — stesso principio delle
+    # ottimizzazioni fatte oggi sul Kanban, qui fin da subito.
+    foto_per_codice = {}
+    codici_op = {o.codice_articolo for o in ordini}
+    if codici_op:
+        for f in (FotoArticolo.query.filter(FotoArticolo.codice_articolo.in_(codici_op))
+                  .order_by(FotoArticolo.caricato_il.desc()).all()):
+            foto_per_codice.setdefault(f.codice_articolo, f.id)
 
     cursore_centro = {}   # centro_id -> datetime primo momento libero
     risultati = []
@@ -142,11 +182,13 @@ def calcola_avanzamento_commesse():
         # ── Simulazione routing interno, componente per componente ──
         fine_produzione_op = oggi
         centri_con_saldo = set()
+        tutti_cicli_op = []
         for codice, moltiplicatore in moltiplicatore_per_codice.items():
             cicli = (CicloLavoroWood.query.filter_by(codice=codice)
                      .order_by(CicloLavoroWood.sequenza).all())
             if not cicli:
                 continue
+            tutti_cicli_op.append(cicli)
             qta_codice = round(saldo_op * moltiplicatore)
             componente_param = None if codice == o.codice_articolo else codice
             cursore_componente = data_materiale_pronto
@@ -206,6 +248,8 @@ def calcola_avanzamento_commesse():
 
         data_consegna = fine_produzione_op + timedelta(days=lead_time_esterno) if lead_time_esterno else fine_produzione_op
         pct = round(100 * (o.qta_buona or 0) / o.qta_pianificata) if o.qta_pianificata else 0
+        fasi = _fasi_routing_op(tutti_cicli_op, centri)
+        foto = foto_per_codice.get(o.codice_articolo)
 
         risultati.append({
             'op_codice': o.codice, 'commessa': o.commessa or '', 'codice_articolo': o.codice_articolo,
@@ -213,6 +257,7 @@ def calcola_avanzamento_commesse():
             'saldo': saldo_op, 'pct': pct, 'priorita': o.priorita,
             'materiale_completo': not materiali_mancanti,
             'centri_in_coda': sorted(centri_con_saldo),
+            'fasi': fasi, 'foto_id': foto,
             'centro_esterno': centro_esterno_nome, 'lead_time_esterno_giorni': lead_time_esterno,
             'data_fine_produzione_stimata': fine_produzione_op.strftime('%d/%m/%Y'),
             'data_consegna_stimata': data_consegna.strftime('%d/%m/%Y'),
