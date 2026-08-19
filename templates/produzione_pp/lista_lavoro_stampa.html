@@ -102,6 +102,7 @@
 
   {% set centri_senza_controllo_materiale = ['pressopiegatrice', 'punzonatrice', 'satinatrice', 'trapani', 'sgolatrice', 'saldatura'] %}
   {% set mostra_controllo_materiale = centro.nome.strip().lower() not in centri_senza_controllo_materiale %}
+  {% set e_saldatura = centro.nome.strip().lower() == 'saldatura' %}
   {% for g in dati.gruppi %}
   {% if mostra_controllo_materiale %}
   <table class="materiale-info">
@@ -117,10 +118,16 @@
     </tbody>
   </table>
   {% endif %}
+  {% if e_saldatura %}
+    {% if loop.first and g.righe and g.righe[0].codice == dati.codice_articolo %}
+    <div class="gruppo-titolo">CODICE PADRE: {{ dati.codice_articolo }}</div>
+    {% endif %}
+  {% else %}
   <div class="gruppo-titolo">Ordine Lavoro {{ centro.nome }}: <b>{{ g.materiale }}</b>{% if g.ha_barra and g.righe[0].lunghezza_barra_mm %} — barra da {{ (g.righe[0].lunghezza_barra_mm/1000)|round(2) }} METRI{% endif %}</div>
+  {% endif %}
   <table class="lavoro">
     <thead><tr>
-      <th class="check">Check</th><th>Codice</th><th>Materiale</th>
+      <th class="check">Check</th><th>Codice</th>{% if not e_saldatura %}<th>Materiale</th>{% endif %}
       {% if g.ha_barra %}<th>Misura (mm)</th><th>Spessore (mm)</th>{% endif %}
       {% if dati.ha_piega %}<th>Matrice</th><th>Punto 0</th><th>Indice ass.</th>{% endif %}
       {% if dati.ha_rullo %}<th>Rullo</th>{% endif %}
@@ -133,7 +140,7 @@
       <tr>
         <td class="check">☐</td>
         <td class="codice-cell">{{ r.codice }}</td>
-        <td>{{ r.materiale }}</td>
+        {% if not e_saldatura %}<td>{{ r.materiale }}</td>{% endif %}
         {% if g.ha_barra %}<td>{{ r.misura }}</td><td>{{ r.spessore_mm or '—' }}</td>{% endif %}
         {% if dati.ha_piega %}<td>{{ r.matrice }}</td><td>{{ r.punto_zero }}</td><td>{{ r.indice_assorbimento }}</td>{% endif %}
         {% if dati.ha_rullo %}<td>{{ r.rullo }}</td>{% endif %}
@@ -148,7 +155,7 @@
     </tbody>
     <tfoot>
       <tr>
-        <td colspan="{{ 3 + (2 if g.ha_barra else 0) + (3 if dati.ha_piega else 0) + (1 if dati.ha_rullo else 0) + (1 if dati.ha_satinatura else 0) }}">Totale</td>
+        <td colspan="{{ (2 if e_saldatura else 3) + (2 if g.ha_barra else 0) + (3 if dati.ha_piega else 0) + (1 if dati.ha_rullo else 0) + (1 if dati.ha_satinatura else 0) }}">Totale</td>
         <td>{{ g.righe|sum(attribute='nr_pz_da_fare') }}</td>
         <td>{{ g.righe|sum(attribute='pezzi_fatti') }}</td>
         <td>{{ g.righe|sum(attribute='saldo') }}</td>
