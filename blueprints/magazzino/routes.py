@@ -1037,6 +1037,40 @@ def api_giacenza_impegni_op(codice):
                     totale=round(sum(r['consumato'] for r in righe), 4))
 
 
+@magazzino_bp.route('/api/ordini-produzione/<op_code>/diagnostica-esplosione')
+def api_diagnostica_esplosione_op(op_code):
+    """
+    Diagnostica GREZZA dell'esplosione distinta base di UN OP specifico:
+    ogni nodo toccato (fabbisogno, quanto trovato in giacenza, quanto
+    mancante che continua a scendere sotto), PIÙ la giacenza fisica di ogni
+    nodo così com'è nel database in questo momento. Serve a vedere ESATTAMENTE
+    a quale livello l'esplosione smette di trovare scorta (es. il semilavorato
+    che una fase ha già prodotto: se qui risulta 0, il carico a magazzino di
+    quella dichiarazione non è mai avvenuto o è finito da qualche altra parte;
+    se risulta ok ma l'esplosione lo ignora comunque, il problema è nel
+    netting). ATTENZIONE: gira l'esplosione ISOLATA per questo solo OP,
+    partendo dalla giacenza attuale — non replica l'ordine di priorità
+    condiviso con gli altri OP aperti (quello lo fa /impegni-op), qui serve
+    solo a vedere l'albero di QUESTO OP da solo.
+    """
+    o = OrdineProduzione.query.filter_by(codice=op_code.strip()).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+    saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+    giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
+    out = {}
+    if saldo > 0:
+        _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, out)
+    nodi = [{
+        'codice': cod, 'fabbisogno': round(r['fabbisogno'], 4), 'usato_da_giacenza': round(r['usato'], 4),
+        'mancante_sceso_sotto': round(r['mancante'], 4),
+        'giacenza_attuale_nel_db': GiacenzaWood.query.get(cod).quantita if GiacenzaWood.query.get(cod) else 0,
+    } for cod, r in out.items()]
+    nodi.sort(key=lambda n: -n['fabbisogno'])
+    return jsonify(ok=True, op_code=o.codice, codice_articolo=o.codice_articolo,
+                    qta_pianificata=o.qta_pianificata, qta_buona=o.qta_buona, saldo_op=saldo, nodi=nodi)
+
+
 @magazzino_bp.route('/api/giacenza_wood/<codice>/scorta_minima', methods=['PUT'])
 def api_giacenza_scorta_minima(codice):
     d = request.get_json(force=True)

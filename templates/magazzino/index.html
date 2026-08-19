@@ -46,6 +46,23 @@
   </div>
 </div>
 
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🌳 Diagnostica esplosione distinta — albero completo di un OP</div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin:0 0 10px">
+      Mostra OGNI nodo toccato esplodendo la distinta base di un OP — fabbisogno, quanto trovato in giacenza,
+      quanto è sceso sotto perché mancante — affiancato alla giacenza REALE di quel codice nel database in
+      questo momento. Utile per vedere esattamente a che livello l'esplosione smette di trovare scorta già
+      prodotta da una fase.
+    </p>
+    <div style="display:flex;gap:8px;align-items:center">
+      <input id="diag-esp-op" type="text" placeholder="Codice OP (es. OP-2026-000009)" style="padding:7px 9px;border-radius:6px;border:1px solid var(--border);width:220px">
+      <button class="btn btn-primary" style="padding:7px 14px;font-size:12px" onclick="caricaDiagnosticaEsplosione()">🔎 Mostra albero</button>
+    </div>
+    <div id="diag-esp-risultato" style="margin-top:14px"></div>
+  </div>
+</div>
+
 {# Popup "Impegni OP" — stesso pattern già usato in MasterLogistic-WMS per gli
    Impegni Clienti, qui applicato agli Ordini di Produzione: quali OP aperti
    generano l'impegno mostrato in tabella, e quanto ciascuno. #}
@@ -104,6 +121,39 @@ async function apriImpegniOp(codice, ev){
 
 function chiudiImpegniOp(){
   document.getElementById('popup-impegni-op').style.display = 'none';
+}
+
+async function caricaDiagnosticaEsplosione(){
+  const opCode = document.getElementById('diag-esp-op').value.trim();
+  const box = document.getElementById('diag-esp-risultato');
+  if(!opCode){ alert('Inserisci un codice OP.'); return; }
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch(`/api/ordini-produzione/${encodeURIComponent(opCode)}/diagnostica-esplosione`);
+    const d = await r.json();
+    if(!d.ok){ box.innerHTML = `<p style="color:#c0392b">⚠️ ${d.error||'errore'}</p>`; return; }
+    if(!d.nodi.length){
+      box.innerHTML = `<p style="color:#2a9d5c">✓ Nessun nodo esploso: saldo OP = ${d.saldo_op} (già completato o nulla da produrre).</p>`;
+      return;
+    }
+    const righe = d.nodi.map(n => {
+      const scarto = n.usato_da_giacenza < n.fabbisogno;
+      return `<tr>
+        <td class="codice">${esc(n.codice)}</td>
+        <td>${n.fabbisogno}</td>
+        <td style="color:#2a9d5c">${n.usato_da_giacenza}</td>
+        <td style="color:${n.mancante_sceso_sotto>0?'#c0392b':'var(--text-dim)'};font-weight:${n.mancante_sceso_sotto>0?700:400}">${n.mancante_sceso_sotto}</td>
+        <td style="color:${n.giacenza_attuale_nel_db>0?'#5debb0':'var(--text-dim)'}">${n.giacenza_attuale_nel_db}</td>
+      </tr>`;
+    }).join('');
+    box.innerHTML = `
+      <p style="font-size:12px;margin-bottom:10px"><b>${d.op_code}</b> — ${d.codice_articolo} — qta_buona: ${d.qta_buona} / ${d.qta_pianificata} — saldo esploso: ${d.saldo_op}</p>
+      <div style="overflow-x:auto"><table class="kanban-table"><thead><tr>
+        <th>Codice</th><th>Fabbisogno</th><th>Usato da giacenza</th><th>Sceso sotto (mancante)</th><th>Giacenza reale ora nel DB</th>
+      </tr></thead><tbody>${righe}</tbody></table></div>`;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
 }
 
 async function caricaMagazzinoWood(){
