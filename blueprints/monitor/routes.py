@@ -708,6 +708,19 @@ def pagina_documentazione_articolo():
     return render_template('monitor/documentazione_articolo.html', active='documentazione_articolo')
 
 
+# ── TOTEM ALESSANDRO — postazione dedicata, verticale, senza via d'uscita ────
+# Schermo fisicamente ruotato (uno schermo normale girato a fare da totem) con
+# SOLO 3 destinazioni: Dichiarazione Produzione (come Angelo, ma senza Area
+# Capo/Diagnostica/Direzione, che non competono ad Alessandro), Documentazione
+# Articolo, e un selettore Monitor che apre — sempre dentro la stessa pagina —
+# il Totem Live già esistente, centro di costo per centro di costo. Pagina
+# standalone (non estende base.html): nessuna sidebar, nessun link verso il
+# resto del programma.
+@monitor_bp.route('/totem/alessandro')
+def totem_alessandro():
+    return render_template('monitor/totem_alessandro.html', macchine=get_macchine_monitor())
+
+
 @monitor_bp.route('/api/foto_articolo/<codice_articolo>')
 def api_lista_foto_articolo(codice_articolo):
     righe = (FotoArticolo.query.filter_by(codice_articolo=codice_articolo)

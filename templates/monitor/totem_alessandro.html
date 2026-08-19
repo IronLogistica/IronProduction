@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Totem — Alessandro</title>
+<style>
+  :root{
+    --dark:#0d1b2e; --dark2:#0a1623; --dark3:#112240;
+    --accent:#1e6fa5; --accent2:#2589c7; --accent-glow:rgba(30,111,165,.25);
+    --steel:#3a7ebf; --steel2:#4d9fd6;
+    --orange:#e8760a; --yellow:#e6b800; --red:#c0392b;
+    --green:#1a9e5c; --green2:#16875c; --grey:#7f8c8d;
+    --bg:#0f1e35; --bg2:#0c1828; --surface:#132035; --white:#ffffff;
+    --text:#c8ddf0; --text-dim:#6b8aaa; --border:rgba(30,111,165,.25);
+    --shadow:0 2px 12px rgba(0,0,0,.4); --radius:8px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+  html,body{height:100%}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--text);
+       display:flex;flex-direction:column;overflow:hidden;user-select:none}
+
+  /* ── Barra totem: SOLO le 3 destinazioni consentite, nessun'altra via d'uscita ── */
+  .totem-tabs{display:flex;flex-shrink:0;background:var(--dark2);border-bottom:2px solid var(--accent);box-shadow:0 2px 12px rgba(0,0,0,.4)}
+  .totem-tab{flex:1;padding:18px 6px;text-align:center;font-size:15px;font-weight:800;color:var(--text-dim);
+             background:transparent;border:none;cursor:pointer;border-bottom:4px solid transparent;
+             display:flex;flex-direction:column;align-items:center;gap:4px;line-height:1.2}
+  .totem-tab .ic{font-size:26px}
+  .totem-tab.attiva{color:#fff;border-bottom-color:var(--accent2);background:rgba(30,111,165,.15)}
+
+  .totem-panel{flex:1;overflow-y:auto;display:none;padding:16px;padding-bottom:40px}
+  .totem-panel.attivo{display:block}
+
+  .clock{position:fixed;top:6px;right:12px;font-size:11px;color:var(--text-dim);font-family:monospace;z-index:50}
+
+  /* ── classi condivise (ricalcate da base.html) ── */
+  .mon-section{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px;border:1px solid var(--border)}
+  .section-hdr{padding:10px 16px;font-size:13px;font-weight:700;color:#fff;display:flex;align-items:center;gap:6px}
+  .postazione-hdr{background:linear-gradient(135deg,#1a5085,#1e6fa5)}
+  .kanban-table{width:100%;border-collapse:collapse;font-size:13px}
+  .kanban-table th{background:var(--dark2);color:var(--steel2);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:9px 8px;text-align:center;border-bottom:2px solid var(--border)}
+  .kanban-table td{padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
+  .codice{font-weight:800;font-size:15px;color:#eaf4ff;letter-spacing:.3px;white-space:nowrap}
+  .muted{color:var(--text-dim)}
+  .page-title{font-size:19px;font-weight:800;color:#e0eefc;margin-bottom:14px}
+  .btn{padding:11px 18px;border-radius:8px;border:none;cursor:pointer;font-size:14px;font-weight:700;
+       transition:all .15s;display:inline-flex;align-items:center;gap:6px;text-decoration:none}
+  .btn-primary{background:var(--accent);color:#fff}.btn-primary:hover{background:var(--accent2)}
+  .btn-ghost{background:rgba(255,255,255,.05);color:#b0ccdd;border:1px solid var(--border)}.btn-ghost:hover{background:rgba(30,111,165,.15);color:#fff}
+  .btn-danger{background:var(--red);color:#fff}
+  .modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:500;display:none;align-items:center;justify-content:center}
+  .modal-overlay.open{display:flex}
+  .modal-box{background:var(--dark);border:1px solid var(--border);border-radius:12px;padding:22px;width:92vw;max-width:420px;box-shadow:0 24px 70px rgba(0,0,0,.7)}
+  .modal-box h3{font-size:16px;font-weight:700;color:#e0eefc;margin-bottom:16px}
+  .modal-input{width:100%;padding:12px;background:var(--dark3);border:1.5px solid var(--border);border-radius:8px;color:var(--text);font-size:16px;outline:none}
+  .modal-footer{display:flex;justify-content:flex-end;gap:8px;margin-top:16px}
+  .modal-label{font-size:12px;color:var(--text-dim);margin:10px 0 5px;display:block;text-transform:uppercase;letter-spacing:.5px}
+  .toast{position:fixed;bottom:20px;left:50%;transform:translateX(-50%) translateY(60px);background:var(--dark3);color:#fff;
+         padding:12px 22px;border-radius:8px;font-size:14px;font-weight:600;box-shadow:0 4px 20px rgba(0,0,0,.5);
+         border:1px solid var(--border);z-index:9999;opacity:0;transition:all .3s;max-width:92vw;text-align:center}
+  .toast.show{transform:translateX(-50%) translateY(0);opacity:1}
+  select.big-input, input.big-input{width:100%;padding:13px;font-size:16px;border-radius:8px;border:1px solid var(--border);
+       background:var(--dark3);color:var(--text)}
+  ::-webkit-scrollbar{width:8px}::-webkit-scrollbar-track{background:var(--bg2)}
+  ::-webkit-scrollbar-thumb{background:var(--accent);border-radius:4px}
+
+  /* ── Documentazione: colonna singola, più leggibile in verticale ── */
+  .doc-foto-grid{display:flex;flex-direction:column;gap:14px}
+  #lista-foto img{width:100px;height:100px}
+
+  /* ── Monitor: griglia di macchine da scegliere, poi iframe a schermo pieno ── */
+  .macchine-grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+  .macchina-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:20px 10px;
+                 text-align:center;font-size:14px;font-weight:700;color:var(--text);cursor:pointer}
+  .macchina-card:active{background:rgba(30,111,165,.25)}
+  .monitor-iframe-wrap{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--bg);z-index:200;display:none;flex-direction:column}
+  .monitor-iframe-wrap.aperto{display:flex}
+  .monitor-iframe-bar{flex-shrink:0;padding:10px 12px;background:var(--dark2);border-bottom:1px solid var(--border);display:flex;align-items:center}
+  .monitor-iframe-wrap iframe{flex:1;border:none;width:100%}
+</style>
+</head>
+<body>
+
+<div class="totem-tabs">
+  <button class="totem-tab attiva" id="tab-produzione" onclick="mostraPannello('produzione')">
+    <span class="ic">✅</span> Dichiarazione<br>Produzione
+  </button>
+  <button class="totem-tab" id="tab-documentazione" onclick="mostraPannello('documentazione')">
+    <span class="ic">📚</span> Documentazione<br>Articolo
+  </button>
+  <button class="totem-tab" id="tab-monitor" onclick="mostraPannello('monitor')">
+    <span class="ic">📺</span> Monitor<br>Macchine
+  </button>
+</div>
+<div class="clock" id="clock"></div>
+
+<!-- ══════════════════════ PANNELLO 1 — DICHIARAZIONE PRODUZIONE ══════════════════════ -->
+<div class="totem-panel attivo" id="panel-produzione">
+  <div class="page-title">✅ Dichiarazione di Produzione</div>
+  <div class="mon-section">
+    <div style="padding:14px">
+      <label class="modal-label" style="margin-top:0">Centro di costo</label>
+      <select id="centro-sel" class="big-input" onchange="caricaOpAperti()">
+        <option value="">Seleziona un centro di costo...</option>
+      </select>
+      <div id="op-lista" style="margin-top:16px">Seleziona un centro di costo per vedere gli Ordini di Produzione aperti.</div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ PANNELLO 2 — DOCUMENTAZIONE ARTICOLO ══════════════════════ -->
+<div class="totem-panel" id="panel-documentazione">
+  <div class="page-title">📚 Documentazione Articolo</div>
+  <div class="mon-section">
+    <div style="padding:14px">
+      <div style="display:flex;gap:8px">
+        <input id="inp-codice" class="big-input" type="text" placeholder="Codice articolo (es. T200)"
+               onkeydown="if(event.key==='Enter') cercaArticolo()">
+        <button class="btn btn-primary" onclick="cercaArticolo()">🔍</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="sezione-articolo" style="display:none">
+    <div class="doc-foto-grid">
+      <div class="mon-section">
+        <div class="section-hdr postazione-hdr">📄 Documentazione tecnica — <span id="titolo-codice-doc"></span></div>
+        <div style="padding:14px">
+          <label class="btn btn-primary" style="display:inline-flex;cursor:pointer">+ Carica documento
+            <input type="file" accept=".pdf,image/*" style="display:none" onchange="caricaDocumento(this)">
+          </label>
+          <div id="lista-documenti" style="margin-top:12px">Caricamento...</div>
+        </div>
+      </div>
+      <div class="mon-section">
+        <div class="section-hdr postazione-hdr">📷 Foto di riferimento prodotto — <span id="titolo-codice-foto"></span></div>
+        <div style="padding:14px">
+          <label class="btn btn-primary" style="display:inline-flex;cursor:pointer">+ Carica foto
+            <input type="file" accept="image/*" style="display:none" onchange="caricaFoto(this)">
+          </label>
+          <div id="lista-foto" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">Caricamento...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ PANNELLO 3 — MONITOR MACCHINE ══════════════════════ -->
+<div class="totem-panel" id="panel-monitor">
+  <div class="page-title">📺 Monitor — scegli la macchina</div>
+  {% if macchine %}
+  <div class="macchine-grid">
+    {% for m in macchine %}
+    <div class="macchina-card" onclick='apriMonitorMacchina({{ m.id }}, {{ m.nome|tojson }})'>{{ m.nome }}</div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="muted">Nessuna macchina configurata nel Monitor Produzione.</p>
+  {% endif %}
+</div>
+
+<!-- Il Monitor si apre qui sopra a schermo pieno (stessa pagina, nessuna via d'uscita) -->
+<div class="monitor-iframe-wrap" id="monitor-iframe-wrap">
+  <div class="monitor-iframe-bar">
+    <button class="btn btn-ghost" onclick="chiudiMonitorMacchina()">← Cambia macchina</button>
+    <span id="monitor-iframe-titolo" style="margin-left:12px;font-weight:700"></span>
+  </div>
+  <iframe id="monitor-iframe" src=""></iframe>
+</div>
+
+<!-- ══ MODAL: ANTEPRIMA CARICO/SCARICO ══ -->
+<div class="modal-overlay" id="modal-anteprima">
+  <div class="modal-box" style="max-width:96vw;width:600px">
+    <h3>📦 Conferma movimenti di magazzino</h3>
+    <div id="ant-carica" style="margin:10px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:rgba(26,158,92,.08)"></div>
+    <div style="font-size:12px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin:10px 0 6px">📤 Scarica da magazzino (correggi se serve)</div>
+    <div id="ant-componenti" style="max-height:260px;overflow-y:auto"></div>
+    <button class="btn btn-primary" style="margin-top:14px;width:100%;justify-content:center" onclick="confermaAnteprima()">✅ Conferma e registra</button>
+    <span id="ant-esito" style="font-size:13px;display:block;margin-top:8px;text-align:center"></span>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-anteprima')">Annulla</button>
+    </div>
+  </div>
+</div>
+
+<!-- ══ MODAL: DICHIARA PRODUZIONE (scarto/tempo, quando serve) ══ -->
+<div class="modal-overlay" id="modal-dichiara">
+  <div class="modal-box">
+    <h3>✅ Dichiara produzione — <span id="dich-titolo"></span></h3>
+    <label class="modal-label" style="margin-top:0">Pezzi buoni</label>
+    <input id="dich-buoni" class="modal-input" type="number" min="0" value="0">
+    <label class="modal-label">Pezzi di scarto</label>
+    <input id="dich-scarto" class="modal-input" type="number" min="0" value="0">
+    <label class="modal-label">Tempo impiegato (minuti)</label>
+    <input id="dich-tempo" class="modal-input" type="number" min="0" value="0">
+    <button class="btn btn-primary" style="margin-top:14px;width:100%;justify-content:center" onclick="salvaDichiarazione()">💾 Registra dichiarazione</button>
+    <span id="dich-esito" style="font-size:13px;display:block;margin-top:8px;text-align:center"></span>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-dichiara')">Chiudi</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+// ═══════════════════════════ NAVIGAZIONE TRA I 3 PANNELLI (nessun'altra via) ═══════════════════════════
+function mostraPannello(nome){
+  document.querySelectorAll('.totem-panel').forEach(p => p.classList.remove('attivo'));
+  document.querySelectorAll('.totem-tab').forEach(t => t.classList.remove('attiva'));
+  document.getElementById('panel-' + nome).classList.add('attivo');
+  document.getElementById('tab-' + nome).classList.add('attiva');
+}
+
+function aggiornaOrologio(){
+  document.getElementById('clock').textContent = new Date().toLocaleString('it-IT', {hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit'});
+}
+aggiornaOrologio(); setInterval(aggiornaOrologio, 30000);
+
+function showToast(msg, err){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.style.borderColor = err ? 'var(--red)' : 'var(--border)';
+  t.classList.add('show');
+  clearTimeout(window._tt); window._tt = setTimeout(() => t.classList.remove('show'), 2800);
+}
+function closeModal(id){ document.getElementById(id).classList.remove('open'); }
+function openModal(id){ document.getElementById(id).classList.add('open'); }
+
+// ═══════════════════════════ PANNELLO 1 — DICHIARAZIONE PRODUZIONE ═══════════════════════════
+// Stessa logica/API della pagina "Dichiarazione di Produzione" usata da Angelo,
+// ma SENZA Area Capo, Diagnostica bug fasi e Area Direzione: quei comandi non
+// competono ad Alessandro, restano riservati alla pagina completa.
+let _centroCorrente = null;
+let _opInDichiarazione = null;
+let _componenteInDichiarazione = null;
+let _anteprimaCorrente = null;
+
+async function caricaCentri(){
+  const r = await fetch('/api/dichiarazione-produzione/centri');
+  const centri = await r.json();
+  const sel = document.getElementById('centro-sel');
+  sel.innerHTML = '<option value="">Seleziona un centro di costo...</option>' +
+    centri.map(c => `<option value="${c.id}">${c.nome}</option>`).join('');
+}
+
+async function caricaOpAperti(){
+  const cid = document.getElementById('centro-sel').value;
+  const box = document.getElementById('op-lista');
+  _centroCorrente = cid;
+  if(!cid){ box.innerHTML = 'Seleziona un centro di costo per vedere gli Ordini di Produzione aperti.'; return; }
+  box.innerHTML = 'Caricamento...';
+  const r = await fetch(`/api/dichiarazione-produzione/${cid}/op-aperti`);
+  const gruppi = await r.json();
+  if(!gruppi.length){ box.innerHTML = '<p class="muted" style="font-style:italic">Nessun codice dichiarabile su questo centro di costo.</p>'; return; }
+  box.innerHTML = gruppi.map((g, i) => {
+    const righeComponenti = g.componenti.map((c, j) => {
+      const etichetta = c.componente_finale ? `${g.codice_articolo} (prodotto finito)` : c.codice_lavorato;
+      const idInput = `dich-inline-${i}-${j}`;
+      return `<tr>
+        <td class="codice">${etichetta}</td>
+        <td class="muted" style="font-size:12px">${c.descrizione || '—'}</td>
+        <td>${c.qta_necessaria}</td>
+        <td>${c.fatti}</td>
+        <td style="font-weight:700">${c.saldo}</td>
+        <td><input id="${idInput}" type="number" min="0" placeholder="0" style="width:64px;padding:8px;font-size:15px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"></td>
+        <td><button class="btn btn-primary" style="padding:8px 12px;font-size:13px" onclick='dichiaraInline(${JSON.stringify(g)}, ${JSON.stringify(c)}, "${idInput}")'>✅</button></td>
+      </tr>`;
+    }).join('');
+    return `<div class="mon-section" style="margin-bottom:10px">` +
+      `<div style="padding:12px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleGruppoOp(${i})">` +
+      `<div><b>${g.commessa || g.codice}</b> — ${g.codice_articolo}<br><small class="muted">${g.descrizione||''}</small></div>` +
+      `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px;color:var(--text-dim)">${g.componenti.length} codice/i</span> <span id="freccia-${i}">▶</span></div></div>` +
+      `<div id="gruppo-${i}" style="display:none;padding:0 14px 12px;overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descr.</th><th>Necessari</th><th>Fatti</th><th>Saldo</th><th>Dichiaro</th><th></th></tr></thead><tbody>${righeComponenti}</tbody></table></div>` +
+      `</div>`;
+  }).join('');
+}
+
+async function dichiaraInline(g, c, idInput){
+  const input = document.getElementById(idInput);
+  const buoni = parseInt(input.value, 10);
+  if(isNaN(buoni) || buoni <= 0){ input.style.borderColor = '#c0392b'; input.focus(); return; }
+
+  const componente = c.componente_finale ? '' : c.codice_lavorato;
+  const url = `/api/dichiarazione-produzione/anteprima?op_code=${encodeURIComponent(g.codice)}&componente=${encodeURIComponent(componente)}&pezzi_buoni=${buoni}&centro_id=${encodeURIComponent(_centroCorrente)}`;
+  let anteprima;
+  try{
+    const r = await fetch(url);
+    anteprima = await r.json();
+    if(!anteprima.ok){ alert('⚠️ ' + anteprima.error); return; }
+  }catch(e){ alert('❌ Errore di rete.'); return; }
+
+  _anteprimaCorrente = {
+    op_code: g.codice, centro_id: _centroCorrente, componente: c.componente_finale ? null : c.codice_lavorato,
+    pezzi_buoni: buoni, idInput,
+  };
+
+  const car = anteprima.carica;
+  if(anteprima.gia_caricato){
+    document.getElementById('ant-carica').innerHTML =
+      `<div style="display:flex;gap:8px;align-items:flex-start">
+        <span style="font-size:18px">ℹ️</span>
+        <div style="font-size:14px;line-height:1.5">${anteprima.messaggio}</div>
+      </div>`;
+    document.getElementById('ant-componenti').innerHTML = '';
+  } else {
+    document.getElementById('ant-carica').innerHTML =
+      `<div style="font-size:12px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-bottom:4px">📥 Carica a magazzino</div>` +
+      `<div style="display:flex;justify-content:space-between;align-items:center">` +
+      `<div><b class="codice">${car.codice}</b> <span class="muted">${car.descrizione||''}</span></div>` +
+      `<div style="font-weight:800;font-size:17px;color:#1a9e5c">× ${car.quantita}</div></div>`;
+
+    const box = document.getElementById('ant-componenti');
+    if(!anteprima.componenti.length){
+      box.innerHTML = '<p class="muted" style="font-style:italic;font-size:13px">Nessun componente da scaricare (distinta base non trovata per questo codice).</p>';
+    } else {
+      box.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed"><colgroup><col style="width:22%"><col style="width:53%"><col style="width:25%"></colgroup>' +
+        '<thead><tr><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Codice</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Descrizione</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Quantità</th></tr></thead><tbody>' +
+        anteprima.componenti.map((comp, k) =>
+          `<tr><td class="codice" style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${comp.codice}</td>` +
+          `<td style="padding:4px 6px;color:var(--text-dim);overflow-wrap:break-word">${comp.descrizione||'—'}</td>` +
+          `<td style="padding:4px 6px"><input id="ant-qta-${k}" type="number" step="0.01" min="0" value="${comp.quantita}" data-codice="${comp.codice}" style="width:80px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);font-size:13px"></td></tr>`
+        ).join('') + '</tbody></table>';
+    }
+  }
+  document.getElementById('ant-esito').textContent = '';
+  openModal('modal-anteprima');
+}
+
+async function confermaAnteprima(){
+  const esito = document.getElementById('ant-esito');
+  const inputsQta = document.querySelectorAll('#ant-componenti input[data-codice]');
+  const consumi = {};
+  inputsQta.forEach(inp => { consumi[inp.dataset.codice] = parseFloat(inp.value) || 0; });
+
+  const payload = { ..._anteprimaCorrente, pezzi_scarto: 0, tempo_minuti: 0, consumi };
+  try{
+    const r = await fetch('/api/dichiarazione-produzione', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ esito.style.color='#f07070'; esito.textContent = '⚠️ ' + d.error; return; }
+    closeModal('modal-anteprima');
+    caricaOpAperti();
+  }catch(e){
+    esito.style.color='#f07070'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
+function toggleGruppoOp(i){
+  const el = document.getElementById(`gruppo-${i}`);
+  const freccia = document.getElementById(`freccia-${i}`);
+  const aperto = el.style.display !== 'none';
+  el.style.display = aperto ? 'none' : 'block';
+  freccia.textContent = aperto ? '▶' : '▼';
+}
+
+async function salvaDichiarazione(){
+  const esito = document.getElementById('dich-esito');
+  const payload = {
+    op_code: _opInDichiarazione, centro_id: _centroCorrente, componente: _componenteInDichiarazione,
+    pezzi_buoni: document.getElementById('dich-buoni').value,
+    pezzi_scarto: document.getElementById('dich-scarto').value,
+    tempo_minuti: document.getElementById('dich-tempo').value,
+  };
+  try{
+    const r = await fetch('/api/dichiarazione-produzione', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ esito.style.color='#f07070'; esito.textContent = '⚠️ ' + d.error; return; }
+    esito.style.color = '#5debb0'; esito.textContent = '✓ Registrata.';
+    setTimeout(()=>{ closeModal('modal-dichiara'); caricaOpAperti(); }, 700);
+  }catch(e){
+    esito.style.color = '#f07070'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
+caricaCentri();
+
+// ═══════════════════════════ PANNELLO 2 — DOCUMENTAZIONE ARTICOLO ═══════════════════════════
+let CODICE_ATTIVO = null;
+
+function cercaArticolo(){
+  const val = document.getElementById('inp-codice').value.trim();
+  if(!val){ return; }
+  CODICE_ATTIVO = val;
+  document.getElementById('titolo-codice-doc').textContent = val;
+  document.getElementById('titolo-codice-foto').textContent = val;
+  document.getElementById('sezione-articolo').style.display = '';
+  caricaListaDocumenti();
+  caricaListaFoto();
+}
+
+function leggiFileBase64(file){
+  return new Promise((resolve, reject) => {
+    const rd = new FileReader();
+    rd.onload = () => resolve(rd.result.split(',')[1]);
+    rd.onerror = () => reject(new Error('Lettura file fallita'));
+    rd.readAsDataURL(file);
+  });
+}
+
+async function caricaDocumento(input){
+  const file = input.files[0];
+  if(!file || !CODICE_ATTIVO) return;
+  try{
+    const b64 = await leggiFileBase64(file);
+    const r = await fetch('/api/totem/documenti', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice_articolo: CODICE_ATTIVO, nome_file: file.name, tipo_mime: file.type, contenuto_base64: b64})
+    });
+    const d = await r.json();
+    if(d.errore){ showToast('❌ ' + d.messaggio, true); return; }
+    showToast('✅ Documento caricato'); caricaListaDocumenti();
+  }catch(e){ showToast('❌ Errore caricamento documento', true); }
+  input.value = '';
+}
+
+async function caricaListaDocumenti(){
+  const box = document.getElementById('lista-documenti');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/totem/documenti/' + encodeURIComponent(CODICE_ATTIVO));
+    const lista = await r.json();
+    box.innerHTML = lista.length ? lista.map(dd =>
+      `<div style="display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid var(--border)">
+        <a href="/api/totem/documenti/file/${dd.id}" target="_blank" style="color:var(--accent2);font-size:14px">📄 ${dd.nome_file}</a>
+        <button class="btn btn-ghost" style="padding:6px 10px;font-size:13px;color:#f07070" onclick="eliminaDocumento(${dd.id})">🗑️</button>
+      </div>`
+    ).join('') : '<span class="muted" style="font-size:.9rem">Nessun documento caricato</span>';
+  }catch(e){ box.innerHTML = '<span style="color:#f07070">Errore caricamento</span>'; }
+}
+
+async function eliminaDocumento(id){
+  if(!confirm('Eliminare questo documento?')) return;
+  await fetch('/api/totem/documenti/' + id, {method:'DELETE'});
+  caricaListaDocumenti();
+}
+
+async function caricaFoto(input){
+  const file = input.files[0];
+  if(!file || !CODICE_ATTIVO) return;
+  try{
+    const b64 = await leggiFileBase64(file);
+    const r = await fetch('/api/foto_articolo', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice_articolo: CODICE_ATTIVO, nome_file: file.name, contenuto_base64: b64})
+    });
+    const d = await r.json();
+    if(d.errore){ showToast('❌ ' + d.messaggio, true); return; }
+    showToast('✅ Foto caricata'); caricaListaFoto();
+  }catch(e){ showToast('❌ Errore caricamento foto', true); }
+  input.value = '';
+}
+
+async function caricaListaFoto(){
+  const box = document.getElementById('lista-foto');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/foto_articolo/' + encodeURIComponent(CODICE_ATTIVO));
+    const lista = await r.json();
+    box.innerHTML = lista.length ? lista.map(f => `
+      <div style="position:relative">
+        <img src="/api/foto_articolo/file/${f.id}" style="width:100px;height:100px;object-fit:cover;border-radius:8px;border:1px solid var(--border);cursor:pointer" onclick="window.open(this.src,'_blank')">
+        <button onclick="eliminaFoto(${f.id})" style="position:absolute;top:-6px;right:-6px;background:#c0392b;color:#fff;border:none;border-radius:50%;width:24px;height:24px;font-size:13px;cursor:pointer">✕</button>
+      </div>`
+    ).join('') : '<span class="muted" style="font-size:.9rem">Nessuna foto caricata</span>';
+  }catch(e){ box.innerHTML = '<span style="color:#f07070">Errore caricamento</span>'; }
+}
+
+async function eliminaFoto(id){
+  if(!confirm('Eliminare questa foto?')) return;
+  await fetch('/api/foto_articolo/' + id, {method:'DELETE'});
+  caricaListaFoto();
+}
+
+// ═══════════════════════════ PANNELLO 3 — MONITOR MACCHINE ═══════════════════════════
+// Riusa la pagina Totem Live già esistente (centro di costo per centro di costo),
+// mostrata qui dentro a schermo pieno: da lì Alessandro può solo tornare a
+// "Cambia macchina", non uscire dal totem.
+function apriMonitorMacchina(cid, nome){
+  document.getElementById('monitor-iframe-titolo').textContent = nome;
+  document.getElementById('monitor-iframe').src = '/totem/macchina/' + cid;
+  document.getElementById('monitor-iframe-wrap').classList.add('aperto');
+}
+function chiudiMonitorMacchina(){
+  document.getElementById('monitor-iframe-wrap').classList.remove('aperto');
+  document.getElementById('monitor-iframe').src = '';
+}
+</script>
+</body>
+</html>
