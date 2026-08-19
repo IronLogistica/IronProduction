@@ -1644,24 +1644,35 @@ def api_dichiarazione_centri():
 @pp_bp.get('/api/dichiarazione-produzione/diagnostica-fasi-op/<path:op_code>')
 def api_diagnostica_fasi_op(op_code):
     """
-    Diagnostica GREZZA per un OP: ogni EventoConsuntivoPP registrato per
-    quell'OP con la sua 'fase' esatta (stringa così com'è nel database,
-    senza nessuna elaborazione), più l'elenco di tutti i Centri di Costo
-    (id, nome esatto). Serve per beccare sul fatto un caso in cui
-    dichiarare su un centro sembra far salire 'Fatti' anche su un altro —
-    se càpita di nuovo, questa pagina mostra la fase ESATTA con cui è stato
-    salvato ogni evento, per confrontarla carattere per carattere col nome
-    del centro su cui si pensava di dichiarare.
+    Diagnostica GREZZA per un OP — o per TUTTI gli OP di un articolo, se
+    quello che viene cercato non è un codice OP ma un codice articolo (es.
+    "T200" invece di "OP-2026-000004", facile confonderli: la tabella
+    sopra li mostra fianco a fianco). Ogni EventoConsuntivoPP registrato
+    con la sua 'fase' esatta (stringa così com'è nel database, senza
+    nessuna elaborazione) — con l'OP di provenienza ben visibile quando ce
+    n'è più di uno — più l'elenco di tutti i Centri di Costo (id, nome
+    esatto). Serve per beccare sul fatto un caso in cui dichiarare su un
+    centro sembra far salire 'Fatti' anche su un altro: il confronto
+    carattere per carattere fra fase salvata e nome centro lo mostra subito.
     """
-    o = OrdineProduzione.query.filter_by(codice=op_code.strip()).first()
-    if not o:
-        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
-    eventi = (EventoConsuntivoPP.query.filter_by(op_code=o.codice)
+    cercato = op_code.strip()
+    ordini = OrdineProduzione.query.filter_by(codice=cercato).all()
+    cercato_per = 'op_code'
+    if not ordini:
+        ordini = OrdineProduzione.query.filter(
+            db.func.upper(OrdineProduzione.codice_articolo) == cercato.upper()).all()
+        cercato_per = 'codice_articolo'
+    if not ordini:
+        return jsonify(ok=False, error=f'Nessun OP trovato né come codice OP né come codice articolo per "{cercato}"'), 404
+
+    codici_op = [o.codice for o in ordini]
+    eventi = (EventoConsuntivoPP.query.filter(EventoConsuntivoPP.op_code.in_(codici_op))
               .order_by(EventoConsuntivoPP.timestamp_evento.desc()).all())
     centri = CentroCostoWood.query.order_by(CentroCostoWood.nome).all()
-    return jsonify(ok=True,
-        op_code=o.codice, codice_articolo=o.codice_articolo, qta_buona=o.qta_buona, stato=o.stato,
-        eventi=[{'id': e.id, 'fase_esatta': e.fase, 'componente': e.componente,
+    return jsonify(ok=True, cercato=cercato, cercato_per=cercato_per,
+        ordini=[{'op_code': o.codice, 'codice_articolo': o.codice_articolo,
+                 'qta_buona': o.qta_buona, 'qta_pianificata': o.qta_pianificata, 'stato': o.stato} for o in ordini],
+        eventi=[{'id': e.id, 'op_code': e.op_code, 'fase_esatta': e.fase, 'componente': e.componente,
                  'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto,
                  'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M:%S')} for e in eventi],
         centri=[{'id': c.id, 'nome_esatto': c.nome} for c in centri])
