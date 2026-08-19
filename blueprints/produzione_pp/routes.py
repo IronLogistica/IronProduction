@@ -573,6 +573,30 @@ def _e_prima_fase_del_ciclo(codice_lavorato, fase_nome):
     return prima.centro_costo.nome.strip().lower() == (fase_nome or '').strip().lower()
 
 
+def _e_ultima_fase_del_ciclo(codice_lavorato, fase_nome):
+    """
+    Vero se fase_nome è l'ULTIMA fase del Ciclo di Lavoro di questo codice —
+    quella che lo rende davvero 'finito'. BUG REALE VERIFICATO IN
+    PRODUZIONE che questa funzione esiste per correggere: per un articolo
+    che passa per PIÙ fasi mantenendo sempre lo STESSO codice (es.
+    Sega→Piega→Saldatura tutte su T200, mai un codice diverso in mezzo),
+    il solo confronto codice_lavorato == o.codice_articolo risulta vero a
+    OGNI fase, non solo all'ultima — quindi dichiarare la prima fase (Sega)
+    faceva avanzare comunque qta_buona/stato dell'INTERO Ordine di
+    Produzione, anche con Piega/Saldatura ancora da fare. Vedi uso in
+    _registra_evento_consuntivo (avanza_op).
+    Se il codice non ha nessun Ciclo di Lavoro configurato, non possiamo
+    saperlo: non blocchiamo, si comporta come prima (stessa filosofia di
+    _e_prima_fase_del_ciclo — un codice a fase singola è sia prima che
+    ultima fase di se stesso).
+    """
+    ultima = (CicloLavoroWood.query.filter_by(codice=codice_lavorato)
+              .order_by(CicloLavoroWood.sequenza.desc()).first())
+    if not ultima or not ultima.centro_costo:
+        return True
+    return ultima.centro_costo.nome.strip().lower() == (fase_nome or '').strip().lower()
+
+
 def _calcola_consumi_standard(o, componente_finale, componente, good):
     """
     Consumi standard (da distinta base) per GOOD pezzi buoni — stessa logica
@@ -645,11 +669,20 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     componente_finale = not componente or componente == o.codice_articolo
     codice_lavorato = o.codice_articolo if componente_finale else componente
 
+    # BUG CORRETTO: componente_finale da solo dice solo "sto lavorando lo
+    # stesso codice del prodotto finito dell'OP" — vero anche per la PRIMA
+    # fase di un articolo a codice unico multi-fase (es. Sega, quando poi
+    # ci sono ancora Piega e Saldatura). L'OP deve avanzare (qta_buona,
+    # stato, "Tecnicamente completato") solo quando è ANCHE l'ultima fase
+    # del ciclo di quel codice — altrimenti dichiarare Sega faceva evadere
+    # l'intero OP anche con le fasi successive ancora da fare.
+    avanza_op = componente_finale and _e_ultima_fase_del_ciclo(codice_lavorato, fase_nome)
+
     db.session.add(EventoConsuntivoPP(event_id=event_id, op_code=o.codice, fase=fase_nome,
                                        componente=None if componente_finale else componente,
                                        timestamp_evento=ts, pezzi_buoni=good, pezzi_scarto=scrap, tempo_minuti=tempo))
     o.tempo_consuntivo_minuti += tempo
-    if componente_finale:
+    if avanza_op:
         o.qta_buona += good; o.qta_scarto += scrap
         if o.stato == 'Rilasciato': o.stato = 'In esecuzione'
         if o.qta_pianificata and o.qta_buona >= o.qta_pianificata:
@@ -667,7 +700,7 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
                     op_code=o.codice, codice_articolo=o.codice_articolo, tipo='SOPRA_PRODUZIONE',
                     qta_pianificata=o.qta_pianificata, qta_buona=o.qta_buona, percentuale=round(pct_sopra, 1)))
     elif o.stato == 'Rilasciato':
-        o.stato = 'In esecuzione'   # un componente ha iniziato la lavorazione: l'OP non è più solo "rilasciato"
+        o.stato = 'In esecuzione'   # una fase (finale o intermedia) ha iniziato la lavorazione: l'OP non è più solo "rilasciato"
     _audit(o, 'EVENTO_CONSUNTIVO', f'componente={codice_lavorato}; fase={fase_nome}; buoni={good}; scarto={scrap}; minuti={tempo}', event_id)
 
     # Scarico automatico giacenza Iron Wood in proporzione ai pezzi buoni
@@ -1670,15 +1703,28 @@ def api_dichiarazione_op_aperti(cid):
             codice_comp = comp['codice']
             if codice_comp not in fasi_per_codice:
                 continue  # questo codice non passa da questo centro
+            # 'componente_finale' qui decide SOLO cosa mandare come
+            # 'componente' nella creazione (None = storicamente sempre
+            # stato "stesso codice dell'articolo", per compatibilità con
+            # come viene salvato/cercato EventoConsuntivoPP — MAI cambiarlo
+            # in base alla fase, altrimenti la ricerca di 'fatti già
+            # dichiarati' sopra smette di trovare le righe già salvate).
+            # 'es_ultima_fase' è SOLO per l'etichetta mostrata all'operaio:
+            # dice se questa riga è davvero l'ultima fase del ciclo (quella
+            # che fa avanzare l'OP) o solo una fase intermedia con lo
+            # stesso codice (es. Sega, quando poi c'è ancora Saldatura) —
+            # il bug per cui dichiarare Sega evadeva l'intero OP è
+            # corretto in _registra_evento_consuntivo (avanza_op), non qui.
             componente_finale = (codice_comp == o.codice_articolo)
             componente_param = None if componente_finale else codice_comp
+            es_ultima_fase = componente_finale and _e_ultima_fase_del_ciclo(codice_comp, centro.nome)
             qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
             fatti = fatti_per_componente.get((o.codice, componente_param), 0)
             saldo = max(qta_necessaria - fatti, 0)
             if saldo <= 0:
                 continue  # già completato su questo centro: non dichiarabile
             gruppo_componenti.append({
-                'componente': componente_param, 'componente_finale': componente_finale,
+                'componente': componente_param, 'componente_finale': es_ultima_fase,
                 'codice_lavorato': codice_comp, 'descrizione': descrizione_per_codice.get(codice_comp, ''),
                 'qta_necessaria': qta_necessaria, 'fatti': fatti, 'saldo': saldo,
             })
