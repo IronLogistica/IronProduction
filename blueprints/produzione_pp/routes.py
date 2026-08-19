@@ -1479,7 +1479,11 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                 'matrice': '', 'punto_zero': '', 'indice_assorbimento': '', 'rullo': '',
                 'impostazione_satinatrice': '', 'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti,
                 'saldo': saldo, 'pz_per_barra': None, 'nr_barre': None,
-                'nota': '⚠️ Parametri non ancora compilati in Parametri di Lavorazione',
+                # In Saldatura non si compilano mai (né servono) i parametri di
+                # Scheda Lavorazione (matrice/punto zero/rullo/satinatura, tutti
+                # per macchine di piega/taglio) — l'avviso lì è sempre falso
+                # allarme, va mostrato solo dove quei parametri hanno senso.
+                'nota': '' if nome_l == 'saldatura' else '⚠️ Parametri non ancora compilati in Parametri di Lavorazione',
             }
             righe_per_materiale.setdefault(materiale, []).append(riga)
 
