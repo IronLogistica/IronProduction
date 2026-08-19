@@ -53,6 +53,20 @@
 </div>
 
 <div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">🐛 Diagnostica bug fasi — OP colpiti dal bug di avanzamento errato</div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin:0 0 12px">
+      Trova gli Ordini di Produzione dove una dichiarazione su una fase INTERMEDIA (es. Sega) ha fatto avanzare
+      per errore la quantità buona/stato dell'intero OP, come se fosse stata l'ultima fase — bug corretto nel
+      programma, questo elenca solo gli effetti già scritti nel database prima della correzione. Sola lettura,
+      non modifica nulla finché non premi "Azzera movimenti" più sotto.
+    </p>
+    <button class="btn btn-primary" style="padding:7px 14px;font-size:12px" onclick="caricaDiagnosticaBugFasi()">🔎 Cerca OP colpiti</button>
+    <div id="diagnostica-bug-fasi-risultato" style="margin-top:14px"></div>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:16px">
   <div class="section-hdr postazione-hdr">🖋️ Area Direzione — approvazioni</div>
   <div style="padding:14px">
     <div id="direzione-avvisi" style="margin-top:14px"></div>
@@ -420,6 +434,52 @@ async function annullaDichiarazione(eid){
   const d = await r.json();
   if(!d.ok){ alert('⚠️ ' + d.error); return; }
   caricaStoricoCapo();
+}
+
+async function caricaDiagnosticaBugFasi(){
+  const box = document.getElementById('diagnostica-bug-fasi-risultato');
+  box.innerHTML = 'Ricerca in corso...';
+  const r = await fetch('/api/dichiarazione-produzione/diagnostica-bug-fasi');
+  const d = await r.json();
+  if(!d.ok){ box.innerHTML = `<p style="color:#c0392b">⚠️ ${d.error||'errore'}</p>`; return; }
+  if(!d.op_colpiti.length){
+    box.innerHTML = '<p style="color:#2a9d5c;font-weight:600">✓ Nessun OP risulta colpito dal bug.</p>';
+    return;
+  }
+  let righe = d.op_colpiti.map(op => `
+    <tr>
+      <td><input type="checkbox" class="chk-op-bug" value="${op.op_code}" checked></td>
+      <td class="codice">${op.op_code}</td>
+      <td>${op.codice_articolo}</td>
+      <td>${op.commessa||'—'}</td>
+      <td>${op.stato}</td>
+      <td>${op.qta_buona} / ${op.qta_pianificata}</td>
+      <td style="color:#e6b800;font-weight:700">${op.pezzi_buoni_sospetti}</td>
+      <td style="font-size:11px;color:var(--text-dim)">${op.eventi_sospetti.map(e=>`${e.fase} (${e.pezzi_buoni} pz, ${e.timestamp})`).join('<br>')}</td>
+    </tr>`).join('');
+  box.innerHTML = `
+    <p style="font-size:12px;margin-bottom:10px">⚠️ Trovati <b>${d.totale}</b> OP con almeno una dichiarazione "finale" registrata su una fase che non era davvero l'ultima.</p>
+    <div style="overflow-x:auto"><table class="kanban-table"><thead><tr>
+      <th><input type="checkbox" id="chk-tutti-bug" checked onchange="document.querySelectorAll('.chk-op-bug').forEach(c=>c.checked=this.checked)"></th>
+      <th>OP</th><th>Codice</th><th>Commessa</th><th>Stato</th><th>Buona/Pianificata</th><th>Pz sospetti</th><th>Dettaglio dichiarazioni sospette</th>
+    </tr></thead><tbody>${righe}</tbody></table></div>
+    <button class="btn btn-danger" style="margin-top:12px;padding:8px 14px;font-size:12px" onclick="azzeraMovimentiBugFasi()">🗑️ Azzera movimenti di magazzino degli OP selezionati</button>
+  `;
+}
+
+async function azzeraMovimentiBugFasi(){
+  const selezionati = [...document.querySelectorAll('.chk-op-bug:checked')].map(c=>c.value);
+  if(!selezionati.length){ alert('Seleziona almeno un OP.'); return; }
+  if(!confirm(`Azzerare i movimenti di magazzino (carico/scarico) di ${selezionati.length} OP?\n\nNON tocca le dichiarazioni di produzione né lo stato/quantità degli OP — solo i movimenti di magazzino generati da questi codici.`)) return;
+  if(!confirm('Conferma definitiva: operazione irreversibile. Procedere?')) return;
+  const r = await fetch('/api/dichiarazione-produzione/diagnostica-bug-fasi/azzera-movimenti', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({pin:_pinCapoAttivo, op_codes:selezionati})
+  });
+  const d = await r.json();
+  if(!d.ok){ alert('⚠️ ' + d.error); return; }
+  alert(`✓ Eliminati ${d.eliminati} movimenti di magazzino.`);
+  caricaDiagnosticaBugFasi();
 }
 
 caricaCentri();

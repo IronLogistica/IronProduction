@@ -2207,3 +2207,82 @@ def api_dichiarazione_movimenti_azzera_periodo():
     db.session.commit()
     return jsonify(ok=True, eliminati=n)
 
+
+@pp_bp.get('/api/dichiarazione-produzione/diagnostica-bug-fasi')
+def api_diagnostica_bug_fasi():
+    """
+    Trova gli Ordini di Produzione colpiti dal bug corretto in
+    _registra_evento_consuntivo (vedi _e_ultima_fase_del_ciclo): un
+    EventoConsuntivoPP con componente NULL (storicamente sempre trattato
+    come "prodotto finito", solo per identità di codice) dichiarato su una
+    fase che NON è davvero l'ultima del Ciclo di Lavoro di quel codice —
+    prima della correzione, avrebbe fatto avanzare qta_buona/stato
+    dell'intero OP anche se non era la fase che lo completava per davvero.
+    Sola lettura: non modifica nulla, elenca solo cosa sembra colpito.
+    """
+    eventi_sospetti = (db.session.query(EventoConsuntivoPP, OrdineProduzione)
+                       .join(OrdineProduzione, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
+                       .filter(EventoConsuntivoPP.componente.is_(None))
+                       .all())
+    per_op = {}
+    for e, o in eventi_sospetti:
+        if _e_ultima_fase_del_ciclo(o.codice_articolo, e.fase):
+            continue  # questa era davvero l'ultima fase: dichiarazione legittima
+        voce = per_op.setdefault(o.codice, {
+            'op_code': o.codice, 'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione,
+            'commessa': o.commessa, 'stato': o.stato, 'qta_pianificata': o.qta_pianificata,
+            'qta_buona': o.qta_buona, 'qta_scarto': o.qta_scarto,
+            'eventi_sospetti': [], 'pezzi_buoni_sospetti': 0, 'pezzi_scarto_sospetti': 0,
+        })
+        voce['eventi_sospetti'].append({
+            'fase': e.fase, 'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M'),
+            'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto,
+        })
+        voce['pezzi_buoni_sospetti'] += e.pezzi_buoni or 0
+        voce['pezzi_scarto_sospetti'] += e.pezzi_scarto or 0
+    risultato = sorted(per_op.values(), key=lambda v: v['op_code'])
+    return jsonify(ok=True, op_colpiti=risultato, totale=len(risultato))
+
+
+@pp_bp.post('/api/dichiarazione-produzione/diagnostica-bug-fasi/azzera-movimenti')
+def api_diagnostica_bug_fasi_azzera_movimenti():
+    """
+    Per gli OP colpiti dal bug (vedi api_diagnostica_bug_fasi): azzera SOLO
+    i movimenti di magazzino (MovimentoGiacenzaWood, carico_produzione/
+    scarico_produzione) legati al loro codice_articolo — stessa logica di
+    reversal di api_dichiarazione_movimenti_azzera_periodo, qui filtrata
+    per codice invece che per data. NON tocca EventoConsuntivoPP (restano
+    per l'audit e per il tracciamento "già dichiarato" di ogni fase, es.
+    Sega continua a sapere cosa è già stato fatto), NON tocca qta_buona/
+    stato dell'OP — solo i movimenti di carico/scarico a magazzino.
+    Richiede il PIN capo, come le altre operazioni di azzeramento massivo.
+    """
+    d = request.get_json(force=True)
+    if not _verifica_pin_capo(d):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    op_codes = d.get('op_codes')
+    if not op_codes or not isinstance(op_codes, list):
+        return jsonify(ok=False, error='Nessun OP indicato'), 400
+
+    codici_articolo = {o.codice_articolo for o in
+                        OrdineProduzione.query.filter(OrdineProduzione.codice.in_(op_codes)).all()}
+    if not codici_articolo:
+        return jsonify(ok=True, eliminati=0)
+
+    movimenti = (MovimentoGiacenzaWood.query
+                 .filter(MovimentoGiacenzaWood.codice.in_(codici_articolo),
+                         MovimentoGiacenzaWood.tipo.in_(('carico_produzione', 'scarico_produzione')),
+                         MovimentoGiacenzaWood.riferimento.in_(op_codes))
+                 .all())
+    n = len(movimenti)
+    for m in movimenti:
+        g = GiacenzaWood.query.get(m.codice)
+        if g:
+            g.quantita = (g.quantita or 0) - m.quantita
+            g.aggiornato_il = datetime.utcnow()
+        db.session.delete(m)
+    db.session.add(AuditPP(op_code='', azione='AZZERA_MOVIMENTI_BUG_FASI',
+                            dettaglio=f'azzerati {n} movimenti di magazzino su {len(op_codes)} OP colpiti dal bug fasi: {", ".join(op_codes)}'))
+    db.session.commit()
+    return jsonify(ok=True, eliminati=n)
+
