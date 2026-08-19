@@ -414,7 +414,7 @@ async function azzeraMovimentiPeriodo(){
   const dataA = document.getElementById('capo-data-a').value;
   if(!dataDa || !dataA){ alert('Seleziona prima un periodo.'); return; }
   const periodoLabel = `dal ${dataDa.split('-').reverse().join('/')} al ${dataA.split('-').reverse().join('/')}`;
-  if(!confirm(`Stornare TUTTE le dichiarazioni di produzione ${periodoLabel} su tutti i centri?\n\nOgni dichiarazione viene invertita esattamente come lo storno singolo: quantità dell'Ordine di Produzione, tempo e materiali a magazzino tutti ripristinati — non solo i movimenti "a parte". Andranno ridichiarate correttamente dopo.`)) return;
+  if(!confirm(`Stornare TUTTE le dichiarazioni di produzione ${periodoLabel} su tutti i centri?\n\nOgni dichiarazione viene invertita esattamente come lo storno singolo: quantità dell'Ordine di Produzione, tempo e materiali a magazzino tutti ripristinati — non solo i movimenti "a parte". Se per un OP+centro non resta più nessuna dichiarazione, viene tolto anche l'Ordine di Lavoro numerato (il documento per gli operai). Andranno rigenerati/ridichiarati correttamente dopo.`)) return;
   if(!confirm('Conferma definitiva: operazione irreversibile. Procedere?')) return;
   const r = await fetch('/api/dichiarazione-produzione/eventi/azzera-periodo', {
     method:'POST', headers:{'Content-Type':'application/json'},

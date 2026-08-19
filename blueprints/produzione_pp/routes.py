@@ -2044,7 +2044,31 @@ def _storna_evento_consuntivo(e, o):
                                               riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
         _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
                                       riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
+
+    op_code_evento, fase_evento = e.op_code, e.fase
     db.session.delete(e)
+
+    # Storno anche l'Ordine di Lavoro (NumeroListaLavoroWood) — il
+    # documento numerato che Angelo manda agli operai, generato PRIMA che
+    # eseguano il lavoro. Se dopo aver tolto questa dichiarazione non
+    # rimane più NESSUNA dichiarazione per questo OP su questo centro, la
+    # lista di lavoro non riflette più niente di realmente eseguito: va
+    # tolta anche lei, non solo la dichiarazione. Se invece restano altre
+    # dichiarazioni sullo stesso OP+centro (es. storno parziale), il
+    # documento resta valido per quelle e non va toccato.
+    centro_evento = CentroCostoWood.query.filter(
+        db.func.lower(CentroCostoWood.nome) == (fase_evento or '').strip().lower()).first()
+    if centro_evento:
+        restano_dichiarazioni = (EventoConsuntivoPP.query
+                                  .filter_by(op_code=op_code_evento, fase=fase_evento).first())
+        if not restano_dichiarazioni:
+            numero_lista = (NumeroListaLavoroWood.query
+                             .filter_by(op_code=op_code_evento, centro_costo_id=centro_evento.id).first())
+            if numero_lista:
+                _audit(o, 'STORNO_ORDINE_LAVORO',
+                       f'tolto Ordine di Lavoro {numero_lista.prefisso}/{numero_lista.numero:03d} '
+                       f'su {centro_evento.nome} (nessuna dichiarazione rimasta)')
+                db.session.delete(numero_lista)
 
 
 @pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/annulla')
