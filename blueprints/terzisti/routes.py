@@ -2,7 +2,7 @@ from flask import Blueprint, render_template, jsonify, request, current_app
 from models import (
     db, Terzista, LavorazioneTerzista, RigaCommessa, FaseRiga, log,
     SchedaTrattamento, TIPI_TRATTAMENTO_SCHEDA, FORNITORI_SCHEDA_DEFAULT,
-    KanbanProdotto, storico_aggiungi_auto,
+    KanbanProdotto, storico_aggiungi_auto, CentroCostoWood,
 )
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
 from datetime import datetime, date
@@ -39,6 +39,52 @@ def _aggiorna_kanban_da_rientro_ddt(codice, qta_rientrata_ora):
     except MasterLogisticError as e:
         log(f'WARN: rientro DDT per {codice} NON notificato a MasterLogistic-WMS: {e}')
     log(f'Kanban: +{qta_rientrata_ora} "Finiti IW" su {p.prodotto} da rientro DDT terzista')
+
+
+def _aggiorna_lead_time_esterno_da_rientro(trattamento, data_uscita, data_rientro):
+    """
+    Auto-apprendimento del lead time fornitore esterno: quando un DDT di
+    rientro chiude COMPLETAMENTE una lavorazione (vedi conferma_ddt_rientro),
+    calcola i giorni reali trascorsi tra spedizione e rientro e aggiorna
+    CentroCostoWood.lead_time_esterno_giorni — con una media cumulativa
+    (si stabilizza mano a mano, non scatta su un solo DDT) — per ogni centro
+    di costo ESTERNO il cui nome corrisponde al tipo di trattamento
+    (zincatura/verniciatura), individuato per parola chiave nel nome (stesso
+    principio già usato altrove nell'app, es. 'sega' in nome_l).
+    Salta i centri bloccati a mano (lead_time_esterno_manuale=True).
+    Non bloccante: qualunque problema di parsing/match viene solo loggato,
+    non deve mai far fallire la conferma del DDT rientro.
+    """
+    try:
+        if not data_uscita or not data_rientro:
+            return
+        d_uscita = datetime.strptime(data_uscita, '%d/%m/%Y')
+        d_rientro = datetime.strptime(data_rientro, '%d/%m/%Y')
+        giorni = (d_rientro - d_uscita).days
+        if giorni < 0:
+            return  # data incoerente (es. OCR sbagliato) — meglio ignorare che sporcare la media
+
+        t = (trattamento or '').lower()
+        parole_chiave = []
+        if 'vernic' in t:
+            parole_chiave.append('vernic')
+        if 'zinc' in t:
+            parole_chiave.append('zinc')
+        if not parole_chiave:
+            return
+
+        for c in CentroCostoWood.query.filter_by(esterno=True).all():
+            if c.lead_time_esterno_manuale:
+                continue
+            if any(k in (c.nome or '').lower() for k in parole_chiave):
+                n = c.lead_time_esterno_n_osservazioni or 0
+                attuale = c.lead_time_esterno_giorni or 0
+                c.lead_time_esterno_giorni = round(((attuale * n) + giorni) / (n + 1), 2)
+                c.lead_time_esterno_n_osservazioni = n + 1
+                log(f'Lead time esterno "{c.nome}" aggiornato automaticamente: '
+                    f'{giorni}gg osservati (media ora {c.lead_time_esterno_giorni}gg su {n + 1} osservazioni)')
+    except Exception as e:
+        log(f'WARN: auto-apprendimento lead time esterno fallito: {e}')
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -747,6 +793,8 @@ def conferma_ddt_rientro():
                 fa = FaseRiga.query.filter_by(riga_id=lav.riga_id, fase=lav.fase).first()
                 if fa:
                     fa.stato = 'completata'
+                _aggiorna_lead_time_esterno_da_rientro(note_j.get('trattamento') or lav.fase,
+                                                        lav.data_uscita, lav.data_rientro)
             else:
                 lav.stato       = 'PARZIALE'
                 lav.ddt_rientro = ', '.join(ddt_list)
