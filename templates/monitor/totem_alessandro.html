@@ -126,19 +126,13 @@
       <div class="mon-section">
         <div class="section-hdr postazione-hdr">📄 Documentazione tecnica — <span id="titolo-codice-doc"></span></div>
         <div style="padding:14px">
-          <label class="btn btn-primary" style="display:inline-flex;cursor:pointer">+ Carica documento
-            <input type="file" accept=".pdf,image/*" style="display:none" onchange="caricaDocumento(this)">
-          </label>
-          <div id="lista-documenti" style="margin-top:12px">Caricamento...</div>
+          <div id="lista-documenti">Caricamento...</div>
         </div>
       </div>
       <div class="mon-section">
         <div class="section-hdr postazione-hdr">📷 Foto di riferimento prodotto — <span id="titolo-codice-foto"></span></div>
         <div style="padding:14px">
-          <label class="btn btn-primary" style="display:inline-flex;cursor:pointer">+ Carica foto
-            <input type="file" accept="image/*" style="display:none" onchange="caricaFoto(this)">
-          </label>
-          <div id="lista-foto" style="margin-top:12px;display:flex;flex-wrap:wrap;gap:8px">Caricamento...</div>
+          <div id="lista-foto" style="display:flex;flex-wrap:wrap;gap:8px">Caricamento...</div>
         </div>
       </div>
     </div>
@@ -393,31 +387,6 @@ function cercaArticolo(){
   caricaListaFoto();
 }
 
-function leggiFileBase64(file){
-  return new Promise((resolve, reject) => {
-    const rd = new FileReader();
-    rd.onload = () => resolve(rd.result.split(',')[1]);
-    rd.onerror = () => reject(new Error('Lettura file fallita'));
-    rd.readAsDataURL(file);
-  });
-}
-
-async function caricaDocumento(input){
-  const file = input.files[0];
-  if(!file || !CODICE_ATTIVO) return;
-  try{
-    const b64 = await leggiFileBase64(file);
-    const r = await fetch('/api/totem/documenti', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({codice_articolo: CODICE_ATTIVO, nome_file: file.name, tipo_mime: file.type, contenuto_base64: b64})
-    });
-    const d = await r.json();
-    if(d.errore){ showToast('❌ ' + d.messaggio, true); return; }
-    showToast('✅ Documento caricato'); caricaListaDocumenti();
-  }catch(e){ showToast('❌ Errore caricamento documento', true); }
-  input.value = '';
-}
-
 async function caricaListaDocumenti(){
   const box = document.getElementById('lista-documenti');
   box.innerHTML = 'Caricamento...';
@@ -437,22 +406,6 @@ async function eliminaDocumento(id){
   if(!confirm('Eliminare questo documento?')) return;
   await fetch('/api/totem/documenti/' + id, {method:'DELETE'});
   caricaListaDocumenti();
-}
-
-async function caricaFoto(input){
-  const file = input.files[0];
-  if(!file || !CODICE_ATTIVO) return;
-  try{
-    const b64 = await leggiFileBase64(file);
-    const r = await fetch('/api/foto_articolo', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({codice_articolo: CODICE_ATTIVO, nome_file: file.name, contenuto_base64: b64})
-    });
-    const d = await r.json();
-    if(d.errore){ showToast('❌ ' + d.messaggio, true); return; }
-    showToast('✅ Foto caricata'); caricaListaFoto();
-  }catch(e){ showToast('❌ Errore caricamento foto', true); }
-  input.value = '';
 }
 
 async function caricaListaFoto(){
