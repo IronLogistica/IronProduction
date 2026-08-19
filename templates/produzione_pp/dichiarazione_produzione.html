@@ -44,7 +44,7 @@
         <div id="capo-filtro-codice-sugg" style="display:none;position:absolute;top:100%;left:0;z-index:20;background:#fff;color:#222;border:1px solid #ccd5df;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;width:220px"></div>
       </span>
       <span style="margin-left:auto">
-        <button class="btn btn-danger" style="padding:7px 12px;font-size:12px" onclick="azzeraMovimentiPeriodo()">🗑️ Azzera movimenti del periodo</button>
+        <button class="btn btn-danger" style="padding:7px 12px;font-size:12px" onclick="azzeraMovimentiPeriodo()">🗑️ Storna dichiarazioni del periodo</button>
       </span>
     </div>
     <div id="capo-storico" style="margin-top:14px"></div>
@@ -414,16 +414,22 @@ async function azzeraMovimentiPeriodo(){
   const dataA = document.getElementById('capo-data-a').value;
   if(!dataDa || !dataA){ alert('Seleziona prima un periodo.'); return; }
   const periodoLabel = `dal ${dataDa.split('-').reverse().join('/')} al ${dataA.split('-').reverse().join('/')}`;
-  if(!confirm(`Eliminare TUTTI i movimenti di carico/scarico ${periodoLabel} su tutti i centri?\n\nLa giacenza verrà corretta di conseguenza per ognuno. NON verranno toccate le dichiarazioni di produzione, gli Ordini di Produzione né altro — solo i movimenti di magazzino nel periodo selezionato.`)) return;
+  if(!confirm(`Stornare TUTTE le dichiarazioni di produzione ${periodoLabel} su tutti i centri?\n\nOgni dichiarazione viene invertita esattamente come lo storno singolo: quantità dell'Ordine di Produzione, tempo e materiali a magazzino tutti ripristinati — non solo i movimenti "a parte". Andranno ridichiarate correttamente dopo.`)) return;
   if(!confirm('Conferma definitiva: operazione irreversibile. Procedere?')) return;
-  const r = await fetch('/api/dichiarazione-produzione/movimenti/azzera-periodo', {
+  const r = await fetch('/api/dichiarazione-produzione/eventi/azzera-periodo', {
     method:'POST', headers:{'Content-Type':'application/json'},
     body: JSON.stringify({pin:_pinCapoAttivo, data_da:dataDa, data_a:dataA})
   });
   const d = await r.json();
   if(!d.ok){ alert('⚠️ ' + d.error); return; }
-  alert(`✓ Eliminati ${d.eliminati} movimenti ${periodoLabel}.`);
+  let msg = `✓ Stornate ${d.stornati} dichiarazioni ${periodoLabel}.`;
+  if(d.falliti && d.falliti.length){
+    msg += `\n\n⚠️ ${d.falliti.length} storni falliti (nessuna modifica applicata a quelli):\n` +
+      d.falliti.map(f => `- OP ${f.op_code||'?'}: ${f.errore}`).join('\n');
+  }
+  alert(msg);
   caricaStoricoCapo();
+  caricaMovimentiCapo();
 }
 
 async function annullaDichiarazione(eid){

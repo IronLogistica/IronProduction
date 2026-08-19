@@ -1999,6 +1999,54 @@ def api_dichiarazione_approva(eid):
     return jsonify(ok=True)
 
 
+def _storna_evento_consuntivo(e, o):
+    """
+    Nucleo dello storno di UNA dichiarazione — condiviso dallo storno
+    singolo (api_dichiarazione_annulla) e dallo storno di massa per periodo
+    (api_dichiarazione_annulla_periodo). Non fa commit: il chiamante decide
+    quando. Solleva eccezione se il ripristino giacenza fallisce — il
+    chiamante deve rollback, mai lasciare uno storno a metà.
+    """
+    componente_finale = not e.componente or e.componente == o.codice_articolo
+    codice_lavorato = o.codice_articolo if componente_finale else e.componente
+    # Stesso bug corretto in _registra_evento_consuntivo: solo l'identità di
+    # codice non basta per sapere se questa dichiarazione aveva fatto
+    # avanzare l'OP — doveva ANCHE essere l'ultima fase del ciclo. Stornare
+    # con la sola identità di codice toglierebbe qta_buona anche da una
+    # dichiarazione intermedia che (dopo la correzione) non l'aveva mai
+    # aggiunta, portando l'OP sotto zero o a numeri sbagliati.
+    avanza_op = componente_finale and _e_ultima_fase_del_ciclo(codice_lavorato, e.fase)
+
+    o.tempo_consuntivo_minuti = max((o.tempo_consuntivo_minuti or 0) - e.tempo_minuti, 0)
+    if avanza_op:
+        o.qta_buona = max((o.qta_buona or 0) - e.pezzi_buoni, 0)
+        o.qta_scarto = max((o.qta_scarto or 0) - e.pezzi_scarto, 0)
+        if o.stato == 'Tecnicamente completato':
+            o.stato = 'In esecuzione'
+    _audit(o, 'ANNULLO_CONSUNTIVO', f'storno evento {e.event_id}: componente={codice_lavorato}; '
+           f'buoni={e.pezzi_buoni}; scarto={e.pezzi_scarto}; minuti={e.tempo_minuti}')
+
+    prima_fase_originale = _e_prima_fase_del_ciclo(codice_lavorato, e.fase)
+    if e.pezzi_buoni > 0 and prima_fase_originale:
+        # Stessa identica logica di esplosione usata per dichiarare —
+        # fondamentale che coincidano: se dichiaro consumando SOLO il
+        # semilavorato (perché ha un ciclo proprio) ma stornassi
+        # esplodendo fino alle materie prime, ripristinerei i codici
+        # sbagliati, lasciando il magazzino disallineato. E se la
+        # dichiarazione originale era una fase SUCCESSIVA alla prima
+        # (non aveva toccato il magazzino — vedi _e_prima_fase_del_ciclo
+        # nella dichiarazione), lo storno non deve inventarsi un
+        # ripristino di qualcosa che non era mai stato scaricato.
+        consumi = _calcola_consumi_standard(o, componente_finale, e.componente, e.pezzi_buoni)
+        for cod, qta_consumata in consumi.items():
+            if qta_consumata:
+                _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',
+                                              riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
+        _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
+                                      riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
+    db.session.delete(e)
+
+
 @pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/annulla')
 def api_dichiarazione_annulla(eid):
     """
@@ -2019,52 +2067,74 @@ def api_dichiarazione_annulla(eid):
     o = OrdineProduzione.query.filter_by(codice=e.op_code).first()
     if not o:
         return jsonify(ok=False, error='Ordine di produzione collegato non trovato'), 404
-
-    componente_finale = not e.componente or e.componente == o.codice_articolo
-    codice_lavorato = o.codice_articolo if componente_finale else e.componente
-
-    o.tempo_consuntivo_minuti = max((o.tempo_consuntivo_minuti or 0) - e.tempo_minuti, 0)
-    if componente_finale:
-        o.qta_buona = max((o.qta_buona or 0) - e.pezzi_buoni, 0)
-        o.qta_scarto = max((o.qta_scarto or 0) - e.pezzi_scarto, 0)
-        if o.stato == 'Tecnicamente completato':
-            o.stato = 'In esecuzione'
-    _audit(o, 'ANNULLO_CONSUNTIVO', f'storno evento {e.event_id}: componente={codice_lavorato}; '
-           f'buoni={e.pezzi_buoni}; scarto={e.pezzi_scarto}; minuti={e.tempo_minuti}')
-
-    prima_fase_originale = _e_prima_fase_del_ciclo(codice_lavorato, e.fase)
-    if e.pezzi_buoni > 0 and prima_fase_originale:
+    try:
         # NESSUN except-pass qui: se il ripristino del magazzino fallisce
         # per qualunque motivo, TUTTA l'operazione deve fallire — mai
         # cancellare l'evento lasciando intendere "storno riuscito" mentre
         # in realtà la giacenza non è stata corretta. Nessun commit fatto
         # finora in questa richiesta, quindi un errore qui non lascia stato
         # parziale: il rollback che segue riporta tutto come prima.
-        try:
-            # Stessa identica logica di esplosione usata per dichiarare —
-            # fondamentale che coincidano: se dichiaro consumando SOLO il
-            # semilavorato (perché ha un ciclo proprio) ma stornassi
-            # esplodendo fino alle materie prime, ripristinerei i codici
-            # sbagliati, lasciando il magazzino disallineato. E se la
-            # dichiarazione originale era una fase SUCCESSIVA alla prima
-            # (non aveva toccato il magazzino — vedi _e_prima_fase_del_ciclo
-            # nella dichiarazione), lo storno non deve inventarsi un
-            # ripristino di qualcosa che non era mai stato scaricato.
-            consumi = _calcola_consumi_standard(o, componente_finale, e.componente, e.pezzi_buoni)
-            for cod, qta_consumata in consumi.items():
-                if qta_consumata:
-                    _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',
-                                                  riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
-            _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
-                                          riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
-        except Exception as exc:
-            db.session.rollback()
-            log(f"⚠️ STORNO FALLITO per evento {e.event_id} (OP {o.codice}): {exc}")
-            return jsonify(ok=False, error=f'Storno non riuscito, nessuna modifica applicata: {exc}'), 500
+        _storna_evento_consuntivo(e, o)
+    except Exception as exc:
+        db.session.rollback()
+        log(f"⚠️ STORNO FALLITO per evento {e.event_id} (OP {o.codice}): {exc}")
+        return jsonify(ok=False, error=f'Storno non riuscito, nessuna modifica applicata: {exc}'), 500
 
-    db.session.delete(e)
     db.session.commit()
     return jsonify(ok=True)
+
+
+@pp_bp.post('/api/dichiarazione-produzione/eventi/azzera-periodo')
+def api_dichiarazione_annulla_periodo():
+    """
+    Storno di MASSA: tutte le dichiarazioni (EventoConsuntivoPP) nel periodo
+    indicato (data_da/data_a, default oggi), opzionalmente filtrate per
+    codice — SOLO PIN capo. Ogni evento viene stornato con la STESSA logica
+    esatta dello storno singolo (_storna_evento_consuntivo): quantità OP,
+    tempo e giacenza tutti correttamente ripristinati, non solo i movimenti
+    di magazzino "a parte" scollegati dalle dichiarazioni che li hanno
+    generati (quello lo fa invece /movimenti/azzera-periodo, pensato per un
+    caso diverso: pulire dati di test senza nessuna dichiarazione dietro).
+    Un errore su UN evento non blocca gli altri già stornati con successo
+    — ogni storno ha il proprio commit indipendente; il riepilogo finale
+    dice quanti sono andati a buon fine e quali sono falliti.
+    """
+    d = request.get_json(force=True)
+    if not _verifica_pin_capo(d):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    oggi_str = datetime.utcnow().strftime('%Y-%m-%d')
+    data_da_str = (d.get('data_da') or oggi_str)
+    data_a_str = (d.get('data_a') or data_da_str)
+    codice_filtro = (d.get('codice') or '').strip().upper()
+    try:
+        giorno_da = datetime.strptime(data_da_str, '%Y-%m-%d').date()
+        giorno_a = datetime.strptime(data_a_str, '%Y-%m-%d').date()
+    except ValueError:
+        return jsonify(ok=False, error='Data non valida'), 400
+
+    query = EventoConsuntivoPP.query.filter(
+        db.func.date(EventoConsuntivoPP.timestamp_evento) >= giorno_da,
+        db.func.date(EventoConsuntivoPP.timestamp_evento) <= giorno_a)
+    if codice_filtro:
+        query = query.join(OrdineProduzione, EventoConsuntivoPP.op_code == OrdineProduzione.codice).filter(
+            db.func.upper(OrdineProduzione.codice_articolo) == codice_filtro)
+    eventi = query.all()
+
+    stornati, falliti = 0, []
+    for e in eventi:
+        o = OrdineProduzione.query.filter_by(codice=e.op_code).first()
+        if not o:
+            falliti.append({'event_id': e.event_id, 'errore': 'Ordine di produzione collegato non trovato'})
+            continue
+        try:
+            _storna_evento_consuntivo(e, o)
+            db.session.commit()
+            stornati += 1
+        except Exception as exc:
+            db.session.rollback()
+            log(f"⚠️ STORNO DI MASSA FALLITO per evento {e.event_id} (OP {o.codice}): {exc}")
+            falliti.append({'event_id': e.event_id, 'op_code': e.op_code, 'errore': str(exc)})
+    return jsonify(ok=True, stornati=stornati, falliti=falliti)
 
 
 @pp_bp.get('/api/dichiarazione-produzione/<int:cid>/movimenti')
