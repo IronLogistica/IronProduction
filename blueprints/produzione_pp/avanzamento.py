@@ -181,6 +181,7 @@ def calcola_avanzamento_commesse():
 
         # ── Simulazione routing interno, componente per componente ──
         fine_produzione_op = oggi
+        inizio_produzione_op = None
         centri_con_saldo = set()
         tutti_cicli_op = []
         for codice, moltiplicatore in moltiplicatore_per_codice.items():
@@ -223,6 +224,8 @@ def calcola_avanzamento_commesse():
 
                 libero_centro = cursore_centro.get(centro.id, oggi)
                 inizio_fase = max(cursore_componente, libero_centro)
+                if inizio_produzione_op is None or inizio_fase < inizio_produzione_op:
+                    inizio_produzione_op = inizio_fase
                 giorni_fase = ore_necessarie / cap if cap else 0
                 fine_fase = _aggiungi_giorni_lavorativi(inizio_fase, giorni_fase)
 
@@ -250,6 +253,7 @@ def calcola_avanzamento_commesse():
         pct = round(100 * (o.qta_buona or 0) / o.qta_pianificata) if o.qta_pianificata else 0
         fasi = _fasi_routing_op(tutti_cicli_op, centri)
         foto = foto_per_codice.get(o.codice_articolo)
+        inizio_produzione_op = inizio_produzione_op or oggi
 
         risultati.append({
             'op_codice': o.codice, 'commessa': o.commessa or '', 'codice_articolo': o.codice_articolo,
@@ -259,8 +263,12 @@ def calcola_avanzamento_commesse():
             'centri_in_coda': sorted(centri_con_saldo),
             'fasi': fasi, 'foto_id': foto,
             'centro_esterno': centro_esterno_nome, 'lead_time_esterno_giorni': lead_time_esterno,
+            'data_inizio_produzione_stimata': inizio_produzione_op.strftime('%d/%m/%Y'),
+            'data_inizio_iso': inizio_produzione_op.strftime('%Y-%m-%d'),
             'data_fine_produzione_stimata': fine_produzione_op.strftime('%d/%m/%Y'),
+            'data_fine_produzione_iso': fine_produzione_op.strftime('%Y-%m-%d'),
             'data_consegna_stimata': data_consegna.strftime('%d/%m/%Y'),
+            'data_consegna_iso': data_consegna.strftime('%Y-%m-%d'),
             'data_prevista': o.data_prevista.strftime('%d/%m/%Y') if o.data_prevista else None,
             'avvisi': avvisi,
         })

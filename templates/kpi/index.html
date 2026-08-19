@@ -29,6 +29,19 @@
   </table>
 </div>
 
+<div style="background:#0f1e35;border-radius:10px;border:1px solid rgba(30,111,165,.25);padding:16px;margin-top:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-weight:500;font-size:14px;color:#e0eefc">🗓️ Gantt commesse</div>
+    <button class="btn btn-ghost" style="font-size:11px" onclick="caricaGanttCommesse()">🔄 Aggiorna</button>
+  </div>
+  <div style="font-size:11px;color:#6b8aaa;margin:6px 0 14px;display:flex;gap:16px">
+    <span><span style="display:inline-block;width:10px;height:10px;background:#2589c7;border-radius:2px;margin-right:5px;vertical-align:-1px"></span>produzione interna</span>
+    <span><span style="display:inline-block;width:10px;height:10px;background:#eb9f27;border-radius:2px;margin-right:5px;vertical-align:-1px"></span>lavorazione esterna</span>
+    <span><span style="display:inline-block;width:2px;height:12px;background:#f09595;margin-right:6px;vertical-align:-2px"></span>oggi</span>
+  </div>
+  <div id="gantt-commesse-box" style="overflow-x:auto;color:#c8ddf0">Caricamento...</div>
+</div>
+
 <div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-top:20px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
     <div style="font-weight:800;font-size:14px;color:var(--dark)">🗓️ Avanzamento Commesse — stima fine produzione e consegna</div>
@@ -45,6 +58,55 @@
 {% block scripts %}
 const AC_CIANO = '#7EEEEF';
 const AC_FASI = [['taglio','✂️','Taglio'], ['sgola_sati','⌒','Sgola/Sati'], ['piega','↩️','Piega'], ['saldatura','👷','Saldatura']];
+
+async function caricaGanttCommesse(){
+  const box = document.getElementById('gantt-commesse-box');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/kpi/avanzamento-commesse');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#6b8aaa;font-style:italic">Nessun ordine di produzione aperto.</p>'; return; }
+
+    const oggi = new Date(); oggi.setHours(0,0,0,0);
+    const parse = s => { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); };
+    const giorniTra = (a,b) => Math.round((b-a) / 86400000);
+
+    const fineMax = righe.reduce((mx,o) => Math.max(mx, giorniTra(oggi, parse(o.data_consegna_iso))), 1);
+    const totaleGiorni = Math.max(fineMax + 2, 14);
+    const scala = Math.max(720 / totaleGiorni, 8);
+    const trackWidth = Math.round(totaleGiorni * scala);
+
+    let righeHtml = '';
+    righe.forEach(o => {
+      const gInizio = Math.max(giorniTra(oggi, parse(o.data_inizio_iso)), 0);
+      const gFineInt = Math.max(giorniTra(oggi, parse(o.data_fine_produzione_iso)), gInizio);
+      const gFineEst = Math.max(giorniTra(oggi, parse(o.data_consegna_iso)), gFineInt);
+      const intLeft = Math.round(gInizio * scala);
+      const intWidth = Math.max(Math.round((gFineInt - gInizio) * scala), 3);
+      const estLeft = Math.round(gFineInt * scala);
+      const estWidth = Math.round((gFineEst - gFineInt) * scala);
+      const estBar = estWidth > 2
+        ? `<div style="position:absolute;left:${estLeft}px;width:${estWidth}px;top:6px;height:16px;background:#eb9f27;border-radius:4px;opacity:.85"></div>`
+        : '';
+      righeHtml += `<div style="display:flex;align-items:center;margin-bottom:10px">
+        <div style="width:170px;flex-shrink:0;padding-right:8px">
+          <div style="font-size:12px;font-weight:500;color:#eaf4ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.codice_articolo}</div>
+          <div style="font-size:10px;color:#6b8aaa">${o.commessa || o.op_codice}</div>
+        </div>
+        <div style="position:relative;width:${trackWidth}px;height:28px;background:rgba(255,255,255,.03);border-radius:4px;flex-shrink:0">
+          <div style="position:absolute;left:0;top:0;bottom:0;width:1px;background:#f09595"></div>
+          <div style="position:absolute;left:${intLeft}px;width:${intWidth}px;top:6px;height:16px;background:#2589c7;border-radius:4px"
+               title="${o.data_inizio_produzione_stimata} → ${o.data_fine_produzione_stimata}"></div>
+          ${estBar}
+        </div>
+      </div>`;
+    });
+    box.innerHTML = `<div style="min-width:${170+trackWidth}px">${righeHtml}</div>`;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+caricaGanttCommesse();
 
 function acCellaFase(attiva){
   return attiva
