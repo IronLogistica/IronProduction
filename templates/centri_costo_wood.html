@@ -81,18 +81,25 @@
           <div style="flex:1"><label class="modal-label">N. risorse equiv.</label>
             <input id="cfg-n-risorse" class="modal-input" type="number" step="0.5" min="0.5" value="1"></div>
           <div style="flex:1"><label class="modal-label">Periodo</label>
-            <select id="cfg-periodo" class="modal-input">
+            <select id="cfg-periodo" class="modal-input" onchange="aggiornaEtichettaPeriodoCC()">
+              <option value="settimanale">Settimanale</option>
               <option value="mensile">Mensile</option>
               <option value="annuale">Annuale</option>
             </select></div>
         </div>
         <div style="display:flex;gap:8px;margin-top:8px">
-          <div style="flex:1"><label class="modal-label">Ore teoriche/periodo</label>
+          <div style="flex:1"><label class="modal-label" id="cfg-ore-teoriche-lbl">Ore teoriche/periodo</label>
             <input id="cfg-ore-teoriche" class="modal-input" type="number" step="1" min="0"></div>
           <div style="flex:1"><label class="modal-label">Efficienza %</label>
             <input id="cfg-efficienza" class="modal-input" type="number" step="1" min="0" max="100" value="100"></div>
         </div>
         <div id="cfg-ore-pratiche" style="margin-top:8px;font-size:12px;color:var(--text-dim)"></div>
+        <div style="margin-top:6px;font-size:11px;color:var(--text-dim);background:rgba(30,111,165,.08);border-left:3px solid var(--accent);padding:6px 8px;border-radius:4px">
+          💡 Con periodo <b>Settimanale</b>: metti <b>N. risorse equiv.</b> come frazione di persona sul turno da 8h
+          per tutta la settimana (0,25 / 0,5 / 0,75 / 1 / 1,25 …; 2,75 ≈ quasi 3 turni da 8h) e <b>Ore teoriche/periodo</b>
+          = 40 (8h × 5 giorni) — la capacità giornaliera che ne esce alimenta anche la stima di avanzamento/consegna
+          nel Cruscotto KPI. Se fra 15 giorni raddoppi le persone, aggiorna qui il numero: i tempi si accorciano da soli.
+        </div>
         <label class="modal-label" style="margin-top:8px">Overhead conversione %</label>
         <input id="cfg-overhead-conversione" class="modal-input" type="number" step="0.1" min="0" placeholder="es. 12,5">
         <div style="font-size:11px;color:var(--text-dim);margin-top:4px">Applicato a macchina + manodopera della fase; mai ai materiali. Non reinserire qui ammortamento, energia e manutenzione già nella tariffa macchina.</div>
@@ -248,6 +255,22 @@ async function apriConfiguraCC(id, nome){
   await caricaConfigurazioneCC();
 }
 
+function aggiornaEtichettaPeriodoCC(){
+  const periodo = document.getElementById('cfg-periodo').value;
+  const lbl = document.getElementById('cfg-ore-teoriche-lbl');
+  const ore = document.getElementById('cfg-ore-teoriche');
+  if(periodo === 'settimanale'){
+    lbl.textContent = 'Ore teoriche/settimana';
+    if(!ore.value) ore.placeholder = 'es. 40 (8h × 5 giorni)';
+  }else if(periodo === 'annuale'){
+    lbl.textContent = 'Ore teoriche/anno';
+    ore.placeholder = '';
+  }else{
+    lbl.textContent = 'Ore teoriche/mese';
+    ore.placeholder = '';
+  }
+}
+
 async function caricaConfigurazioneCC(){
   try{
     const r = await fetch('/api/centri_costo_wood/' + _cfgCentroId + '/configurazione');
@@ -265,6 +288,7 @@ async function caricaConfigurazioneCC(){
     document.getElementById('cfg-driver').value = d.driver_attivita || 'ora_reparto';
     document.getElementById('cfg-n-risorse').value = d.n_risorse_equivalenti || 1;
     document.getElementById('cfg-periodo').value = d.periodo_riferimento || 'mensile';
+    aggiornaEtichettaPeriodoCC();
     document.getElementById('cfg-ore-teoriche').value = d.ore_teoriche_periodo || '';
     document.getElementById('cfg-efficienza').value = d.pct_efficienza ?? 100;
     document.getElementById('cfg-overhead-conversione').value = d.aliquota_overhead_conversione_pct ?? 0;

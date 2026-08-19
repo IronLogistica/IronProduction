@@ -37,6 +37,7 @@ from datetime import datetime, timedelta
 
 DEFAULT_ORE_GIORNO = 8.0          # fallback quando il centro non ha capacità configurata
 DEFAULT_LEAD_TIME_MATERIALE = 7   # giorni — fallback quando l'articolo mancante non ha lead time configurato
+GIORNI_LAVORATIVI_SETTIMANA = 5
 GIORNI_LAVORATIVI_MESE = 22
 GIORNI_LAVORATIVI_ANNO = 260
 
@@ -60,10 +61,19 @@ def _aggiungi_giorni_lavorativi(inizio, giorni_decimali):
 
 
 def _capacita_giornaliera_ore(centro):
-    """Ore/giorno lavorativo disponibili su questo centro, oppure None se non configurato."""
+    """Ore/giorno lavorativo disponibili su questo centro, oppure None se non configurato.
+    'ore_teoriche_periodo' è per SINGOLA risorsa sull'intero periodo scelto
+    (settimanale/mensile/annuale) — qui si moltiplica per n_risorse_equivalenti
+    (la frazione di persona: 0.25/0.5/1.25/2.75...) e per l'efficienza %, poi si
+    divide per i giorni lavorativi di quello stesso periodo."""
     if not centro or not centro.ore_teoriche_periodo:
         return None
-    giorni_periodo = GIORNI_LAVORATIVI_MESE if centro.periodo_riferimento == 'mensile' else GIORNI_LAVORATIVI_ANNO
+    if centro.periodo_riferimento == 'settimanale':
+        giorni_periodo = GIORNI_LAVORATIVI_SETTIMANA
+    elif centro.periodo_riferimento == 'annuale':
+        giorni_periodo = GIORNI_LAVORATIVI_ANNO
+    else:
+        giorni_periodo = GIORNI_LAVORATIVI_MESE
     ore_totali = (centro.ore_teoriche_periodo * (centro.n_risorse_equivalenti or 1)
                   * ((centro.pct_efficienza or 100) / 100))
     return ore_totali / giorni_periodo if giorni_periodo else None

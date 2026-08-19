@@ -1605,7 +1605,7 @@ def api_centro_costo_configurazione_salva(cid):
                 return jsonify({'errore': True, 'messaggio': "L'efficienza deve essere tra 0 e 100%"}), 400
         if 'periodo_riferimento' in d:
             periodo = d.get('periodo_riferimento')
-            if periodo not in ('mensile', 'annuale'):
+            if periodo not in ('settimanale', 'mensile', 'annuale'):
                 return jsonify({'errore': True, 'messaggio': 'Periodo di riferimento non valido'}), 400
             c.periodo_riferimento = periodo
     except (TypeError, ValueError):
