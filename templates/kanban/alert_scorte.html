@@ -37,12 +37,14 @@
     </thead>
     <tbody>
       {% for r in righe %}
+      {% set sfondo = 'rgba(192,57,43,.18)' if r.livello=='rosso' else ('rgba(230,184,0,.14)' if r.livello=='giallo' else 'transparent') %}
       <tr class="alert-row" data-prodotto="{{ r.prodotto|lower }}"
-          style="border-left:3px solid {{ '#c0392b' if r.livello=='rosso' else ('#e6b800' if r.livello=='giallo' else ('#1a9e5c' if r.livello=='verde' else '#5f5e5a')) }}">
+          style="border-left:3px solid {{ '#c0392b' if r.livello=='rosso' else ('#e6b800' if r.livello=='giallo' else ('#1a9e5c' if r.livello=='verde' else '#5f5e5a')) }};
+                 background:{{ sfondo }}">
         <td style="text-align:center">
           {% if r.livello=='rosso' %}🔴{% elif r.livello=='giallo' %}🟡{% elif r.livello=='verde' %}🟢{% else %}⚪{% endif %}
         </td>
-        <td class="codice">{{ r.prodotto }}</td>
+        <td class="codice" style="{{ 'color:#ff8a80;font-weight:800' if r.livello=='rosso' else '' }}">{{ r.prodotto }}</td>
         <td class="num">{{ r.stock_pronto }}</td>
         <td class="num">{{ r.scorta_minima_pz if r.scorta_minima_pz is not none else '—' }}</td>
         <td class="num">{{ r.domanda_gg if r.domanda_gg else '—' }}</td>
