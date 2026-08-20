@@ -58,17 +58,25 @@
 
 <div class="header">
   <div class="titolo"><span class="dot"></span> LIVE {{ centro.nome }}</div>
-  <div style="display:flex;align-items:center;gap:14px">
-    <a href="/kpi" style="font-size:.8rem;padding:6px 14px;border-radius:7px;border:1px solid var(--border);
-       color:var(--accent,#00b4d8);text-decoration:none;font-weight:700;white-space:nowrap">📈 KPI</a>
-    <div id="clock">{{ now }}</div>
-  </div>
+  <div id="clock">{{ now }}</div>
 </div>
 
 <div class="nav-macchine">
   {% for m in macchine %}
   <a href="/totem/macchina/{{ m.id }}" class="{{ 'attivo' if m.id == centro.id else '' }}">{{ m.nome }}</a>
   {% endfor %}
+  <a href="#" onclick="apriKpiOverlay(event)" style="margin-left:auto">📈 KPI</a>
+</div>
+
+<!-- Overlay KPI: resta dentro il totem, non naviga via — l'auto-refresh
+     della pagina (ogni 60s) si mette in pausa finché è aperto. -->
+<div id="kpi-overlay" style="position:fixed;inset:0;background:var(--bg);z-index:500;display:none;flex-direction:column">
+  <div style="display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:2px solid var(--border);flex-shrink:0">
+    <button onclick="chiudiKpiOverlay()" style="background:transparent;border:1px solid var(--border);color:var(--accent);
+            border-radius:7px;padding:6px 14px;cursor:pointer;font-size:.85rem;font-weight:700">← Torna al Totem</button>
+    <div style="color:var(--muted);font-size:.8rem">Cruscotto KPI</div>
+  </div>
+  <iframe id="kpi-iframe" src="" style="flex:1;border:none;width:100%;background:#fff"></iframe>
 </div>
 
 <table class="tabella-totem">
@@ -156,7 +164,19 @@ setInterval(() => {
 // Sola lettura: nessuna dichiarazione da qui — i pezzi fatti arrivano da
 // Dichiarazione di Produzione. Aggiorno la pagina da sola ogni tanto per
 // restare live senza bisogno di un pulsante.
-setInterval(() => window.location.reload(), 60000);
+let _kpiOverlayAperto = false;
+function apriKpiOverlay(ev){
+  ev.preventDefault();
+  document.getElementById('kpi-iframe').src = '/kpi';
+  document.getElementById('kpi-overlay').style.display = 'flex';
+  _kpiOverlayAperto = true;
+}
+function chiudiKpiOverlay(){
+  document.getElementById('kpi-overlay').style.display = 'none';
+  document.getElementById('kpi-iframe').src = '';
+  _kpiOverlayAperto = false;
+}
+setInterval(() => { if(!_kpiOverlayAperto) window.location.reload(); }, 60000);
 </script>
 </body>
 </html>
