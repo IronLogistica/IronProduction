@@ -915,7 +915,15 @@ def calcola_alert_fabbisogno_codici_padre():
     from models import (DistintaBaseWood, GiacenzaWood, OrdineProduzione, EventoConsuntivoPP,
                          ScortaMinimaWood, RettificaGrezzoIW, RigaOrdineAcquistoWood, OrdineAcquistoWood)
 
-    codici_padre = sorted({r[0] for r in db.session.query(DistintaBaseWood.codice_padre).distinct().all()})
+    # Codice PADRE vero = compare come codice_padre in Distinta Base MA NON
+    # compare mai come codice_figlio da nessuna parte — la radice
+    # dell'albero (prodotto finito reale). Un semilavorato come M16-SFS ha
+    # a sua volta dei componenti sotto di sé (risulta 'codice_padre' di
+    # QUEL pezzo di distinta), ma è comunque un figlio di T200/ZT più in
+    # alto: senza questa esclusione finiva scambiato per un codice padre.
+    tutti_padri = {r[0] for r in db.session.query(DistintaBaseWood.codice_padre).distinct().all()}
+    tutti_figli = {r[0] for r in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
+    codici_padre = sorted(tutti_padri - tutti_figli)
     if not codici_padre:
         return []
 
