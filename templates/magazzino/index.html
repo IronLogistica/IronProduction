@@ -160,6 +160,21 @@ function chiudiImpegniOp(){
   document.getElementById('popup-impegni-op').style.display = 'none';
 }
 
+async function toggleCodicePadreManuale(codice, marca){
+  try{
+    const r = await fetch(`/api/giacenza_wood/${encodeURIComponent(codice)}/codice-padre-manuale`, {
+      method: marca ? 'POST' : 'DELETE',
+      headers: marca ? {'Content-Type':'application/json'} : undefined,
+      body: marca ? JSON.stringify({}) : undefined,
+    });
+    const d = await r.json();
+    if(!d.ok){ alert('⚠️ Errore nella marcatura.'); return; }
+    caricaMagazzinoWood();
+  }catch(e){
+    alert('❌ Errore di rete.');
+  }
+}
+
 async function caricaDiagnosticaEsplosione(){
   const opCode = document.getElementById('diag-esp-op').value.trim();
   const box = document.getElementById('diag-esp-risultato');
@@ -265,7 +280,15 @@ async function caricaMagazzinoWood(){
       html += `<tr>
         <td class="codice">${g.codice}</td>
         <td class="prod-name">${g.descrizione || '—'}</td>
-        <td style="font-size:11px;color:${g.tipologia==='Codice Padre'?'#5debb0':(g.tipologia==='Da classificare'?'#e67e22':'var(--text-dim)')};font-weight:${g.tipologia==='Codice Padre'?'700':'400'}">${g.tipologia}</td>
+        <td style="font-size:11px;color:${g.tipologia==='Codice Padre'?'#5debb0':(g.tipologia==='Da classificare'?'#e67e22':'var(--text-dim)')};font-weight:${g.tipologia==='Codice Padre'?'700':'400'}">
+          ${g.tipologia}${g.codice_padre_manuale?' <span title="Marcato manualmente, nessun OP proprio" style="font-size:9px">✋</span>':''}
+          ${!g.ha_op_proprio ? `<div>
+            <button class="btn btn-ghost" style="padding:1px 6px;font-size:9px;margin-top:3px"
+              onclick="toggleCodicePadreManuale('${esc(g.codice)}', ${g.codice_padre_manuale ? 'false' : 'true'})">
+              ${g.codice_padre_manuale ? '✕ Rimuovi marcatura' : '✋ Marca come Codice Padre'}
+            </button>
+          </div>` : ''}
+        </td>
         <td class="${g.quantita>0?'mt-val-stock':'mt-val-zero'}">
           <div style="display:flex;align-items:center;gap:4px">
             <input type="number" step="0.01" value="${g.quantita}" id="stock-${g.codice}"

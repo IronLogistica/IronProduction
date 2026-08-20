@@ -204,6 +204,23 @@ class GiacenzaWood(db.Model):
     scorta_minima_wms_aggiornato_il = db.Column(db.DateTime, nullable=True)
 
 
+class CodicePadreManuale(db.Model):
+    """
+    Marcatura manuale "Codice Padre" per codici che NON hanno ancora un
+    Ordine di Produzione proprio in IronProduction (la regola normale,
+    usata da _tipologia() e calcola_alert_fabbisogno_codici_padre) — ma che
+    l'azienda vende comunque come prodotto finito autonomo, semplicemente
+    non ancora messo in produzione dentro il programma (es. venduto/
+    producibile fuori sistema, o nuovo e non ancora partito). Senza questa
+    marcatura quei codici restano invisibili come Codice Padre — la regola
+    "ha un OP" da sola non basta a coprire questo caso reale.
+    """
+    __tablename__ = 'codici_padre_manuali'
+    codice      = db.Column(db.String(50), primary_key=True)
+    nota        = db.Column(db.String(255), default='')
+    marcato_il  = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class ScortaMinimaWood(db.Model):
     """
     Scorta minima configurabile per codice Iron Wood — soglia sotto la quale

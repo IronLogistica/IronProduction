@@ -12,7 +12,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood,
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
-                    EventoConsuntivoPP, RettificaGrezzoIW)
+                    EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -1040,13 +1040,19 @@ def _calcola_campi_giacenza(righe):
 
     # Tipologia — incrocia le stesse fonti già usate nel resto dell'app:
     # Codice Padre = ha almeno un Ordine di Produzione proprio (stessa
-    # definizione di calcola_alert_fabbisogno_codici_padre). Se non lo è,
-    # guarda tipo_approvvigionamento (Parametri di Lavorazione). Se manca
-    # anche quello ma ha un Ciclo di Lavoro proprio, è un semilavorato
-    # realizzato internamente (lavorato ma mai venduto/prodotto come OP
-    # a sé). Altrimenti non ancora classificato.
-    codici_padre = {r[0] for r in db.session.query(OrdineProduzione.codice_articolo)
-                     .filter(OrdineProduzione.codice_articolo.in_(codici)).distinct().all()}
+    # definizione di calcola_alert_fabbisogno_codici_padre) — OPPURE è
+    # stato marcato manualmente come tale (CodicePadreManuale, per i
+    # codici venduti ma non ancora messi in produzione dentro
+    # IronProduction: senza un OP, la regola normale non li vede). Se non è
+    # nessuno dei due, guarda tipo_approvvigionamento (Parametri di
+    # Lavorazione). Se manca anche quello ma ha un Ciclo di Lavoro proprio,
+    # è un semilavorato realizzato internamente (lavorato ma mai venduto/
+    # prodotto come OP a sé). Altrimenti non ancora classificato.
+    codici_padre_da_op = {r[0] for r in db.session.query(OrdineProduzione.codice_articolo)
+                           .filter(OrdineProduzione.codice_articolo.in_(codici)).distinct().all()}
+    codici_padre_manuali = {r[0] for r in db.session.query(CodicePadreManuale.codice)
+                             .filter(CodicePadreManuale.codice.in_(codici)).distinct().all()}
+    codici_padre = codici_padre_da_op | codici_padre_manuali
     codici_con_ciclo = {r[0] for r in db.session.query(CicloLavoroWood.codice)
                          .filter(CicloLavoroWood.codice.in_(codici)).distinct().all()}
     LABEL_TIPO_APPROVVIGIONAMENTO = {
@@ -1085,6 +1091,8 @@ def _calcola_campi_giacenza(righe):
             'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
             'unita_misura': approvvigionamenti.get(g.codice).unita_misura if approvvigionamenti.get(g.codice) else '',
             'tipologia': _tipologia(g.codice),
+            'ha_op_proprio': g.codice in codici_padre_da_op,
+            'codice_padre_manuale': g.codice in codici_padre_manuali,
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
             'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
             'scorta_minima': getattr(g, 'scorta_minima_wms', None),
@@ -1110,6 +1118,9 @@ def calcola_alert_fabbisogno_codici_padre():
     ANCHE come componente di un altro assieme più grande (es. un kit) e
     restare comunque un prodotto finito a sé — la Distinta Base da sola
     non basta a distinguerlo.
+    PIÙ i codici marcati manualmente (CodicePadreManuale) — venduti ma non
+    ancora messi in produzione dentro IronProduction, quindi senza nessun
+    OP che li faccia riconoscere dalla regola sopra.
     Il cui Fabbisogno è diverso da zero. Riusa _calcola_campi_giacenza —
     LA STESSA funzione di /api/giacenza_wood (Magazzino) — così non può
     mai dare un numero diverso da quello che vedi in Magazzino per lo
@@ -1117,7 +1128,8 @@ def calcola_alert_fabbisogno_codici_padre():
     """
     from models import GiacenzaWood
 
-    codici_padre = sorted({r[0] for r in db.session.query(OrdineProduzione.codice_articolo).distinct().all()})
+    codici_padre = sorted({r[0] for r in db.session.query(OrdineProduzione.codice_articolo).distinct().all()}
+                           | {r[0] for r in db.session.query(CodicePadreManuale.codice).distinct().all()})
     if not codici_padre:
         return []
 
@@ -1305,6 +1317,36 @@ def api_giacenza_scorta_minima(codice):
     """
     return jsonify({'errore': True,
                      'messaggio': "La Scorta Minima non è più modificabile qui: si legge automaticamente da MasterLogistic-WMS. Modificala là."}), 410
+
+
+@magazzino_bp.route('/api/giacenza_wood/<codice>/codice-padre-manuale', methods=['POST', 'DELETE'])
+def api_codice_padre_manuale(codice):
+    """
+    Marca/smarca manualmente un codice come "Codice Padre" anche senza
+    nessun Ordine di Produzione proprio — per i codici venduti ma non
+    ancora messi in produzione dentro IronProduction (prodotti fuori
+    sistema, o nuovi non ancora partiti): senza questo, la regola normale
+    ("ha un OP") non li vede mai come Codice Padre. Non richiede PIN: stesso
+    livello di fiducia di una modifica inline di classificazione, reversibile
+    in un click.
+    POST per marcare, DELETE per smarcare.
+    """
+    codice = codice.strip().upper()
+    if request.method == 'DELETE':
+        riga = CodicePadreManuale.query.get(codice)
+        if riga:
+            db.session.delete(riga)
+            db.session.commit()
+        return jsonify(ok=True, marcato=False)
+    d = request.get_json(silent=True) or {}
+    riga = CodicePadreManuale.query.get(codice)
+    if not riga:
+        riga = CodicePadreManuale(codice=codice)
+        db.session.add(riga)
+    riga.nota = (d.get('nota') or '').strip()
+    riga.marcato_il = datetime.utcnow()
+    db.session.commit()
+    return jsonify(ok=True, marcato=True)
 
 
 @magazzino_bp.route('/api/giacenza_wood/<codice>/rettifica-grezzo-iw', methods=['POST'])
