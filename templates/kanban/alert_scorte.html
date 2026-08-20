@@ -7,6 +7,44 @@
   <button class="btn btn-ghost" onclick="location.reload()">🔄 Aggiorna</button>
 </div>
 
+<!-- ══ TABELLA 1 — CODICI PADRE CON FABBISOGNO ══ -->
+<div class="mon-section" style="margin-bottom:24px">
+  <div class="section-hdr" style="background:linear-gradient(135deg,#791f1f,#c0392b)">📦 Codici Padre — Fabbisogno &gt; 0</div>
+  <p style="font-size:12px;color:var(--text-dim);padding:12px 14px 0">
+    Prodotti finiti/assiemi (codici padre) il cui Fabbisogno (Scorta Minima meno Disponibilità Contabile Allargata —
+    stock + grezzo IW − impegnato + ordinato fornitori + ordinato in produzione) è diverso da zero: qui ci finiscono
+    quando serve intervenire.
+  </p>
+  <div style="padding:0 14px 14px;overflow-x:auto">
+    {% if righe_fabbisogno %}
+    <table class="kanban-table">
+      <thead><tr>
+        <th style="text-align:left">Codice</th><th style="text-align:left">Descrizione</th>
+        <th>Stock</th><th>Grezzo IW</th><th>Ordinato Produzione</th><th>Ordinato Fornitori</th>
+        <th>Scorta Minima</th><th>Disp. Allargata*</th><th>Fabbisogno</th>
+      </tr></thead>
+      <tbody>
+        {% for r in righe_fabbisogno %}
+        <tr style="background:rgba(192,57,43,.12)">
+          <td class="codice" style="text-align:left">{{ r.codice }}</td>
+          <td style="text-align:left">{{ r.descrizione or '—' }}</td>
+          <td class="num">{{ r.stock }}</td>
+          <td class="num">{{ r.grezzo_iw }}</td>
+          <td class="num">{{ r.ordinato_produzione }}</td>
+          <td class="num">{{ r.ordinato_fornitori }}</td>
+          <td class="num">{{ r.scorta_minima }}</td>
+          <td class="num">{{ r.disponibile_allargata }}</td>
+          <td class="num" style="color:#ff8a80;font-weight:800">{{ r.fabbisogno }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color:var(--text-dim);font-style:italic">Nessun codice padre con fabbisogno al momento.</p>
+    {% endif %}
+  </div>
+</div>
+
 <p style="font-size:12px;color:var(--text-dim);max-width:900px;margin:0 0 16px">
   Per ogni prodotto finito: giorni di copertura = stock pronto alla vendita ORA (Finiti IW + Finiti IS − riservato
   clienti) ÷ domanda media/gg (la più alta tra storico ultimi 90gg e budget commerciale mensile, se impostato).
@@ -21,6 +59,12 @@
   <div class="kstat" style="background:linear-gradient(135deg,#791f1f,#c0392b)"><span class="kstat-num">{{ n_rosso }}</span><span class="kstat-lbl">🔴 Rischio a terra</span></div>
   <div class="kstat" style="background:linear-gradient(135deg,#854f0b,#e6b800)"><span class="kstat-num">{{ n_giallo }}</span><span class="kstat-lbl">🟡 Sotto scorta minima</span></div>
 </div>
+
+<div style="margin-bottom:14px">
+  <button class="btn btn-primary" id="btn-chiedi-ai" onclick="chiediAiAlert()">🤖 Chiedi a ChatGPT come comportarti</button>
+</div>
+<div id="ai-risposta-box" style="display:none;background:var(--dark3,#132035);border:1px solid rgba(30,111,165,.3);border-radius:10px;
+     padding:16px;margin-bottom:20px;white-space:pre-wrap;font-size:13px;line-height:1.6;color:var(--text,#c8ddf0)"></div>
 
 <div class="mon-section">
   <table class="kanban-table" id="alert-table">
@@ -62,5 +106,28 @@ function filterAlertTable(q){
   document.querySelectorAll('#alert-table .alert-row').forEach(function(tr){
     tr.style.display = tr.dataset.prodotto.includes(q) ? '' : 'none';
   });
+}
+
+async function chiediAiAlert(){
+  const btn = document.getElementById('btn-chiedi-ai');
+  const box = document.getElementById('ai-risposta-box');
+  const testoOrig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Sto chiedendo a ChatGPT...';
+  box.style.display = 'block';
+  box.textContent = 'Analisi in corso, qualche secondo...';
+  try{
+    const r = await fetch('/api/alert-scorte/chiedi-ai', {method: 'POST'});
+    const d = await r.json();
+    if(d.errore){
+      box.textContent = '⚠️ ' + d.messaggio;
+    }else{
+      box.textContent = d.analisi;
+    }
+  }catch(e){
+    box.textContent = '❌ Errore di rete durante la richiesta a ChatGPT.';
+  }
+  btn.disabled = false;
+  btn.textContent = testoOrig;
 }
 {% endblock %}

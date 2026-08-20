@@ -903,6 +903,87 @@ def _registra_movimento_giacenza(codice, delta, tipo, riferimento='', note='', c
                                           riferimento=riferimento, note=note))
 
 
+def calcola_alert_fabbisogno_codici_padre():
+    """
+    Codici PADRE (compaiono come codice_padre in Distinta Base Iron Wood —
+    prodotti finiti/assiemi, non materie prime foglia) il cui Fabbisogno
+    (stessa formula di /api/giacenza_wood: MAX(Scorta Minima − Disp.
+    Contabile Allargata, 0)) è diverso da zero. Alimenta la NUOVA tabella
+    sopra Alert Scorte: 'qui ci vanno a finire' i codici padre critici,
+    prima ancora della board Kanban sottostante.
+    """
+    from models import (DistintaBaseWood, GiacenzaWood, OrdineProduzione, EventoConsuntivoPP,
+                         ScortaMinimaWood, RettificaGrezzoIW, RigaOrdineAcquistoWood, OrdineAcquistoWood)
+
+    codici_padre = sorted({r[0] for r in db.session.query(DistintaBaseWood.codice_padre).distinct().all()})
+    if not codici_padre:
+        return []
+
+    giacenze = {g.codice: g.quantita or 0 for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici_padre)).all()}
+    giacenza_residua = _giacenza_residua_dopo_impegni()
+    impegnato = {cod: round(giacenze.get(cod, 0) - giacenza_residua.get(cod, giacenze.get(cod, 0)), 4) for cod in codici_padre}
+
+    ordinato = {}
+    for cod, qta_orig, qta_ric in (db.session.query(RigaOrdineAcquistoWood.codice,
+                                    RigaOrdineAcquistoWood.qta_originale, RigaOrdineAcquistoWood.qta_ricevuta)
+                                    .join(OrdineAcquistoWood)
+                                    .filter(RigaOrdineAcquistoWood.codice.in_(codici_padre),
+                                            OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all()):
+        residuo = (qta_orig or 0) - (qta_ric or 0)
+        if residuo > 0:
+            ordinato[cod] = ordinato.get(cod, 0) + residuo
+
+    grezzo_iw = {}
+    for cod, tot in (db.session.query(OrdineProduzione.codice_articolo, db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+                      .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
+                      .filter(OrdineProduzione.codice_articolo.in_(codici_padre),
+                              EventoConsuntivoPP.componente.is_(None),
+                              db.func.lower(EventoConsuntivoPP.fase) == 'saldatura',
+                              EventoConsuntivoPP.approvato_direzione.is_(True))
+                      .group_by(OrdineProduzione.codice_articolo).all()):
+        grezzo_iw[cod] = tot or 0
+    for cod, delta_tot in (db.session.query(RettificaGrezzoIW.codice, db.func.sum(RettificaGrezzoIW.delta))
+                            .filter(RettificaGrezzoIW.codice.in_(codici_padre))
+                            .group_by(RettificaGrezzoIW.codice).all()):
+        grezzo_iw[cod] = grezzo_iw.get(cod, 0) + (delta_tot or 0)
+
+    ordinato_produzione = {}
+    for cod, qta_pian, qta_buona in (db.session.query(OrdineProduzione.codice_articolo,
+                                      OrdineProduzione.qta_pianificata, OrdineProduzione.qta_buona)
+                                      .filter(OrdineProduzione.codice_articolo.in_(codici_padre),
+                                              OrdineProduzione.stato.in_(['Creato', 'Rilasciato', 'In esecuzione'])).all()):
+        residuo = max((qta_pian or 0) - (qta_buona or 0), 0)
+        if residuo > 0:
+            ordinato_produzione[cod] = ordinato_produzione.get(cod, 0) + residuo
+
+    scorte_minime = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.filter(ScortaMinimaWood.codice.in_(codici_padre)).all()}
+    descrizioni = {}
+    for cod, descr in (db.session.query(RigaOrdineAcquistoWood.codice, RigaOrdineAcquistoWood.descrizione)
+                        .filter(RigaOrdineAcquistoWood.codice.in_(codici_padre))
+                        .order_by(RigaOrdineAcquistoWood.id.desc()).all()):
+        descrizioni.setdefault(cod, descr)
+
+    risultati = []
+    for cod in codici_padre:
+        stock = giacenze.get(cod, 0)
+        imp = impegnato.get(cod, 0)
+        ord_ = ordinato.get(cod, 0)
+        grz = grezzo_iw.get(cod, 0)
+        ord_prod = ordinato_produzione.get(cod, 0)
+        scorta_min = scorte_minime.get(cod, 0)
+        disp_allargata = round(stock + grz - imp + ord_ + ord_prod, 4)
+        fabbisogno = round(max(scorta_min - disp_allargata, 0), 4)
+        if fabbisogno > 0:
+            risultati.append({
+                'codice': cod, 'descrizione': descrizioni.get(cod, ''), 'stock': stock,
+                'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'ordinato_fornitori': ord_,
+                'scorta_minima': scorta_min, 'disponibile_allargata': disp_allargata,
+                'fabbisogno': fabbisogno,
+            })
+    risultati.sort(key=lambda r: -r['fabbisogno'])
+    return risultati
+
+
 @magazzino_bp.route('/api/giacenza_wood', methods=['GET'])
 def api_giacenza_lista():
     """Elenco giacenze, con limite di default (200) + ricerca — stesso principio

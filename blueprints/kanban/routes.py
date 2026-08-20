@@ -303,13 +303,93 @@ def _calcola_alert_scorte():
 # ── PAGINA ALERT SCORTE ──────────────────────────────────────────────────────
 @kanban_bp.route('/alert-scorte')
 def pagina_alert_scorte():
+    from blueprints.magazzino.routes import calcola_alert_fabbisogno_codici_padre
     return render_template('kanban/alert_scorte.html', active='alert-scorte',
-                            topbar_title='🚨 Alert Scorte', righe=_calcola_alert_scorte())
+                            topbar_title='🚨 Alert Scorte', righe=_calcola_alert_scorte(),
+                            righe_fabbisogno=calcola_alert_fabbisogno_codici_padre())
 
 
 @kanban_bp.route('/api/alert-scorte')
 def api_alert_scorte():
     return jsonify(_calcola_alert_scorte())
+
+
+@kanban_bp.route('/api/alert-scorte/fabbisogno-padre')
+def api_alert_fabbisogno_padre():
+    from blueprints.magazzino.routes import calcola_alert_fabbisogno_codici_padre
+    return jsonify(calcola_alert_fabbisogno_codici_padre())
+
+
+@kanban_bp.route('/api/alert-scorte/chiedi-ai', methods=['POST'])
+def api_alert_chiedi_ai():
+    """
+    Manda lo stato di Alert Scorte (fabbisogno codici padre + rischio
+    stockout Kanban) a ChatGPT con un prompt studiato per farsi suggerire
+    concretamente come comportarsi — priorità, cosa produrre/ordinare
+    prima, dove concentrare l'attenzione. Richiede la variabile d'ambiente
+    OPENAI_API_KEY (da impostare su Railway); se manca, errore chiaro
+    invece di un crash silenzioso.
+    """
+    from blueprints.magazzino.routes import calcola_alert_fabbisogno_codici_padre
+    import os, requests as req
+
+    api_key = os.environ.get('OPENAI_API_KEY')
+    if not api_key:
+        return jsonify({'errore': True,
+                         'messaggio': "Manca la variabile d'ambiente OPENAI_API_KEY su Railway — chiedi a Maurizio di impostarla."}), 400
+
+    righe_padre = calcola_alert_fabbisogno_codici_padre()
+    righe_scorte = _calcola_alert_scorte()
+
+    if not righe_padre and not righe_scorte:
+        return jsonify({'ok': True, 'analisi': "Nessun alert attivo al momento — stock, scorte minime e fabbisogni risultano tutti a posto."})
+
+    def fmt_padre(r):
+        return (f"- {r['codice']} ({r['descrizione'] or 'senza descrizione'}): fabbisogno {r['fabbisogno']}, "
+                f"scorta minima {r['scorta_minima']}, disponibile allargata {r['disponibile_allargata']}, "
+                f"stock {r['stock']}, grezzo IW {r['grezzo_iw']}, ordinato in produzione {r['ordinato_produzione']}, "
+                f"ordinato a fornitori {r['ordinato_fornitori']}")
+
+    def fmt_scorta(r):
+        if r['livello'] == 'grigio':
+            return f"- {r['prodotto']}: nessuno storico di vendita né budget, non calcolabile"
+        return (f"- {r['prodotto']} [{r['livello'].upper()}]: stock pronto {r['stock_pronto']}, "
+                f"scorta minima {r['scorta_minima_pz']}, domanda media/gg {r['domanda_gg']}, "
+                f"giorni di copertura {r['giorni_copertura']}, lead time rifornimento {r['lead_time_giorni']}gg")
+
+    blocco_padre = '\n'.join(fmt_padre(r) for r in righe_padre) if righe_padre else '(nessun codice padre con fabbisogno > 0)'
+    blocco_scorte = '\n'.join(fmt_scorta(r) for r in righe_scorte) if righe_scorte else '(nessun prodotto in tabella)'
+
+    prompt = f"""Sei un consulente di produzione e supply chain per una piccola/media azienda di carpenteria metallica (arredo urbano e segnaletica stradale). Ti fornisco lo stato attuale di due tabelle di allarme scorte del loro sistema gestionale (IronProduction). Il tuo compito è dare consigli PRATICI e AZIONABILI, non una descrizione dei dati.
+
+═══ TABELLA 1 — CODICI PADRE (prodotti finiti/assiemi) CON FABBISOGNO > 0 ═══
+Il "fabbisogno" è quanto manca rispetto alla scorta minima impostata, tenendo conto di stock fisico, grezzo assemblato non ancora verniciato, ordinato a fornitori e ordinato in produzione interna. Fabbisogno > 0 = servirebbe intervenire.
+{blocco_padre}
+
+═══ TABELLA 2 — RISCHIO DI RIMANERE A TERRA (stock finito vs domanda storica/budget) ═══
+Livello ROSSO = si esaurirà prima che un nuovo lotto possa arrivare (rischio reale di stockout). GIALLO = sotto scorta minima ma con margine. GRIGIO = dati insufficienti per calcolare.
+{blocco_scorte}
+
+Dammi una risposta strutturata in italiano, con questi punti:
+1. **Priorità immediate** — quali 2-4 codici richiedono attenzione OGGI e perché (incrocia le due tabelle se un codice compare in entrambe: è più urgente).
+2. **Per ciascun codice prioritario** — un suggerimento concreto: produrre di più, sollecitare un fornitore, aumentare la scorta minima se sembra sottostimata, o altro.
+3. **Pattern generali** — se noti che più codici hanno lo stesso tipo di problema (es. tutti in attesa dello stesso fornitore, o tutti sulla stessa macchina collo di bottiglia), segnalalo.
+4. **Cosa NON è urgente** — rassicura su cosa può aspettare, per non far percepire tutto come un'emergenza.
+
+Sii diretto, concreto, e concentrati su AZIONI da fare, non su ripetere i numeri che hai già visto sopra. Massimo 350 parole."""
+
+    try:
+        r = req.post('https://api.openai.com/v1/chat/completions',
+                      headers={'Authorization': f'Bearer {api_key}', 'Content-Type': 'application/json'},
+                      json={'model': 'gpt-4o', 'messages': [{'role': 'user', 'content': prompt}], 'temperature': 0.3},
+                      timeout=45)
+        r.raise_for_status()
+        analisi = r.json()['choices'][0]['message']['content']
+        return jsonify({'ok': True, 'analisi': analisi})
+    except req.exceptions.RequestException as e:
+        return jsonify({'errore': True, 'messaggio': f'Errore durante la chiamata a ChatGPT: {e}'}), 502
+    except (KeyError, IndexError):
+        return jsonify({'errore': True, 'messaggio': 'Risposta inattesa da ChatGPT.'}), 502
 
 
 # ── PAGINA KANBAN ────────────────────────────────────────────────────────────
