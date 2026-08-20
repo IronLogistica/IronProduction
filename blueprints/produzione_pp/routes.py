@@ -668,10 +668,18 @@ def _e_ultima_fase_del_ciclo(codice_lavorato, fase_nome):
     return ultima.centro_costo.nome.strip().lower() == (fase_nome or '').strip().lower()
 
 
-def _calcola_consumi_standard(o, componente_finale, componente, good):
+def _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata):
     """
-    Consumi standard (da distinta base) per GOOD pezzi buoni — stessa logica
-    usata sia per la registrazione vera sia per l'anteprima pre-conferma.
+    Consumi standard (da distinta base) per QTA_TAGLIATA pezzi — stessa
+    logica usata sia per la registrazione vera sia per l'anteprima pre-
+    conferma. IMPORTANTE: qta_tagliata deve essere BUONI+SCARTO, non solo
+    i pezzi buoni — il materiale grezzo (es. il ferro alla segatrice) si
+    consuma per OGNI pezzo tagliato, compreso quello poi scartato: uno
+    scarto non è "materiale mai toccato", è materiale già consumato che
+    non è diventato un pezzo conforme. Solo il CARICO a magazzino del
+    pezzo prodotto (più sotto in _registra_evento_consuntivo) resta sui
+    soli pezzi buoni — quello sì che deve rappresentare solo scorta
+    davvero utilizzabile.
 
     Riesplode la distinta SOLO fino ai figli che NON hanno un proprio Ciclo
     di Lavoro (materie prime/componenti d'acquisto puri, mai dichiarabili da
@@ -684,7 +692,7 @@ def _calcola_consumi_standard(o, componente_finale, componente, good):
     """
     codice_base = o.codice_articolo if componente_finale else componente
     consumi = {}
-    _esplodi_fino_a_semilavorati_dichiarabili(codice_base, good, consumi)
+    _esplodi_fino_a_semilavorati_dichiarabili(codice_base, qta_tagliata, consumi)
     return consumi
 
 
@@ -804,21 +812,23 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     # rappresenta davvero scorta fisica di un pezzo pronto, non il prodotto
     # finito in attesa di trattamento esterno.
     carica_prodotto_finito = not (codice_lavorato == o.codice_articolo and avanza_op)
-    if good > 0 and prima_fase:
+    qta_tagliata = good + scrap  # il materiale si consuma per OGNI pezzo tagliato, buono o scarto
+    if qta_tagliata > 0 and prima_fase:
         try:
-            consumi = consumi_override if consumi_override is not None else _calcola_consumi_standard(o, componente_finale, componente, good)
+            consumi = consumi_override if consumi_override is not None else _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata)
             for cod, qta_consumata in consumi.items():
                 if qta_consumata:
                     costo_corrente = _calcola_costo_standard(cod)['costo_totale']
                     _registra_movimento_giacenza(cod, -qta_consumata, 'scarico_produzione',
-                                                  riferimento=o.codice, note=f'Consuntivo {good} pz buoni ({codice_lavorato})',
+                                                  riferimento=o.codice,
+                                                  note=f'Consuntivo {good} pz buoni + {scrap} pz scarto ({codice_lavorato})',
                                                   costo_unitario=costo_corrente)
         except Exception:
             pass  # lo scarico giacenza non deve mai bloccare la registrazione del consuntivo
 
         try:
             costo = _calcola_costo_standard(codice_lavorato)
-            if carica_prodotto_finito:
+            if carica_prodotto_finito and good > 0:
                 if costo['codici_senza_costo']:
                     nota_costo = (f'Consuntivo {good} pz buoni — ⚠️ COSTO INCOMPLETO: mancano prezzi per '
                                    f'{", ".join(sorted(costo["codici_senza_costo"]))} — totale sottostimato')
@@ -2117,21 +2127,24 @@ def api_dichiarazione_anteprima():
     """
     Maschera di anteprima pre-conferma (stesso principio di "Evasione
     articoli composti" di Zucchetti): cosa si CARICA a magazzino (il
-    prodotto — finito o semilavorato, secondo il componente dichiarato) e
-    cosa si SCARICA (i suoi componenti diretti, quantità standard di
-    distinta) — proposti come default, modificabili prima di confermare.
+    prodotto — finito o semilavorato, secondo il componente dichiarato,
+    SOLO i pezzi buoni) e cosa si SCARICA (i suoi componenti diretti,
+    quantità standard di distinta PER BUONI+SCARTO — il materiale si
+    consuma per ogni pezzo tagliato, anche quello poi scartato) —
+    proposti come default, modificabili prima di confermare.
     """
     op_code = (request.args.get('op_code') or '').strip()
     componente = (request.args.get('componente') or '').strip() or None
     centro_id = request.args.get('centro_id')
     try:
         good = _integer(request.args.get('pezzi_buoni', 0), 'Pezzi buoni')
+        scrap = _integer(request.args.get('pezzi_scarto', 0), 'Pezzi scarto')
     except ValueError as exc:
         return jsonify(ok=False, error=str(exc)), 400
     o = OrdineProduzione.query.filter_by(codice=op_code).first()
     if not o:
         return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
-    if good <= 0:
+    if good <= 0 and scrap <= 0:
         return jsonify(ok=True, carica=None, componenti=[])
 
     componente_finale = not componente or componente == o.codice_articolo
@@ -2149,7 +2162,9 @@ def api_dichiarazione_anteprima():
                        f'ciclo di lavoro — questa è una fase successiva sullo STESSO pezzo: nessun materiale '
                        f'verrà scaricato né ricaricato, si registrano solo i pezzi fatti e il tempo.'))
 
-    consumi = _calcola_consumi_standard(o, componente_finale, componente, good)
+    # Scarico basato su BUONI+SCARTO: il materiale grezzo si consuma per
+    # ogni pezzo tagliato, anche quello poi scartato — non solo per i buoni.
+    consumi = _calcola_consumi_standard(o, componente_finale, componente, good + scrap)
 
     tutti_codici = {codice_caricato} | set(consumi.keys())
     descr_map = {}
@@ -2165,8 +2180,12 @@ def api_dichiarazione_anteprima():
             if dsc.descrizione:
                 descr_map[dsc.codice] = dsc.descrizione
 
+    # Il CARICO a magazzino resta SOLO sui pezzi buoni — uno scarto non
+    # diventa mai scorta utilizzabile. Se good=0 (solo scarto dichiarato),
+    # niente da caricare.
     return jsonify(ok=True,
-        carica={'codice': codice_caricato, 'descrizione': descr_map.get(codice_caricato, ''), 'quantita': good},
+        carica=({'codice': codice_caricato, 'descrizione': descr_map.get(codice_caricato, ''), 'quantita': good}
+                if good > 0 else None),
         componenti=[{'codice': cod, 'descrizione': descr_map.get(cod, ''), 'quantita': round(qta, 4)}
                     for cod, qta in consumi.items()])
 
@@ -2386,7 +2405,8 @@ def _storna_evento_consuntivo(e, o):
     # carica_prodotto_finito in _registra_evento_consuntivo) — lo storno non
     # deve inventarsi uno scarico di qualcosa che non è mai stato caricato.
     carica_prodotto_finito = not (codice_lavorato == o.codice_articolo and avanza_op)
-    if e.pezzi_buoni > 0 and prima_fase_originale:
+    qta_tagliata_originale = e.pezzi_buoni + e.pezzi_scarto
+    if qta_tagliata_originale > 0 and prima_fase_originale:
         # Stessa identica logica di esplosione usata per dichiarare —
         # fondamentale che coincidano: se dichiaro consumando SOLO il
         # semilavorato (perché ha un ciclo proprio) ma stornassi
@@ -2396,12 +2416,15 @@ def _storna_evento_consuntivo(e, o):
         # (non aveva toccato il magazzino — vedi _e_prima_fase_del_ciclo
         # nella dichiarazione), lo storno non deve inventarsi un
         # ripristino di qualcosa che non era mai stato scaricato.
-        consumi = _calcola_consumi_standard(o, componente_finale, e.componente, e.pezzi_buoni)
+        # Buoni+scarto: il materiale scaricato in dichiarazione copriva
+        # ANCHE i pezzi di scarto (consumano ferro come quelli buoni),
+        # quindi lo storno deve ripristinare la stessa quantità totale.
+        consumi = _calcola_consumi_standard(o, componente_finale, e.componente, qta_tagliata_originale)
         for cod, qta_consumata in consumi.items():
             if qta_consumata:
                 _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',
                                               riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
-        if carica_prodotto_finito:
+        if carica_prodotto_finito and e.pezzi_buoni > 0:
             _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
                                           riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
 
