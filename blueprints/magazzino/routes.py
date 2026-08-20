@@ -1248,7 +1248,8 @@ def api_giacenza_impegni_op(codice):
         if saldo <= 0:
             continue
         out = {}
-        _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua, out, mappa=mappa)
+        _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua, out, mappa=mappa,
+                               escludi_fabbisogno_per=op.codice_articolo)
         tocco = out.get(codice)
         if tocco and tocco['fabbisogno'] > 0:
             righe.append({
@@ -1563,7 +1564,7 @@ def api_importa_giacenza():
         return jsonify({'errore': True, 'messaggio': f'Errore durante l\'import: {e}'}), 500
 
 
-def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _profondita=0, _max_profondita=12, mappa=None):
+def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _profondita=0, _max_profondita=12, mappa=None, escludi_fabbisogno_per=None):
     """
     Esplode la distinta Iron Wood da `codice` per una quantità `qta`, NETTANDO
     ad ogni nodo contro `giacenza_residua` (dict mutabile {codice: qta libera},
@@ -1580,6 +1581,20 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
     evita una query per nodo — indispensabile quando si esplodono le
     distinte di molti OP nella stessa richiesta (es. Situazione Ordini di
     Produzione, Monitor Macchina).
+
+    'escludi_fabbisogno_per': BUG CORRETTO — il primo nodo esplorato è
+    SEMPRE il codice_articolo dell'OP stesso (il prodotto che quell'OP sta
+    producendo), non un materiale che consuma. Senza questa esclusione,
+    quel nodo veniva registrato in 'out' come qualunque altro componente:
+    per un Codice Padre (es. T200) che ha un proprio OP aperto, "Impegnato"
+    in Magazzino mostrava un numero anche per T200 stesso — come se l'OP
+    "impegnasse" il prodotto che lui stesso sta creando. Passando qui il
+    codice_articolo dell'OP, quel SINGOLO nodo di partenza (profondità 0)
+    non viene registrato in 'out' — ma l'esplosione dei suoi componenti
+    (i materiali che servono per PRODURLO) continua identica. Se lo stesso
+    codice ricompare più sotto nell'albero come VERO componente di
+    qualcos'altro (es. in un kit), quello conta regolarmente: l'esclusione
+    vale solo per l'esatta chiamata di partenza.
     """
     if _visitati is None:
         _visitati = set()
@@ -1599,17 +1614,18 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
     giacenza_residua[codice] = disponibile_prima - usato
     mancante = qta - usato
 
-    riga = out.setdefault(codice, {'fabbisogno': 0.0, 'usato': 0.0, 'mancante': 0.0})
-    riga['fabbisogno'] += qta
-    riga['usato']      += usato
-    riga['mancante']   += mancante
+    if not (_profondita == 0 and codice == escludi_fabbisogno_per):
+        riga = out.setdefault(codice, {'fabbisogno': 0.0, 'usato': 0.0, 'mancante': 0.0})
+        riga['fabbisogno'] += qta
+        riga['usato']      += usato
+        riga['mancante']   += mancante
 
     if mancante <= 0:
         return
     righe_bom = _righe_bom_attive_wood(codice, mappa=mappa)
     for r in righe_bom:
         qta_figlio = (r.quantita or 1.0) * mancante
-        _netta_e_esplodi_wood(r.codice_figlio, qta_figlio, giacenza_residua, out, _visitati, _profondita + 1, _max_profondita, mappa=mappa)
+        _netta_e_esplodi_wood(r.codice_figlio, qta_figlio, giacenza_residua, out, _visitati, _profondita + 1, _max_profondita, mappa=mappa, escludi_fabbisogno_per=escludi_fabbisogno_per)
 
 
 def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None, fabbisogno_lordo_out=None):
@@ -1646,7 +1662,8 @@ def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None, fabbisogno_lo
         saldo = (op.qta_pianificata or 0) - (op.qta_buona or 0)
         if saldo > 0:
             _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua,
-                                   out_condiviso if out_condiviso is not None else {}, mappa=mappa)
+                                   out_condiviso if out_condiviso is not None else {}, mappa=mappa,
+                                   escludi_fabbisogno_per=op.codice_articolo)
     if fabbisogno_lordo_out is not None:
         for cod, r in out_condiviso.items():
             fabbisogno_lordo_out[cod] = r['fabbisogno']
