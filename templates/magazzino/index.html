@@ -250,7 +250,7 @@ async function caricaMagazzinoWood(){
       return;
     }
     let html = `<div style="overflow-x:auto"><table class="mat-table"><thead><tr>
-      <th>Codice</th><th>Descrizione</th>
+      <th>Codice</th><th>Descrizione</th><th>Tipologia</th>
       <th class="mt-th-stock">+ Stock IW<div class="mt-formula">Giacenza fisica registrata</div></th>
       <th class="mt-th-stock">Grezzo IW<div class="mt-formula">Prodotto assemblato ma NON ANCORA verniciato: totale prodotto (consuntivi) meno quanto già spedito a trattamento esterno</div></th>
       <th class="mt-th-impegnato">− Impegnato OP<div class="mt-formula">Stock − Giacenza residua dopo aver simulato il consumo di TUTTI gli OP aperti, in ordine di priorità, nettando a ogni nodo della distinta contro lo stock già disponibile (incluso il semilavorato già prodotto)</div></th>
@@ -265,6 +265,7 @@ async function caricaMagazzinoWood(){
       html += `<tr>
         <td class="codice">${g.codice}</td>
         <td class="prod-name">${g.descrizione || '—'}</td>
+        <td style="font-size:11px;color:${g.tipologia==='Codice Padre'?'#5debb0':(g.tipologia==='Da classificare'?'#e67e22':'var(--text-dim)')};font-weight:${g.tipologia==='Codice Padre'?'700':'400'}">${g.tipologia}</td>
         <td class="${g.quantita>0?'mt-val-stock':'mt-val-zero'}">
           <div style="display:flex;align-items:center;gap:4px">
             <input type="number" step="0.01" value="${g.quantita}" id="stock-${g.codice}"

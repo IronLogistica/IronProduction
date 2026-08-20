@@ -1026,6 +1026,33 @@ def _calcola_campi_giacenza(righe):
 
     approvvigionamenti = {a.codice: a for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()}
 
+    # Tipologia — incrocia le stesse fonti già usate nel resto dell'app:
+    # Codice Padre = ha almeno un Ordine di Produzione proprio (stessa
+    # definizione di calcola_alert_fabbisogno_codici_padre). Se non lo è,
+    # guarda tipo_approvvigionamento (Parametri di Lavorazione). Se manca
+    # anche quello ma ha un Ciclo di Lavoro proprio, è un semilavorato
+    # realizzato internamente (lavorato ma mai venduto/prodotto come OP
+    # a sé). Altrimenti non ancora classificato.
+    codici_padre = {r[0] for r in db.session.query(OrdineProduzione.codice_articolo)
+                     .filter(OrdineProduzione.codice_articolo.in_(codici)).distinct().all()}
+    codici_con_ciclo = {r[0] for r in db.session.query(CicloLavoroWood.codice)
+                         .filter(CicloLavoroWood.codice.in_(codici)).distinct().all()}
+    LABEL_TIPO_APPROVVIGIONAMENTO = {
+        'MATERIA_PRIMA_FORNITORE': 'Materia Prima (fornitore)',
+        'COMPONENTE_ACQUISTO': "Componente d'Acquisto",
+        'LASERATO': 'Laserato',
+    }
+
+    def _tipologia(codice):
+        if codice in codici_padre:
+            return 'Codice Padre'
+        art = approvvigionamenti.get(codice)
+        if art and art.tipo_approvvigionamento in LABEL_TIPO_APPROVVIGIONAMENTO:
+            return LABEL_TIPO_APPROVVIGIONAMENTO[art.tipo_approvvigionamento]
+        if codice in codici_con_ciclo:
+            return 'Semilavorato (centri di costo)'
+        return 'Da classificare'
+
     righe_out = []
     for g in righe:
         imp = impegnato.get(g.codice, 0)
@@ -1045,6 +1072,7 @@ def _calcola_campi_giacenza(righe):
         righe_out.append({
             'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
             'unita_misura': approvvigionamenti.get(g.codice).unita_misura if approvvigionamenti.get(g.codice) else '',
+            'tipologia': _tipologia(g.codice),
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
             'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
             'scorta_minima': scorta_min,
