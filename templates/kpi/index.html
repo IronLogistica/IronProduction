@@ -147,16 +147,16 @@ async function caricaAvanzamentoCommesse(){
           ? `<span title="${o.avvisi.join(' | ').replace(/"/g,'&quot;')}" style="color:#e67e22;cursor:help">⚠️ ${o.avvisi.length}</span>`
           : '';
         const foto = o.foto_id
-          ? `<img src="/api/foto_articolo/file/${o.foto_id}" style="width:44px;height:44px;object-fit:contain;border:1px solid #ddd;border-radius:4px;vertical-align:middle;margin-right:8px">`
-          : `<span style="display:inline-block;width:44px;height:44px;vertical-align:middle;margin-right:8px"></span>`;
+          ? `<img src="/api/foto_articolo/file/${o.foto_id}" style="width:72px;height:72px;object-fit:contain;border:1px solid #ddd;border-radius:4px;vertical-align:middle;margin-right:10px">`
+          : `<span style="display:inline-block;width:72px;height:72px;vertical-align:middle;margin-right:10px"></span>`;
         const fasiRow = AC_ZONE.map(z => acCellaZona(o.zone ? o.zone[z[0]] : null)).join('');
-        return `<tr style="border-bottom:1px solid #eee">
-          <td style="text-align:center;padding:6px;background:#f7fdfd"><i>${o.commessa || o.priorita}</i></td>
-          <td style="padding:6px;background:#f7fdfd">
-            ${foto}<b style="font-size:14px;vertical-align:middle">${o.codice_articolo}</b>
-            <div style="font-size:10px;color:#666;margin-left:52px">${o.descrizione || ''} — ${o.op_codice}</div>
+        return `<tr style="border-bottom:3px solid #1a1a1a">
+          <td style="text-align:center;padding:10px 6px;background:#f7fdfd"><i>${o.commessa || o.priorita}</i></td>
+          <td style="padding:10px 6px;background:#f7fdfd">
+            ${foto}<b style="font-size:19px;color:#111;vertical-align:middle">${o.codice_articolo}</b>
+            <div style="font-size:10px;color:#666;margin-left:82px">${o.descrizione || ''} — ${o.op_codice}</div>
           </td>
-          <td style="text-align:center;font-weight:800;font-size:20px;background:#f7fdfd">${o.saldo}</td>
+          <td style="text-align:center;font-weight:800;font-size:24px;color:#111;background:#f7fdfd">${o.saldo}</td>
           ${fasiRow}
           <td style="text-align:center;padding:6px">${materiale}</td>
           <td style="text-align:center;padding:6px;font-weight:700">${o.data_fine_produzione_stimata}</td>
