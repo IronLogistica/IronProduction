@@ -1078,6 +1078,24 @@ def assicura_ordinato_cliente_wms():
                 db.session.commit()
 
 
+def assicura_operatore_evento_consuntivo():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    pp_eventi_consuntivi.operatore (chi ha inviato la dichiarazione,
+    dall'account MasterWork) senza ricreare tabelle."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS operatore VARCHAR(100)"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('pp_eventi_consuntivi')}
+        if 'operatore' not in colonne:
+            db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN operatore VARCHAR(100)"))
+            db.session.commit()
+
+
 class KanbanProdotto(db.Model):
     __tablename__ = "kanban_prodotti"
     id           = db.Column(db.Integer, primary_key=True)
@@ -1929,6 +1947,11 @@ class EventoConsuntivoPP(db.Model):
     # che la Direzione deve dare: non blocca né ritarda la produzione.
     approvato_direzione = db.Column(db.Boolean, nullable=False, default=False)
     approvato_il = db.Column(db.DateTime, nullable=True)
+    # Chi ha inviato la dichiarazione, secondo l'account con cui è collegato
+    # a MasterWork — arriva nel payload di POST /api/pp/events se MasterWork
+    # lo manda (campo opzionale: le dichiarazioni più vecchie e quelle dal
+    # totem a bordo macchina restano senza, mai un errore per questo).
+    operatore = db.Column(db.String(100), nullable=True)
 
 class AuditPP(db.Model):
     __tablename__ = "pp_audit"

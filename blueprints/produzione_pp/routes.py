@@ -707,7 +707,7 @@ def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, _visitati=No
             _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, _visitati)
 
 
-def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None):
+def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None, operatore=None):
     """
     Nucleo di registrazione di un consuntivo per l'OP o (già lockato con
     with_for_update dal chiamante): crea l'EventoConsuntivoPP, aggiorna
@@ -751,7 +751,8 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
 
     db.session.add(EventoConsuntivoPP(event_id=event_id, op_code=o.codice, fase=fase_nome,
                                        componente=None if componente_finale else componente,
-                                       timestamp_evento=ts, pezzi_buoni=good, pezzi_scarto=scrap, tempo_minuti=tempo))
+                                       timestamp_evento=ts, pezzi_buoni=good, pezzi_scarto=scrap, tempo_minuti=tempo,
+                                       operatore=operatore))
     o.tempo_consuntivo_minuti += tempo
     if avanza_op:
         o.qta_buona += good; o.qta_scarto += scrap
@@ -920,7 +921,8 @@ def api_evento():
         if not _is_carpenteria(o.asa) or o.stato not in ('Rilasciato','In esecuzione'):
             return jsonify(ok=False, error='OP non attivo o non disponibile per Carpenteria Propria'), 409
         _registra_evento_consuntivo(o, str(d['fase']).strip(), ts, good, scrap, tempo, str(d['event_id']).strip(),
-                                     componente=(str(d['componente']).strip() if d.get('componente') else None))
+                                     componente=(str(d['componente']).strip() if d.get('componente') else None),
+                                     operatore=(str(d['operatore']).strip() if d.get('operatore') else None))
         db.session.commit(); return jsonify(ok=True, deduplicated=False, ordine=_ordine(o)), 201
     except ValueError as exc: return jsonify(ok=False, error=str(exc)), 400
     except IntegrityError:
@@ -2144,6 +2146,7 @@ def api_dichiarazione_approvazioni():
         'codice_articolo': articolo_per_op.get(e.op_code, '—'),
         'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M'),
         'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto, 'tempo_minuti': e.tempo_minuti,
+        'operatore': e.operatore,
     } for e in eventi])
 
 
@@ -2257,19 +2260,23 @@ def _storna_evento_consuntivo(e, o):
 @pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/annulla')
 def api_dichiarazione_annulla(eid):
     """
-    Storno di una dichiarazione sbagliata — SOLO col PIN del capo. Non
-    modifica i numeri sul posto: inverte esattamente quantità OP, giacenza
-    (ri-carica i materiali scaricati, ri-scarica il prodotto caricato) e
-    tempo, poi elimina l'evento. Il capo reparto ridichiara poi quella
-    corretta con la dichiarazione normale.
+    Storno di una dichiarazione sbagliata — col PIN del capo OPPURE della
+    Direzione (chi trova l'errore prima interviene: la Direzione lo vede
+    tipicamente qui, nella coda di approvazione, prima ancora che il capo
+    se ne accorga nello storico). Non modifica i numeri sul posto: inverte
+    esattamente quantità OP, giacenza (ri-carica i materiali scaricati,
+    ri-scarica il prodotto caricato) e tempo, poi elimina l'evento. La
+    correzione via MasterWork (es. il saldatore aveva segnato 100 invece
+    di 80) resta comunque un intervento SEPARATO che Angelo fa di là, per
+    conto suo — qui si toglie solo l'errore da IronProduction.
     ⚠️ LIMITE: le eventuali righe di Varianza di Produzione legate a questo
     evento NON vengono rimosse (restano come residuo storico) — non alterano
     la giacenza, solo l'Analisi Costo di quell'OP potrebbe mostrare una
     varianza in più che non riflette più produzione reale.
     """
     d = request.get_json(force=True)
-    if not _verifica_pin_capo(d):
-        return jsonify(ok=False, error='PIN capo non valido'), 403
+    if not (_verifica_pin_capo(d) or _verifica_pin_direzione(d)):
+        return jsonify(ok=False, error='PIN capo o Direzione non valido'), 403
     e = EventoConsuntivoPP.query.get_or_404(eid)
     o = OrdineProduzione.query.filter_by(codice=e.op_code).first()
     if not o:
