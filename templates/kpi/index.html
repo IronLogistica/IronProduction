@@ -11,23 +11,6 @@
   <div class="kpi-card accent"><div class="kpi-value">{{ kpi.in_saldatura_mon }}</div><div class="kpi-label">👨‍🏭 In Saldatura</div></div>
   <div class="kpi-card warn"><div class="kpi-value">{{ kpi.commesse_aperte }}</div><div class="kpi-label">Commesse Aperte</div></div>
 </div>
-<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px">
-  <div style="font-weight:800;font-size:14px;color:var(--dark);margin-bottom:12px">⚠️ Prodotti da Programmare per Categoria</div>
-  <table class="kanban-table">
-    <thead><tr><th>Categoria</th><th>Tot. Prodotti</th><th>Da Programmare</th><th>OK</th><th>% Saturazione</th></tr></thead>
-    <tbody>
-    {% for row in cat_rows %}
-    <tr>
-      <td class="prod-name">{{ row.label }}</td>
-      <td class="num">{{ row.tot }}</td>
-      <td class="num" style="color:var(--red);font-weight:800">{{ row.warn }}</td>
-      <td class="num" style="color:var(--teal)">{{ row.ok }}</td>
-      <td><div class="pct-bar" style="width:100px"><div class="pct-fill" style="width:{{ row.pct }}%;background:{{ row.color }}"></div><span>{{ row.pct }}%</span></div></td>
-    </tr>
-    {% endfor %}
-    </tbody>
-  </table>
-</div>
 
 <div style="background:#0f1e35;border-radius:10px;border:1px solid rgba(30,111,165,.25);padding:16px;margin-top:20px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
