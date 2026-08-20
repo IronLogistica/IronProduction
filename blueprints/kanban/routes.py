@@ -7,6 +7,7 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     GiacenzaWood, OrdineProduzione, LavorazioneTerzista)
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, ottieni_stock_kanban, ottieni_scheda_kanban, MasterLogisticError
 from masterledgerlight_client import cerca_articolo, MasterLedgerLightError
+from blueprints.magazzino.routes import _grezzo_iw_per_codici
 from datetime import datetime, timedelta
 import re, json
 
@@ -524,10 +525,19 @@ def api_kanban_scheda(pid):
     p = KanbanProdotto.query.get_or_404(pid)
     sku = sku_da_nome_prodotto(p.prodotto)
 
+    # Grezzi IW — stessa fonte condivisa di Magazzino/Alert Scorte Codici
+    # Padre (_grezzo_iw_per_codici): quantità di prodotto finito dichiarata
+    # completa in Saldatura E approvata dalla Direzione, più eventuali
+    # rettifiche manuali. Distinto da 'Grezzi' (p.grezzi, box più sotto
+    # nella scheda): quello è "prodotti lavorati, non ancora trattati"
+    # calcolato da Dichiarazioni+DDT; questo è il dato ufficiale di
+    # magazzino, la stessa identica fonte che vede Angelo su Materiali.
+    grezzi_iw = _grezzo_iw_per_codici([sku]).get(sku, 0) if sku else 0
+
     risultato = {
         'sku': sku,
         'stock_verniciati': p.verniciati, 'stock_grezzi': p.grezzi, 'in_vern': p.in_vern,
-        'stock_is': p.finiti_is,
+        'stock_is': p.finiti_is, 'grezzi_iw': grezzi_iw,
         'riservato_clienti': p.riservato,
         'ordini_clienti': [], 'ultimi_evasi': [],
         'saldo_contabile': p.saldo_contabile,

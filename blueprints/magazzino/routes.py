@@ -974,6 +974,31 @@ def api_sincronizza_ordinato_cliente_wms():
     return jsonify({'ok': True, 'totale': len(righe_gz), 'aggiornati': aggiornati})
 
 
+def _grezzo_iw_per_codici(codici):
+    """
+    Grezzo IW per un elenco di codici — quantità di prodotto finito
+    dichiarata completa (Saldatura, l'ultima fase del ciclo) E approvata
+    dalla Direzione, più le rettifiche manuali cumulative. FUNZIONE
+    CONDIVISA: usata sia da _calcola_campi_giacenza (Magazzino/Alert
+    Scorte) sia dalla Scheda WMS del Kanban Gruppi (card 'Grezzi IW') —
+    stessa fonte, stesso numero ovunque compaia."""
+    grezzo_iw = {}
+    for cod, tot in (db.session.query(OrdineProduzione.codice_articolo,
+                      db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+                      .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
+                      .filter(OrdineProduzione.codice_articolo.in_(codici),
+                              EventoConsuntivoPP.componente.is_(None),
+                              db.func.lower(EventoConsuntivoPP.fase) == 'saldatura',
+                              EventoConsuntivoPP.approvato_direzione.is_(True))
+                      .group_by(OrdineProduzione.codice_articolo).all()):
+        grezzo_iw[cod] = tot or 0
+    for cod, delta_tot in (db.session.query(RettificaGrezzoIW.codice, db.func.sum(RettificaGrezzoIW.delta))
+                            .filter(RettificaGrezzoIW.codice.in_(codici))
+                            .group_by(RettificaGrezzoIW.codice).all()):
+        grezzo_iw[cod] = grezzo_iw.get(cod, 0) + (delta_tot or 0)
+    return grezzo_iw
+
+
 def _calcola_campi_giacenza(righe):
     """
     Funzione CONDIVISA che calcola Impegnato/Ordinato/Grezzo IW/Ordinato in
@@ -1006,20 +1031,7 @@ def _calcola_campi_giacenza(righe):
     # editabile — la scorta minima "vera" vive già dentro WMS, qui è solo
     # una lettura di quel valore; None = non ancora sincronizzato, 0 non è
     # un'assunzione sicura da fare al posto suo).
-    grezzo_iw = {}
-    for cod, tot in (db.session.query(OrdineProduzione.codice_articolo,
-                      db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-                      .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
-                      .filter(OrdineProduzione.codice_articolo.in_(codici),
-                              EventoConsuntivoPP.componente.is_(None),
-                              db.func.lower(EventoConsuntivoPP.fase) == 'saldatura',
-                              EventoConsuntivoPP.approvato_direzione.is_(True))
-                      .group_by(OrdineProduzione.codice_articolo).all()):
-        grezzo_iw[cod] = tot or 0
-    for cod, delta_tot in (db.session.query(RettificaGrezzoIW.codice, db.func.sum(RettificaGrezzoIW.delta))
-                            .filter(RettificaGrezzoIW.codice.in_(codici))
-                            .group_by(RettificaGrezzoIW.codice).all()):
-        grezzo_iw[cod] = grezzo_iw.get(cod, 0) + (delta_tot or 0)
+    grezzo_iw = _grezzo_iw_per_codici(codici)
 
     ordinato_produzione = {}
     for cod, qta_pian, qta_buona in (db.session.query(OrdineProduzione.codice_articolo,

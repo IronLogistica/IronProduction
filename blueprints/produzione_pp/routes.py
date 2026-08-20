@@ -13,7 +13,7 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
                     NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
-                    FotoArticolo)
+                    FotoArticolo, KanbanProdotto, storico_aggiungi_auto)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -2064,6 +2064,20 @@ def api_dichiarazione_approva(eid):
     e.approvato_il = datetime.utcnow()
     db.session.add(AuditPP(op_code=e.op_code, event_id=e.event_id, azione='APPROVAZIONE_DIREZIONE',
                             dettaglio=f'dichiarazione {e.event_id} approvata dalla Direzione'))
+    # Aggancio Storico Produzione Kanban: questa approvazione è ESATTAMENTE
+    # la stessa condizione che fa salire "Grezzo IW" in Magazzino
+    # (componente NULL, fase Saldatura, approvato dalla Direzione — vedi
+    # _calcola_campi_giacenza) — quindi lo Storico Produzione del Kanban
+    # deve contarla nello stesso istante, non restare fermo ai soli rientri
+    # DDT dalla verniciatura.
+    if e.componente is None and (e.fase or '').strip().lower() == 'saldatura' and e.pezzi_buoni > 0:
+        o = OrdineProduzione.query.filter_by(codice=e.op_code).first()
+        if o:
+            p = (KanbanProdotto.query
+                 .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{(o.codice_articolo or "").upper()}%'))
+                 .first())
+            if p:
+                storico_aggiungi_auto(p.id, e.pezzi_buoni)
     db.session.commit()
     return jsonify(ok=True)
 
