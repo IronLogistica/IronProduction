@@ -167,7 +167,7 @@ setInterval(() => {
 let _kpiOverlayAperto = false;
 function apriKpiOverlay(ev){
   ev.preventDefault();
-  document.getElementById('kpi-iframe').src = '/kpi';
+  document.getElementById('kpi-iframe').src = '/kpi/embed';
   document.getElementById('kpi-overlay').style.display = 'flex';
   _kpiOverlayAperto = true;
 }

@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Cruscotto KPI — vista compatta</title>
+<style>
+  :root{
+    --dark:#0d1b2e; --accent:#1e6fa5; --white:#ffffff; --text-dim:#6b8aaa; --radius:8px;
+    --shadow:0 2px 12px rgba(0,0,0,.4);
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:16px;font-family:'Segoe UI',Arial,sans-serif;background:#07101f}
+  .kanban-table{width:100%;border-collapse:collapse;font-size:12px}
+  .kanban-table th{background:#0a1623;color:#4d9fd6;padding:8px;text-transform:uppercase;font-size:10px;text-align:center}
+  .kanban-table td{padding:8px;border-bottom:1px solid rgba(30,111,165,.2);color:#c8ddf0;text-align:center}
+  .num{text-align:center}
+  .codice{font-weight:800;color:#eaf4ff}
+  .descr-td{text-align:left;color:#9fb8d0}
+  .btn{padding:6px 12px;border-radius:6px;border:1px solid rgba(30,111,165,.4);background:transparent;color:#4d9fd6;cursor:pointer;font-size:11px;font-weight:700}
+</style>
+</head>
+<body>
+
+<div style="background:#0f1e35;border-radius:10px;border:1px solid rgba(30,111,165,.25);padding:16px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-weight:500;font-size:14px;color:#e0eefc">🗓️ Gantt commesse</div>
+    <button class="btn" onclick="caricaGanttCommesse()">🔄 Aggiorna</button>
+  </div>
+  <div style="font-size:11px;color:#6b8aaa;margin:6px 0 14px;display:flex;gap:16px">
+    <span><span style="display:inline-block;width:10px;height:10px;background:#2589c7;border-radius:2px;margin-right:5px;vertical-align:-1px"></span>produzione interna</span>
+    <span><span style="display:inline-block;width:10px;height:10px;background:#eb9f27;border-radius:2px;margin-right:5px;vertical-align:-1px"></span>lavorazione esterna</span>
+    <span><span style="display:inline-block;width:2px;height:12px;background:#f09595;margin-right:6px;vertical-align:-2px"></span>oggi</span>
+  </div>
+  <div id="gantt-commesse-box" style="overflow-x:auto;color:#c8ddf0">Caricamento...</div>
+</div>
+
+<div style="background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-top:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-weight:800;font-size:14px;color:var(--dark)">🗓️ Avanzamento Commesse — stima fine produzione e consegna</div>
+    <button class="btn" style="border-color:#ddd;color:#333" onclick="caricaAvanzamentoCommesse()">🔄 Aggiorna</button>
+  </div>
+  <p style="font-size:11px;color:#888;margin-bottom:12px">
+    Stima gestionale calcolata incrociando priorità, Ciclo di Lavoro (tempi standard), giacenza/ordini di acquisto e
+    capacità dei centri di costo — non un impegno contrattuale. Le righe con ⚠️ hanno usato una stima di default.
+  </p>
+  <div id="avanzamento-commesse-box" style="overflow-x:auto">Caricamento...</div>
+</div>
+
+<div style="background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-top:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-weight:800;font-size:14px;color:var(--dark)">🔔 In Attesa di Rilascio</div>
+    <button class="btn" style="border-color:#ddd;color:#333" onclick="caricaInAttesaRilascio()">🔄 Aggiorna</button>
+  </div>
+  <p style="font-size:11px;color:#888;margin-bottom:12px">
+    Ordini di Produzione già inseriti ma non ancora rilasciati — promemoria trasversale a tutti i centri di costo.
+  </p>
+  <div id="in-attesa-rilascio-box" style="overflow-x:auto">Caricamento...</div>
+</div>
+
+<script>
+const AC_CIANO = '#7EEEEF';
+const AC_ZONE = [['taglio','Taglio'], ['fori','Fori'], ['curvatura','Curvatura'], ['sgola_sati','Sgola/Sati'], ['saldatura','Saldatura']];
+
+async function caricaGanttCommesse(){
+  const box = document.getElementById('gantt-commesse-box');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/kpi/avanzamento-commesse');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#6b8aaa;font-style:italic">Nessun ordine di produzione aperto.</p>'; return; }
+
+    const oggi = new Date(); oggi.setHours(0,0,0,0);
+    const parse = s => { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); };
+    const giorniTra = (a,b) => Math.round((b-a) / 86400000);
+
+    const fineMax = righe.reduce((mx,o) => Math.max(mx, giorniTra(oggi, parse(o.data_consegna_iso))), 1);
+    const totaleGiorni = Math.max(fineMax + 2, 14);
+    const scala = Math.max(720 / totaleGiorni, 8);
+    const trackWidth = Math.round(totaleGiorni * scala);
+
+    let righeHtml = '';
+    righe.forEach(o => {
+      const gInizio = Math.max(giorniTra(oggi, parse(o.data_inizio_iso)), 0);
+      const gFineInt = Math.max(giorniTra(oggi, parse(o.data_fine_produzione_iso)), gInizio);
+      const gFineEst = Math.max(giorniTra(oggi, parse(o.data_consegna_iso)), gFineInt);
+      const intLeft = Math.round(gInizio * scala);
+      const intWidth = Math.max(Math.round((gFineInt - gInizio) * scala), 3);
+      const estLeft = Math.round(gFineInt * scala);
+      const estWidth = Math.round((gFineEst - gFineInt) * scala);
+      const estBar = estWidth > 2
+        ? `<div style="position:absolute;left:${estLeft}px;width:${estWidth}px;top:6px;height:16px;background:#eb9f27;border-radius:4px;opacity:.85"></div>`
+        : '';
+      righeHtml += `<div style="display:flex;align-items:center;margin-bottom:10px">
+        <div style="width:170px;flex-shrink:0;padding-right:8px">
+          <div style="font-size:12px;font-weight:500;color:#eaf4ff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${o.codice_articolo}</div>
+          <div style="font-size:10px;color:#6b8aaa">${o.commessa || o.op_codice}</div>
+        </div>
+        <div style="position:relative;width:${trackWidth}px;height:28px;background:rgba(255,255,255,.03);border-radius:4px;flex-shrink:0">
+          <div style="position:absolute;left:0;top:0;bottom:0;width:1px;background:#f09595"></div>
+          <div style="position:absolute;left:${intLeft}px;width:${intWidth}px;top:6px;height:16px;background:#2589c7;border-radius:4px"
+               title="${o.data_inizio_produzione_stimata} → ${o.data_fine_produzione_stimata}"></div>
+          ${estBar}
+        </div>
+      </div>`;
+    });
+    box.innerHTML = `<div style="min-width:${170+trackWidth}px">${righeHtml}</div>`;
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+caricaGanttCommesse();
+
+function acCellaZona(pct){
+  if(pct === null || pct === undefined){
+    return `<td style="background:#fff;text-align:center;padding:6px;border:1px solid #ddd;color:#333;font-weight:700">✕</td>`;
+  }
+  const bg = pct >= 100 ? '#22c55e' : (pct > 0 ? '#eab308' : '#f97316');
+  const colore = pct > 0 && pct < 100 ? '#3a2f00' : '#fff';
+  return `<td style="background:${bg};text-align:center;padding:6px;border:1px solid #fff;color:${colore};font-weight:800">${pct}%</td>`;
+}
+
+async function caricaAvanzamentoCommesse(){
+  const box = document.getElementById('avanzamento-commesse-box');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/kpi/avanzamento-commesse');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di produzione aperto.</p>'; return; }
+
+    const thFasi = AC_ZONE.map(z => `<th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">${z[1]}</th>`).join('');
+
+    box.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;min-width:1100px"><thead><tr>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">N° Comm</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;text-align:left">Codice e Descrizione</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 10px;font-size:11px">Saldo da<br>produrre</th>
+      ${thFasi}
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">Materiale</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">Fine produzione<br>interna</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">Lavorazione<br>esterna</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">Consegna<br>stimata</th>
+      <th style="background:#e6e6e6;color:#333;padding:8px 6px;font-size:11px">%</th>
+      <th style="background:#e6e6e6;color:#333;padding:8px 6px;font-size:11px">Avvisi</th>
+      </tr></thead><tbody>` +
+      righe.map(o => {
+        const materiale = o.materiale_completo
+          ? '<span style="color:#1a9e5c;font-weight:700">✅ OK</span>'
+          : '<span style="color:#c0392b;font-weight:700">🔴 Mancante</span>';
+        const esterno = o.centro_esterno
+          ? `${o.centro_esterno}${o.lead_time_esterno_giorni ? ' (+' + o.lead_time_esterno_giorni + 'gg)' : ''}`
+          : '<span style="color:#999">—</span>';
+        const avvisi = o.avvisi && o.avvisi.length
+          ? `<span title="${o.avvisi.join(' | ').replace(/"/g,'&quot;')}" style="color:#e67e22;cursor:help">⚠️ ${o.avvisi.length}</span>`
+          : '';
+        const foto = o.foto_id
+          ? `<img src="/api/foto_articolo/file/${o.foto_id}" style="width:72px;height:72px;object-fit:contain;border:1px solid #ddd;border-radius:4px;vertical-align:middle;margin-right:10px">`
+          : `<span style="display:inline-block;width:72px;height:72px;vertical-align:middle;margin-right:10px"></span>`;
+        const fasiRow = AC_ZONE.map(z => acCellaZona(o.zone ? o.zone[z[0]] : null)).join('');
+        return `<tr style="border-bottom:3px solid #1a1a1a">
+          <td style="text-align:center;padding:10px 6px;background:#f7fdfd"><i>${o.commessa || o.priorita}</i></td>
+          <td style="padding:10px 6px;background:#f7fdfd">
+            ${foto}<b style="font-size:19px;color:#111;vertical-align:middle">${o.codice_articolo}</b>
+            <div style="font-size:10px;color:#666;margin-left:82px">${o.descrizione || ''} — ${o.op_codice}</div>
+          </td>
+          <td style="text-align:center;font-weight:800;font-size:24px;color:#111;background:#f7fdfd">${o.saldo}</td>
+          ${fasiRow}
+          <td style="text-align:center;padding:6px">${materiale}</td>
+          <td style="text-align:center;padding:6px;font-weight:700">${o.data_fine_produzione_stimata}</td>
+          <td style="text-align:center;padding:6px;font-size:11px">${esterno}</td>
+          <td style="text-align:center;padding:6px;font-weight:800;color:#1e6fa5">${o.data_consegna_stimata}</td>
+          <td style="text-align:center;padding:6px;background:#f0f0f0;font-weight:700">${o.pct}%</td>
+          <td style="text-align:center;padding:6px;background:#f0f0f0">${avvisi}</td>
+        </tr>`;
+      }).join('') + '</tbody></table>';
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+caricaAvanzamentoCommesse();
+
+async function caricaInAttesaRilascio(){
+  const box = document.getElementById('in-attesa-rilascio-box');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/kpi/in-attesa-rilascio');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine in attesa di rilascio.</p>'; return; }
+    box.innerHTML = '<table class="kanban-table"><thead><tr>' +
+      '<th>PRIO</th><th>OP</th><th>Commessa</th><th>Codice</th><th style="text-align:left">Descrizione</th><th>Qtà pianificata</th><th>Data prevista</th>' +
+      '</tr></thead><tbody>' +
+      righe.map(o => `<tr>
+        <td class="num">${o.priorita}</td>
+        <td class="codice">${o.op_codice}</td>
+        <td>${o.commessa || '—'}</td>
+        <td class="codice">${o.codice_articolo}</td>
+        <td class="descr-td">${o.descrizione || ''}</td>
+        <td class="num">${o.qta_pianificata}</td>
+        <td style="font-size:11px;color:#6b8aaa">${o.data_prevista || '—'}</td>
+      </tr>`).join('') + '</tbody></table>';
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+caricaInAttesaRilascio();
+</script>
+</body>
+</html>

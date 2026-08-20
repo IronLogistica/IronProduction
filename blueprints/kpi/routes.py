@@ -41,6 +41,18 @@ def index():
         topbar_badge='Dashboard',
         kpi=kpi, cat_rows=cat_rows)
 
+
+@kpi_bp.route('/kpi/embed')
+def kpi_embed():
+    """
+    Copia 'nuda' del Cruscotto KPI (Gantt + Avanzamento Commesse + In Attesa
+    di Rilascio, stessa API — sempre gli stessi dati) SENZA sidebar/topbar
+    né nessun link verso il resto del programma: pensata per essere mostrata
+    dentro un overlay (es. Totem Live) senza mai far uscire l'utente dalla
+    pagina che stava guardando.
+    """
+    return render_template('kpi/embed.html')
+
 @kpi_bp.route('/api/kpi')
 def api_kpi():
     return jsonify(calcola_kpi())
