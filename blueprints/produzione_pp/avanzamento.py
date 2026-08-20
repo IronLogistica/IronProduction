@@ -79,34 +79,29 @@ def _capacita_giornaliera_ore(centro):
     return ore_totali / giorni_periodo if giorni_periodo else None
 
 
-FASI_STANDARD = [
-    ('taglio', ['sega', 'taglio', 'punzon', 'laser']),
-    ('sgola_sati', ['sgol', 'satin']),
-    ('piega', ['pieg', 'press']),
-    ('saldatura', ['sald']),
+# 5 zone di reparto, ognuna raggruppa una o più macchine (centri di costo) —
+# stesso schema usato sul cartaceo dall'ufficio ("1 Taglio, 2 Fori,
+# 3 Curvatura, 4 Sgola-Sati, 5 Saldatura"). L'ordine qui è l'ordine delle
+# colonne nella tabella Avanzamento Commesse.
+ZONE_STANDARD = [
+    ('taglio', 'Taglio', ['sega']),
+    ('fori', 'Fori', ['pressopieg', 'punzon', 'trapan']),
+    ('curvatura', 'Curvatura', ['calandr', 'curvatub']),
+    ('sgola_sati', 'Sgola/Sati', ['satin', 'sgol']),
+    ('saldatura', 'Saldatura', ['sald']),
 ]
 
 
-def _fasi_routing_op(cicli_per_codice, centri):
-    """
-    Per le 4 colonne standard della tabella (Taglio / Sgola-Sati / Piega /
-    Saldatura, come nel vecchio Gantt di Angelo): True se QUALCHE codice
-    del routing di questo OP passa da un centro il cui nome corrisponde a
-    quella fase (stesso riconoscimento per parola chiave già usato altrove
-    nell'app, es. get_macchine_monitor/totem_tabella), False se non gli
-    serve — non è "già fatto/da fare", è "gli serve o no questo reparto".
-    """
-    presenti = set()
-    for cicli in cicli_per_codice:
-        for ciclo in cicli:
-            centro = centri.get(ciclo.centro_costo_id)
-            if not centro or centro.esterno:
-                continue
-            nome_l = (centro.nome or '').lower()
-            for fase, parole in FASI_STANDARD:
-                if any(p in nome_l for p in parole):
-                    presenti.add(fase)
-    return {fase: (fase in presenti) for fase, _ in FASI_STANDARD}
+def _zona_di_centro(centro):
+    """Ritorna la chiave-zona (taglio/fori/curvatura/sgola_sati/saldatura) a
+    cui appartiene questo centro di costo, individuata per parola chiave nel
+    nome (stesso riconoscimento già usato altrove nell'app) — None se il
+    centro non rientra in nessuna delle 5 zone standard."""
+    nome_l = (centro.nome or '').lower()
+    for zona, _, parole in ZONE_STANDARD:
+        if any(p in nome_l for p in parole):
+            return zona
+    return None
 
 
 def calcola_avanzamento_commesse():
@@ -184,6 +179,8 @@ def calcola_avanzamento_commesse():
         inizio_produzione_op = None
         centri_con_saldo = set()
         tutti_cicli_op = []
+        zona_totale = {z: 0 for z, _, _ in ZONE_STANDARD}
+        zona_fatti = {z: 0 for z, _, _ in ZONE_STANDARD}
         for codice, moltiplicatore in moltiplicatore_per_codice.items():
             cicli = (CicloLavoroWood.query.filter_by(codice=codice)
                      .order_by(CicloLavoroWood.sequenza).all())
@@ -205,6 +202,17 @@ def calcola_avanzamento_commesse():
                                           EventoConsuntivoPP.componente == componente_param if componente_param
                                           else EventoConsuntivoPP.componente.is_(None))
                                   .scalar()) or 0)
+
+                # Avanzamento per ZONA (tabella Avanzamento Commesse): conta
+                # SEMPRE, anche per una fase già completata al 100% (che qui
+                # sotto uscirebbe subito col 'continue' perché non c'è più
+                # nulla da schedulare) — altrimenti una fase finita farebbe
+                # sparire il suo contributo dalla percentuale della zona.
+                zona = _zona_di_centro(centro)
+                if zona:
+                    zona_totale[zona] += qta_codice
+                    zona_fatti[zona] += min(pezzi_fatti, qta_codice)
+
                 saldo_fase = max(qta_codice - pezzi_fatti, 0)
                 if saldo_fase <= 0:
                     continue
@@ -251,9 +259,16 @@ def calcola_avanzamento_commesse():
 
         data_consegna = fine_produzione_op + timedelta(days=lead_time_esterno) if lead_time_esterno else fine_produzione_op
         pct = round(100 * (o.qta_buona or 0) / o.qta_pianificata) if o.qta_pianificata else 0
-        fasi = _fasi_routing_op(tutti_cicli_op, centri)
         foto = foto_per_codice.get(o.codice_articolo)
         inizio_produzione_op = inizio_produzione_op or oggi
+
+        # Per ogni zona: None = nessun ordine di lavorazione in quella zona
+        # per questo OP (colonna bianca con X), altrimenti percentuale
+        # fatti/totale arrotondata (0-100).
+        zone_pct = {}
+        for zona, _, _ in ZONE_STANDARD:
+            tot = zona_totale[zona]
+            zone_pct[zona] = round(100 * zona_fatti[zona] / tot) if tot > 0 else None
 
         risultati.append({
             'op_codice': o.codice, 'commessa': o.commessa or '', 'codice_articolo': o.codice_articolo,
@@ -261,7 +276,7 @@ def calcola_avanzamento_commesse():
             'saldo': saldo_op, 'pct': pct, 'priorita': o.priorita,
             'materiale_completo': not materiali_mancanti,
             'centri_in_coda': sorted(centri_con_saldo),
-            'fasi': fasi, 'foto_id': foto,
+            'zone': zone_pct, 'foto_id': foto,
             'centro_esterno': centro_esterno_nome, 'lead_time_esterno_giorni': lead_time_esterno,
             'data_inizio_produzione_stimata': inizio_produzione_op.strftime('%d/%m/%Y'),
             'data_inizio_iso': inizio_produzione_op.strftime('%Y-%m-%d'),

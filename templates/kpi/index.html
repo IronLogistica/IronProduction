@@ -69,7 +69,7 @@
 {% endblock %}
 {% block scripts %}
 const AC_CIANO = '#7EEEEF';
-const AC_FASI = [['taglio','✂️','Taglio'], ['sgola_sati','⌒','Sgola/Sati'], ['piega','↩️','Piega'], ['saldatura','👷','Saldatura']];
+const AC_ZONE = [['taglio','Taglio'], ['fori','Fori'], ['curvatura','Curvatura'], ['sgola_sati','Sgola/Sati'], ['saldatura','Saldatura']];
 
 async function caricaGanttCommesse(){
   const box = document.getElementById('gantt-commesse-box');
@@ -120,10 +120,15 @@ async function caricaGanttCommesse(){
 }
 caricaGanttCommesse();
 
-function acCellaFase(attiva){
-  return attiva
-    ? `<td style="background:#22c55e;text-align:center;padding:6px;border:1px solid #fff">✅</td>`
-    : `<td style="background:#fff;text-align:center;padding:6px;border:1px solid #ddd;color:#333;font-weight:700">✕</td>`;
+// Semaforo zona: null = nessun ordine di lavorazione in questa zona (bianco, X)
+// 100% = verde, 1-99% = giallo, 0% = arancione.
+function acCellaZona(pct){
+  if(pct === null || pct === undefined){
+    return `<td style="background:#fff;text-align:center;padding:6px;border:1px solid #ddd;color:#333;font-weight:700">✕</td>`;
+  }
+  const bg = pct >= 100 ? '#22c55e' : (pct > 0 ? '#eab308' : '#f97316');
+  const colore = pct > 0 && pct < 100 ? '#3a2f00' : '#fff';
+  return `<td style="background:${bg};text-align:center;padding:6px;border:1px solid #fff;color:${colore};font-weight:800">${pct}%</td>`;
 }
 
 async function caricaAvanzamentoCommesse(){
@@ -134,7 +139,7 @@ async function caricaAvanzamentoCommesse(){
     const righe = await r.json();
     if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di produzione aperto.</p>'; return; }
 
-    const thFasi = AC_FASI.map(f => `<th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">${f[1]}<br>${f[2]}</th>`).join('');
+    const thFasi = AC_ZONE.map(z => `<th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">${z[1]}</th>`).join('');
 
     box.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;min-width:1100px"><thead><tr>
       <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">N° Comm</th>
@@ -161,7 +166,7 @@ async function caricaAvanzamentoCommesse(){
         const foto = o.foto_id
           ? `<img src="/api/foto_articolo/file/${o.foto_id}" style="width:44px;height:44px;object-fit:contain;border:1px solid #ddd;border-radius:4px;vertical-align:middle;margin-right:8px">`
           : `<span style="display:inline-block;width:44px;height:44px;vertical-align:middle;margin-right:8px"></span>`;
-        const fasiRow = AC_FASI.map(f => acCellaFase(!!(o.fasi && o.fasi[f[0]]))).join('');
+        const fasiRow = AC_ZONE.map(z => acCellaZona(o.zone ? o.zone[z[0]] : null)).join('');
         return `<tr style="border-bottom:1px solid #eee">
           <td style="text-align:center;padding:6px;background:#f7fdfd"><i>${o.commessa || o.priorita}</i></td>
           <td style="padding:6px;background:#f7fdfd">
