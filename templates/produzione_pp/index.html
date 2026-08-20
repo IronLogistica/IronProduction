@@ -76,6 +76,7 @@ async function load(){try{const list=await api('/api/ordini-produzione'); rows.i
   if(x.stato==='Creato') azioni += `<button class="btn btn-primary" onclick="releaseOp(${x.id})">Rilascia</button> `;
   if(x.stato==='Tecnicamente completato') azioni += `<button class="btn btn-ghost" onclick="closeCo(${x.id})">Chiudi CO</button> `;
   if(x.stato==='Rilasciato' || x.stato==='In esecuzione') azioni += `<button class="btn btn-ghost" onclick="chiudiForzato(${x.id},'${esc(x.codice)}',${x.qta_pianificata},${x.qta_buona})" style="color:#e6b800">🛑 Chiudi Forzato</button> `;
+  if(x.stato==='Chiuso CO') azioni += `<button class="btn btn-ghost" onclick="riapriOp(${x.id},'${esc(x.codice)}')" style="color:#5debb0">↩️ Riapri</button> `;
   if(puoModificare) azioni += `<button class="btn btn-ghost" onclick='apriModificaOp(${JSON.stringify(x)})'>✏️ Modifica</button> `;
   if(puoEliminare) azioni += `<button class="btn btn-ghost" onclick="deleteOp(${x.id},'${esc(x.codice)}')" style="color:#c0392b">🗑️ Elimina</button> `;
   if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/analisi-costo">📊 Analisi Costo</a> `;
@@ -127,6 +128,13 @@ async function chiudiForzato(id, codice, pianificata, buona){
   const nota = prompt('Nota facoltativa sul motivo della chiusura forzata (es. "cliente ha annullato il residuo"):', '') || '';
   try{
     await api('/api/ordini-produzione/'+id+'/chiudi-forzato',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nota})});
+    load();
+  }catch(e){ alert(e.message) }
+}
+async function riapriOp(id, codice){
+  if(!confirm(`Riaprire l'OP ${codice}?\n\nLo stato tornerà quello coerente con quanto è già stato prodotto (Rilasciato/In esecuzione/Tecnicamente completato) — se rientra in produzione attiva, torna anche a impegnare la materia prima corrispondente al prossimo ricalcolo.`)) return;
+  try{
+    await api('/api/ordini-produzione/'+id+'/riapri',{method:'POST'});
     load();
   }catch(e){ alert(e.message) }
 }

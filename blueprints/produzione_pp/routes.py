@@ -588,6 +588,35 @@ def chiudi_forzato(oid):
     db.session.commit()
     return jsonify(ok=True, ordine=_ordine(o), residuo_non_completato=residuo)
 
+@pp_bp.post('/api/ordini-produzione/<int:oid>/riapri')
+def riapri(oid):
+    """
+    Riapre un OP 'Chiuso CO' (sia da chiusura forzata che da chiusura
+    normale dopo completamento tecnico) — reversibile in entrambi i casi,
+    non solo per la forzata: una chiusura fatta per errore va sempre
+    corretta allo stesso modo. Lo stato in cui torna non è fisso: viene
+    ricalcolato da quanto è stato REALMENTE prodotto finora (qta_buona vs
+    qta_pianificata), esattamente come se non fosse mai stato chiuso —
+    'Tecnicamente completato' se la quantità pianificata è già raggiunta,
+    altrimenti 'In esecuzione' (o 'Rilasciato' se non è ancora partita
+    nessuna dichiarazione). Rientrando in uno stato che impegna materiale,
+    l'Impegnato OP in Magazzino torna a contarlo al prossimo ricalcolo —
+    stesso motivo per cui la chiusura lo liberava.
+    """
+    o = OrdineProduzione.query.get_or_404(oid)
+    if o.stato != 'Chiuso CO':
+        return jsonify(ok=False, error="Riapertura possibile solo da uno stato 'Chiuso CO'"), 409
+    if (o.qta_pianificata or 0) > 0 and (o.qta_buona or 0) >= o.qta_pianificata:
+        nuovo_stato = 'Tecnicamente completato'
+    elif (o.qta_buona or 0) > 0:
+        nuovo_stato = 'In esecuzione'
+    else:
+        nuovo_stato = 'Rilasciato'
+    o.stato, o.data_chiusura_co = nuovo_stato, None
+    _audit(o, 'RIAPERTO', f"OP riaperto da 'Chiuso CO' — stato ricalcolato a '{nuovo_stato}'")
+    db.session.commit()
+    return jsonify(ok=True, ordine=_ordine(o))
+
 @pp_bp.get('/api/pp/orders')
 def api_ordini_attivi():
     auth = _api_auth()
