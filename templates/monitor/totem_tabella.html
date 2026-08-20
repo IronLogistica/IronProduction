@@ -58,7 +58,11 @@
 
 <div class="header">
   <div class="titolo"><span class="dot"></span> LIVE {{ centro.nome }}</div>
-  <div id="clock">{{ now }}</div>
+  <div style="display:flex;align-items:center;gap:14px">
+    <a href="/kpi" style="font-size:.8rem;padding:6px 14px;border-radius:7px;border:1px solid var(--border);
+       color:var(--accent,#00b4d8);text-decoration:none;font-weight:700;white-space:nowrap">📈 KPI</a>
+    <div id="clock">{{ now }}</div>
+  </div>
 </div>
 
 <div class="nav-macchine">
