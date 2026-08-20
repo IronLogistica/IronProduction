@@ -176,6 +176,23 @@
     <div id="ant-componenti" style="max-height:260px;overflow-y:auto"></div>
     <button class="btn btn-primary" style="margin-top:14px;width:100%;justify-content:center" onclick="confermaAnteprima()">✅ Conferma e registra</button>
     <span id="ant-esito" style="font-size:13px;display:block;margin-top:8px;text-align:center"></span>
+
+    <!-- Mostrato SOLO se la dichiarazione viene bloccata per eccedenza > soglia -->
+    <div id="ant-blocco-8d" style="display:none;margin-top:16px;padding:14px;border:1.5px solid #e6b800;border-radius:8px;background:rgba(230,184,0,.08)">
+      <div style="font-weight:700;color:#e6b800;margin-bottom:6px">⚠️ Dichiarazione bloccata — eccedenza oltre soglia</div>
+      <div id="ant-blocco-8d-testo" style="font-size:13px;margin-bottom:10px"></div>
+      <div id="ant-blocco-8d-form">
+        <label class="modal-label" style="margin-top:0">Descrizione del problema</label>
+        <textarea id="ncf-descrizione" class="modal-input" rows="2" placeholder="Cosa è successo"></textarea>
+        <label class="modal-label">Causa probabile</label>
+        <textarea id="ncf-causa" class="modal-input" rows="2" placeholder="Perché pensi sia successo"></textarea>
+        <label class="modal-label">Azione immediata proposta</label>
+        <textarea id="ncf-azione" class="modal-input" rows="2" placeholder="Cosa fare subito"></textarea>
+        <button class="btn btn-primary" style="margin-top:10px;width:100%;justify-content:center" onclick="apriModulo8D()">📋 Apri Modulo Non Conformità 8D per Angelo</button>
+      </div>
+      <div id="ant-blocco-8d-esito" style="font-size:13px;margin-top:8px"></div>
+    </div>
+
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modal-anteprima')">Annulla</button>
     </div>
@@ -262,7 +279,12 @@ async function caricaOpAperti(){
         <td>${c.qta_necessaria}</td>
         <td>${c.fatti}</td>
         <td style="font-weight:700">${c.saldo}</td>
-        <td><input id="${idInput}" type="number" min="0" placeholder="0" style="width:64px;padding:8px;font-size:15px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"></td>
+        <td style="display:flex;gap:4px">
+          <input id="${idInput}" type="number" min="0" placeholder="0" title="Pezzi buoni"
+                 style="width:58px;padding:8px;font-size:15px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)">
+          <input id="${idInput}-scarto" type="number" min="0" placeholder="0" title="Pezzi di scarto"
+                 style="width:52px;padding:8px;font-size:15px;border-radius:6px;border:1px solid #e6b800;background:var(--dark3);color:#e6b800">
+        </td>
         <td><button class="btn btn-primary" style="padding:8px 12px;font-size:13px" onclick='dichiaraInline(${JSON.stringify(g)}, ${JSON.stringify(c)}, "${idInput}")'>✅</button></td>
       </tr>`;
     }).join('');
@@ -270,18 +292,20 @@ async function caricaOpAperti(){
       `<div style="padding:12px 14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleGruppoOp(${i})">` +
       `<div><b>${g.commessa || g.codice}</b> — ${g.codice_articolo}<br><small class="muted">${g.descrizione||''}</small></div>` +
       `<div style="display:flex;align-items:center;gap:10px"><span style="font-size:12px;color:var(--text-dim)">${g.componenti.length} codice/i</span> <span id="freccia-${i}">▶</span></div></div>` +
-      `<div id="gruppo-${i}" style="display:none;padding:0 14px 12px;overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descr.</th><th>Necessari</th><th>Fatti</th><th>Saldo</th><th>Dichiaro</th><th></th></tr></thead><tbody>${righeComponenti}</tbody></table></div>` +
+      `<div id="gruppo-${i}" style="display:none;padding:0 14px 12px;overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descr.</th><th>Necessari</th><th>Fatti</th><th>Saldo</th><th>Buoni/Scarto</th><th></th></tr></thead><tbody>${righeComponenti}</tbody></table></div>` +
       `</div>`;
   }).join('');
 }
 
 async function dichiaraInline(g, c, idInput){
   const input = document.getElementById(idInput);
-  const buoni = parseInt(input.value, 10);
-  if(isNaN(buoni) || buoni <= 0){ input.style.borderColor = '#c0392b'; input.focus(); return; }
+  const inputScarto = document.getElementById(idInput + '-scarto');
+  const buoni = parseInt(input.value, 10) || 0;
+  const scarto = parseInt(inputScarto.value, 10) || 0;
+  if(buoni <= 0 && scarto <= 0){ input.style.borderColor = '#c0392b'; input.focus(); return; }
 
   const componente = c.componente_finale ? '' : c.codice_lavorato;
-  const url = `/api/dichiarazione-produzione/anteprima?op_code=${encodeURIComponent(g.codice)}&componente=${encodeURIComponent(componente)}&pezzi_buoni=${buoni}&centro_id=${encodeURIComponent(_centroCorrente)}`;
+  const url = `/api/dichiarazione-produzione/anteprima?op_code=${encodeURIComponent(g.codice)}&componente=${encodeURIComponent(componente)}&pezzi_buoni=${buoni}&pezzi_scarto=${scarto}&centro_id=${encodeURIComponent(_centroCorrente)}`;
   let anteprima;
   try{
     const r = await fetch(url);
@@ -291,10 +315,13 @@ async function dichiaraInline(g, c, idInput){
 
   _anteprimaCorrente = {
     op_code: g.codice, centro_id: _centroCorrente, componente: c.componente_finale ? null : c.codice_lavorato,
-    pezzi_buoni: buoni, idInput,
+    pezzi_buoni: buoni, pezzi_scarto: scarto, idInput,
   };
 
   const car = anteprima.carica;
+  const notaScarto = scarto > 0
+    ? `<div style="font-size:11px;color:#e6b800;margin-top:6px">⚠️ Lo scarico include anche il materiale per i <b>${scarto} pezzi di scarto</b>.</div>`
+    : '';
   if(anteprima.gia_caricato){
     document.getElementById('ant-carica').innerHTML =
       `<div style="display:flex;gap:8px;align-items:flex-start">
@@ -305,9 +332,12 @@ async function dichiaraInline(g, c, idInput){
   } else {
     document.getElementById('ant-carica').innerHTML =
       `<div style="font-size:12px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-bottom:4px">📥 Carica a magazzino</div>` +
-      `<div style="display:flex;justify-content:space-between;align-items:center">` +
-      `<div><b class="codice">${car.codice}</b> <span class="muted">${car.descrizione||''}</span></div>` +
-      `<div style="font-weight:800;font-size:17px;color:#1a9e5c">× ${car.quantita}</div></div>`;
+      (car
+        ? `<div style="display:flex;justify-content:space-between;align-items:center">` +
+          `<div><b class="codice">${car.codice}</b> <span class="muted">${car.descrizione||''}</span></div>` +
+          `<div style="font-weight:800;font-size:17px;color:#1a9e5c">× ${car.quantita}</div></div>`
+        : `<div style="font-size:12px;color:var(--text-dim);font-style:italic">Nessun pezzo buono — solo scarto, niente da caricare a magazzino.</div>`)
+      + notaScarto;
 
     const box = document.getElementById('ant-componenti');
     if(!anteprima.componenti.length){
@@ -328,17 +358,50 @@ async function dichiaraInline(g, c, idInput){
 
 async function confermaAnteprima(){
   const esito = document.getElementById('ant-esito');
+  document.getElementById('ant-blocco-8d').style.display = 'none';
   const inputsQta = document.querySelectorAll('#ant-componenti input[data-codice]');
   const consumi = {};
   inputsQta.forEach(inp => { consumi[inp.dataset.codice] = parseFloat(inp.value) || 0; });
 
-  const payload = { ..._anteprimaCorrente, pezzi_scarto: 0, tempo_minuti: 0, consumi };
+  const payload = { ..._anteprimaCorrente, tempo_minuti: 0, consumi };
   try{
     const r = await fetch('/api/dichiarazione-produzione', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const d = await r.json();
-    if(!d.ok){ esito.style.color='#f07070'; esito.textContent = '⚠️ ' + d.error; return; }
+    if(!d.ok){
+      if(d.richiede_8d){
+        esito.textContent = '';
+        const box = document.getElementById('ant-blocco-8d');
+        box.style.display = 'block';
+        document.getElementById('ant-blocco-8d-testo').textContent = d.error;
+        document.getElementById('ant-blocco-8d-form').style.display = '';
+        document.getElementById('ant-blocco-8d-esito').textContent = '';
+        return;
+      }
+      esito.style.color='#f07070'; esito.textContent = '⚠️ ' + d.error; return;
+    }
     closeModal('modal-anteprima');
     caricaOpAperti();
+  }catch(e){
+    esito.style.color='#f07070'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
+async function apriModulo8D(){
+  const esito = document.getElementById('ant-blocco-8d-esito');
+  const payload = {
+    op_code: _anteprimaCorrente.op_code, centro_id: _anteprimaCorrente.centro_id,
+    componente: _anteprimaCorrente.componente, pezzi_buoni: _anteprimaCorrente.pezzi_buoni,
+    descrizione_problema: document.getElementById('ncf-descrizione').value,
+    causa_probabile: document.getElementById('ncf-causa').value,
+    azione_immediata: document.getElementById('ncf-azione').value,
+  };
+  try{
+    const r = await fetch('/api/non-conformita-8d', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ esito.style.color='#f07070'; esito.textContent = '⚠️ ' + d.error; return; }
+    document.getElementById('ant-blocco-8d-form').style.display = 'none';
+    esito.style.color = '#5debb0';
+    esito.textContent = '✓ Modulo inviato ad Angelo. Appena approvato, riprova a confermare (stessa quantità).';
   }catch(e){
     esito.style.color='#f07070'; esito.textContent = '❌ Errore di rete.';
   }
