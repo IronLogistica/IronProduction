@@ -1808,6 +1808,75 @@ def api_diagnostica_fasi_op(op_code):
         centri=[{'id': c.id, 'nome_esatto': c.nome} for c in centri])
 
 
+@pp_bp.get('/api/dichiarazione-produzione/reintegro-scarti')
+def api_reintegro_scarti():
+    """
+    Elenco di TUTTI i codici (su qualunque centro di costo interno) dove è
+    stato dichiarato dello scarto E mancano ancora pezzi buoni per
+    completare il pianificato — cioè "ho scartato dei pezzi, li devo
+    rifare". Il meccanismo per dichiararli è lo STESSO di sempre (dichiara
+    di nuovo sulla stessa riga, in Dichiarazione Produzione) — questo
+    endpoint serve solo a renderlo impossibile da perdere: senza, un
+    reintegro da fare si confondeva nella lista generale di tutti gli OP
+    aperti, indipendentemente dal perché mancava ancora qualcosa.
+    """
+    ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
+              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+    if not ordini:
+        return jsonify([])
+
+    centri_interni = {c.id: c for c in CentroCostoWood.query.filter_by(esterno=False).all()}
+    mappa_distinta = _carica_mappa_distinta_base_wood()
+    componenti_per_op = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini}
+    tutti_i_codici = {c['codice'] for lista in componenti_per_op.values() for c in lista}
+
+    fasi_per_codice = {}
+    if tutti_i_codici:
+        for f in CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_i_codici)).all():
+            if f.centro_costo_id in centri_interni:
+                fasi_per_codice.setdefault(f.codice, []).append(f)
+
+    codici_op = [o.codice for o in ordini]
+    dati_per_riga = {}  # (op_code, componente, fase_lower) -> {buoni, scarto}
+    if codici_op:
+        for op_code, componente, fase, buoni, scarto in (
+                db.session.query(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente,
+                                  EventoConsuntivoPP.fase, db.func.sum(EventoConsuntivoPP.pezzi_buoni),
+                                  db.func.sum(EventoConsuntivoPP.pezzi_scarto))
+                .filter(EventoConsuntivoPP.op_code.in_(codici_op))
+                .group_by(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente, EventoConsuntivoPP.fase).all()):
+            dati_per_riga[(op_code, componente, fase.strip().lower())] = {
+                'buoni': buoni or 0, 'scarto': scarto or 0}
+
+    risultato = []
+    for o in ordini:
+        for comp in componenti_per_op[o.id]:
+            codice_comp = comp['codice']
+            componente_finale = (codice_comp == o.codice_articolo)
+            componente_param = None if componente_finale else codice_comp
+            for ciclo in fasi_per_codice.get(codice_comp, []):
+                centro = centri_interni.get(ciclo.centro_costo_id)
+                if not centro:
+                    continue
+                chiave = (o.codice, componente_param, centro.nome.strip().lower())
+                dati = dati_per_riga.get(chiave)
+                if not dati or dati['scarto'] <= 0:
+                    continue  # nessuno scarto dichiarato qui: non è un reintegro
+                qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+                saldo = max(qta_necessaria - dati['buoni'], 0)
+                if saldo <= 0:
+                    continue  # lo scarto c'è stato ma è già stato rifatto: niente da reintegrare
+                risultato.append({
+                    'op_code': o.codice, 'commessa': o.commessa or '', 'codice_articolo': o.codice_articolo,
+                    'componente': componente_param, 'codice_lavorato': codice_comp,
+                    'centro_id': centro.id, 'centro_nome': centro.nome,
+                    'qta_necessaria': qta_necessaria, 'buoni': dati['buoni'], 'scarto_totale': dati['scarto'],
+                    'saldo_da_reintegrare': saldo,
+                })
+    risultato.sort(key=lambda r: -r['saldo_da_reintegrare'])
+    return jsonify(risultato)
+
+
 @pp_bp.get('/api/dichiarazione-produzione/<int:cid>/op-aperti')
 def api_dichiarazione_op_aperti(cid):
     """
