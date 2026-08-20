@@ -365,9 +365,15 @@ def totem_macchina(cid):
     # aspettano ancora materiale mancante ("non autorizzate" a partire)
     # restano fuori: l'operaio davanti alla macchina deve vedere solo cosa
     # può davvero prendere in mano adesso, non l'intera coda con anche i
-    # lavori bloccati. Una commessa già completata (saldo a zero) resta
-    # comunque visibile — non è "incompleta", è finita.
+    # lavori bloccati.
     gruppi = [g for g in gruppi if g['materiale_disponibile']]
+    # Un gruppo (OP) completato al 100% — TUTTI i suoi componenti finiti,
+    # non solo uno — non serve più qui: si toglie del tutto. Diverso dal
+    # caso di completamento PARZIALE (un componente finito, altri ancora
+    # da fare): quello resta visibile con il componente segnato ✅, proprio
+    # perché serve a far tornare giusta la percentuale aggregata dell'OP —
+    # qui invece non c'è più nessuna percentuale da seguire, è finito.
+    gruppi = [g for g in gruppi if g['pct_aggregato'] < 100]
 
     codici_prodotto_finito = {g['codice_articolo'] for g in gruppi}
     foto_per_codice = {}
