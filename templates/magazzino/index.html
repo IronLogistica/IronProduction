@@ -259,7 +259,8 @@ async function caricaMagazzinoWood(){
       <th class="mt-th-disp">(=) Disp. Contabile<div class="mt-formula">Stock − Impegnato OP + Ordinato Fornitori</div></th>
       <th class="mt-th-disp">(=) Disp. Contabile Allargata*<div class="mt-formula">*Diversa dalla Disp. Contabile qui a fianco e dal concetto usato nei Kanban: Stock + Grezzo IW − Impegnato OP + Ordinato Fornitori + Ordinato in Produzione</div></th>
       <th class="mt-th-scorta">− Scorta Min.<div class="mt-formula">Valore impostato manualmente</div></th>
-      <th class="mt-th-fabb">(=) Fabbisogno<div class="mt-formula">MAX(Scorta Minima − Disp. Contabile Allargata*, 0)</div></th></tr></thead><tbody>`;
+      <th class="mt-th-scorta">− Ordinato da Cliente (WMS)<div class="mt-formula">Ordine cliente ancora aperto letto da MasterLogistic-WMS — si somma alla Scorta Minima nel Fabbisogno, non la sostituisce</div></th>
+      <th class="mt-th-fabb">(=) Fabbisogno<div class="mt-formula">MAX(Scorta Minima + Ordinato da Cliente (WMS) − Disp. Contabile Allargata*, 0)</div></th></tr></thead><tbody>`;
     righe.forEach(g=>{
       html += `<tr>
         <td class="codice">${g.codice}</td>
@@ -291,6 +292,12 @@ async function caricaMagazzinoWood(){
             <input type="number" step="0.01" value="${g.scorta_minima}" id="scorta-${g.codice}"
                    style="width:70px;padding:4px 6px;border-radius:5px;border:1.5px solid #ffb300;background:var(--dark3);color:#ffd54f;font-weight:800">
             <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="salvaScortaMinima('${g.codice}')" title="Salva scorta minima">💾</button>
+          </div>
+        </td>
+        <td class="${(g.ordinato_cliente_wms||0)>0?'mt-val-impegnato':'mt-val-zero'}">
+          <div style="display:flex;align-items:center;gap:4px">
+            <span>${g.ordinato_cliente_wms===null||g.ordinato_cliente_wms===undefined?'—':g.ordinato_cliente_wms}</span>
+            <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="sincronizzaOrdinatoClienteWMS('${esc(g.codice)}')" title="Aggiorna da MasterLogistic-WMS${g.ordinato_cliente_wms_aggiornato_il ? ' (ultimo agg. ' + g.ordinato_cliente_wms_aggiornato_il + ')' : ''}">🔄</button>
           </div>
         </td>
         <td>${g.fabbisogno>0?`<span class="mt-fabb-badge">▲ ${g.fabbisogno}</span>`:`<span class="mt-fabb-ok">0</span>`}</td>
@@ -393,6 +400,20 @@ async function salvaRettificaGrezzoIW(){
     caricaMagazzinoWood();
   }catch(e){
     alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function sincronizzaOrdinatoClienteWMS(codice){
+  try{
+    const r = await fetch('/api/giacenza_wood/sincronizza-ordinato-cliente-wms', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({codici:[codice]})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    showToast('✅ Aggiornato da WMS');
+    caricaMagazzinoWood();
+  }catch(e){
+    alert('❌ Errore di rete durante l\'aggiornamento da WMS.');
   }
 }
 

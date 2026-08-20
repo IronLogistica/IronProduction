@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, jsonify, request, redirect, current_app
 from datetime import datetime, date
 import json
+from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
                     TIPI_APPROVVIGIONAMENTO, GiacenzaWood, MovimentoGiacenzaWood, OrdineProduzione,
@@ -903,6 +904,66 @@ def _registra_movimento_giacenza(codice, delta, tipo, riferimento='', note='', c
                                           riferimento=riferimento, note=note))
 
 
+ORDINATO_CLIENTE_WMS_TTL_SECONDI = 600  # non richiamare WMS per lo stesso codice più spesso di così
+
+
+def _aggiorna_ordinato_cliente_wms(g, forza=False):
+    """
+    Aggiorna GiacenzaWood.ordinato_cliente_wms leggendo da MasterLogistic-WMS
+    (campo 'ordinato_fornitori' della scheda — vedi masterlogistic_client.
+    ottieni_scheda_kanban). Chiamata SOLO su richiesta esplicita (pulsante),
+    MAI durante il caricamento normale di una pagina — stesso principio già
+    applicato al Kanban: una pagina non deve mai dipendere da una chiamata
+    di rete esterna per aprirsi. Rispetta comunque un TTL per non richiamare
+    WMS inutilmente su un codice appena aggiornato.
+    Un fallimento qui lascia il valore precedente invariato, non lo azzera.
+    """
+    ora = datetime.utcnow()
+    if not forza and g.ordinato_cliente_wms_aggiornato_il and \
+       (ora - g.ordinato_cliente_wms_aggiornato_il).total_seconds() < ORDINATO_CLIENTE_WMS_TTL_SECONDI:
+        return
+    try:
+        scheda = ottieni_scheda_kanban(g.codice)
+    except MasterLogisticError:
+        return
+    valore = scheda.get('ordinato_fornitori')
+    if valore is not None:
+        g.ordinato_cliente_wms = valore
+        g.ordinato_cliente_wms_aggiornato_il = ora
+
+
+@magazzino_bp.route('/api/giacenza_wood/sincronizza-ordinato-cliente-wms', methods=['POST'])
+def api_sincronizza_ordinato_cliente_wms():
+    """
+    Aggiorna 'Ordinato da Cliente (WMS)' per un elenco di codici passato nel
+    body (JSON: {"codici": [...]}), o per TUTTI i codici padre (quelli con
+    almeno un Ordine di Produzione) se non specificato — azione ESPLICITA
+    dal pulsante dedicato, mai automatica.
+    """
+    d = request.get_json(silent=True) or {}
+    codici = d.get('codici')
+    if not codici:
+        codici = [r[0] for r in db.session.query(OrdineProduzione.codice_articolo).distinct().all()]
+    if not codici:
+        return jsonify({'ok': True, 'totale': 0, 'aggiornati': 0})
+
+    righe_gz = GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici)).all()
+    presenti = {g.codice for g in righe_gz}
+    for c in sorted(set(codici) - presenti):
+        nuova = GiacenzaWood(codice=c, quantita=0)
+        db.session.add(nuova)
+        righe_gz.append(nuova)
+
+    aggiornati = 0
+    for g in righe_gz:
+        prima = g.ordinato_cliente_wms
+        _aggiorna_ordinato_cliente_wms(g, forza=True)
+        if g.ordinato_cliente_wms != prima:
+            aggiornati += 1
+    db.session.commit()
+    return jsonify({'ok': True, 'totale': len(righe_gz), 'aggiornati': aggiornati})
+
+
 def _calcola_campi_giacenza(righe):
     """
     Funzione CONDIVISA che calcola Impegnato/Ordinato/Grezzo IW/Ordinato in
@@ -972,15 +1033,25 @@ def _calcola_campi_giacenza(righe):
         grz = grezzo_iw.get(g.codice, 0)
         ord_prod = ordinato_produzione.get(g.codice, 0)
         scorta_min = scorte_minime.get(g.codice, 0)
+        ord_cliente_wms = getattr(g, 'ordinato_cliente_wms', None) or 0
         disp_contabile = round((g.quantita or 0) - imp + ord_, 4)
         disp_allargata = round((g.quantita or 0) + grz - imp + ord_ + ord_prod, 4)
-        fabbisogno = round(max(scorta_min - disp_allargata, 0), 4)
+        # Fabbisogno = MAX(Scorta Minima + Ordinato da Cliente (WMS) − Disp.
+        # Contabile Allargata, 0): un ordine cliente reale letto da WMS pesa
+        # di più della sola scorta di sicurezza — non la sostituisce, si
+        # somma. Se il campo WMS non è mai stato aggiornato (None), conta 0,
+        # non blocca il calcolo.
+        fabbisogno = round(max(scorta_min + ord_cliente_wms - disp_allargata, 0), 4)
         righe_out.append({
             'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
             'unita_misura': approvvigionamenti.get(g.codice).unita_misura if approvvigionamenti.get(g.codice) else '',
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
             'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
-            'scorta_minima': scorta_min, 'fabbisogno': fabbisogno,
+            'scorta_minima': scorta_min,
+            'ordinato_cliente_wms': getattr(g, 'ordinato_cliente_wms', None),
+            'ordinato_cliente_wms_aggiornato_il': (g.ordinato_cliente_wms_aggiornato_il.strftime('%d/%m/%Y %H:%M')
+                if getattr(g, 'ordinato_cliente_wms_aggiornato_il', None) else None),
+            'fabbisogno': fabbisogno,
             'aggiornato_il': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if getattr(g, 'aggiornato_il', None) else '',
         })
     return righe_out

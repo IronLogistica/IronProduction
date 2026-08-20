@@ -83,6 +83,15 @@ def ottieni_scheda_kanban(sku_vern, sku_grezzo="", timeout=8):
     tabella 'Riservato a Clienti', riga per riga) — dato che l'interrogazione
     in fase di creazione (ottieni_stock_kanban) tiene volutamente fuori
     perché lì basta il totale.
+
+    'ordinato_fornitori': quanto QUESTO SKU risulta ordinato dal fornitore
+    nella scheda WMS del cliente (es. Iron Segnaletica) — dal loro lato è
+    "in arrivo dal fornitore", dal nostro è l'ordine cliente ancora da
+    evadere. NOME CAMPO NON ANCORA CONFERMATO lato WMS: assunto
+    'ordinato_fornitori' per coerenza con gli altri campi di questa stessa
+    risposta — se WMS lo chiama diversamente, il valore arriverà a None
+    (mai un falso 0) finché non si verifica il nome vero con chi ha
+    costruito WMS.
     """
     dati = _kanban_stock_grezzo(sku_vern, sku_grezzo, timeout)
     return {
@@ -91,6 +100,7 @@ def ottieni_scheda_kanban(sku_vern, sku_grezzo="", timeout=8):
         'riservato_clienti': dati.get('riservato_clienti', 0),
         'ordini_clienti': dati.get('ordini_clienti', []),
         'ultimi_evasi': dati.get('ultimi_evasi', []),
+        'ordinato_fornitori': dati.get('ordinato_fornitori'),
     }
 
 

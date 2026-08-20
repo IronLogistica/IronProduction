@@ -11,28 +11,32 @@
 <div class="mon-section" style="margin-bottom:24px">
   <div class="section-hdr" style="background:linear-gradient(135deg,#791f1f,#c0392b)">📦 Codici Padre — Fabbisogno &gt; 0</div>
   <p style="font-size:12px;color:var(--text-dim);padding:12px 14px 0">
-    Prodotti finiti/assiemi (codici padre) il cui Fabbisogno (Scorta Minima meno Disponibilità Contabile Allargata —
-    stock + grezzo IW − impegnato + ordinato fornitori + ordinato in produzione) è diverso da zero: qui ci finiscono
-    quando serve intervenire.
+    Prodotti finiti/assiemi (codici padre) il cui Fabbisogno (Scorta Minima + Ordinato da Cliente (WMS) meno
+    Disponibilità Contabile Allargata — stock + grezzo IW − impegnato + ordinato fornitori + ordinato in produzione)
+    è diverso da zero: qui ci finiscono quando serve intervenire.
   </p>
+  <div style="padding:0 14px 8px">
+    <button class="btn btn-ghost" style="font-size:11px" onclick="sincronizzaTuttiOrdinatoClienteWMS()">🔄 Aggiorna Ordinato da Cliente (WMS)</button>
+  </div>
   <div style="padding:0 14px 14px;overflow-x:auto">
     {% if righe_fabbisogno %}
     <table class="kanban-table">
       <thead><tr>
         <th style="text-align:left">Codice</th><th style="text-align:left">Descrizione</th>
         <th>Stock</th><th>Grezzo IW</th><th>Ordinato Produzione</th><th>Ordinato Fornitori</th>
-        <th>Scorta Minima</th><th>Disp. Allargata*</th><th>Fabbisogno</th>
+        <th>Scorta Minima</th><th>Ordinato da Cliente (WMS)</th><th>Disp. Allargata*</th><th>Fabbisogno</th>
       </tr></thead>
       <tbody>
         {% for r in righe_fabbisogno %}
         <tr style="background:rgba(192,57,43,.12)">
           <td class="codice" style="text-align:left">{{ r.codice }}</td>
           <td style="text-align:left">{{ r.descrizione or '—' }}</td>
-          <td class="num">{{ r.stock }}</td>
+          <td class="num">{{ r.quantita }}</td>
           <td class="num">{{ r.grezzo_iw }}</td>
           <td class="num">{{ r.ordinato_produzione }}</td>
-          <td class="num">{{ r.ordinato_fornitori }}</td>
+          <td class="num">{{ r.ordinato }}</td>
           <td class="num">{{ r.scorta_minima }}</td>
+          <td class="num">{{ r.ordinato_cliente_wms if r.ordinato_cliente_wms is not none else '—' }}</td>
           <td class="num">{{ r.disponibile_allargata }}</td>
           <td class="num" style="color:#ff8a80;font-weight:800">{{ r.fabbisogno }}</td>
         </tr>
@@ -106,6 +110,27 @@ function filterAlertTable(q){
   document.querySelectorAll('#alert-table .alert-row').forEach(function(tr){
     tr.style.display = tr.dataset.prodotto.includes(q) ? '' : 'none';
   });
+}
+
+async function sincronizzaTuttiOrdinatoClienteWMS(){
+  const btn = event.target;
+  const testoOrig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Aggiorno da WMS...';
+  try{
+    const r = await fetch('/api/giacenza_wood/sincronizza-ordinato-cliente-wms', {method: 'POST', headers:{'Content-Type':'application/json'}, body: '{}'});
+    const d = await r.json();
+    if(d.ok){
+      showToast(`✅ Ordinato da Cliente aggiornato — ${d.aggiornati}/${d.totale} codici cambiati`);
+      setTimeout(() => location.reload(), 900);
+    }else{
+      showToast('❌ Errore durante la sincronizzazione', true);
+    }
+  }catch(e){
+    showToast('❌ Errore di rete', true);
+  }
+  btn.disabled = false;
+  btn.textContent = testoOrig;
 }
 
 async function chiediAiAlert(){

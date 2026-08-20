@@ -184,6 +184,17 @@ class GiacenzaWood(db.Model):
     codice        = db.Column(db.String(50), primary_key=True)
     quantita      = db.Column(db.Float, default=0)
     aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow)
+    # Quanto un cliente (letto da MasterLogistic-WMS, es. "Ordinati
+    # Fornitori" nella scheda WMS del cliente per quel SKU — dal loro lato
+    # è ciò che hanno ordinato dal loro fornitore, che per questo codice
+    # siamo noi) ha ordinato e non ancora ricevuto — si somma alla Scorta
+    # Minima nel calcolo del Fabbisogno, perché un ordine cliente reale
+    # pesa più della sola scorta di sicurezza. Aggiornato solo su richiesta
+    # esplicita (pulsante), mai in automatico al caricamento pagina — una
+    # chiamata di rete per codice ad ogni apertura pagina è esattamente
+    # l'errore già commesso e corretto nel Kanban.
+    ordinato_cliente_wms            = db.Column(db.Float, nullable=True)
+    ordinato_cliente_wms_aggiornato_il = db.Column(db.DateTime, nullable=True)
 
 
 class ScortaMinimaWood(db.Model):
@@ -1009,6 +1020,30 @@ def assicura_lead_time_esterno_centri():
             if nome not in colonne_ciclo:
                 db.session.execute(text(ddl))
                 db.session.commit()
+
+
+def assicura_ordinato_cliente_wms():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    giacenza_wood.ordinato_cliente_wms (+ timestamp) per il Fabbisogno che
+    tiene conto anche degli ordini cliente letti da MasterLogistic-WMS,
+    senza ricreare tabelle."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE giacenza_wood ADD COLUMN IF NOT EXISTS ordinato_cliente_wms FLOAT"))
+            db.session.execute(text("ALTER TABLE giacenza_wood ADD COLUMN IF NOT EXISTS ordinato_cliente_wms_aggiornato_il TIMESTAMP"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('giacenza_wood')}
+        if 'ordinato_cliente_wms' not in colonne:
+            db.session.execute(text("ALTER TABLE giacenza_wood ADD COLUMN ordinato_cliente_wms FLOAT"))
+            db.session.commit()
+        if 'ordinato_cliente_wms_aggiornato_il' not in colonne:
+            db.session.execute(text("ALTER TABLE giacenza_wood ADD COLUMN ordinato_cliente_wms_aggiornato_il TIMESTAMP"))
+            db.session.commit()
+
 
 class KanbanProdotto(db.Model):
     __tablename__ = "kanban_prodotti"
