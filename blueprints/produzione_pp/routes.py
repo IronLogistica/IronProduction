@@ -788,6 +788,21 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     # dichiarata — quella è per costruzione specifica di ogni singola fase,
     # non va mai saltata.
     prima_fase = _e_prima_fase_del_ciclo(codice_lavorato, fase_nome)
+    # BUG CORRETTO: quando si completa la produzione del CODICE PADRE
+    # (avanza_op=True, codice_lavorato == codice_articolo — l'esatta
+    # dichiarazione di "fine produzione" che chiude l'OP), il carico a
+    # GiacenzaWood del prodotto finito finiva nella STESSA giacenza che
+    # alimenta "Finiti IW" sul Kanban — che invece deve rappresentare SOLO
+    # merce rientrata dalla verniciatura/zincatura ESTERNA via DDT
+    # confermato, mai la produzione interna grezza appena completata. Quel
+    # dato resta comunque visibile tramite "Grezzo IW" (_grezzo_iw_per_codici,
+    # letto direttamente dalle dichiarazioni approvate) — qui semplicemente
+    # non tocchiamo più GiacenzaWood per il prodotto finito in questo caso
+    # specifico. Per i semilavorati/componenti intermedi (codice_lavorato
+    # diverso dal codice articolo) il carico resta invariato: quello
+    # rappresenta davvero scorta fisica di un pezzo pronto, non il prodotto
+    # finito in attesa di trattamento esterno.
+    carica_prodotto_finito = not (codice_lavorato == o.codice_articolo and avanza_op)
     if good > 0 and prima_fase:
         try:
             consumi = consumi_override if consumi_override is not None else _calcola_consumi_standard(o, componente_finale, componente, good)
@@ -802,14 +817,15 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
 
         try:
             costo = _calcola_costo_standard(codice_lavorato)
-            if costo['codici_senza_costo']:
-                nota_costo = (f'Consuntivo {good} pz buoni — ⚠️ COSTO INCOMPLETO: mancano prezzi per '
-                               f'{", ".join(sorted(costo["codici_senza_costo"]))} — totale sottostimato')
-            else:
-                nota_costo = f'Consuntivo {good} pz buoni' + ('' if componente_finale else ' (semilavorato)')
-            _registra_movimento_giacenza(codice_lavorato, good, 'carico_produzione',
-                                          riferimento=o.codice, note=nota_costo,
-                                          costo_unitario=costo['costo_totale'])
+            if carica_prodotto_finito:
+                if costo['codici_senza_costo']:
+                    nota_costo = (f'Consuntivo {good} pz buoni — ⚠️ COSTO INCOMPLETO: mancano prezzi per '
+                                   f'{", ".join(sorted(costo["codici_senza_costo"]))} — totale sottostimato')
+                else:
+                    nota_costo = f'Consuntivo {good} pz buoni' + ('' if componente_finale else ' (semilavorato)')
+                _registra_movimento_giacenza(codice_lavorato, good, 'carico_produzione',
+                                              riferimento=o.codice, note=nota_costo,
+                                              costo_unitario=costo['costo_totale'])
         except Exception:
             pass  # il carico a magazzino non deve mai bloccare la registrazione del consuntivo
 
@@ -2180,6 +2196,12 @@ def _storna_evento_consuntivo(e, o):
            f'buoni={e.pezzi_buoni}; scarto={e.pezzi_scarto}; minuti={e.tempo_minuti}')
 
     prima_fase_originale = _e_prima_fase_del_ciclo(codice_lavorato, e.fase)
+    # Stessa esclusione della dichiarazione originale: se questo evento era
+    # il completamento del CODICE PADRE (avanza_op), il carico a
+    # GiacenzaWood del prodotto finito non era mai avvenuto (vedi
+    # carica_prodotto_finito in _registra_evento_consuntivo) — lo storno non
+    # deve inventarsi uno scarico di qualcosa che non è mai stato caricato.
+    carica_prodotto_finito = not (codice_lavorato == o.codice_articolo and avanza_op)
     if e.pezzi_buoni > 0 and prima_fase_originale:
         # Stessa identica logica di esplosione usata per dichiarare —
         # fondamentale che coincidano: se dichiaro consumando SOLO il
@@ -2195,8 +2217,9 @@ def _storna_evento_consuntivo(e, o):
             if qta_consumata:
                 _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',
                                               riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
-        _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
-                                      riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
+        if carica_prodotto_finito:
+            _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
+                                          riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
 
     op_code_evento, fase_evento = e.op_code, e.fase
     db.session.delete(e)
