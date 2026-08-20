@@ -12,7 +12,7 @@
   .mt-th-impegnato{color:#e8760a}
   .mt-th-ordinato{color:#4d9fd6}
   .mt-th-disp{color:#2589c7}
-  .mt-th-scorta{color:var(--text-dim)}
+  .mt-th-scorta{color:#ffb300}
   .mt-th-fabb{color:#e74c3c}
   .mt-val-stock{color:#e0eefc;font-weight:700;font-size:14px}
   .mt-val-impegnato{color:#e8760a;font-weight:600}
@@ -86,6 +86,31 @@
       <span style="cursor:pointer;font-size:18px;color:var(--text-dim)" onclick="chiudiImpegniOp()">✕</span>
     </div>
     <div id="impegni-op-corpo">Caricamento...</div>
+  </div>
+</div>
+
+{# Popup "Rettifica Grezzo IW" — correzione manuale (Angelo) al valore
+   calcolato in automatico da MasterWork: scarti, rotture in trasporto tra
+   produzione e magazzino, ecc. Cumulativa, con storico. #}
+<div id="popup-rettifica-grezzo" style="display:none;position:fixed;inset:0;z-index:1000" onclick="if(event.target===this) chiudiRettificaGrezzoIW()">
+  <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);background:var(--dark2);border:1px solid var(--border);
+              border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.5);min-width:420px;max-width:90vw;max-height:80vh;overflow-y:auto;padding:16px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+      <div style="font-weight:800;font-size:14px;display:flex;align-items:center;gap:8px">✏️ Rettifica Grezzo IW — <span id="rettifica-grezzo-codice"></span></div>
+      <span style="cursor:pointer;font-size:18px;color:var(--text-dim)" onclick="chiudiRettificaGrezzoIW()">✕</span>
+    </div>
+    <p style="font-size:11px;color:var(--text-dim);margin-bottom:10px">
+      Correzione manuale a quello che l'automatico da MasterWork non vede: scarti, rotture in trasporto tra
+      produzione e magazzino, ecc. Numero negativo = scarico, positivo = carico. Si somma al valore calcolato,
+      non lo sovrascrive.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px">
+      <input id="rett-grezzo-delta" type="number" step="1" placeholder="es. -3" style="width:110px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)">
+      <input id="rett-grezzo-note" type="text" placeholder="Motivo (es. rottura in trasporto)" style="flex:1;min-width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)">
+      <button class="btn btn-primary" onclick="salvaRettificaGrezzoIW()">💾 Applica</button>
+    </div>
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px;font-weight:700">STORICO RETTIFICHE</div>
+    <div id="rettifica-grezzo-storico">Caricamento...</div>
   </div>
 </div>
 {% endblock %}
@@ -234,7 +259,7 @@ async function caricaMagazzinoWood(){
       <th class="mt-th-disp">(=) Disp. Contabile<div class="mt-formula">Stock − Impegnato OP + Ordinato Fornitori</div></th>
       <th class="mt-th-disp">(=) Disp. Contabile Allargata*<div class="mt-formula">*Diversa dalla Disp. Contabile qui a fianco e dal concetto usato nei Kanban: Stock + Grezzo IW − Impegnato OP + Ordinato Fornitori + Ordinato in Produzione</div></th>
       <th class="mt-th-scorta">− Scorta Min.<div class="mt-formula">Valore impostato manualmente</div></th>
-      <th class="mt-th-fabb">(=) Fabbisogno<div class="mt-formula">MAX(Scorta Minima − Disp. Contabile, 0)</div></th></tr></thead><tbody>`;
+      <th class="mt-th-fabb">(=) Fabbisogno<div class="mt-formula">MAX(Scorta Minima − Disp. Contabile Allargata*, 0)</div></th></tr></thead><tbody>`;
     righe.forEach(g=>{
       html += `<tr>
         <td class="codice">${g.codice}</td>
@@ -246,7 +271,12 @@ async function caricaMagazzinoWood(){
             <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="salvaStock('${g.codice}')" title="Salva nuovo stock">💾</button>
           </div>
         </td>
-        <td class="${g.grezzo_iw>0?'mt-val-stock':'mt-val-zero'}">${g.grezzo_iw>0?g.grezzo_iw:0}</td>
+        <td class="${g.grezzo_iw>0?'mt-val-stock':'mt-val-zero'}">
+          <div style="display:flex;align-items:center;gap:4px">
+            <span>${g.grezzo_iw>0?g.grezzo_iw:0}</span>
+            <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="apriRettificaGrezzoIW('${esc(g.codice)}')" title="Rettifica manuale (scarti, rotture in trasporto, ecc.)">✏️</button>
+          </div>
+        </td>
         <td class="${g.impegnato>0?'mt-val-impegnato':'mt-val-zero'}">
           ${g.impegnato>0
             ? `<span style="cursor:pointer;display:inline-flex;align-items:center;gap:5px" onclick="apriImpegniOp('${esc(g.codice)}', event)">${g.impegnato} <span title="Vedi quali OP generano questo impegno">📋</span></span>`
@@ -256,10 +286,10 @@ async function caricaMagazzinoWood(){
         <td class="${g.ordinato_produzione>0?'mt-val-ordinato':'mt-val-zero'}">${g.ordinato_produzione>0?g.ordinato_produzione:0}</td>
         <td class="mt-val-disp">${g.disponibile_contabile}</td>
         <td class="mt-val-disp">${g.disponibile_allargata}*</td>
-        <td class="mt-val-zero">
+        <td>
           <div style="display:flex;align-items:center;gap:4px">
             <input type="number" step="0.01" value="${g.scorta_minima}" id="scorta-${g.codice}"
-                   style="width:70px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);background:var(--dark3);color:inherit">
+                   style="width:70px;padding:4px 6px;border-radius:5px;border:1.5px solid #ffb300;background:var(--dark3);color:#ffd54f;font-weight:800">
             <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="salvaScortaMinima('${g.codice}')" title="Salva scorta minima">💾</button>
           </div>
         </td>
@@ -312,6 +342,54 @@ async function salvaScortaMinima(codice){
     const d = await r.json();
     if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
     showToast('✅ Scorta minima aggiornata');
+    caricaMagazzinoWood();
+  }catch(e){
+    alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function apriRettificaGrezzoIW(codice){
+  document.getElementById('rettifica-grezzo-codice').textContent = codice;
+  document.getElementById('rett-grezzo-delta').value = '';
+  document.getElementById('rett-grezzo-note').value = '';
+  document.getElementById('popup-rettifica-grezzo').style.display = 'block';
+  document.getElementById('popup-rettifica-grezzo').dataset.codice = codice;
+  await caricaStoricoRettificaGrezzo(codice);
+}
+function chiudiRettificaGrezzoIW(){
+  document.getElementById('popup-rettifica-grezzo').style.display = 'none';
+}
+async function caricaStoricoRettificaGrezzo(codice){
+  const box = document.getElementById('rettifica-grezzo-storico');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/giacenza_wood/' + encodeURIComponent(codice) + '/rettifiche-grezzo-iw');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic;font-size:12px">Nessuna rettifica ancora registrata.</p>'; return; }
+    box.innerHTML = righe.map(x => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid rgba(255,255,255,.06);font-size:12px">
+      <span style="color:${x.delta>0?'#5debb0':'#f07070'};font-weight:700">${x.delta>0?'+':''}${x.delta}</span>
+      <span style="color:var(--text-dim);flex:1;margin:0 10px">${x.note||'—'}</span>
+      <span style="color:var(--text-dim);font-size:11px">${x.creato_il}</span>
+    </div>`).join('');
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+async function salvaRettificaGrezzoIW(){
+  const codice = document.getElementById('popup-rettifica-grezzo').dataset.codice;
+  const delta = parseFloat(document.getElementById('rett-grezzo-delta').value);
+  const note = document.getElementById('rett-grezzo-note').value.trim();
+  if(isNaN(delta) || delta === 0){ alert('⚠️ Inserisci un numero diverso da zero.'); return; }
+  try{
+    const r = await fetch('/api/giacenza_wood/' + encodeURIComponent(codice) + '/rettifica-grezzo-iw', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({delta, note})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    showToast('✅ Rettifica applicata');
+    document.getElementById('rett-grezzo-delta').value = '';
+    document.getElementById('rett-grezzo-note').value = '';
+    await caricaStoricoRettificaGrezzo(codice);
     caricaMagazzinoWood();
   }catch(e){
     alert('❌ Errore di rete durante il salvataggio.');

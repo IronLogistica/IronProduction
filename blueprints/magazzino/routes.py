@@ -11,7 +11,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood,
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
-                    EventoConsuntivoPP)
+                    EventoConsuntivoPP, RettificaGrezzoIW)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -988,6 +988,13 @@ def api_giacenza_lista():
                                   EventoConsuntivoPP.approvato_direzione.is_(True))
                           .group_by(OrdineProduzione.codice_articolo).all()):
             grezzo_iw[cod] = tot or 0
+    # + rettifiche manuali cumulative (scarti, rotture in trasporto, ecc. —
+    # Angelo corregge a mano quello che l'automatico da MasterWork non vede).
+    if codici:
+        for cod, delta_tot in (db.session.query(RettificaGrezzoIW.codice, db.func.sum(RettificaGrezzoIW.delta))
+                                .filter(RettificaGrezzoIW.codice.in_(codici))
+                                .group_by(RettificaGrezzoIW.codice).all()):
+            grezzo_iw[cod] = grezzo_iw.get(cod, 0) + (delta_tot or 0)
 
     # Ordinato in Produzione: SALDO degli Ordini di Lavoro in produzione
     # ancora aperti per questo codice (es. ordinati 60, riversati a
@@ -1027,7 +1034,10 @@ def api_giacenza_lista():
         # contabile della board Kanban: qui entrano anche Grezzo IW e
         # Ordinato in Produzione, per questo è marcata con l'asterisco.
         disp_allargata = round((g.quantita or 0) + grz - imp + ord_ + ord_prod, 4)
-        fabbisogno = round(max(scorta_min - disp_contabile, 0), 4)
+        # Fabbisogno dipende dalla Disp. Contabile ALLARGATA (non da quella
+        # stretta) confrontata con la Scorta Minima — vede anche Grezzo IW
+        # e Ordinato in Produzione come disponibilità reale/imminente.
+        fabbisogno = round(max(scorta_min - disp_allargata, 0), 4)
         righe_out.append({
             'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
             'unita_misura': approvvigionamenti.get(g.codice).unita_misura if approvvigionamenti.get(g.codice) else '',
@@ -1162,6 +1172,39 @@ def api_giacenza_scorta_minima(codice):
         db.session.add(ScortaMinimaWood(codice=codice, scorta_minima=valore))
     db.session.commit()
     return jsonify({'ok': True})
+
+
+@magazzino_bp.route('/api/giacenza_wood/<codice>/rettifica-grezzo-iw', methods=['POST'])
+def api_rettifica_grezzo_iw(codice):
+    """
+    Rettifica manuale (Angelo) al Grezzo IW calcolato in automatico da
+    MasterWork: scarti, rotture in trasporto tra produzione e magazzino,
+    o qualunque altra correzione che l'automatico non vede. Cumulativa —
+    non sovrascrive, si somma alla serie storica (come i movimenti di
+    giacenza), quindi resta tracciabile chi ha corretto cosa e perché.
+    """
+    codice = codice.strip()
+    d = request.get_json(force=True)
+    try:
+        delta = float(d.get('delta'))
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Il valore deve essere un numero (positivo o negativo)'}), 400
+    if delta == 0:
+        return jsonify({'errore': True, 'messaggio': 'Inserisci un valore diverso da zero'}), 400
+    note = (d.get('note') or '').strip()
+    db.session.add(RettificaGrezzoIW(codice=codice, delta=delta, note=note))
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@magazzino_bp.route('/api/giacenza_wood/<codice>/rettifiche-grezzo-iw')
+def api_lista_rettifiche_grezzo_iw(codice):
+    righe = (RettificaGrezzoIW.query.filter_by(codice=codice.strip())
+             .order_by(RettificaGrezzoIW.creato_il.desc()).all())
+    return jsonify([{
+        'delta': r.delta, 'note': r.note,
+        'creato_il': r.creato_il.strftime('%d/%m/%Y %H:%M') if r.creato_il else '',
+    } for r in righe])
 
 
 @magazzino_bp.route('/api/giacenza_wood/<codice>/movimenti')

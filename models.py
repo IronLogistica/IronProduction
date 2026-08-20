@@ -195,6 +195,25 @@ class ScortaMinimaWood(db.Model):
     __tablename__ = 'scorte_minime_wood'
     codice         = db.Column(db.String(50), primary_key=True)
     scorta_minima  = db.Column(db.Float, default=0)
+
+
+class RettificaGrezzoIW(db.Model):
+    """
+    Rettifica manuale al 'Grezzo IW' (fine saldatura giornaliera dichiarata
+    e approvata dalla Direzione) — Grezzo IW pesca in automatico da
+    MasterWork/Dichiarazione Produzione, ma Angelo deve poter correggerlo a
+    mano per scarti, rotture in trasporto tra produzione e magazzino, ecc.
+    Cumulativa (come i movimenti di giacenza): ogni riga è un +carico o
+    -scarico con nota, non un valore che sovrascrive — mantiene lo storico.
+    Il Grezzo IW mostrato è sempre: somma consuntivi approvati + somma di
+    queste rettifiche.
+    """
+    __tablename__ = 'rettifiche_grezzo_iw'
+    id        = db.Column(db.Integer, primary_key=True)
+    codice    = db.Column(db.String(100), nullable=False, index=True)
+    delta     = db.Column(db.Float, nullable=False)
+    note      = db.Column(db.String(300), default='')
+    creato_il = db.Column(db.DateTime, default=datetime.utcnow)
     aggiornato_il  = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
