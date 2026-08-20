@@ -223,6 +223,7 @@ def _righe_macchina(centro):
                                      if fase_ciclo.scarto_max_pct else None,
                 'consumi_standard': consumi_standard,
                 'non_rilasciato': False,
+                'completato': saldo_fase <= 0,
                 '_chiave_ordine': chiave_ordine,
             })
 
@@ -347,7 +348,15 @@ def totem_macchina(cid):
         return render_template('monitor/nessuna_macchina.html', active='monitor',
             messaggio=f'"{centro.nome}" è marcato come {"esterno" if centro.esterno else "escluso dal Monitor Produzione"} — nessun totem qui.')
     righe = _righe_macchina(centro)
-    righe_tabella = righe['da_iniziare'] + righe['lavorazione']
+    # Le righe COMPLETATE (sezione 'terminati') restano visibili qui, non
+    # spariscono più: prima venivano escluse del tutto dal Totem Live, quindi
+    # un componente appena finito (es. il primo taglio di T200) scompariva
+    # alla vista dell'operaio E — siccome _raggruppa_per_op raggruppa PER
+    # SEZIONE — la percentuale complessiva dell'OP in cima non lo contava
+    # più, restando ferma anche se in realtà quel pezzo dell'OP era fatto al
+    # 100%. Ora tutte le righe dello stesso OP restano in UN solo gruppo,
+    # qualunque sia il loro stato, e la percentuale aggregata le somma tutte.
+    righe_tabella = righe['da_iniziare'] + righe['lavorazione'] + righe['terminati']
     righe_tabella.sort(key=lambda r: (r['posizione_manuale'] if r['posizione_manuale'] is not None else 999, r['priorita'], r['op_id']))
 
     gruppi = _raggruppa_per_op(righe_tabella)

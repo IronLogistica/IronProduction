@@ -13,7 +13,7 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
                     NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
-                    FotoArticolo, KanbanProdotto, storico_aggiungi_auto)
+                    FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -1904,7 +1904,15 @@ def api_dichiarazione_crea():
     dichiarando (None/assente = prodotto finito dell'OP).
     'consumi' opzionale: {codice: quantità} — se il capo ha corretto le
     quantità nella maschera di anteprima, si scarica quello invece dello
-    standard di distinta (vedi _registra_evento_consuntivo)."""
+    standard di distinta (vedi _registra_evento_consuntivo).
+
+    Blocco eccedenza produzione: se i pezzi buoni dichiarati (sommati a
+    quelli già fatti su questa riga) superano la quantità pianificata di
+    oltre SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE, la dichiarazione viene
+    RIFIUTATA — un'eccedenza così grande quasi certamente segnala scarti
+    o un errore, non va lasciata passare in automatico. Sblocco solo con
+    un Modulo Non Conformità 8D (semplificato) APPROVATO da Angelo per
+    ESATTAMENTE questa quantità — vedi ModuloNonConformita8D."""
     d = request.get_json(force=True)
     o = OrdineProduzione.query.filter_by(codice=(d.get('op_code') or '').strip()).first()
     if not o:
@@ -1921,6 +1929,12 @@ def api_dichiarazione_crea():
         return jsonify(ok=False, error=str(exc)), 400
     if good <= 0 and scrap <= 0:
         return jsonify(ok=False, error='Dichiara almeno un pezzo buono o di scarto'), 400
+
+    if good > 0:
+        blocco = _verifica_eccedenza_dichiarazione(o, centro, componente, good)
+        if blocco:
+            return jsonify(blocco), 409
+
     consumi_override = None
     if 'consumi' in d and isinstance(d['consumi'], dict):
         consumi_override = {}
@@ -1934,8 +1948,168 @@ def api_dichiarazione_crea():
     event_id = str(uuid.uuid4())
     _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id,
                                  componente=componente, consumi_override=consumi_override)
+
+    # Se questa dichiarazione era autorizzata da un 8D approvato, lo consuma:
+    # non autorizza più nessuna dichiarazione futura, un'eccedenza successiva
+    # richiede un nuovo modulo.
+    if good > 0:
+        modulo = (ModuloNonConformita8D.query
+                  .filter_by(op_code=o.codice, centro_costo_id=centro.id, componente=componente,
+                             stato='APPROVATO', qta_richiesta=good).order_by(ModuloNonConformita8D.id.desc()).first())
+        if modulo:
+            modulo.stato = 'CONSUMATO'
+            modulo.event_id_consumato = event_id
+
     db.session.commit()
     return jsonify(ok=True, event_id=event_id, ordine=_ordine(o))
+
+
+SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE = 20  # oltre questa % sopra il pianificato, blocco automatico
+
+
+def _qta_necessaria_riga(o, componente):
+    """Quantità pianificata per QUESTA riga (prodotto finito o componente
+    specifico) — moltiplicatore di distinta × qta_pianificata dell'OP.
+    None se il componente non è riconosciuto nella distinta (non blocca:
+    senza un pianificato di riferimento non si può giudicare un'eccedenza)."""
+    try:
+        comp_list = _esplodi_componenti_op(o)
+    except Exception:
+        return None
+    target = componente or o.codice_articolo
+    match = next((c for c in comp_list if c['codice'] == target), None)
+    if not match:
+        return None
+    return round((o.qta_pianificata or 0) * match['moltiplicatore'], 4)
+
+
+def _verifica_eccedenza_dichiarazione(o, centro, componente, good):
+    """
+    Controlla se GOOD pezzi (sommati a quelli già dichiarati su questa
+    riga) eccedono il pianificato di oltre SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE.
+    Ritorna None se si può procedere, altrimenti il dict di errore da
+    restituire al chiamante (già pronto per jsonify).
+    """
+    qta_necessaria = _qta_necessaria_riga(o, componente)
+    if not qta_necessaria or qta_necessaria <= 0:
+        return None  # nessun pianificato di riferimento: non blocchiamo alla cieca
+
+    gia_fatti = (db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+                 .filter(EventoConsuntivoPP.op_code == o.codice,
+                         db.func.lower(EventoConsuntivoPP.fase) == centro.nome.strip().lower(),
+                         EventoConsuntivoPP.componente == componente if componente
+                         else EventoConsuntivoPP.componente.is_(None))
+                 .scalar()) or 0
+    nuovo_totale = gia_fatti + good
+    eccedenza_pct = round(max(0, (nuovo_totale - qta_necessaria) / qta_necessaria * 100), 1)
+    if eccedenza_pct <= SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE:
+        return None
+
+    # Un 8D approvato per ESATTAMENTE questa quantità la sblocca UNA volta.
+    modulo = (ModuloNonConformita8D.query
+              .filter_by(op_code=o.codice, centro_costo_id=centro.id, componente=componente,
+                         stato='APPROVATO', qta_richiesta=good).order_by(ModuloNonConformita8D.id.desc()).first())
+    if modulo:
+        return None
+
+    return {
+        'ok': False,
+        'error': (f'Dichiarazione bloccata: {good} pezzi (totale {nuovo_totale} su questa riga) '
+                  f'superano il pianificato ({qta_necessaria}) del {eccedenza_pct}%, oltre la soglia '
+                  f'del {SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE}% — probabile scarto/errore da segnalare. '
+                  f'Serve un Modulo Non Conformità 8D approvato da Angelo per procedere.'),
+        'richiede_8d': True,
+        'qta_necessaria': qta_necessaria, 'gia_fatti': gia_fatti,
+        'qta_richiesta': good, 'eccedenza_pct': eccedenza_pct,
+    }
+
+
+@pp_bp.post('/api/non-conformita-8d')
+def api_non_conformita_8d_crea():
+    """Apre un Modulo Non Conformità 8D (semplificato) per un'eccedenza di
+    produzione bloccata — va in coda per l'autorizzazione di Angelo."""
+    d = request.get_json(force=True)
+    o = OrdineProduzione.query.filter_by(codice=(d.get('op_code') or '').strip()).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+    centro = CentroCostoWood.query.get(d.get('centro_id'))
+    if not centro:
+        return jsonify(ok=False, error='Centro di costo non trovato'), 404
+    componente = (d.get('componente') or '').strip() or None
+    try:
+        good = _integer(d.get('pezzi_buoni', 0), 'Pezzi buoni')
+    except ValueError as exc:
+        return jsonify(ok=False, error=str(exc)), 400
+    if good <= 0:
+        return jsonify(ok=False, error='Quantità non valida'), 400
+
+    qta_necessaria = _qta_necessaria_riga(o, componente)
+    if not qta_necessaria or qta_necessaria <= 0:
+        return jsonify(ok=False, error='Riga non riconosciuta nella distinta: nessun pianificato di riferimento'), 400
+    gia_fatti = (db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+                 .filter(EventoConsuntivoPP.op_code == o.codice,
+                         db.func.lower(EventoConsuntivoPP.fase) == centro.nome.strip().lower(),
+                         EventoConsuntivoPP.componente == componente if componente
+                         else EventoConsuntivoPP.componente.is_(None))
+                 .scalar()) or 0
+    eccedenza_pct = round(max(0, (gia_fatti + good - qta_necessaria) / qta_necessaria * 100), 1)
+
+    modulo = ModuloNonConformita8D(
+        op_code=o.codice, centro_costo_id=centro.id, componente=componente,
+        qta_pianificata_riga=qta_necessaria, qta_gia_fatta=gia_fatti, qta_richiesta=good,
+        eccedenza_pct=eccedenza_pct,
+        descrizione_problema=(d.get('descrizione_problema') or '').strip(),
+        causa_probabile=(d.get('causa_probabile') or '').strip(),
+        azione_immediata=(d.get('azione_immediata') or '').strip(),
+    )
+    db.session.add(modulo)
+    db.session.commit()
+    return jsonify(ok=True, id=modulo.id)
+
+
+@pp_bp.get('/api/non-conformita-8d')
+def api_non_conformita_8d_lista():
+    """Coda per Angelo — SOLO PIN capo. Di default solo IN_ATTESA; ?tutti=1
+    per vedere anche le decise (storico)."""
+    if not _verifica_pin_capo(request.args):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    q = ModuloNonConformita8D.query
+    if request.args.get('tutti') != '1':
+        q = q.filter_by(stato='IN_ATTESA')
+    moduli = q.order_by(ModuloNonConformita8D.creato_il.desc()).limit(100).all()
+    op_codes = {m.op_code for m in moduli}
+    articolo_per_op = {o.codice: o.codice_articolo for o in
+                       OrdineProduzione.query.filter(OrdineProduzione.codice.in_(op_codes)).all()}
+    centri = {c.id: c.nome for c in CentroCostoWood.query.filter(
+        CentroCostoWood.id.in_({m.centro_costo_id for m in moduli})).all()}
+    return jsonify(ok=True, moduli=[{
+        'id': m.id, 'op_code': m.op_code, 'codice_articolo': articolo_per_op.get(m.op_code, '—'),
+        'centro_nome': centri.get(m.centro_costo_id, '—'), 'componente': m.componente,
+        'qta_pianificata_riga': m.qta_pianificata_riga, 'qta_gia_fatta': m.qta_gia_fatta,
+        'qta_richiesta': m.qta_richiesta, 'eccedenza_pct': m.eccedenza_pct,
+        'descrizione_problema': m.descrizione_problema, 'causa_probabile': m.causa_probabile,
+        'azione_immediata': m.azione_immediata, 'stato': m.stato,
+        'creato_il': m.creato_il.strftime('%d/%m/%Y %H:%M'),
+        'deciso_il': m.deciso_il.strftime('%d/%m/%Y %H:%M') if m.deciso_il else None,
+        'nota_decisione': m.nota_decisione,
+    } for m in moduli])
+
+
+@pp_bp.post('/api/non-conformita-8d/<int:mid>/decidi')
+def api_non_conformita_8d_decidi(mid):
+    """Angelo approva o respinge — SOLO PIN capo. 'approva': true/false,
+    'nota' opzionale."""
+    d = request.get_json(force=True)
+    if not _verifica_pin_capo(d):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    m = ModuloNonConformita8D.query.get_or_404(mid)
+    if m.stato != 'IN_ATTESA':
+        return jsonify(ok=False, error=f'Modulo già deciso ({m.stato})'), 409
+    m.stato = 'APPROVATO' if d.get('approva') else 'RESPINTO'
+    m.nota_decisione = (d.get('nota') or '').strip()
+    m.deciso_il = datetime.utcnow()
+    db.session.commit()
+    return jsonify(ok=True, stato=m.stato)
 
 
 @pp_bp.get('/api/dichiarazione-produzione/anteprima')

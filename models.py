@@ -1962,6 +1962,40 @@ class AuditPP(db.Model):
     dettaglio = db.Column(db.Text, default="")
     creato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
 
+
+class ModuloNonConformita8D(db.Model):
+    """
+    Autorizzazione per una dichiarazione di produzione che eccede la
+    quantità pianificata di oltre SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE (20%,
+    vedi blueprints/produzione_pp/routes.py) — un'eccedenza così grande
+    quasi certamente segnala scarti/errori, quindi la dichiarazione viene
+    BLOCCATA finché non c'è un'autorizzazione esplicita di Angelo.
+    Ricalca il metodo Fiat 8D (analisi strutturata delle non conformità)
+    ma volutamente ridotto all'essenziale — non le 8 sezioni complete,
+    solo cosa serve per decidere: cosa è successo, causa probabile,
+    azione immediata, e la decisione finale.
+    Una volta APPROVATO, autorizza UNA sola dichiarazione (la stessa
+    quantità richiesta qui) — poi passa a CONSUMATO e non autorizza più
+    nulla: un'eccedenza successiva richiede un nuovo modulo.
+    """
+    __tablename__ = "moduli_non_conformita_8d"
+    id = db.Column(db.Integer, primary_key=True)
+    op_code = db.Column(db.String(20), nullable=False, index=True)
+    centro_costo_id = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
+    componente = db.Column(db.String(50), nullable=True)  # None = prodotto finito/assieme dell'OP
+    qta_pianificata_riga = db.Column(db.Float, nullable=False)
+    qta_gia_fatta = db.Column(db.Float, nullable=False, default=0)
+    qta_richiesta = db.Column(db.Float, nullable=False)   # pezzi buoni che si vuole dichiarare ORA
+    eccedenza_pct = db.Column(db.Float, nullable=False)
+    descrizione_problema = db.Column(db.Text, default='')
+    causa_probabile = db.Column(db.Text, default='')
+    azione_immediata = db.Column(db.Text, default='')
+    stato = db.Column(db.String(20), nullable=False, default='IN_ATTESA')  # IN_ATTESA / APPROVATO / RESPINTO / CONSUMATO
+    creato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    deciso_il = db.Column(db.DateTime, nullable=True)
+    nota_decisione = db.Column(db.Text, default='')
+    event_id_consumato = db.Column(db.String(100), nullable=True)  # collega alla dichiarazione poi effettivamente registrata
+
 def prossimo_codice_ordine_pp():
     """Restituisce OP-YYYY-000001. Su PostgreSQL serializza anche la prima riga annuale."""
     anno = datetime.utcnow().year

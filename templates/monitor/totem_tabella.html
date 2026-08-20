@@ -44,6 +44,8 @@
   table.tabella-dettaglio td{padding:6px 8px;font-size:.85rem;color:var(--text);border-top:1px solid var(--border)}
   table.tabella-dettaglio .codice-cell{font-weight:700}
   table.tabella-dettaglio .muted{color:var(--muted)}
+  table.tabella-dettaglio tr.componente-completo{background:rgba(26,158,92,.12)}
+  table.tabella-dettaglio tr.componente-completo td{color:var(--ok,#1a9e5c)}
   .codice-nome{font-size:1.15rem;font-weight:800;color:var(--text)}
   .codice-desc{font-size:.8rem;color:var(--muted)}
   .pct-bar{background:var(--surf2);border-radius:8px;height:20px;overflow:hidden;position:relative;min-width:110px}
@@ -120,8 +122,8 @@
           </tr></thead>
           <tbody>
             {% for c in g.componenti %}
-            <tr>
-              <td class="codice-cell">{{ c.codice_lavorato }}{{ ' (prodotto finito)' if c.componente_finale else '' }}</td>
+            <tr class="{{ 'componente-completo' if c.completato else '' }}">
+              <td class="codice-cell">{{ c.codice_lavorato }}{{ ' (prodotto finito)' if c.componente_finale else '' }}{{ ' ✅' if c.completato else '' }}</td>
               <td class="muted">{{ c.descrizione_lavorata or '—' }}</td>
               <td>{{ c.totale | round | int }}</td>
               <td>{{ (c.totale - c.saldo) | round | int }}</td>
