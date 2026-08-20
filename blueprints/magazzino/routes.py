@@ -10,7 +10,8 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     CostoStandardVersioneDettaglioWood, CostoStandardVersioneFaseWood,
                     MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood,
                     DescrizioneCodiceWood,
-                    ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista)
+                    ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
+                    EventoConsuntivoPP)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -970,35 +971,28 @@ def api_giacenza_lista():
 
     scorte_minime = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.filter(ScortaMinimaWood.codice.in_(codici)).all()} if codici else {}
 
-    # Grezzo IW: prodotto assemblato ma NON ANCORA verniciato — stessa
-    # identica formula già usata per il campo 'Grezzi' della board Kanban
-    # (_aggiorna_grezzi_e_trattamento): totale prodotto (qta_buona su TUTTI
-    # gli OP, aperti e chiusi, di questo codice) meno quanto già spedito a
-    # un terzista per il trattamento esterno (LavorazioneTerzista, DDT
-    # uscita) — quello partito non è più "grezzo in casa".
-    prodotto_totale = {}
+    # Grezzo IW: fine saldatura giornaliera dichiarata in MasterWork/
+    # Dichiarazione Produzione per il CODICE PADRE (componente IS NULL =
+    # prodotto finito/assieme finale, non un semilavorato), fase Saldatura,
+    # E approvata dalla Direzione (approvato_direzione=True) — solo quello
+    # che Angelo ha controllato attentamente conta come "grezzo pronto",
+    # non ogni dichiarazione appena arrivata.
+    grezzo_iw = {}
     if codici:
-        for cod, tot in (db.session.query(OrdineProduzione.codice_articolo, db.func.sum(OrdineProduzione.qta_buona))
-                          .filter(OrdineProduzione.codice_articolo.in_(codici))
+        for cod, tot in (db.session.query(OrdineProduzione.codice_articolo,
+                          db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+                          .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
+                          .filter(OrdineProduzione.codice_articolo.in_(codici),
+                                  EventoConsuntivoPP.componente.is_(None),
+                                  db.func.lower(EventoConsuntivoPP.fase) == 'saldatura',
+                                  EventoConsuntivoPP.approvato_direzione.is_(True))
                           .group_by(OrdineProduzione.codice_articolo).all()):
-            prodotto_totale[cod] = tot or 0
-    spedito_trattamento = {}
-    if prodotto_totale:
-        for lav in LavorazioneTerzista.query.all():
-            try:
-                note_j = json.loads(lav.note or '{}')
-            except Exception:
-                continue
-            cod = (note_j.get('codice') or '').strip()
-            if cod in prodotto_totale:
-                spedito_trattamento[cod] = spedito_trattamento.get(cod, 0) + (lav.qta or 0)
-    grezzo_iw = {cod: max(tot - spedito_trattamento.get(cod, 0), 0) for cod, tot in prodotto_totale.items()}
+            grezzo_iw[cod] = tot or 0
 
-    # Ordinato in Produzione: residuo (qta_pianificata − qta_buona) sugli OP
-    # ANCORA APERTI per questo codice — fonte di supply ALTERNATIVA a
-    # 'Ordinato Fornitori': lo stesso codice può essere prodotto in casa
-    # invece che comprato dal fornitore. Stessi stati già usati per il
-    # 'Residuo da produrre' della board Kanban (_aggiorna_residuo_produzione).
+    # Ordinato in Produzione: SALDO degli Ordini di Lavoro in produzione
+    # ancora aperti per questo codice (es. ordinati 60, riversati a
+    # magazzino 30 → saldo 30) — residuo (qta_pianificata − qta_buona)
+    # sugli stessi stati già usati per il 'Residuo da produrre' Kanban.
     ordinato_produzione = {}
     if codici:
         for cod, qta_pian, qta_buona in (db.session.query(OrdineProduzione.codice_articolo,
@@ -1023,14 +1017,22 @@ def api_giacenza_lista():
     for g in righe:
         imp = impegnato.get(g.codice, 0)
         ord_ = ordinato.get(g.codice, 0)
+        grz = grezzo_iw.get(g.codice, 0)
+        ord_prod = ordinato_produzione.get(g.codice, 0)
         scorta_min = scorte_minime.get(g.codice, 0)
         disp_contabile = round((g.quantita or 0) - imp + ord_, 4)
+        # Disp. Contabile Allargata* — formula DIVERSA dalla Disp. Contabile
+        # "stretta" sopra (quella resta invariata, usata anche per il
+        # Fabbisogno) e diversa anche dal concetto di disponibilità
+        # contabile della board Kanban: qui entrano anche Grezzo IW e
+        # Ordinato in Produzione, per questo è marcata con l'asterisco.
+        disp_allargata = round((g.quantita or 0) + grz - imp + ord_ + ord_prod, 4)
         fabbisogno = round(max(scorta_min - disp_contabile, 0), 4)
         righe_out.append({
             'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
             'unita_misura': approvvigionamenti.get(g.codice).unita_misura if approvvigionamenti.get(g.codice) else '',
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
-            'grezzo_iw': grezzo_iw.get(g.codice, 0), 'ordinato_produzione': ordinato_produzione.get(g.codice, 0),
+            'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
             'scorta_minima': scorta_min, 'fabbisogno': fabbisogno,
             'aggiornato_il': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if g.aggiornato_il else '',
         })

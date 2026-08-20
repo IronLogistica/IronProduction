@@ -232,6 +232,7 @@ async function caricaMagazzinoWood(){
       <th class="mt-th-ordinato">+ Ordinato Fornitori<div class="mt-formula">Somma di (qtà ordinata − qtà ricevuta) sulle righe di Ordine di Acquisto ancora aperte per questo codice</div></th>
       <th class="mt-th-ordinato">+ Ordinato in Produzione<div class="mt-formula">Residuo (da fare − fatto) sugli Ordini di Produzione ancora aperti per questo codice — l'alternativa a produrlo in casa invece che comprarlo</div></th>
       <th class="mt-th-disp">(=) Disp. Contabile<div class="mt-formula">Stock − Impegnato OP + Ordinato Fornitori</div></th>
+      <th class="mt-th-disp">(=) Disp. Contabile Allargata*<div class="mt-formula">*Diversa dalla Disp. Contabile qui a fianco e dal concetto usato nei Kanban: Stock + Grezzo IW − Impegnato OP + Ordinato Fornitori + Ordinato in Produzione</div></th>
       <th class="mt-th-scorta">− Scorta Min.<div class="mt-formula">Valore impostato manualmente</div></th>
       <th class="mt-th-fabb">(=) Fabbisogno<div class="mt-formula">MAX(Scorta Minima − Disp. Contabile, 0)</div></th></tr></thead><tbody>`;
     righe.forEach(g=>{
@@ -254,6 +255,7 @@ async function caricaMagazzinoWood(){
         <td class="${g.ordinato>0?'mt-val-ordinato':'mt-val-zero'}">${g.ordinato>0?g.ordinato:0}</td>
         <td class="${g.ordinato_produzione>0?'mt-val-ordinato':'mt-val-zero'}">${g.ordinato_produzione>0?g.ordinato_produzione:0}</td>
         <td class="mt-val-disp">${g.disponibile_contabile}</td>
+        <td class="mt-val-disp">${g.disponibile_allargata}*</td>
         <td class="mt-val-zero">
           <div style="display:flex;align-items:center;gap:4px">
             <input type="number" step="0.01" value="${g.scorta_minima}" id="scorta-${g.codice}"
