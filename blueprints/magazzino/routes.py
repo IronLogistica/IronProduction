@@ -1,5 +1,6 @@
 from flask import Blueprint, render_template, jsonify, request, redirect, current_app
 from datetime import datetime, date
+import json
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
                     TIPI_APPROVVIGIONAMENTO, GiacenzaWood, MovimentoGiacenzaWood, OrdineProduzione,
@@ -9,7 +10,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     CostoStandardVersioneDettaglioWood, CostoStandardVersioneFaseWood,
                     MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood,
                     DescrizioneCodiceWood,
-                    ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood)
+                    ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -969,6 +970,45 @@ def api_giacenza_lista():
 
     scorte_minime = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.filter(ScortaMinimaWood.codice.in_(codici)).all()} if codici else {}
 
+    # Grezzo IW: prodotto assemblato ma NON ANCORA verniciato — stessa
+    # identica formula già usata per il campo 'Grezzi' della board Kanban
+    # (_aggiorna_grezzi_e_trattamento): totale prodotto (qta_buona su TUTTI
+    # gli OP, aperti e chiusi, di questo codice) meno quanto già spedito a
+    # un terzista per il trattamento esterno (LavorazioneTerzista, DDT
+    # uscita) — quello partito non è più "grezzo in casa".
+    prodotto_totale = {}
+    if codici:
+        for cod, tot in (db.session.query(OrdineProduzione.codice_articolo, db.func.sum(OrdineProduzione.qta_buona))
+                          .filter(OrdineProduzione.codice_articolo.in_(codici))
+                          .group_by(OrdineProduzione.codice_articolo).all()):
+            prodotto_totale[cod] = tot or 0
+    spedito_trattamento = {}
+    if prodotto_totale:
+        for lav in LavorazioneTerzista.query.all():
+            try:
+                note_j = json.loads(lav.note or '{}')
+            except Exception:
+                continue
+            cod = (note_j.get('codice') or '').strip()
+            if cod in prodotto_totale:
+                spedito_trattamento[cod] = spedito_trattamento.get(cod, 0) + (lav.qta or 0)
+    grezzo_iw = {cod: max(tot - spedito_trattamento.get(cod, 0), 0) for cod, tot in prodotto_totale.items()}
+
+    # Ordinato in Produzione: residuo (qta_pianificata − qta_buona) sugli OP
+    # ANCORA APERTI per questo codice — fonte di supply ALTERNATIVA a
+    # 'Ordinato Fornitori': lo stesso codice può essere prodotto in casa
+    # invece che comprato dal fornitore. Stessi stati già usati per il
+    # 'Residuo da produrre' della board Kanban (_aggiorna_residuo_produzione).
+    ordinato_produzione = {}
+    if codici:
+        for cod, qta_pian, qta_buona in (db.session.query(OrdineProduzione.codice_articolo,
+                                          OrdineProduzione.qta_pianificata, OrdineProduzione.qta_buona)
+                                          .filter(OrdineProduzione.codice_articolo.in_(codici),
+                                                  OrdineProduzione.stato.in_(['Creato', 'Rilasciato', 'In esecuzione'])).all()):
+            residuo = max((qta_pian or 0) - (qta_buona or 0), 0)
+            if residuo > 0:
+                ordinato_produzione[cod] = ordinato_produzione.get(cod, 0) + residuo
+
     # Descrizione: best-effort dall'ultima riga di Ordine di Acquisto vista per quel codice (nessuna anagrafica descrittiva propria per Iron Wood).
     descrizioni = {}
     if codici:
@@ -990,6 +1030,7 @@ def api_giacenza_lista():
             'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
             'unita_misura': approvvigionamenti.get(g.codice).unita_misura if approvvigionamenti.get(g.codice) else '',
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
+            'grezzo_iw': grezzo_iw.get(g.codice, 0), 'ordinato_produzione': ordinato_produzione.get(g.codice, 0),
             'scorta_minima': scorta_min, 'fabbisogno': fabbisogno,
             'aggiornato_il': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if g.aggiornato_il else '',
         })

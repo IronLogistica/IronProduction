@@ -227,8 +227,10 @@ async function caricaMagazzinoWood(){
     let html = `<div style="overflow-x:auto"><table class="mat-table"><thead><tr>
       <th>Codice</th><th>Descrizione</th>
       <th class="mt-th-stock">+ Stock<div class="mt-formula">Giacenza fisica registrata</div></th>
+      <th class="mt-th-stock">Grezzo IW<div class="mt-formula">Prodotto assemblato ma NON ANCORA verniciato: totale prodotto (consuntivi) meno quanto già spedito a trattamento esterno</div></th>
       <th class="mt-th-impegnato">− Impegnato OP<div class="mt-formula">Stock − Giacenza residua dopo aver simulato il consumo di TUTTI gli OP aperti, in ordine di priorità, nettando a ogni nodo della distinta contro lo stock già disponibile (incluso il semilavorato già prodotto)</div></th>
       <th class="mt-th-ordinato">+ Ordinato Fornitori<div class="mt-formula">Somma di (qtà ordinata − qtà ricevuta) sulle righe di Ordine di Acquisto ancora aperte per questo codice</div></th>
+      <th class="mt-th-ordinato">+ Ordinato in Produzione<div class="mt-formula">Residuo (da fare − fatto) sugli Ordini di Produzione ancora aperti per questo codice — l'alternativa a produrlo in casa invece che comprarlo</div></th>
       <th class="mt-th-disp">(=) Disp. Contabile<div class="mt-formula">Stock − Impegnato OP + Ordinato Fornitori</div></th>
       <th class="mt-th-scorta">− Scorta Min.<div class="mt-formula">Valore impostato manualmente</div></th>
       <th class="mt-th-fabb">(=) Fabbisogno<div class="mt-formula">MAX(Scorta Minima − Disp. Contabile, 0)</div></th></tr></thead><tbody>`;
@@ -243,12 +245,14 @@ async function caricaMagazzinoWood(){
             <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="salvaStock('${g.codice}')" title="Salva nuovo stock">💾</button>
           </div>
         </td>
+        <td class="${g.grezzo_iw>0?'mt-val-stock':'mt-val-zero'}">${g.grezzo_iw>0?g.grezzo_iw:0}</td>
         <td class="${g.impegnato>0?'mt-val-impegnato':'mt-val-zero'}">
           ${g.impegnato>0
             ? `<span style="cursor:pointer;display:inline-flex;align-items:center;gap:5px" onclick="apriImpegniOp('${esc(g.codice)}', event)">${g.impegnato} <span title="Vedi quali OP generano questo impegno">📋</span></span>`
             : g.impegnato}
         </td>
         <td class="${g.ordinato>0?'mt-val-ordinato':'mt-val-zero'}">${g.ordinato>0?g.ordinato:0}</td>
+        <td class="${g.ordinato_produzione>0?'mt-val-ordinato':'mt-val-zero'}">${g.ordinato_produzione>0?g.ordinato_produzione:0}</td>
         <td class="mt-val-disp">${g.disponibile_contabile}</td>
         <td class="mt-val-zero">
           <div style="display:flex;align-items:center;gap:4px">
