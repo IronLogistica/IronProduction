@@ -903,91 +903,115 @@ def _registra_movimento_giacenza(codice, delta, tipo, riferimento='', note='', c
                                           riferimento=riferimento, note=note))
 
 
-def calcola_alert_fabbisogno_codici_padre():
+def _calcola_campi_giacenza(righe):
     """
-    Codici PADRE (compaiono come codice_padre in Distinta Base Iron Wood —
-    prodotti finiti/assiemi, non materie prime foglia) il cui Fabbisogno
-    (stessa formula di /api/giacenza_wood: MAX(Scorta Minima − Disp.
-    Contabile Allargata, 0)) è diverso da zero. Alimenta la NUOVA tabella
-    sopra Alert Scorte: 'qui ci vanno a finire' i codici padre critici,
-    prima ancora della board Kanban sottostante.
+    Funzione CONDIVISA che calcola Impegnato/Ordinato/Grezzo IW/Ordinato in
+    Produzione/Disponibilità (stretta e Allargata*)/Fabbisogno per un
+    elenco di righe GiacenzaWood (vere o sintetiche, es. i codici della
+    Distinta Base senza ancora una riga di giacenza propria) — usata SIA
+    da /api/giacenza_wood (Magazzino) SIA da Alert Scorte Codici Padre,
+    così le due pagine non possono MAI più mostrare un fabbisogno diverso
+    per lo stesso codice: prima ognuna aveva la sua copia della formula e
+    rischiavano (ed è successo) di disallinearsi.
     """
-    from models import (DistintaBaseWood, GiacenzaWood, OrdineProduzione, EventoConsuntivoPP,
-                         ScortaMinimaWood, RettificaGrezzoIW, RigaOrdineAcquistoWood, OrdineAcquistoWood)
-
-    # Codice PADRE vero = compare come codice_padre in Distinta Base MA NON
-    # compare mai come codice_figlio da nessuna parte — la radice
-    # dell'albero (prodotto finito reale). Un semilavorato come M16-SFS ha
-    # a sua volta dei componenti sotto di sé (risulta 'codice_padre' di
-    # QUEL pezzo di distinta), ma è comunque un figlio di T200/ZT più in
-    # alto: senza questa esclusione finiva scambiato per un codice padre.
-    tutti_padri = {r[0] for r in db.session.query(DistintaBaseWood.codice_padre).distinct().all()}
-    tutti_figli = {r[0] for r in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
-    codici_padre = sorted(tutti_padri - tutti_figli)
-    if not codici_padre:
+    codici = [g.codice for g in righe]
+    if not codici:
         return []
 
-    giacenze = {g.codice: g.quantita or 0 for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici_padre)).all()}
     giacenza_residua = _giacenza_residua_dopo_impegni()
-    impegnato = {cod: round(giacenze.get(cod, 0) - giacenza_residua.get(cod, giacenze.get(cod, 0)), 4) for cod in codici_padre}
+    impegnato = {g.codice: round((g.quantita or 0) - giacenza_residua.get(g.codice, g.quantita or 0), 4) for g in righe}
 
     ordinato = {}
     for cod, qta_orig, qta_ric in (db.session.query(RigaOrdineAcquistoWood.codice,
                                     RigaOrdineAcquistoWood.qta_originale, RigaOrdineAcquistoWood.qta_ricevuta)
                                     .join(OrdineAcquistoWood)
-                                    .filter(RigaOrdineAcquistoWood.codice.in_(codici_padre),
+                                    .filter(RigaOrdineAcquistoWood.codice.in_(codici),
                                             OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all()):
         residuo = (qta_orig or 0) - (qta_ric or 0)
         if residuo > 0:
             ordinato[cod] = ordinato.get(cod, 0) + residuo
 
+    scorte_minime = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.filter(ScortaMinimaWood.codice.in_(codici)).all()}
+
     grezzo_iw = {}
-    for cod, tot in (db.session.query(OrdineProduzione.codice_articolo, db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+    for cod, tot in (db.session.query(OrdineProduzione.codice_articolo,
+                      db.func.sum(EventoConsuntivoPP.pezzi_buoni))
                       .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
-                      .filter(OrdineProduzione.codice_articolo.in_(codici_padre),
+                      .filter(OrdineProduzione.codice_articolo.in_(codici),
                               EventoConsuntivoPP.componente.is_(None),
                               db.func.lower(EventoConsuntivoPP.fase) == 'saldatura',
                               EventoConsuntivoPP.approvato_direzione.is_(True))
                       .group_by(OrdineProduzione.codice_articolo).all()):
         grezzo_iw[cod] = tot or 0
     for cod, delta_tot in (db.session.query(RettificaGrezzoIW.codice, db.func.sum(RettificaGrezzoIW.delta))
-                            .filter(RettificaGrezzoIW.codice.in_(codici_padre))
+                            .filter(RettificaGrezzoIW.codice.in_(codici))
                             .group_by(RettificaGrezzoIW.codice).all()):
         grezzo_iw[cod] = grezzo_iw.get(cod, 0) + (delta_tot or 0)
 
     ordinato_produzione = {}
     for cod, qta_pian, qta_buona in (db.session.query(OrdineProduzione.codice_articolo,
                                       OrdineProduzione.qta_pianificata, OrdineProduzione.qta_buona)
-                                      .filter(OrdineProduzione.codice_articolo.in_(codici_padre),
+                                      .filter(OrdineProduzione.codice_articolo.in_(codici),
                                               OrdineProduzione.stato.in_(['Creato', 'Rilasciato', 'In esecuzione'])).all()):
         residuo = max((qta_pian or 0) - (qta_buona or 0), 0)
         if residuo > 0:
             ordinato_produzione[cod] = ordinato_produzione.get(cod, 0) + residuo
 
-    scorte_minime = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.filter(ScortaMinimaWood.codice.in_(codici_padre)).all()}
     descrizioni = {}
     for cod, descr in (db.session.query(RigaOrdineAcquistoWood.codice, RigaOrdineAcquistoWood.descrizione)
-                        .filter(RigaOrdineAcquistoWood.codice.in_(codici_padre))
+                        .filter(RigaOrdineAcquistoWood.codice.in_(codici))
                         .order_by(RigaOrdineAcquistoWood.id.desc()).all()):
         descrizioni.setdefault(cod, descr)
 
-    risultati = []
-    for cod in codici_padre:
-        stock = giacenze.get(cod, 0)
-        imp = impegnato.get(cod, 0)
-        ord_ = ordinato.get(cod, 0)
-        grz = grezzo_iw.get(cod, 0)
-        ord_prod = ordinato_produzione.get(cod, 0)
-        scorta_min = scorte_minime.get(cod, 0)
-        disp_allargata = round(stock + grz - imp + ord_ + ord_prod, 4)
+    approvvigionamenti = {a.codice: a for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()}
+
+    righe_out = []
+    for g in righe:
+        imp = impegnato.get(g.codice, 0)
+        ord_ = ordinato.get(g.codice, 0)
+        grz = grezzo_iw.get(g.codice, 0)
+        ord_prod = ordinato_produzione.get(g.codice, 0)
+        scorta_min = scorte_minime.get(g.codice, 0)
+        disp_contabile = round((g.quantita or 0) - imp + ord_, 4)
+        disp_allargata = round((g.quantita or 0) + grz - imp + ord_ + ord_prod, 4)
         fabbisogno = round(max(scorta_min - disp_allargata, 0), 4)
-        if fabbisogno > 0:
-            risultati.append({
-                'codice': cod, 'descrizione': descrizioni.get(cod, ''), 'stock': stock,
-                'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'ordinato_fornitori': ord_,
-                'scorta_minima': scorta_min, 'disponibile_allargata': disp_allargata,
-                'fabbisogno': fabbisogno,
-            })
+        righe_out.append({
+            'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
+            'unita_misura': approvvigionamenti.get(g.codice).unita_misura if approvvigionamenti.get(g.codice) else '',
+            'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
+            'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
+            'scorta_minima': scorta_min, 'fabbisogno': fabbisogno,
+            'aggiornato_il': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if getattr(g, 'aggiornato_il', None) else '',
+        })
+    return righe_out
+
+
+def calcola_alert_fabbisogno_codici_padre():
+    """
+    Codici PADRE (compaiono come codice_padre in Distinta Base Iron Wood MA
+    MAI come codice_figlio da nessuna parte — la radice dell'albero, il
+    prodotto finito reale, non un semilavorato) il cui Fabbisogno è diverso
+    da zero. Riusa _calcola_campi_giacenza — LA STESSA funzione di
+    /api/giacenza_wood (Magazzino) — così non può mai dare un numero
+    diverso da quello che vedi in Magazzino per lo stesso codice.
+    """
+    from models import DistintaBaseWood, GiacenzaWood
+
+    tutti_padri = {r[0] for r in db.session.query(DistintaBaseWood.codice_padre).distinct().all()}
+    tutti_figli = {r[0] for r in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
+    codici_padre = sorted(tutti_padri - tutti_figli)
+    if not codici_padre:
+        return []
+
+    righe_gz = GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici_padre)).all()
+    presenti = {g.codice for g in righe_gz}
+    # Un codice padre senza ancora nessuna riga di giacenza propria (mai
+    # movimentato) deve comunque poter avere fabbisogno visibile — stessa
+    # regola già usata in /api/giacenza_wood per non nasconderlo.
+    righe_gz = list(righe_gz) + [GiacenzaWood(codice=c, quantita=0) for c in sorted(set(codici_padre) - presenti)]
+
+    righe_out = _calcola_campi_giacenza(righe_gz)
+    risultati = [r for r in righe_out if r['fabbisogno'] > 0]
     risultati.sort(key=lambda r: -r['fabbisogno'])
     return risultati
 
@@ -1040,101 +1064,7 @@ def api_giacenza_lista():
         totale += len(mancanti)
     codici = [g.codice for g in righe]
 
-    # Impegnato: quanto di ogni codice è già "preso" dagli OP aperti (stessa
-    # simulazione priorità-based usata ovunque nell'app per il fabbisogno).
-    giacenza_residua = _giacenza_residua_dopo_impegni()
-    impegnato = {g.codice: round((g.quantita or 0) - giacenza_residua.get(g.codice, g.quantita or 0), 4) for g in righe}
-
-    # Ordinato: quanto è ancora da ricevere sugli Ordini di Acquisto aperti per questi codici.
-    ordinato = {}
-    if codici:
-        for cod, qta_orig, qta_ric in (db.session.query(RigaOrdineAcquistoWood.codice,
-                                                          RigaOrdineAcquistoWood.qta_originale,
-                                                          RigaOrdineAcquistoWood.qta_ricevuta)
-                                        .join(OrdineAcquistoWood)
-                                        .filter(RigaOrdineAcquistoWood.codice.in_(codici),
-                                                OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all()):
-            residuo = (qta_orig or 0) - (qta_ric or 0)
-            if residuo > 0:
-                ordinato[cod] = ordinato.get(cod, 0) + residuo
-
-    scorte_minime = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.filter(ScortaMinimaWood.codice.in_(codici)).all()} if codici else {}
-
-    # Grezzo IW: fine saldatura giornaliera dichiarata in MasterWork/
-    # Dichiarazione Produzione per il CODICE PADRE (componente IS NULL =
-    # prodotto finito/assieme finale, non un semilavorato), fase Saldatura,
-    # E approvata dalla Direzione (approvato_direzione=True) — solo quello
-    # che Angelo ha controllato attentamente conta come "grezzo pronto",
-    # non ogni dichiarazione appena arrivata.
-    grezzo_iw = {}
-    if codici:
-        for cod, tot in (db.session.query(OrdineProduzione.codice_articolo,
-                          db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-                          .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
-                          .filter(OrdineProduzione.codice_articolo.in_(codici),
-                                  EventoConsuntivoPP.componente.is_(None),
-                                  db.func.lower(EventoConsuntivoPP.fase) == 'saldatura',
-                                  EventoConsuntivoPP.approvato_direzione.is_(True))
-                          .group_by(OrdineProduzione.codice_articolo).all()):
-            grezzo_iw[cod] = tot or 0
-    # + rettifiche manuali cumulative (scarti, rotture in trasporto, ecc. —
-    # Angelo corregge a mano quello che l'automatico da MasterWork non vede).
-    if codici:
-        for cod, delta_tot in (db.session.query(RettificaGrezzoIW.codice, db.func.sum(RettificaGrezzoIW.delta))
-                                .filter(RettificaGrezzoIW.codice.in_(codici))
-                                .group_by(RettificaGrezzoIW.codice).all()):
-            grezzo_iw[cod] = grezzo_iw.get(cod, 0) + (delta_tot or 0)
-
-    # Ordinato in Produzione: SALDO degli Ordini di Lavoro in produzione
-    # ancora aperti per questo codice (es. ordinati 60, riversati a
-    # magazzino 30 → saldo 30) — residuo (qta_pianificata − qta_buona)
-    # sugli stessi stati già usati per il 'Residuo da produrre' Kanban.
-    ordinato_produzione = {}
-    if codici:
-        for cod, qta_pian, qta_buona in (db.session.query(OrdineProduzione.codice_articolo,
-                                          OrdineProduzione.qta_pianificata, OrdineProduzione.qta_buona)
-                                          .filter(OrdineProduzione.codice_articolo.in_(codici),
-                                                  OrdineProduzione.stato.in_(['Creato', 'Rilasciato', 'In esecuzione'])).all()):
-            residuo = max((qta_pian or 0) - (qta_buona or 0), 0)
-            if residuo > 0:
-                ordinato_produzione[cod] = ordinato_produzione.get(cod, 0) + residuo
-
-    # Descrizione: best-effort dall'ultima riga di Ordine di Acquisto vista per quel codice (nessuna anagrafica descrittiva propria per Iron Wood).
-    descrizioni = {}
-    if codici:
-        for cod, descr in (db.session.query(RigaOrdineAcquistoWood.codice, RigaOrdineAcquistoWood.descrizione)
-                            .filter(RigaOrdineAcquistoWood.codice.in_(codici))
-                            .order_by(RigaOrdineAcquistoWood.id.desc()).all()):
-            descrizioni.setdefault(cod, descr)
-
-    approvvigionamenti = {a.codice: a for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()} if codici else {}
-
-    righe_out = []
-    for g in righe:
-        imp = impegnato.get(g.codice, 0)
-        ord_ = ordinato.get(g.codice, 0)
-        grz = grezzo_iw.get(g.codice, 0)
-        ord_prod = ordinato_produzione.get(g.codice, 0)
-        scorta_min = scorte_minime.get(g.codice, 0)
-        disp_contabile = round((g.quantita or 0) - imp + ord_, 4)
-        # Disp. Contabile Allargata* — formula DIVERSA dalla Disp. Contabile
-        # "stretta" sopra (quella resta invariata, usata anche per il
-        # Fabbisogno) e diversa anche dal concetto di disponibilità
-        # contabile della board Kanban: qui entrano anche Grezzo IW e
-        # Ordinato in Produzione, per questo è marcata con l'asterisco.
-        disp_allargata = round((g.quantita or 0) + grz - imp + ord_ + ord_prod, 4)
-        # Fabbisogno dipende dalla Disp. Contabile ALLARGATA (non da quella
-        # stretta) confrontata con la Scorta Minima — vede anche Grezzo IW
-        # e Ordinato in Produzione come disponibilità reale/imminente.
-        fabbisogno = round(max(scorta_min - disp_allargata, 0), 4)
-        righe_out.append({
-            'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
-            'unita_misura': approvvigionamenti.get(g.codice).unita_misura if approvvigionamenti.get(g.codice) else '',
-            'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
-            'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
-            'scorta_minima': scorta_min, 'fabbisogno': fabbisogno,
-            'aggiornato_il': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if g.aggiornato_il else '',
-        })
+    righe_out = _calcola_campi_giacenza(righe)
 
     return jsonify({
         'righe': righe_out,
