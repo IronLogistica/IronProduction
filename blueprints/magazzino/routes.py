@@ -941,23 +941,6 @@ def _aggiorna_dati_wms(g, forza=False):
         g.scorta_minima_wms_aggiornato_il = ora
 
 
-@magazzino_bp.route('/api/giacenza_wood/<codice>/wms-raw')
-def api_giacenza_wms_raw(codice):
-    """
-    DIAGNOSTICA — mostra la risposta GREZZA e completa di MasterLogistic-WMS
-    per questo SKU (tutti i campi, non solo quelli che ottieni_scheda_kanban
-    già usa) — serve a trovare il nome vero del campo 'scorta minima' (e di
-    qualunque altro), dato che il nome usato oggi ('scorta_minima') è
-    un'ipotesi non confermata e a quanto pare sbagliata. Da togliere una
-    volta chiarito il contratto reale dell'API WMS con chi l'ha costruita.
-    """
-    from masterlogistic_client import _kanban_stock_grezzo, MasterLogisticError
-    try:
-        dati = _kanban_stock_grezzo(codice.strip())
-    except MasterLogisticError as e:
-        return jsonify({'errore': True, 'messaggio': str(e)}), 502
-    return jsonify(dati)
-
 
 @magazzino_bp.route('/api/giacenza_wood/sincronizza-ordinato-cliente-wms', methods=['POST'])
 def api_sincronizza_ordinato_cliente_wms():
