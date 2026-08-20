@@ -92,6 +92,13 @@ def ottieni_scheda_kanban(sku_vern, sku_grezzo="", timeout=8):
     risposta — se WMS lo chiama diversamente, il valore arriverà a None
     (mai un falso 0) finché non si verifica il nome vero con chi ha
     costruito WMS.
+
+    'scorta_minima': la scorta minima già configurata dentro MasterLogistic-
+    WMS per questo SKU (colonna "SCORTA MIN." della sua scheda) — in
+    IronProduction non è più un campo modificabile localmente, è solo una
+    lettura di quel valore. STESSO AVVISO: nome campo NON confermato,
+    assunto 'scorta_minima' per coerenza — arriva a None finché non si
+    verifica con chi ha costruito WMS.
     """
     dati = _kanban_stock_grezzo(sku_vern, sku_grezzo, timeout)
     return {
@@ -101,6 +108,7 @@ def ottieni_scheda_kanban(sku_vern, sku_grezzo="", timeout=8):
         'ordini_clienti': dati.get('ordini_clienti', []),
         'ultimi_evasi': dati.get('ultimi_evasi', []),
         'ordinato_fornitori': dati.get('ordinato_fornitori'),
+        'scorta_minima': dati.get('scorta_minima'),
     }
 
 

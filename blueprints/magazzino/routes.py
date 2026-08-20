@@ -907,38 +907,43 @@ def _registra_movimento_giacenza(codice, delta, tipo, riferimento='', note='', c
 ORDINATO_CLIENTE_WMS_TTL_SECONDI = 600  # non richiamare WMS per lo stesso codice più spesso di così
 
 
-def _aggiorna_ordinato_cliente_wms(g, forza=False):
+def _aggiorna_dati_wms(g, forza=False):
     """
-    Aggiorna GiacenzaWood.ordinato_cliente_wms leggendo da MasterLogistic-WMS
-    (campo 'ordinato_fornitori' della scheda — vedi masterlogistic_client.
-    ottieni_scheda_kanban). Chiamata SOLO su richiesta esplicita (pulsante),
-    MAI durante il caricamento normale di una pagina — stesso principio già
-    applicato al Kanban: una pagina non deve mai dipendere da una chiamata
-    di rete esterna per aprirsi. Rispetta comunque un TTL per non richiamare
-    WMS inutilmente su un codice appena aggiornato.
-    Un fallimento qui lascia il valore precedente invariato, non lo azzera.
+    Aggiorna GiacenzaWood.ordinato_cliente_wms E .scorta_minima_wms
+    leggendo da MasterLogistic-WMS in UNA sola chiamata (ottieni_scheda_
+    kanban restituisce entrambi i campi insieme) — chiamata SOLO su
+    richiesta esplicita (pulsante), MAI durante il caricamento normale di
+    una pagina: una pagina non deve mai dipendere da una chiamata di rete
+    esterna per aprirsi (stesso principio già applicato al Kanban).
+    Rispetta un TTL per non richiamare WMS inutilmente su un codice
+    appena aggiornato. Un fallimento lascia i valori precedenti invariati.
     """
     ora = datetime.utcnow()
-    if not forza and g.ordinato_cliente_wms_aggiornato_il and \
-       (ora - g.ordinato_cliente_wms_aggiornato_il).total_seconds() < ORDINATO_CLIENTE_WMS_TTL_SECONDI:
+    aggiornato_di_recente = (g.ordinato_cliente_wms_aggiornato_il and
+        (ora - g.ordinato_cliente_wms_aggiornato_il).total_seconds() < ORDINATO_CLIENTE_WMS_TTL_SECONDI)
+    if not forza and aggiornato_di_recente:
         return
     try:
         scheda = ottieni_scheda_kanban(g.codice)
     except MasterLogisticError:
         return
-    valore = scheda.get('ordinato_fornitori')
-    if valore is not None:
-        g.ordinato_cliente_wms = valore
+    ordinato = scheda.get('ordinato_fornitori')
+    if ordinato is not None:
+        g.ordinato_cliente_wms = ordinato
         g.ordinato_cliente_wms_aggiornato_il = ora
+    scorta_min = scheda.get('scorta_minima')
+    if scorta_min is not None:
+        g.scorta_minima_wms = scorta_min
+        g.scorta_minima_wms_aggiornato_il = ora
 
 
 @magazzino_bp.route('/api/giacenza_wood/sincronizza-ordinato-cliente-wms', methods=['POST'])
 def api_sincronizza_ordinato_cliente_wms():
     """
-    Aggiorna 'Ordinato da Cliente (WMS)' per un elenco di codici passato nel
-    body (JSON: {"codici": [...]}), o per TUTTI i codici padre (quelli con
-    almeno un Ordine di Produzione) se non specificato — azione ESPLICITA
-    dal pulsante dedicato, mai automatica.
+    Aggiorna 'Ordinato da Cliente (WMS)' e 'Scorta Minima (WMS)' per un
+    elenco di codici passato nel body (JSON: {"codici": [...]}), o per
+    TUTTI i codici padre (quelli con almeno un Ordine di Produzione) se
+    non specificato — azione ESPLICITA dal pulsante dedicato, mai automatica.
     """
     d = request.get_json(silent=True) or {}
     codici = d.get('codici')
@@ -956,9 +961,9 @@ def api_sincronizza_ordinato_cliente_wms():
 
     aggiornati = 0
     for g in righe_gz:
-        prima = g.ordinato_cliente_wms
-        _aggiorna_ordinato_cliente_wms(g, forza=True)
-        if g.ordinato_cliente_wms != prima:
+        prima = (g.ordinato_cliente_wms, g.scorta_minima_wms)
+        _aggiorna_dati_wms(g, forza=True)
+        if (g.ordinato_cliente_wms, g.scorta_minima_wms) != prima:
             aggiornati += 1
     db.session.commit()
     return jsonify({'ok': True, 'totale': len(righe_gz), 'aggiornati': aggiornati})
@@ -992,8 +997,10 @@ def _calcola_campi_giacenza(righe):
         if residuo > 0:
             ordinato[cod] = ordinato.get(cod, 0) + residuo
 
-    scorte_minime = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.filter(ScortaMinimaWood.codice.in_(codici)).all()}
-
+    # Scorta minima: SOLO da MasterLogistic-WMS (non più un campo locale
+    # editabile — la scorta minima "vera" vive già dentro WMS, qui è solo
+    # una lettura di quel valore; None = non ancora sincronizzato, 0 non è
+    # un'assunzione sicura da fare al posto suo).
     grezzo_iw = {}
     for cod, tot in (db.session.query(OrdineProduzione.codice_articolo,
                       db.func.sum(EventoConsuntivoPP.pezzi_buoni))
@@ -1059,15 +1066,15 @@ def _calcola_campi_giacenza(righe):
         ord_ = ordinato.get(g.codice, 0)
         grz = grezzo_iw.get(g.codice, 0)
         ord_prod = ordinato_produzione.get(g.codice, 0)
-        scorta_min = scorte_minime.get(g.codice, 0)
+        scorta_min = getattr(g, 'scorta_minima_wms', None) or 0
         ord_cliente_wms = getattr(g, 'ordinato_cliente_wms', None) or 0
         disp_contabile = round((g.quantita or 0) - imp + ord_, 4)
         disp_allargata = round((g.quantita or 0) + grz - imp + ord_ + ord_prod, 4)
-        # Fabbisogno = MAX(Scorta Minima + Ordinato da Cliente (WMS) − Disp.
-        # Contabile Allargata, 0): un ordine cliente reale letto da WMS pesa
-        # di più della sola scorta di sicurezza — non la sostituisce, si
-        # somma. Se il campo WMS non è mai stato aggiornato (None), conta 0,
-        # non blocca il calcolo.
+        # Fabbisogno = MAX(Scorta Minima (da WMS) + Ordinato da Cliente
+        # (WMS) − Disp. Contabile Allargata, 0): un ordine cliente reale
+        # letto da WMS pesa di più della sola scorta di sicurezza — non la
+        # sostituisce, si somma. Se un campo WMS non è mai stato
+        # aggiornato (None), conta 0, non blocca il calcolo.
         fabbisogno = round(max(scorta_min + ord_cliente_wms - disp_allargata, 0), 4)
         righe_out.append({
             'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
@@ -1075,7 +1082,9 @@ def _calcola_campi_giacenza(righe):
             'tipologia': _tipologia(g.codice),
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
             'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
-            'scorta_minima': scorta_min,
+            'scorta_minima': getattr(g, 'scorta_minima_wms', None),
+            'scorta_minima_wms_aggiornato_il': (g.scorta_minima_wms_aggiornato_il.strftime('%d/%m/%Y %H:%M')
+                if getattr(g, 'scorta_minima_wms_aggiornato_il', None) else None),
             'ordinato_cliente_wms': getattr(g, 'ordinato_cliente_wms', None),
             'ordinato_cliente_wms_aggiornato_il': (g.ordinato_cliente_wms_aggiornato_il.strftime('%d/%m/%Y %H:%M')
                 if getattr(g, 'ordinato_cliente_wms_aggiornato_il', None) else None),
@@ -1281,20 +1290,16 @@ def api_distinta_righe_grezze(codice_padre):
 
 @magazzino_bp.route('/api/giacenza_wood/<codice>/scorta_minima', methods=['PUT'])
 def api_giacenza_scorta_minima(codice):
-    d = request.get_json(force=True)
-    try:
-        valore = float(d.get('scorta_minima'))
-    except (TypeError, ValueError):
-        return jsonify({'errore': True, 'messaggio': 'La scorta minima deve essere un numero'}), 400
-    if valore < 0:
-        return jsonify({'errore': True, 'messaggio': 'La scorta minima non può essere negativa'}), 400
-    r = ScortaMinimaWood.query.get(codice)
-    if r:
-        r.scorta_minima = valore
-    else:
-        db.session.add(ScortaMinimaWood(codice=codice, scorta_minima=valore))
-    db.session.commit()
-    return jsonify({'ok': True})
+    """
+    DISATTIVATO su richiesta esplicita: la Scorta Minima adesso è SOLO una
+    lettura da MasterLogistic-WMS (dove è già modificabile alla fonte),
+    non più un campo locale editabile qui — vedi _calcola_campi_giacenza
+    e la route /api/giacenza_wood/sincronizza-ordinato-cliente-wms.
+    Route lasciata qui (non rimossa) solo per compatibilità di eventuali
+    chiamate residue, ma risponde sempre con errore esplicativo.
+    """
+    return jsonify({'errore': True,
+                     'messaggio': "La Scorta Minima non è più modificabile qui: si legge automaticamente da MasterLogistic-WMS. Modificala là."}), 410
 
 
 @magazzino_bp.route('/api/giacenza_wood/<codice>/rettifica-grezzo-iw', methods=['POST'])
