@@ -202,12 +202,23 @@ class GiacenzaWood(db.Model):
     # refresh-su-richiesta di ordinato_cliente_wms sopra.
     scorta_minima_wms               = db.Column(db.Float, nullable=True)
     scorta_minima_wms_aggiornato_il = db.Column(db.DateTime, nullable=True)
-    # Marca manuale "è un codice padre" anche SENZA un Ordine di Produzione
-    # proprio — caso reale: un codice venduto (es. ZT) per cui non è ancora
-    # mai stato creato un OP in IronProduction. La regola automatica (ha un
-    # OP) resta la fonte principale; questa è un'eccezione esplicita per i
-    # casi che quella regola non può vedere da sola.
-    codice_padre_manuale            = db.Column(db.Boolean, default=False)
+
+
+class CodicePadreManuale(db.Model):
+    """
+    Marcatura manuale "Codice Padre" per codici che NON hanno ancora un
+    Ordine di Produzione proprio in IronProduction (la regola normale,
+    usata da _tipologia() e calcola_alert_fabbisogno_codici_padre) — ma che
+    l'azienda vende comunque come prodotto finito autonomo, semplicemente
+    non ancora messo in produzione dentro il programma (es. venduto/
+    producibile fuori sistema, o nuovo e non ancora partito). Senza questa
+    marcatura quei codici restano invisibili come Codice Padre — la regola
+    "ha un OP" da sola non basta a coprire questo caso reale.
+    """
+    __tablename__ = 'codici_padre_manuali'
+    codice      = db.Column(db.String(50), primary_key=True)
+    nota        = db.Column(db.String(255), default='')
+    marcato_il  = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class ScortaMinimaWood(db.Model):
@@ -1046,7 +1057,6 @@ def assicura_ordinato_cliente_wms():
         "ALTER TABLE giacenza_wood ADD COLUMN IF NOT EXISTS ordinato_cliente_wms_aggiornato_il TIMESTAMP",
         "ALTER TABLE giacenza_wood ADD COLUMN IF NOT EXISTS scorta_minima_wms FLOAT",
         "ALTER TABLE giacenza_wood ADD COLUMN IF NOT EXISTS scorta_minima_wms_aggiornato_il TIMESTAMP",
-        "ALTER TABLE giacenza_wood ADD COLUMN IF NOT EXISTS codice_padre_manuale BOOLEAN DEFAULT FALSE",
     ]
     if 'postgresql' in db_url or 'postgres' in db_url:
         for stmt in ddl:
@@ -1062,7 +1072,6 @@ def assicura_ordinato_cliente_wms():
             ('ordinato_cliente_wms_aggiornato_il', "ALTER TABLE giacenza_wood ADD COLUMN ordinato_cliente_wms_aggiornato_il TIMESTAMP"),
             ('scorta_minima_wms', "ALTER TABLE giacenza_wood ADD COLUMN scorta_minima_wms FLOAT"),
             ('scorta_minima_wms_aggiornato_il', "ALTER TABLE giacenza_wood ADD COLUMN scorta_minima_wms_aggiornato_il TIMESTAMP"),
-            ('codice_padre_manuale', "ALTER TABLE giacenza_wood ADD COLUMN codice_padre_manuale BOOLEAN DEFAULT 0"),
         ]:
             if nome not in colonne:
                 db.session.execute(text(stmt))

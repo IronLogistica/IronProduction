@@ -13,7 +13,7 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
                     NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
-                    FotoArticolo)
+                    FotoArticolo, KanbanProdotto, storico_aggiungi_auto)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -547,6 +547,76 @@ def chiudi_co(oid):
     o.stato, o.data_chiusura_co = 'Chiuso CO', datetime.utcnow(); _audit(o, 'CHIUSO_CO', 'Chiusura CO manuale')
     db.session.commit(); return jsonify(ok=True, ordine=_ordine(o))
 
+@pp_bp.post('/api/ordini-produzione/<int:oid>/chiudi-forzato')
+def chiudi_forzato(oid):
+    """
+    Chiude un OP che non arriverà mai a completamento tecnico (qta_buona
+    resterà sempre sotto qta_pianificata — es. 1496 di 1500, gli ultimi 4
+    non verranno mai fatti) — quello che 'Chiudi CO' normale non permette,
+    dato che richiede esplicitamente lo stato 'Tecnicamente completato'.
+    Va bene sia per OP senza nessun movimento (l'alternativa più pulita
+    resta comunque l'Eliminazione, che qui non tocchiamo) sia — soprattutto
+    — per OP con dichiarazioni/movimenti già registrati, che quindi non
+    sono più eliminabili: qui la storia resta intatta, cambia solo lo stato.
+
+    Cosa succede al residuo (i 4 pezzi mai fatti) una volta chiuso:
+    - L'OP esce da STATI_CHE_IMPEGNANO (Rilasciato/In esecuzione/Tecnicamente
+      completato) appena passa a 'Chiuso CO': il fabbisogno lordo che
+      teneva impegnata la materia prima per quei 4 pezzi (vedi Impegnato
+      OP in Magazzino) si libera in automatico al prossimo ricalcolo —
+      nessuna azione separata necessaria.
+    - NON genera da sola nessuna Varianza Materiali: quella (Analisi Costo
+      → Dettaglio varianza materiali) è già calcolata automaticamente dai
+      movimenti di scarico REALMENTE avvenuti confrontati con lo standard
+      per qta_buona — se la materia prima per quei 4 pezzi non è mai stata
+      scaricata (solo impegnata, mai consumata), non c'è nessuna varianza
+      da registrare: il materiale resta fisicamente a magazzino, libero.
+      Se invece era già stata scaricata (es. tagliata e poi scartata), la
+      varianza risulta GIÀ visibile in Analisi Costo prima ancora di
+      chiudere qui — chiudere l'OP non cambia quel calcolo.
+    """
+    o = OrdineProduzione.query.get_or_404(oid)
+    if o.stato not in ('Rilasciato', 'In esecuzione'):
+        return jsonify(ok=False, error='Chiusura forzata possibile solo da Rilasciato o In esecuzione'), 409
+    d = request.get_json(silent=True) or {}
+    residuo = max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0)
+    nota = (d.get('nota') or '').strip()
+    o.stato, o.data_chiusura_co = 'Chiuso CO', datetime.utcnow()
+    _audit(o, 'CHIUSO_CO_FORZATO',
+           f'Chiusura forzata: {o.qta_buona}/{o.qta_pianificata} realizzati, {residuo} pezzi mai completati.'
+           + (f' Nota: {nota}' if nota else ''))
+    db.session.commit()
+    return jsonify(ok=True, ordine=_ordine(o), residuo_non_completato=residuo)
+
+@pp_bp.post('/api/ordini-produzione/<int:oid>/riapri')
+def riapri(oid):
+    """
+    Riapre un OP 'Chiuso CO' (sia da chiusura forzata che da chiusura
+    normale dopo completamento tecnico) — reversibile in entrambi i casi,
+    non solo per la forzata: una chiusura fatta per errore va sempre
+    corretta allo stesso modo. Lo stato in cui torna non è fisso: viene
+    ricalcolato da quanto è stato REALMENTE prodotto finora (qta_buona vs
+    qta_pianificata), esattamente come se non fosse mai stato chiuso —
+    'Tecnicamente completato' se la quantità pianificata è già raggiunta,
+    altrimenti 'In esecuzione' (o 'Rilasciato' se non è ancora partita
+    nessuna dichiarazione). Rientrando in uno stato che impegna materiale,
+    l'Impegnato OP in Magazzino torna a contarlo al prossimo ricalcolo —
+    stesso motivo per cui la chiusura lo liberava.
+    """
+    o = OrdineProduzione.query.get_or_404(oid)
+    if o.stato != 'Chiuso CO':
+        return jsonify(ok=False, error="Riapertura possibile solo da uno stato 'Chiuso CO'"), 409
+    if (o.qta_pianificata or 0) > 0 and (o.qta_buona or 0) >= o.qta_pianificata:
+        nuovo_stato = 'Tecnicamente completato'
+    elif (o.qta_buona or 0) > 0:
+        nuovo_stato = 'In esecuzione'
+    else:
+        nuovo_stato = 'Rilasciato'
+    o.stato, o.data_chiusura_co = nuovo_stato, None
+    _audit(o, 'RIAPERTO', f"OP riaperto da 'Chiuso CO' — stato ricalcolato a '{nuovo_stato}'")
+    db.session.commit()
+    return jsonify(ok=True, ordine=_ordine(o))
+
 @pp_bp.get('/api/pp/orders')
 def api_ordini_attivi():
     auth = _api_auth()
@@ -718,6 +788,21 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     # dichiarata — quella è per costruzione specifica di ogni singola fase,
     # non va mai saltata.
     prima_fase = _e_prima_fase_del_ciclo(codice_lavorato, fase_nome)
+    # BUG CORRETTO: quando si completa la produzione del CODICE PADRE
+    # (avanza_op=True, codice_lavorato == codice_articolo — l'esatta
+    # dichiarazione di "fine produzione" che chiude l'OP), il carico a
+    # GiacenzaWood del prodotto finito finiva nella STESSA giacenza che
+    # alimenta "Finiti IW" sul Kanban — che invece deve rappresentare SOLO
+    # merce rientrata dalla verniciatura/zincatura ESTERNA via DDT
+    # confermato, mai la produzione interna grezza appena completata. Quel
+    # dato resta comunque visibile tramite "Grezzo IW" (_grezzo_iw_per_codici,
+    # letto direttamente dalle dichiarazioni approvate) — qui semplicemente
+    # non tocchiamo più GiacenzaWood per il prodotto finito in questo caso
+    # specifico. Per i semilavorati/componenti intermedi (codice_lavorato
+    # diverso dal codice articolo) il carico resta invariato: quello
+    # rappresenta davvero scorta fisica di un pezzo pronto, non il prodotto
+    # finito in attesa di trattamento esterno.
+    carica_prodotto_finito = not (codice_lavorato == o.codice_articolo and avanza_op)
     if good > 0 and prima_fase:
         try:
             consumi = consumi_override if consumi_override is not None else _calcola_consumi_standard(o, componente_finale, componente, good)
@@ -732,14 +817,15 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
 
         try:
             costo = _calcola_costo_standard(codice_lavorato)
-            if costo['codici_senza_costo']:
-                nota_costo = (f'Consuntivo {good} pz buoni — ⚠️ COSTO INCOMPLETO: mancano prezzi per '
-                               f'{", ".join(sorted(costo["codici_senza_costo"]))} — totale sottostimato')
-            else:
-                nota_costo = f'Consuntivo {good} pz buoni' + ('' if componente_finale else ' (semilavorato)')
-            _registra_movimento_giacenza(codice_lavorato, good, 'carico_produzione',
-                                          riferimento=o.codice, note=nota_costo,
-                                          costo_unitario=costo['costo_totale'])
+            if carica_prodotto_finito:
+                if costo['codici_senza_costo']:
+                    nota_costo = (f'Consuntivo {good} pz buoni — ⚠️ COSTO INCOMPLETO: mancano prezzi per '
+                                   f'{", ".join(sorted(costo["codici_senza_costo"]))} — totale sottostimato')
+                else:
+                    nota_costo = f'Consuntivo {good} pz buoni' + ('' if componente_finale else ' (semilavorato)')
+                _registra_movimento_giacenza(codice_lavorato, good, 'carico_produzione',
+                                              riferimento=o.codice, note=nota_costo,
+                                              costo_unitario=costo['costo_totale'])
         except Exception:
             pass  # il carico a magazzino non deve mai bloccare la registrazione del consuntivo
 
@@ -2047,8 +2133,15 @@ def api_dichiarazione_approvazioni():
         return jsonify(ok=False, error='PIN Direzione non valido'), 403
     eventi = (EventoConsuntivoPP.query.filter_by(approvato_direzione=False)
               .order_by(EventoConsuntivoPP.timestamp_evento.desc()).limit(200).all())
+    # Codice articolo: preso dall'OP collegato, così la Direzione vede COSA
+    # sta approvando (prima si vedeva solo l'OP, non il prodotto). Una sola
+    # query per tutti gli OP coinvolti, non una per riga.
+    op_codes = {e.op_code for e in eventi}
+    articolo_per_op = {o.codice: o.codice_articolo for o in
+                        OrdineProduzione.query.filter(OrdineProduzione.codice.in_(op_codes)).all()}
     return jsonify(ok=True, eventi=[{
         'id': e.id, 'event_id': e.event_id, 'op_code': e.op_code, 'fase': e.fase, 'componente': e.componente,
+        'codice_articolo': articolo_per_op.get(e.op_code, '—'),
         'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M'),
         'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto, 'tempo_minuti': e.tempo_minuti,
     } for e in eventi])
@@ -2064,6 +2157,20 @@ def api_dichiarazione_approva(eid):
     e.approvato_il = datetime.utcnow()
     db.session.add(AuditPP(op_code=e.op_code, event_id=e.event_id, azione='APPROVAZIONE_DIREZIONE',
                             dettaglio=f'dichiarazione {e.event_id} approvata dalla Direzione'))
+    # Aggancio Storico Produzione Kanban: questa approvazione è ESATTAMENTE
+    # la stessa condizione che fa salire "Grezzo IW" in Magazzino
+    # (componente NULL, fase Saldatura, approvato dalla Direzione — vedi
+    # _calcola_campi_giacenza) — quindi lo Storico Produzione del Kanban
+    # deve contarla nello stesso istante, non restare fermo ai soli rientri
+    # DDT dalla verniciatura.
+    if e.componente is None and (e.fase or '').strip().lower() == 'saldatura' and e.pezzi_buoni > 0:
+        o = OrdineProduzione.query.filter_by(codice=e.op_code).first()
+        if o:
+            p = (KanbanProdotto.query
+                 .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{(o.codice_articolo or "").upper()}%'))
+                 .first())
+            if p:
+                storico_aggiungi_auto(p.id, e.pezzi_buoni)
     db.session.commit()
     return jsonify(ok=True)
 
@@ -2096,6 +2203,12 @@ def _storna_evento_consuntivo(e, o):
            f'buoni={e.pezzi_buoni}; scarto={e.pezzi_scarto}; minuti={e.tempo_minuti}')
 
     prima_fase_originale = _e_prima_fase_del_ciclo(codice_lavorato, e.fase)
+    # Stessa esclusione della dichiarazione originale: se questo evento era
+    # il completamento del CODICE PADRE (avanza_op), il carico a
+    # GiacenzaWood del prodotto finito non era mai avvenuto (vedi
+    # carica_prodotto_finito in _registra_evento_consuntivo) — lo storno non
+    # deve inventarsi uno scarico di qualcosa che non è mai stato caricato.
+    carica_prodotto_finito = not (codice_lavorato == o.codice_articolo and avanza_op)
     if e.pezzi_buoni > 0 and prima_fase_originale:
         # Stessa identica logica di esplosione usata per dichiarare —
         # fondamentale che coincidano: se dichiaro consumando SOLO il
@@ -2111,8 +2224,9 @@ def _storna_evento_consuntivo(e, o):
             if qta_consumata:
                 _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',
                                               riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
-        _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
-                                      riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
+        if carica_prodotto_finito:
+            _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
+                                          riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
 
     op_code_evento, fase_evento = e.op_code, e.fase
     db.session.delete(e)

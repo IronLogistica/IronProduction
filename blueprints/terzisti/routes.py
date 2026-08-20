@@ -5,6 +5,7 @@ from models import (
     KanbanProdotto, storico_aggiungi_auto, CentroCostoWood,
 )
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
+from blueprints.magazzino.routes import _registra_movimento_giacenza
 from datetime import datetime, date
 import os, re, json, shutil
 import PyPDF2
@@ -34,6 +35,12 @@ def _aggiorna_kanban_da_rientro_ddt(codice, qta_rientrata_ora):
     if ora_now >= datetime(2026, 7, 1):
         storico_aggiungi_auto(p.id, qta_rientrata_ora)
     sku = sku_da_nome_prodotto(p.prodotto)
+    # Magazzino LOCALE di IronProduction (GiacenzaWood/Materiali) — senza
+    # questo, il rientro si vedeva su Kanban ("Finiti IW" saliva) ma NON
+    # sulla pagina Materiali, perché quella legge solo GiacenzaWood, mai
+    # il campo Kanban p.verniciati. Le due cose vanno tenute allineate.
+    _registra_movimento_giacenza(sku, qta_rientrata_ora, 'carico_produzione',
+                                  riferimento=codice, note=f'Rientro DDT terzista — {qta_rientrata_ora} pz')
     try:
         carica_produzione(sku, qta_rientrata_ora)
     except MasterLogisticError as e:

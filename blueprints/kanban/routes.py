@@ -7,6 +7,7 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     GiacenzaWood, OrdineProduzione, LavorazioneTerzista)
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, ottieni_stock_kanban, ottieni_scheda_kanban, MasterLogisticError
 from masterledgerlight_client import cerca_articolo, MasterLedgerLightError
+from blueprints.magazzino.routes import _grezzo_iw_per_codici
 from datetime import datetime, timedelta
 import re, json
 
@@ -24,6 +25,13 @@ def _mappa_op_per_sku():
     for o in OrdineProduzione.query.all():
         per_sku.setdefault((o.codice_articolo or '').upper(), []).append(o)
     return per_sku
+
+
+def _mappa_giacenza_per_sku():
+    """Tutta la giacenza locale (GiacenzaWood), come dict {codice_upper:
+    quantita} — UNA query sola invece di una per ogni prodotto Kanban,
+    stesso principio delle mappe qui sopra."""
+    return {(g.codice or '').upper(): (g.quantita or 0) for g in GiacenzaWood.query.all()}
 
 
 def _mappa_lavorazioni_terzisti_per_sku():
@@ -156,6 +164,37 @@ def _aggiorna_finiti_is_da_wms(p, forza=False):
         return
     p.finiti_is = int(wms.get('stock_verniciati') or 0)
     p.finiti_is_aggiornato_il = ora
+
+
+def _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku=None):
+    """
+    'Finiti IW' (KanbanProdotto.verniciati) deve SEMPRE rispecchiare il
+    Magazzino locale (GiacenzaWood), non il contrario. Prima veniva solo
+    incrementato a evento (rientro DDT terzista, +N) — comodo per
+    l'aggiornamento immediato, ma se Angelo poi RETTIFICA il magazzino a
+    mano su Materiali (es. dopo un inventario fisico di fine mese, dove il
+    conteggio reale può differire da quello accumulato via eventi), quella
+    correzione non arrivava mai al Kanban: i due numeri restavano
+    disallineati indefinitamente. Da qui in poi, a ogni apertura board, il
+    Kanban si RIALLINEA al Magazzino — in caso di divergenza vince sempre
+    lui, perché una rettifica manuale rappresenta la verità fisica reale,
+    mentre l'accumulo a eventi è solo una stima costruita nel tempo.
+    'giacenza_per_sku' opzionale: dict {codice: quantita} già caricato in
+    blocco, per non fare una query per prodotto a ogni apertura board.
+    """
+    sku = sku_da_nome_prodotto(p.prodotto)
+    if not sku:
+        return
+    if giacenza_per_sku is not None:
+        sku_upper = sku.upper()
+        if sku_upper not in giacenza_per_sku:
+            return  # nessuna riga di magazzino ancora per questo SKU: niente da riallineare
+        p.verniciati = int(round(giacenza_per_sku[sku_upper]))
+    else:
+        g = GiacenzaWood.query.get(sku)
+        if not g:
+            return
+        p.verniciati = int(round(g.quantita or 0))
 
 
 def _url_key_from_label(label):
@@ -423,9 +462,11 @@ def index(url_key):
     # navigazione normale.
     op_per_sku = _mappa_op_per_sku()
     lav_per_sku = _mappa_lavorazioni_terzisti_per_sku()
+    giacenza_per_sku = _mappa_giacenza_per_sku()
     for p in prodotti:
         _aggiorna_residuo_produzione(p, op_per_sku)
         _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku)
+        _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
     db.session.commit()
 
     tot    = len(prodotti)
@@ -484,10 +525,19 @@ def api_kanban_scheda(pid):
     p = KanbanProdotto.query.get_or_404(pid)
     sku = sku_da_nome_prodotto(p.prodotto)
 
+    # Grezzi IW — stessa fonte condivisa di Magazzino/Alert Scorte Codici
+    # Padre (_grezzo_iw_per_codici): quantità di prodotto finito dichiarata
+    # completa in Saldatura E approvata dalla Direzione, più eventuali
+    # rettifiche manuali. Distinto da 'Grezzi' (p.grezzi, box più sotto
+    # nella scheda): quello è "prodotti lavorati, non ancora trattati"
+    # calcolato da Dichiarazioni+DDT; questo è il dato ufficiale di
+    # magazzino, la stessa identica fonte che vede Angelo su Materiali.
+    grezzi_iw = _grezzo_iw_per_codici([sku]).get(sku, 0) if sku else 0
+
     risultato = {
         'sku': sku,
         'stock_verniciati': p.verniciati, 'stock_grezzi': p.grezzi, 'in_vern': p.in_vern,
-        'stock_is': p.finiti_is,
+        'stock_is': p.finiti_is, 'grezzi_iw': grezzi_iw,
         'riservato_clienti': p.riservato,
         'ordini_clienti': [], 'ultimi_evasi': [],
         'saldo_contabile': p.saldo_contabile,
@@ -605,14 +655,11 @@ def api_risincronizza_wms(kid):
     """
     Riallinea in blocco UNA scheda già esistente: riservato + Finiti IS da
     MasterLogistic-WMS, grezzi/in trattamento da Dichiarazioni di Produzione
-    + DDT terzisti, residuo da produrre dalle Commesse aperte — stessa
-    identica logica automatica usata a ogni apertura board (vedi le
-    funzioni _aggiorna_* sopra), richiamabile qui a comando per una singola
-    scheda (utile appena dopo un test, senza aspettare il prossimo giro).
-    'Finiti IW' (verniciati) apposta NON viene toccato qui: sale solo
-    all'evento di un rientro DDT confermato (_aggiorna_kanban_da_rientro_ddt)
-    — ririchiamarlo da un valore raw WMS rischierebbe di contare due volte
-    la stessa quantità.
+    + DDT terzisti, residuo da produrre dalle Commesse aperte, Finiti IW dal
+    Magazzino locale — stessa identica logica automatica usata a ogni
+    apertura board (vedi le funzioni _aggiorna_*/_sincronizza_* sopra),
+    richiamabile qui a comando per una singola scheda (utile appena dopo un
+    test, senza aspettare il prossimo giro).
     """
     p = KanbanProdotto.query.get_or_404(kid)
     sku = sku_da_nome_prodotto(p.prodotto)
@@ -627,6 +674,7 @@ def api_risincronizza_wms(kid):
     p.finiti_is_aggiornato_il = datetime.utcnow()
     _aggiorna_grezzi_e_trattamento(p)
     _aggiorna_residuo_produzione(p)
+    _sincronizza_finiti_iw_da_magazzino(p)
     p.aggiornato_il = datetime.utcnow()
     log(f'Kanban: risincronizzato {p.prodotto} — grezzi={p.grezzi}, in_vern={p.in_vern}, '
         f'riservato={p.riservato}, finiti_is={p.finiti_is}, in_prod={p.in_prod}')

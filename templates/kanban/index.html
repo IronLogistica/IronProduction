@@ -267,7 +267,7 @@
   <div id="wmsContent" style="display:none">
 
     {# ── RIGA 1: 5 saldi + stock fianco a fianco ── #}
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px;margin-top:38px">
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px;margin-top:38px">
 
       {# Saldo Contabile a Lungo Termine (SCLT) #}
       <div class="wms-saldo-box" style="border-top-color:var(--accent)">
@@ -300,6 +300,16 @@
         <div id="avvisoContraddizione" style="display:none;font-size:9px;font-weight:800;color:#ff3b3b;margin-top:5px;padding:3px 5px;background:rgba(255,59,59,.12);border-radius:4px">
           ⚠️ Il Saldo Contabile è positivo ma NON è pronto alla consegna
         </div>
+      </div>
+
+      {# Grezzi IW — vicino a Finiti IW: stessa fonte di Magazzino
+         (dichiarazioni Saldatura approvate dalla Direzione + rettifiche),
+         distinta dal box 'Grezzi' più sotto (quello è una stima locale
+         da Dichiarazioni+DDT). #}
+      <div class="wms-saldo-box" style="border-top-color:#c9a227">
+        <div class="wms-saldo-lbl">🔧 GREZZI IW</div>
+        <div class="wms-saldo-val" style="color:#e0c14a" id="wsGrezziIW">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Da Magazzino (Saldatura approvata)</div>
       </div>
 
       {# Finiti IW — vicino a IS #}
@@ -901,6 +911,11 @@ function _caricaSchedaWms(pid) {
   Promise.all([p1, p2]).then(([d, storico]) => {
     document.getElementById('wmsLoading').style.display = 'none';
     document.getElementById('wmsContent').style.display = 'block';
+
+    // Grezzi IW: sempre dal Magazzino locale IronProduction, mai da WMS —
+    // va mostrato anche se WMS è irraggiungibile (d.wms_errore).
+    const wsGrezziIW = document.getElementById('wsGrezziIW');
+    if (wsGrezziIW) wsGrezziIW.textContent = (d && d.grezzi_iw != null) ? d.grezzi_iw : '—';
 
     // ── WMS dati (opzionali — se non connesso mostra comunque il resto) ──
     if (d && !d.wms_errore) {
