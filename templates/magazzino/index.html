@@ -294,6 +294,7 @@ async function caricaMagazzinoWood(){
             <input type="number" step="0.01" value="${g.quantita}" id="stock-${g.codice}"
                    style="width:80px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);background:var(--dark3);color:inherit">
             <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="salvaStock('${g.codice}')" title="Salva nuovo stock">💾</button>
+            <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="ricostruisciDaDdt('${esc(g.codice)}')" title="Ricostruisci lo stock SOLO dai rientri DDT già registrati, scartando altre modifiche accumulate">🧹</button>
           </div>
         </td>
         <td class="${g.grezzo_iw>0?'mt-val-stock':'mt-val-zero'}">
@@ -357,6 +358,19 @@ async function salvaStock(codice){
     caricaMagazzinoWood();
   }catch(e){
     alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function ricostruisciDaDdt(codice){
+  if(!confirm(`Ricostruire lo stock di ${codice} SOLO dai rientri DDT terzista già registrati?\n\nVerranno eliminati tutti gli altri movimenti (rettifiche manuali, test) accumulati per questo codice — resta solo la somma dei rientri DDT confermati. Operazione irreversibile.`)) return;
+  try{
+    const r = await fetch(`/api/giacenza_wood/${encodeURIComponent(codice)}/ricostruisci-da-ddt`, {method:'POST'});
+    const d = await r.json();
+    if(!d.ok){ alert('⚠️ ' + (d.error || d.messaggio || 'errore')); return; }
+    showToast(`✅ ${codice}: da ${d.stock_precedente} a ${d.stock_nuovo} (${d.movimenti_ddt_conservati} rientri DDT, rimossi ${d.movimenti_rimossi} altri movimenti)`);
+    caricaMagazzinoWood();
+  }catch(e){
+    alert('❌ Errore di rete.');
   }
 }
 

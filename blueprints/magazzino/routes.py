@@ -12,7 +12,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood,
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
-                    EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale)
+                    EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -1368,6 +1368,47 @@ def api_codice_padre_manuale(codice):
     riga.marcato_il = datetime.utcnow()
     db.session.commit()
     return jsonify(ok=True, marcato=True)
+
+
+@magazzino_bp.route('/api/giacenza_wood/<codice>/ricostruisci-da-ddt', methods=['POST'])
+def api_ricostruisci_da_ddt(codice):
+    """
+    Ricostruisce lo stock di UN codice partendo SOLO dai rientri DDT
+    terzista già registrati (i movimenti 'carico_produzione' con nota che
+    inizia per 'Rientro DDT terzista' — vedi blueprints/terzisti/routes.py::
+    _aggiorna_kanban_da_rientro_ddt), scartando qualunque altro movimento
+    accumulato nel frattempo (rettifiche manuali di test, doppie
+    battiture, ecc.) — per rimettere i numeri comparabili quando lo stock
+    si è "sporcato" durante le prove.
+    Elimina tutti i movimenti NON-DDT per questo codice, poi riporta la
+    giacenza alla sola somma di quelli DDT rimasti. Non tocca gli OP,
+    le dichiarazioni, né altri codici.
+    """
+    codice = codice.strip().upper()
+    tutti = MovimentoGiacenzaWood.query.filter(
+        db.func.upper(MovimentoGiacenzaWood.codice) == codice).all()
+    movimenti_ddt = [m for m in tutti if (m.note or '').startswith('Rientro DDT terzista')]
+    movimenti_altri = [m for m in tutti if m not in movimenti_ddt]
+
+    n_rimossi = len(movimenti_altri)
+    for m in movimenti_altri:
+        db.session.delete(m)
+
+    totale_ddt = round(sum(m.quantita for m in movimenti_ddt), 4)
+    g = GiacenzaWood.query.get(codice)
+    if not g:
+        g = GiacenzaWood(codice=codice, quantita=0)
+        db.session.add(g)
+    valore_precedente = g.quantita or 0
+    g.quantita = totale_ddt
+    g.aggiornato_il = datetime.utcnow()
+
+    db.session.add(AuditPP(op_code='', azione='RICOSTRUZIONE_DA_DDT',
+                            dettaglio=f'{codice}: stock riportato da {valore_precedente} a {totale_ddt} '
+                                      f'(solo {len(movimenti_ddt)} rientri DDT), rimossi {n_rimossi} altri movimenti'))
+    db.session.commit()
+    return jsonify(ok=True, codice=codice, stock_precedente=valore_precedente, stock_nuovo=totale_ddt,
+                    movimenti_ddt_conservati=len(movimenti_ddt), movimenti_rimossi=n_rimossi)
 
 
 @magazzino_bp.route('/api/giacenza_wood/<codice>/rettifica-grezzo-iw', methods=['POST'])
