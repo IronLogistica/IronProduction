@@ -1014,8 +1014,16 @@ def _calcola_campi_giacenza(righe):
     if not codici:
         return []
 
-    giacenza_residua = _giacenza_residua_dopo_impegni()
-    impegnato = {g.codice: round((g.quantita or 0) - giacenza_residua.get(g.codice, g.quantita or 0), 4) for g in righe}
+    # BUG CORRETTO: 'Impegnato' non è più "quanto stock si è consumato nella
+    # simulazione" (che saliva insieme allo stock stesso quando la domanda
+    # superava la disponibilità — editare lo stock a mano faceva salire
+    # l'impegno senza nessun nuovo OP) — ora è il fabbisogno LORDO richiesto
+    # dagli OP aperti, che dipende solo da loro, mai dallo stock del
+    # codice stesso. giacenza_residua resta comunque necessaria per
+    # Disponibile/Fabbisogno più sotto.
+    fabbisogno_lordo = {}
+    giacenza_residua = _giacenza_residua_dopo_impegni(fabbisogno_lordo_out=fabbisogno_lordo)
+    impegnato = {g.codice: round(fabbisogno_lordo.get(g.codice, 0), 4) for g in righe}
 
     ordinato = {}
     for cod, qta_orig, qta_ric in (db.session.query(RigaOrdineAcquistoWood.codice,
@@ -1221,12 +1229,13 @@ def api_giacenza_impegni_op(codice):
     l'"Impegnato OP" mostrato nella pagina Materiali, e quanto ciascuno —
     stesso popup pattern già presente in MasterLogistic-WMS per gli Impegni
     Clienti, qui applicato agli OP invece che agli ordini di vendita.
-    Ripete la STESSA simulazione priorità-based di _giacenza_residua_dopo_impegni
-    (stessa giacenza condivisa, consumata in ordine di priorità), ma invece
-    di buttare via il dettaglio per-OP (che quella funzione scarta), lo
-    tiene: per ogni OP che tocca questo codice nella sua esplosione di
-    distinta, quanto ne ha effettivamente consumato dalla giacenza
-    (net_usato) prima che passasse al successivo.
+    Ripete la STESSA simulazione priorità-based di _giacenza_residua_dopo_impegni,
+    tenendo il dettaglio per-OP che quella scarta: per ogni OP che tocca
+    questo codice nella sua esplosione di distinta, quanto ne richiede
+    (fabbisogno) — NON quanto ne ha effettivamente trovato/consumato dalla
+    giacenza (che dipenderebbe dallo stock del codice stesso, disallineando
+    questo popup dal totale "Impegnato" mostrato in tabella — bug corretto
+    lì: vedi _giacenza_residua_dopo_impegni).
     """
     codice = codice.strip()
     giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
@@ -1241,11 +1250,11 @@ def api_giacenza_impegni_op(codice):
         out = {}
         _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua, out, mappa=mappa)
         tocco = out.get(codice)
-        if tocco and tocco['usato'] > 0:
+        if tocco and tocco['fabbisogno'] > 0:
             righe.append({
                 'op_code': op.codice, 'codice_articolo': op.codice_articolo,
                 'commessa': op.commessa or '', 'priorita': op.priorita,
-                'stato': op.stato, 'consumato': round(tocco['usato'], 4),
+                'stato': op.stato, 'consumato': round(tocco['fabbisogno'], 4),
             })
     return jsonify(ok=True, codice=codice, impegni=righe,
                     totale=round(sum(r['consumato'] for r in righe), 4))
@@ -1562,7 +1571,7 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
         _netta_e_esplodi_wood(r.codice_figlio, qta_figlio, giacenza_residua, out, _visitati, _profondita + 1, _max_profondita, mappa=mappa)
 
 
-def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None):
+def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None, fabbisogno_lordo_out=None):
     """
     Parte dalla giacenza fisica attuale e simula il consumo di TUTTI gli OP
     aperti (stato in STATI_CHE_IMPEGNANO), servendo PRIMA gli OP con priorità
@@ -1572,16 +1581,34 @@ def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None):
     Ordini di Produzione), non semplicemente chi è stato creato prima.
     Ritorna il dict {codice: qta rimasta} DOPO aver tolto quanto già
     impegnato da quegli OP. 'mappa' opzionale: vedi _carica_mappa_distinta_base_wood.
+
+    'fabbisogno_lordo_out': dict opzionale passato dal chiamante — se dato,
+    viene RIEMPITO con il fabbisogno LORDO per codice (quanto viene
+    richiesto dagli OP aperti, PRIMA di nettare contro la giacenza propria
+    di quel nodo). Serve per "Impegnato" in Magazzino: BUG CORRETTO — prima
+    'Impegnato = Stock − Residuo' faceva salire l'impegno insieme allo
+    stock ogni volta che la domanda totale superava la disponibilità (es.
+    editi lo stock da 5 a 20 senza nessun nuovo OP, e "Impegnato" saliva da
+    5 a 20 lo stesso, perché saliva insieme a quanto stock c'era da
+    "consumare" nella simulazione). Il fabbisogno lordo invece dipende SOLO
+    da quanto chiedono gli OP aperti a monte nella distinta — mai dallo
+    stock del nodo stesso — quindi editare lo stock a mano non lo sposta
+    mai, come deve essere.
     """
     giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
     op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
                  .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+    out_condiviso = {} if fabbisogno_lordo_out is not None else None
     for op in op_aperti:
         if escludi_op_id and op.id == escludi_op_id:
             continue
         saldo = (op.qta_pianificata or 0) - (op.qta_buona or 0)
         if saldo > 0:
-            _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua, {}, mappa=mappa)
+            _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua,
+                                   out_condiviso if out_condiviso is not None else {}, mappa=mappa)
+    if fabbisogno_lordo_out is not None:
+        for cod, r in out_condiviso.items():
+            fabbisogno_lordo_out[cod] = r['fabbisogno']
     return giacenza_residua
 
 
