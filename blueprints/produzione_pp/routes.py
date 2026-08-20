@@ -1901,7 +1901,7 @@ def api_dichiarazione_op_aperti(cid):
             'codice': o.codice, 'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione,
             'commessa': o.commessa, 'priorita': o.priorita,
             'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona, 'qta_scarto': o.qta_scarto,
-            'saldo': max((o.qta_pianificata or 0) - (o.qta_buona or 0) - (o.qta_scarto or 0), 0),
+            'saldo': max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0),
             'componenti': gruppo_componenti,
         })
     return jsonify(risultato)
