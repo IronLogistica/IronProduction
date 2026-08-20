@@ -127,19 +127,19 @@ async function caricaAvanzamentoCommesse(){
     const righe = await r.json();
     if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di produzione aperto.</p>'; return; }
 
-    const thFasi = AC_ZONE.map(z => `<th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:7%">${z[1]}</th>`).join('');
+    const thFasi = AC_ZONE.map(z => `<th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:6%">${z[1]}</th>`).join('');
 
     box.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;min-width:1100px;table-layout:fixed"><thead><tr>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">N° Comm</th>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;text-align:left">Codice e Descrizione</th>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 10px;font-size:11px">Saldo da<br>produrre</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:6%">N° Comm</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;text-align:left;width:19%">Codice e Descrizione</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 10px;font-size:11px;width:7%">Saldo da<br>produrre</th>
       ${thFasi}
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">Materiale</th>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">Fine produzione<br>interna</th>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">Lavorazione<br>esterna</th>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">Consegna<br>stimata</th>
-      <th style="background:#e6e6e6;color:#333;padding:8px 6px;font-size:11px">%</th>
-      <th style="background:#e6e6e6;color:#333;padding:8px 6px;font-size:11px">Avvisi</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:7%">Materiale</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:8%">Fine produzione<br>interna</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:8%">Lavorazione<br>esterna</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:8%">Consegna<br>stimata</th>
+      <th style="background:#e6e6e6;color:#333;padding:8px 6px;font-size:11px;width:4%">%</th>
+      <th style="background:#e6e6e6;color:#333;padding:8px 6px;font-size:11px;width:5%">Avvisi</th>
       </tr></thead><tbody>` +
       righe.map(o => {
         const materiale = o.materiale_completo
@@ -159,7 +159,7 @@ async function caricaAvanzamentoCommesse(){
           <td style="text-align:center;padding:10px 6px;background:#f7fdfd"><i>${o.commessa || o.priorita}</i></td>
           <td style="padding:10px 6px;background:#f7fdfd">
             ${foto}<b style="font-size:19px;color:#111;vertical-align:middle">${o.codice_articolo}</b>
-            <div style="font-size:10px;color:#666;margin-left:82px">${o.descrizione || ''} — ${o.op_codice}</div>
+            <div style="font-size:10px;color:#666;margin-left:82px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.descrizione || ''} — ${o.op_codice}</div>
           </td>
           <td style="text-align:center;font-weight:800;font-size:24px;color:#111;background:#f7fdfd">${o.saldo}</td>
           ${fasiRow}
