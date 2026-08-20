@@ -360,11 +360,14 @@ def totem_macchina(cid):
     righe_tabella.sort(key=lambda r: (r['posizione_manuale'] if r['posizione_manuale'] is not None else 999, r['priorita'], r['op_id']))
 
     gruppi = _raggruppa_per_op(righe_tabella)
-    # Chi ha già tutto il materiale va in cima (evidenza gialla lampeggiante
-    # in LIVE): gli altri lavori, anche se aperti, restano in coda a questi —
-    # ordine di priorità già calcolato preservato dentro ciascun sottogruppo
-    # (sort stabile).
-    gruppi.sort(key=lambda g: 0 if g['materiale_disponibile'] else 1)
+    # Il Totem Live mostra SOLO le commesse pronte per essere lavorate ORA
+    # (materiale disponibile — il bordo giallo lampeggiante) — quelle che
+    # aspettano ancora materiale mancante ("non autorizzate" a partire)
+    # restano fuori: l'operaio davanti alla macchina deve vedere solo cosa
+    # può davvero prendere in mano adesso, non l'intera coda con anche i
+    # lavori bloccati. Una commessa già completata (saldo a zero) resta
+    # comunque visibile — non è "incompleta", è finita.
+    gruppi = [g for g in gruppi if g['materiale_disponibile']]
 
     codici_prodotto_finito = {g['codice_articolo'] for g in gruppi}
     foto_per_codice = {}
