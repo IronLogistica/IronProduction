@@ -305,7 +305,7 @@ def _calcola_alert_scorte():
 def pagina_alert_scorte():
     from blueprints.magazzino.routes import calcola_alert_fabbisogno_codici_padre
     return render_template('kanban/alert_scorte.html', active='alert-scorte',
-                            topbar_title='🚨 Alert Scorte', righe=_calcola_alert_scorte(),
+                            topbar_title='🚨 Alert Scorte Codici Padre', righe=_calcola_alert_scorte(),
                             righe_fabbisogno=calcola_alert_fabbisogno_codici_padre())
 
 
