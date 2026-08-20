@@ -75,6 +75,7 @@ async function load(){try{const list=await api('/api/ordini-produzione'); rows.i
   let azioni = '';
   if(x.stato==='Creato') azioni += `<button class="btn btn-primary" onclick="releaseOp(${x.id})">Rilascia</button> `;
   if(x.stato==='Tecnicamente completato') azioni += `<button class="btn btn-ghost" onclick="closeCo(${x.id})">Chiudi CO</button> `;
+  if(x.stato==='Rilasciato' || x.stato==='In esecuzione') azioni += `<button class="btn btn-ghost" onclick="chiudiForzato(${x.id},'${esc(x.codice)}',${x.qta_pianificata},${x.qta_buona})" style="color:#e6b800">🛑 Chiudi Forzato</button> `;
   if(puoModificare) azioni += `<button class="btn btn-ghost" onclick='apriModificaOp(${JSON.stringify(x)})'>✏️ Modifica</button> `;
   if(puoEliminare) azioni += `<button class="btn btn-ghost" onclick="deleteOp(${x.id},'${esc(x.codice)}')" style="color:#c0392b">🗑️ Elimina</button> `;
   if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/analisi-costo">📊 Analisi Costo</a> `;
@@ -117,6 +118,18 @@ async function salvaModificaOp(){
 async function cambiaPriorita(id,valore){try{await api('/api/ordini-produzione/'+id,{method:'PUT',headers:{'Content-Type':'application/json'},body:JSON.stringify({priorita:parseInt(valore)})});load()}catch(e){alert(e.message)}}
 async function releaseOp(id){try{await api('/api/ordini-produzione/'+id+'/rilascia',{method:'POST'});load()}catch(e){alert(e.message)}}
 async function closeCo(id){try{await api('/api/ordini-produzione/'+id+'/chiudi-co',{method:'POST'});load()}catch(e){alert(e.message)}}
+async function chiudiForzato(id, codice, pianificata, buona){
+  const residuo = Math.max(pianificata - buona, 0);
+  const msg = residuo > 0
+    ? `Chiudere FORZATAMENTE l'OP ${codice}?\n\nRealizzati ${buona} di ${pianificata} — i ${residuo} pezzi mancanti non verranno mai completati.\n\nL'OP esce dagli impegni: la materia prima ancora riservata per quei ${residuo} pezzi torna libera al prossimo ricalcolo. Se quel materiale era già stato scaricato (non solo impegnato), la relativa varianza è già visibile in Analisi Costo — chiudere qui non la crea né la modifica.\n\nLa dichiarazione/storia dell'OP resta intatta, cambia solo lo stato. Operazione irreversibile.`
+    : `Chiudere FORZATAMENTE l'OP ${codice}?\n\nOperazione irreversibile, resta comunque nello storico.`;
+  if(!confirm(msg)) return;
+  const nota = prompt('Nota facoltativa sul motivo della chiusura forzata (es. "cliente ha annullato il residuo"):', '') || '';
+  try{
+    await api('/api/ordini-produzione/'+id+'/chiudi-forzato',{method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nota})});
+    load();
+  }catch(e){ alert(e.message) }
+}
 async function deleteOp(id,codice){if(!confirm('Eliminare definitivamente '+codice+'? L\'operazione non è reversibile.'))return;try{await api('/api/ordini-produzione/'+id,{method:'DELETE'});load()}catch(e){alert(e.message)}}
 opForm.onsubmit=async e=>{e.preventDefault();message.textContent='';document.getElementById('scorta-result').innerHTML='';const data=Object.fromEntries(new FormData(opForm));if(codiciPadreValidi.size && !codiciPadreValidi.has(data.codice_articolo)){message.textContent='⚠️ Codice non presente tra i codici padre della distinta base Iron Wood — selezionalo dall\'elenco.';return}try{const r=await api('/api/ordini-produzione',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});message.textContent='Creato '+r.ordine.codice+' — Commessa '+r.ordine.commessa;renderControlloScorta(r.controllo_scorta);opForm.reset();load()}catch(e){message.textContent='Errore: '+e.message}}; load(); precaricaCodiciPadre();
 

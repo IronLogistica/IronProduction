@@ -547,6 +547,47 @@ def chiudi_co(oid):
     o.stato, o.data_chiusura_co = 'Chiuso CO', datetime.utcnow(); _audit(o, 'CHIUSO_CO', 'Chiusura CO manuale')
     db.session.commit(); return jsonify(ok=True, ordine=_ordine(o))
 
+@pp_bp.post('/api/ordini-produzione/<int:oid>/chiudi-forzato')
+def chiudi_forzato(oid):
+    """
+    Chiude un OP che non arriverà mai a completamento tecnico (qta_buona
+    resterà sempre sotto qta_pianificata — es. 1496 di 1500, gli ultimi 4
+    non verranno mai fatti) — quello che 'Chiudi CO' normale non permette,
+    dato che richiede esplicitamente lo stato 'Tecnicamente completato'.
+    Va bene sia per OP senza nessun movimento (l'alternativa più pulita
+    resta comunque l'Eliminazione, che qui non tocchiamo) sia — soprattutto
+    — per OP con dichiarazioni/movimenti già registrati, che quindi non
+    sono più eliminabili: qui la storia resta intatta, cambia solo lo stato.
+
+    Cosa succede al residuo (i 4 pezzi mai fatti) una volta chiuso:
+    - L'OP esce da STATI_CHE_IMPEGNANO (Rilasciato/In esecuzione/Tecnicamente
+      completato) appena passa a 'Chiuso CO': il fabbisogno lordo che
+      teneva impegnata la materia prima per quei 4 pezzi (vedi Impegnato
+      OP in Magazzino) si libera in automatico al prossimo ricalcolo —
+      nessuna azione separata necessaria.
+    - NON genera da sola nessuna Varianza Materiali: quella (Analisi Costo
+      → Dettaglio varianza materiali) è già calcolata automaticamente dai
+      movimenti di scarico REALMENTE avvenuti confrontati con lo standard
+      per qta_buona — se la materia prima per quei 4 pezzi non è mai stata
+      scaricata (solo impegnata, mai consumata), non c'è nessuna varianza
+      da registrare: il materiale resta fisicamente a magazzino, libero.
+      Se invece era già stata scaricata (es. tagliata e poi scartata), la
+      varianza risulta GIÀ visibile in Analisi Costo prima ancora di
+      chiudere qui — chiudere l'OP non cambia quel calcolo.
+    """
+    o = OrdineProduzione.query.get_or_404(oid)
+    if o.stato not in ('Rilasciato', 'In esecuzione'):
+        return jsonify(ok=False, error='Chiusura forzata possibile solo da Rilasciato o In esecuzione'), 409
+    d = request.get_json(silent=True) or {}
+    residuo = max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0)
+    nota = (d.get('nota') or '').strip()
+    o.stato, o.data_chiusura_co = 'Chiuso CO', datetime.utcnow()
+    _audit(o, 'CHIUSO_CO_FORZATO',
+           f'Chiusura forzata: {o.qta_buona}/{o.qta_pianificata} realizzati, {residuo} pezzi mai completati.'
+           + (f' Nota: {nota}' if nota else ''))
+    db.session.commit()
+    return jsonify(ok=True, ordine=_ordine(o), residuo_non_completato=residuo)
+
 @pp_bp.get('/api/pp/orders')
 def api_ordini_attivi():
     auth = _api_auth()
