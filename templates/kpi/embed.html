@@ -127,9 +127,9 @@ async function caricaAvanzamentoCommesse(){
     const righe = await r.json();
     if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di produzione aperto.</p>'; return; }
 
-    const thFasi = AC_ZONE.map(z => `<th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">${z[1]}</th>`).join('');
+    const thFasi = AC_ZONE.map(z => `<th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:7%">${z[1]}</th>`).join('');
 
-    box.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;min-width:1100px"><thead><tr>
+    box.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;min-width:1100px;table-layout:fixed"><thead><tr>
       <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px">N° Comm</th>
       <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;text-align:left">Codice e Descrizione</th>
       <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 10px;font-size:11px">Saldo da<br>produrre</th>
@@ -185,16 +185,16 @@ async function caricaInAttesaRilascio(){
     const righe = await r.json();
     if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine in attesa di rilascio.</p>'; return; }
     box.innerHTML = '<table class="kanban-table"><thead><tr>' +
-      '<th>PRIO</th><th>OP</th><th>Commessa</th><th>Codice</th><th style="text-align:left">Descrizione</th><th>Qtà pianificata</th><th>Data prevista</th>' +
+      '<th>PRIO</th><th>OP</th><th>Commessa</th><th>Codice</th><th>Descrizione</th><th>Qtà pianificata</th><th>Data prevista</th>' +
       '</tr></thead><tbody>' +
-      righe.map(o => `<tr>
-        <td class="num">${o.priorita}</td>
-        <td class="codice">${o.op_codice}</td>
-        <td>${o.commessa || '—'}</td>
-        <td class="codice">${o.codice_articolo}</td>
-        <td class="descr-td">${o.descrizione || ''}</td>
-        <td class="num">${o.qta_pianificata}</td>
-        <td style="font-size:11px;color:#6b8aaa">${o.data_prevista || '—'}</td>
+      righe.map(o => `<tr style="background:#0d1b2e">
+        <td style="text-align:center;color:#fff;padding:8px">${o.priorita}</td>
+        <td style="text-align:center;color:#4d9fd6;font-weight:800;padding:8px">${o.op_codice}</td>
+        <td style="text-align:center;color:#fff;padding:8px">${o.commessa || '—'}</td>
+        <td style="text-align:center;color:#fff;font-weight:800;padding:8px">${o.codice_articolo}</td>
+        <td style="text-align:center;color:#fff;padding:8px">${o.descrizione || ''}</td>
+        <td style="text-align:center;color:#fff;padding:8px">${o.qta_pianificata}</td>
+        <td style="text-align:center;font-size:11px;color:#9fb8d0;padding:8px">${o.data_prevista || '—'}</td>
       </tr>`).join('') + '</tbody></table>';
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
