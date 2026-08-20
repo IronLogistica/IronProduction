@@ -84,21 +84,18 @@ def ottieni_scheda_kanban(sku_vern, sku_grezzo="", timeout=8):
     in fase di creazione (ottieni_stock_kanban) tiene volutamente fuori
     perché lì basta il totale.
 
-    'ordinato_fornitori': quanto QUESTO SKU risulta ordinato dal fornitore
-    nella scheda WMS del cliente (es. Iron Segnaletica) — dal loro lato è
-    "in arrivo dal fornitore", dal nostro è l'ordine cliente ancora da
-    evadere. NOME CAMPO NON ANCORA CONFERMATO lato WMS: assunto
-    'ordinato_fornitori' per coerenza con gli altri campi di questa stessa
-    risposta — se WMS lo chiama diversamente, il valore arriverà a None
-    (mai un falso 0) finché non si verifica il nome vero con chi ha
-    costruito WMS.
+    'riservato_clienti': quanto è impegnato/riservato per i clienti su
+    questo SKU — già usato per il Kanban ('Riservato'), qui riletto anche
+    come "Ordinato da Cliente (WMS)" per Iron Wood (Magazzino/Alert Scorte
+    Codici Padre): il campo che conta davvero un impegno cliente reale
+    verso quel prodotto.
 
     'scorta_minima': la scorta minima già configurata dentro MasterLogistic-
     WMS per questo SKU (colonna "SCORTA MIN." della sua scheda) — in
     IronProduction non è più un campo modificabile localmente, è solo una
-    lettura di quel valore. STESSO AVVISO: nome campo NON confermato,
-    assunto 'scorta_minima' per coerenza — arriva a None finché non si
-    verifica con chi ha costruito WMS.
+    lettura di quel valore. AVVISO: nome campo NON confermato, assunto
+    'scorta_minima' per coerenza — arriva a None finché non si verifica
+    con chi ha costruito WMS.
     """
     dati = _kanban_stock_grezzo(sku_vern, sku_grezzo, timeout)
     return {
@@ -107,7 +104,6 @@ def ottieni_scheda_kanban(sku_vern, sku_grezzo="", timeout=8):
         'riservato_clienti': dati.get('riservato_clienti', 0),
         'ordini_clienti': dati.get('ordini_clienti', []),
         'ultimi_evasi': dati.get('ultimi_evasi', []),
-        'ordinato_fornitori': dati.get('ordinato_fornitori'),
         'scorta_minima': dati.get('scorta_minima'),
     }
 

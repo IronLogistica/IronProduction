@@ -927,7 +927,11 @@ def _aggiorna_dati_wms(g, forza=False):
         scheda = ottieni_scheda_kanban(g.codice)
     except MasterLogisticError:
         return
-    ordinato = scheda.get('ordinato_fornitori')
+    # 'riservato_clienti' — stesso campo già confermato e usato per il
+    # Kanban ('Riservato'/Impegnato Clienti), qui riletto come "Ordinato da
+    # Cliente" per Iron Wood: quanto è impegnato per i clienti su questo
+    # SKU nella scheda WMS.
+    ordinato = scheda.get('riservato_clienti')
     if ordinato is not None:
         g.ordinato_cliente_wms = ordinato
         g.ordinato_cliente_wms_aggiornato_il = ora

@@ -259,7 +259,7 @@ async function caricaMagazzinoWood(){
       <th class="mt-th-disp">(=) Disp. Contabile<div class="mt-formula">Stock − Impegnato OP + Ordinato Fornitori</div></th>
       <th class="mt-th-disp">(=) Disp. Contabile Allargata*<div class="mt-formula">*Diversa dalla Disp. Contabile qui a fianco e dal concetto usato nei Kanban: Stock + Grezzo IW − Impegnato OP + Ordinato Fornitori + Ordinato in Produzione</div></th>
       <th class="mt-th-scorta">− Scorta Min. (da WMS)<div class="mt-formula">Letta automaticamente da MasterLogistic-WMS — non più modificabile qui</div></th>
-      <th class="mt-th-scorta">− Ordinato da Cliente (WMS)<div class="mt-formula">Ordine cliente ancora aperto letto da MasterLogistic-WMS — si somma alla Scorta Minima nel Fabbisogno, non la sostituisce</div></th>
+      <th class="mt-th-scorta">− Ordinato da Cliente (WMS)<div class="mt-formula">Impegnato Clienti letto dalla scheda MasterLogistic-WMS di quel codice — si somma alla Scorta Minima nel Fabbisogno, non la sostituisce</div></th>
       <th class="mt-th-fabb">(=) Fabbisogno<div class="mt-formula">MAX(Scorta Minima (WMS) + Ordinato da Cliente (WMS) − Disp. Contabile Allargata*, 0)</div></th></tr></thead><tbody>`;
     righe.forEach(g=>{
       html += `<tr>
