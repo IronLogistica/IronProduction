@@ -988,18 +988,23 @@ def _calcola_campi_giacenza(righe):
 
 def calcola_alert_fabbisogno_codici_padre():
     """
-    Codici PADRE (compaiono come codice_padre in Distinta Base Iron Wood MA
-    MAI come codice_figlio da nessuna parte — la radice dell'albero, il
-    prodotto finito reale, non un semilavorato) il cui Fabbisogno è diverso
-    da zero. Riusa _calcola_campi_giacenza — LA STESSA funzione di
-    /api/giacenza_wood (Magazzino) — così non può mai dare un numero
-    diverso da quello che vedi in Magazzino per lo stesso codice.
+    Codici PADRE = codici per cui esiste ALMENO UN Ordine di Produzione
+    (codice_articolo) — cioè prodotti finiti gestiti come articolo
+    autonomo, non semilavorati (i semilavorati non hanno mai un proprio
+    OP: vengono lavorati DENTRO l'OP del prodotto finito, tracciati per
+    componente — vedi EventoConsuntivoPP.componente). Più solido della
+    posizione nella Distinta Base: un codice padre può benissimo comparire
+    ANCHE come componente di un altro assieme più grande (es. un kit) e
+    restare comunque un prodotto finito a sé — la Distinta Base da sola
+    non basta a distinguerlo.
+    Il cui Fabbisogno è diverso da zero. Riusa _calcola_campi_giacenza —
+    LA STESSA funzione di /api/giacenza_wood (Magazzino) — così non può
+    mai dare un numero diverso da quello che vedi in Magazzino per lo
+    stesso codice.
     """
-    from models import DistintaBaseWood, GiacenzaWood
+    from models import GiacenzaWood
 
-    tutti_padri = {r[0] for r in db.session.query(DistintaBaseWood.codice_padre).distinct().all()}
-    tutti_figli = {r[0] for r in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
-    codici_padre = sorted(tutti_padri - tutti_figli)
+    codici_padre = sorted({r[0] for r in db.session.query(OrdineProduzione.codice_articolo).distinct().all()})
     if not codici_padre:
         return []
 
