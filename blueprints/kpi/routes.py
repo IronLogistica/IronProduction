@@ -49,6 +49,23 @@ def api_kpi():
 def api_avanzamento_commesse():
     return jsonify(calcola_avanzamento_commesse())
 
+@kpi_bp.route('/api/kpi/in-attesa-rilascio')
+def api_in_attesa_rilascio():
+    """
+    Tutti gli Ordini di Produzione inseriti ma NON ANCORA rilasciati (stato
+    'Creato') — promemoria trasversale a tutti i centri di costo, così non
+    sparisce dal radar un OP inserito e mai rilasciato in produzione.
+    """
+    from models import OrdineProduzione
+    ordini = (OrdineProduzione.query.filter_by(stato='Creato')
+              .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+    return jsonify([{
+        'id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
+        'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
+        'qta_pianificata': o.qta_pianificata, 'priorita': o.priorita,
+        'data_prevista': o.data_prevista.strftime('%d/%m/%Y') if o.data_prevista else None,
+    } for o in ordini])
+
 @kpi_bp.route('/api/kpi/storico')
 def api_storico():
     oggi = date.today()

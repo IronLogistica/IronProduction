@@ -54,7 +54,9 @@
         <td onclick="event.stopPropagation()"><input class="prio-input" type="number" value="{{ g.posizione_manuale if g.posizione_manuale is not none else '' }}"
                    placeholder="{{ g.priorita }}" onchange="impostaPosizione({{ g.op_id }}, this.value)"></td>
         <td class="comm-id">{{ g.commessa }}</td>
-        <td class="codice" style="cursor:pointer" onclick="event.stopPropagation();apriSituazioneOP('{{ g.op_codice }}')">{{ g.op_codice }}</td>
+        <td class="codice" style="cursor:pointer" onclick="event.stopPropagation();apriSituazioneOP('{{ g.op_codice }}')">{{ g.op_codice }}
+          {% if g.non_rilasciato %}<span class="badge" style="font-size:9px;background:rgba(230,184,0,.25);color:#e6b800" title="Ordine di Produzione inserito ma non ancora rilasciato — questa è solo un promemoria, non ha ancora impegnato materiale né generato un ordine di lavoro">🔔 non rilasciato</span>{% endif %}
+        </td>
         <td class="codice">{{ g.codice_articolo }}</td>
         <td class="codice">
           {% if multi %}

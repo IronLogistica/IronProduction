@@ -85,6 +85,15 @@ def _righe_macchina(centro):
               .filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
               .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
 
+    # OP 'Creato' ma NON ANCORA rilasciato: non entra nel netting materiale
+    # (non è ancora un impegno reale di produzione), ma l'utente deve poter
+    # vederlo comunque in coda come promemoria — altrimenti un OP inserito e
+    # mai rilasciato sparisce dal radar finché qualcuno non se lo ricorda da
+    # solo. Righe semplificate (materiale/% non calcolati), sempre in
+    # "IN ATTESA / DA INIZIARE", con 'non_rilasciato': True per il badge.
+    ordini_non_rilasciati = (OrdineProduzione.query.filter_by(stato='Creato')
+                              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+
     # Un OP passa a "IN ESECUZIONE" appena viene emesso il suo Ordine di
     # Lavoro su QUESTA macchina (numero di lista assegnato — vedi
     # NumeroListaLavoroWood/_numero_lista_lavoro), non solo quando arrivano i
@@ -105,7 +114,9 @@ def _righe_macchina(centro):
     # raccoglie tutti i codici coinvolti, per poter leggere il Ciclo di
     # Lavoro di TUTTI in una sola query invece di una per (OP, componente).
     componenti_per_op = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini}
-    tutti_i_codici = {c['codice'] for lista in componenti_per_op.values() for c in lista}
+    componenti_per_op_non_rilasciati = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini_non_rilasciati}
+    tutti_i_codici = ({c['codice'] for lista in componenti_per_op.values() for c in lista}
+                       | {c['codice'] for lista in componenti_per_op_non_rilasciati.values() for c in lista})
     fasi_per_codice = {}
     if tutti_i_codici:
         for f in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_i_codici))
@@ -211,7 +222,35 @@ def _righe_macchina(centro):
                 'scarto_max_pezzi': (round(qta_necessaria * fase_ciclo.scarto_max_pct / 100))
                                      if fase_ciclo.scarto_max_pct else None,
                 'consumi_standard': consumi_standard,
+                'non_rilasciato': False,
                 '_chiave_ordine': chiave_ordine,
+            })
+
+    # ── righe promemoria per gli OP 'Creato' non ancora rilasciati ──
+    for o in ordini_non_rilasciati:
+        for comp in componenti_per_op_non_rilasciati[o.id]:
+            codice_comp = comp['codice']
+            componente_finale = (codice_comp == o.codice_articolo)
+            fasi_ciclo = fasi_per_codice.get(codice_comp, [])
+            idx = next((i for i, f in enumerate(fasi_ciclo) if f.centro_costo_id == centro.id), None)
+            if idx is None:
+                continue
+            qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+            fase_ciclo = fasi_ciclo[idx]
+            tempo_standard_min_pz = (60 / fase_ciclo.produttivita_oraria) if fase_ciclo.produttivita_oraria else None
+            righe['da_iniziare'].append({
+                'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
+                'codice_articolo': o.codice_articolo, 'qta_pianificata': o.qta_pianificata,
+                'materiale_disponibile': None,  # non calcolato: l'OP non è ancora un impegno reale
+                'componente': None if componente_finale else codice_comp, 'componente_finale': componente_finale,
+                'codice_lavorato': codice_comp, 'descrizione': o.descrizione or '',
+                'priorita': o.priorita, 'stato_op': o.stato,
+                'totale': qta_necessaria, 'saldo': qta_necessaria, 'pct': 0,
+                'posizione_manuale': None, 'data_prevista': o.data_prevista.isoformat() if o.data_prevista else None,
+                'tempo_standard_min_pz': round(tempo_standard_min_pz, 2) if tempo_standard_min_pz else None,
+                'scarto_max_pct': fase_ciclo.scarto_max_pct, 'scarto_max_pezzi': None,
+                'consumi_standard': [], 'non_rilasciato': True,
+                '_chiave_ordine': (2, o.priorita, o.data_prevista or datetime.max.date(), o.id, codice_comp),
             })
 
     for sezione in righe:
@@ -259,6 +298,7 @@ def _raggruppa_per_op(righe):
                 'codice_articolo': r['codice_articolo'], 'priorita': r['priorita'],
                 'posizione_manuale': r['posizione_manuale'], 'descrizione': r['descrizione'],
                 'qta_pianificata': r['qta_pianificata'], 'materiale_disponibile': r['materiale_disponibile'],
+                'non_rilasciato': r.get('non_rilasciato', False),
                 'componenti': [], 'saldo_totale': 0, 'totale_totale': 0,
             })
         g = gruppi[indice_per_op[r['op_id']]]

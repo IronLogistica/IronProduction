@@ -54,6 +54,18 @@
   </p>
   <div id="avanzamento-commesse-box" style="overflow-x:auto">Caricamento...</div>
 </div>
+
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-top:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-weight:800;font-size:14px;color:var(--dark)">🔔 In Attesa di Rilascio</div>
+    <button class="btn btn-ghost" style="font-size:11px" onclick="caricaInAttesaRilascio()">🔄 Aggiorna</button>
+  </div>
+  <p style="font-size:11px;color:var(--text-dim);margin-bottom:12px">
+    Ordini di Produzione già inseriti ma non ancora rilasciati — promemoria trasversale a tutti i centri di costo.
+    Finché restano in questo stato non impegnano materiale né generano ordini di lavoro.
+  </p>
+  <div id="in-attesa-rilascio-box" style="overflow-x:auto">Caricamento...</div>
+</div>
 {% endblock %}
 {% block scripts %}
 const AC_CIANO = '#7EEEEF';
@@ -171,4 +183,29 @@ async function caricaAvanzamentoCommesse(){
   }
 }
 caricaAvanzamentoCommesse();
+
+async function caricaInAttesaRilascio(){
+  const box = document.getElementById('in-attesa-rilascio-box');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/kpi/in-attesa-rilascio');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine in attesa di rilascio.</p>'; return; }
+    box.innerHTML = '<table class="kanban-table"><thead><tr>' +
+      '<th>PRIO</th><th>OP</th><th>Commessa</th><th>Codice</th><th style="text-align:left">Descrizione</th><th>Qtà pianificata</th><th>Data prevista</th>' +
+      '</tr></thead><tbody>' +
+      righe.map(o => `<tr>
+        <td class="num">${o.priorita}</td>
+        <td class="codice"><a href="/ordini-produzione" style="color:var(--accent)">${o.op_codice}</a></td>
+        <td>${o.commessa || '—'}</td>
+        <td class="codice">${o.codice_articolo}</td>
+        <td class="descr-td">${o.descrizione || ''}</td>
+        <td class="num">${o.qta_pianificata}</td>
+        <td style="font-size:11px;color:var(--text-dim)">${o.data_prevista || '—'}</td>
+      </tr>`).join('') + '</tbody></table>';
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+caricaInAttesaRilascio();
 {% endblock %}
