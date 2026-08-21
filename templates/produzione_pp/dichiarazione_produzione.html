@@ -298,17 +298,17 @@ async function dichiaraInline(g, c, idInput){
       + notaScarto;
 
     const box = document.getElementById('ant-componenti');
-    if(!anteprima.componenti.length){
-      box.innerHTML = '<p style="color:var(--text-dim);font-style:italic;font-size:12px">Nessun componente da scaricare (distinta base non trovata per questo codice).</p>';
-    } else {
-      box.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed"><colgroup><col style="width:22%"><col style="width:58%"><col style="width:20%"></colgroup>' +
-        '<thead><tr><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Codice</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Descrizione</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Quantità</th></tr></thead><tbody>' +
-        anteprima.componenti.map((comp, k) =>
-          `<tr><td class="codice" style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${comp.codice}</td>` +
-          `<td style="padding:4px 6px;color:var(--text-dim);overflow-wrap:break-word">${comp.descrizione||'—'}</td>` +
-          `<td style="padding:4px 6px"><input id="ant-qta-${k}" type="number" step="0.01" min="0" value="${comp.quantita}" data-codice="${comp.codice}" style="width:85px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px"></td></tr>`
-        ).join('') + '</tbody></table>';
-    }
+    box.innerHTML = '<table id="ant-tabella-componenti" style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed"><colgroup><col style="width:26%"><col style="width:44%"><col style="width:18%"><col style="width:12%"></colgroup>' +
+      '<thead><tr><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Codice</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Descrizione</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Quantità</th><th></th></tr></thead><tbody id="ant-righe-componenti">' +
+      (anteprima.componenti.length ? anteprima.componenti.map((comp, k) =>
+        `<tr data-riga-materiale><td style="padding:4px 6px"><input type="text" value="${comp.codice}" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px;font-family:monospace"></td>` +
+        `<td class="ant-desc-riga" style="padding:4px 6px;color:var(--text-dim);overflow-wrap:break-word">${comp.descrizione||'—'}</td>` +
+        `<td style="padding:4px 6px"><input type="number" step="0.01" min="0" value="${comp.quantita}" style="width:85px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px"></td>` +
+        `<td style="padding:4px 6px"><button type="button" class="btn btn-ghost" style="color:#e74c3c;padding:2px 8px" onclick="this.closest('tr').remove()" title="Rimuovi questa riga">✕</button></td></tr>`
+      ).join('') : '') + '</tbody></table>' +
+      (anteprima.componenti.length ? '' : '<p style="color:var(--text-dim);font-style:italic;font-size:12px;margin-top:6px">Nessun componente da distinta base — aggiungi manualmente il materiale usato.</p>') +
+      `<div style="margin-top:8px"><button type="button" class="btn btn-ghost" onclick="_antAggiungiRigaMateriale()">➕ Aggiungi materiale (es. sostituzione spessore/codice)</button></div>` +
+      `<div style="font-size:11px;color:var(--text-dim);margin-top:4px;font-style:italic">Puoi correggere il codice (es. era finito il ferro sp.3, hai usato lo sp.4) o aggiungere righe extra — lo scarico avverrà sui codici indicati qui, non su quelli di distinta base.</div>`;
 
     // Isole one-piece-flow (es. FRONTE+RETRO assemblati insieme): mostrati
     // solo come info, NON modificabili — vengono caricati e scaricati in
@@ -326,12 +326,34 @@ async function dichiaraInline(g, c, idInput){
   openModal('modal-anteprima');
 }
 
+function _antAggiungiRigaMateriale(){
+  const tbody = document.getElementById('ant-righe-componenti');
+  if(!tbody) return;
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-riga-materiale', '');
+  tr.innerHTML =
+    `<td style="padding:4px 6px"><input type="text" placeholder="codice materiale" style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px;font-family:monospace"></td>` +
+    `<td class="ant-desc-riga" style="padding:4px 6px;color:var(--text-dim)">—</td>` +
+    `<td style="padding:4px 6px"><input type="number" step="0.01" min="0" value="0" style="width:85px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px"></td>` +
+    `<td style="padding:4px 6px"><button type="button" class="btn btn-ghost" style="color:#e74c3c;padding:2px 8px" onclick="this.closest('tr').remove()" title="Rimuovi questa riga">✕</button></td>`;
+  tbody.appendChild(tr);
+  tr.querySelector('input[type="text"]').focus();
+}
+
 async function confermaAnteprima(){
   const esito = document.getElementById('ant-esito');
   document.getElementById('ant-blocco-8d').style.display = 'none';
-  const inputsQta = document.querySelectorAll('#ant-componenti input[data-codice]');
+  // Legge codice+quantità riga per riga (non più campi fissi): il codice è
+  // modificabile — permette di sostituire un materiale finito (es. ferro
+  // sp.3 → sp.4 usato al suo posto) o aggiungere righe extra non previste
+  // dalla distinta base, tramite il pulsante "Aggiungi materiale".
+  const righe = document.querySelectorAll('#ant-righe-componenti tr[data-riga-materiale]');
   const consumi = {};
-  inputsQta.forEach(inp => { consumi[inp.dataset.codice] = parseFloat(inp.value) || 0; });
+  righe.forEach(tr => {
+    const codice = (tr.querySelector('input[type="text"]')?.value || '').trim().toUpperCase();
+    const qta = parseFloat(tr.querySelector('input[type="number"]')?.value) || 0;
+    if(codice && qta > 0) consumi[codice] = (consumi[codice] || 0) + qta;
+  });
 
   const payload = { ..._anteprimaCorrente, tempo_minuti: 0, consumi };
   try{
