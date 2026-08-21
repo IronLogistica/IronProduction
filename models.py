@@ -575,6 +575,16 @@ class DistintaBaseWood(db.Model):
     # esistente, che non cambia e non deve sapere di questi due campi.
     pezzi_per_barra    = db.Column(db.Float, nullable=True)
     sviluppo           = db.Column(db.String(50), nullable=True)   # es. "L. 1.932" — testo libero, alcune schede hanno note tipo "D.V." attaccate
+    # ── Isole lean one-piece-flow (es. FRONTE+RETRO di un cavalletto, saldati
+    # insieme nello stesso istante): questo figlio non viene MAI dichiarato/
+    # caricato a magazzino da solo — nasce e si consuma nello stesso momento
+    # in cui si dichiara il codice padre. Quando True, la registrazione del
+    # consuntivo del padre carica e scarica IN AUTOMATICO anche questo
+    # figlio (vedi _esplodi_fino_a_semilavorati_dichiarabili), invece di
+    # trattarlo come un semilavorato già in giacenza da una fase a monte
+    # (Taglio/Trapano ecc.) dichiarata separatamente — quello resta il
+    # comportamento normale quando contestuale=False.
+    contestuale        = db.Column(db.Boolean, default=False, nullable=False)
     creato_il     = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_padre_figlio_wood_uc'),)
 
@@ -1093,6 +1103,25 @@ def assicura_operatore_evento_consuntivo():
         colonne = {c['name'] for c in inspect(db.engine).get_columns('pp_eventi_consuntivi')}
         if 'operatore' not in colonne:
             db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN operatore VARCHAR(100)"))
+            db.session.commit()
+
+
+def assicura_contestuale_distinta_base():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    distinta_base_wood.contestuale (isole lean one-piece-flow: figlio nato e
+    consumato nello stesso istante del padre, es. FRONTE+RETRO saldati
+    insieme) senza ricreare tabelle."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS contestuale BOOLEAN NOT NULL DEFAULT FALSE"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('distinta_base_wood')}
+        if 'contestuale' not in colonne:
+            db.session.execute(text("ALTER TABLE distinta_base_wood ADD COLUMN contestuale BOOLEAN NOT NULL DEFAULT 0"))
             db.session.commit()
 
 

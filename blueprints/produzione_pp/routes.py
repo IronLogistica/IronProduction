@@ -689,20 +689,40 @@ def _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata):
     stesse materie prime due volte, e in più scaricare a sua volta il
     semilavorato appena caricato. Si consuma quindi LUI (il semilavorato,
     dal magazzino), non si riesplode sotto di lui.
+
+    Ritorna (consumi, contestuali): 'consumi' sono gli scarichi normali
+    (presumono un carico avvenuto altrove/prima, es. Taglio/Trapano);
+    'contestuali' sono i figli marcati come "isola one-piece-flow" in
+    distinta base (DistintaBaseWood.contestuale=True, es. FRONTE+RETRO di
+    un cavalletto saldati insieme) — nascono e si consumano nello stesso
+    istante del padre, quindi vanno caricati E scaricati in automatico qui
+    (vedi _registra_evento_consuntivo), mai trattati come stock preesistente.
     """
     codice_base = o.codice_articolo if componente_finale else componente
     consumi = {}
-    _esplodi_fino_a_semilavorati_dichiarabili(codice_base, qta_tagliata, consumi)
-    return consumi
+    contestuali = {}
+    _esplodi_fino_a_semilavorati_dichiarabili(codice_base, qta_tagliata, consumi, contestuali)
+    return consumi, contestuali
 
 
-def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, _visitati=None):
+def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali, _visitati=None):
     _visitati = _visitati if _visitati is not None else set()
     if codice in _visitati:
         return  # mai un ciclo infinito su una distinta configurata male per errore
     _visitati.add(codice)
     for rb in _righe_bom_attive_wood(codice):
         qta_figlio = rb.quantita * qta
+        if rb.contestuale:
+            # Isola one-piece-flow: questo figlio non è mai stato caricato a
+            # magazzino da solo (nasce e si assembla nello stesso istante del
+            # padre) — va accumulato a parte per il carico+scarico automatico,
+            # MAI messo tra i 'consumi' normali (che presumono stock già
+            # esistente). Si continua comunque a esplodere sotto di lui: anche
+            # le SUE materie prime/componenti vanno consumate, a meno che pure
+            # loro siano contestuali o abbiano un proprio ciclo dichiarato a parte.
+            contestuali[rb.codice_figlio] = contestuali.get(rb.codice_figlio, 0) + qta_figlio
+            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, _visitati)
+            continue
         ha_proprio_ciclo = CicloLavoroWood.query.filter_by(codice=rb.codice_figlio).first() is not None
         figli_del_figlio = _righe_bom_attive_wood(rb.codice_figlio)
         if ha_proprio_ciclo or not figli_del_figlio:
@@ -712,7 +732,7 @@ def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, _visitati=No
             # distinta sotto — e va comunque consumata a questo livello.
             consumi[rb.codice_figlio] = consumi.get(rb.codice_figlio, 0) + qta_figlio
         else:
-            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, _visitati)
+            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, _visitati)
 
 
 def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None, operatore=None):
@@ -816,13 +836,36 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     avviso_magazzino = None
     if qta_tagliata > 0 and prima_fase:
         try:
-            consumi = consumi_override if consumi_override is not None else _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata)
+            consumi_calcolati, contestuali = _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata)
+            consumi = consumi_override if consumi_override is not None else consumi_calcolati
             for cod, qta_consumata in consumi.items():
                 if qta_consumata:
                     costo_corrente = _calcola_costo_standard(cod)['costo_totale']
                     _registra_movimento_giacenza(cod, -qta_consumata, 'scarico_produzione',
                                                   riferimento=o.codice,
                                                   note=f'Consuntivo {good} pz buoni + {scrap} pz scarto ({codice_lavorato})',
+                                                  costo_unitario=costo_corrente)
+            # Isole one-piece-flow (DistintaBaseWood.contestuale=True, es.
+            # FRONTE+RETRO di un cavalletto saldati insieme): questi figli non
+            # sono MAI stock preesistente, nascono e si consumano nello stesso
+            # istante del padre — si carica il fabbisogno e lo si scarica
+            # subito dopo, così restano tracciati (costo, storico movimenti)
+            # senza mai lasciare una giacenza fantasma né andare in negativo.
+            # Non passa da consumi_override: è un comportamento automatico
+            # legato al flag di distinta, non un valore che il capo reparto
+            # corregge a mano nell'anteprima.
+            for cod, qta_consumata in contestuali.items():
+                if qta_consumata:
+                    costo_corrente = _calcola_costo_standard(cod)['costo_totale']
+                    _registra_movimento_giacenza(cod, qta_consumata, 'carico_produzione',
+                                                  riferimento=o.codice,
+                                                  note=(f'Assemblato contestualmente in {fase_nome} ({codice_lavorato}) '
+                                                        f'— isola one-piece-flow, mai dichiarato a parte'),
+                                                  costo_unitario=costo_corrente)
+                    _registra_movimento_giacenza(cod, -qta_consumata, 'scarico_produzione',
+                                                  riferimento=o.codice,
+                                                  note=(f'Consuntivo {good} pz buoni + {scrap} pz scarto '
+                                                        f'— assemblato contestualmente in {codice_lavorato}'),
                                                   costo_unitario=costo_corrente)
         except Exception as e:
             # NON deve mai bloccare la registrazione del consuntivo — ma un
@@ -2249,9 +2292,9 @@ def api_dichiarazione_anteprima():
 
     # Scarico basato su BUONI+SCARTO: il materiale grezzo si consuma per
     # ogni pezzo tagliato, anche quello poi scartato — non solo per i buoni.
-    consumi = _calcola_consumi_standard(o, componente_finale, componente, good + scrap)
+    consumi, contestuali = _calcola_consumi_standard(o, componente_finale, componente, good + scrap)
 
-    tutti_codici = {codice_caricato} | set(consumi.keys())
+    tutti_codici = {codice_caricato} | set(consumi.keys()) | set(contestuali.keys())
     descr_map = {}
     try:
         for a in ArticoloML.query.filter(ArticoloML.sku.in_(tutti_codici)).all():
@@ -2267,12 +2310,16 @@ def api_dichiarazione_anteprima():
 
     # Il CARICO a magazzino resta SOLO sui pezzi buoni — uno scarto non
     # diventa mai scorta utilizzabile. Se good=0 (solo scarto dichiarato),
-    # niente da caricare.
+    # niente da caricare. I 'contestuali' (isole one-piece-flow, es.
+    # FRONTE+RETRO) si mostrano a parte: verranno caricati E scaricati in
+    # automatico alla conferma, non sono uno scarico da stock preesistente.
     return jsonify(ok=True,
         carica=({'codice': codice_caricato, 'descrizione': descr_map.get(codice_caricato, ''), 'quantita': good}
                 if good > 0 else None),
         componenti=[{'codice': cod, 'descrizione': descr_map.get(cod, ''), 'quantita': round(qta, 4)}
-                    for cod, qta in consumi.items()])
+                    for cod, qta in consumi.items()],
+        componenti_contestuali=[{'codice': cod, 'descrizione': descr_map.get(cod, ''), 'quantita': round(qta, 4)}
+                                 for cod, qta in contestuali.items()])
 
 
 def _verifica_pin_capo(d):
@@ -2504,7 +2551,12 @@ def _storna_evento_consuntivo(e, o):
         # Buoni+scarto: il materiale scaricato in dichiarazione copriva
         # ANCHE i pezzi di scarto (consumano ferro come quelli buoni),
         # quindi lo storno deve ripristinare la stessa quantità totale.
-        consumi = _calcola_consumi_standard(o, componente_finale, e.componente, qta_tagliata_originale)
+        # 'contestuali' (isole one-piece-flow) non richiedono nessun
+        # ripristino: alla dichiarazione originale erano stati caricati E
+        # scaricati nello stesso istante (net zero sulla giacenza) — non
+        # c'è nessuno stock fantasma da restituire, lo storno riguarda
+        # solo i 'consumi' normali (presunto stock preesistente).
+        consumi, _contestuali_storno = _calcola_consumi_standard(o, componente_finale, e.componente, qta_tagliata_originale)
         for cod, qta_consumata in consumi.items():
             if qta_consumata:
                 _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',

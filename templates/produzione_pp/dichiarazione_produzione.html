@@ -309,6 +309,18 @@ async function dichiaraInline(g, c, idInput){
           `<td style="padding:4px 6px"><input id="ant-qta-${k}" type="number" step="0.01" min="0" value="${comp.quantita}" data-codice="${comp.codice}" style="width:85px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px"></td></tr>`
         ).join('') + '</tbody></table>';
     }
+
+    // Isole one-piece-flow (es. FRONTE+RETRO assemblati insieme): mostrati
+    // solo come info, NON modificabili — vengono caricati e scaricati in
+    // automatico alla conferma, non passano da consumi_override.
+    if(anteprima.componenti_contestuali && anteprima.componenti_contestuali.length){
+      box.innerHTML += '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border)">' +
+        '<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-bottom:4px">🔗 Assemblati contestualmente (automatico)</div>' +
+        anteprima.componenti_contestuali.map(c =>
+          `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 6px;color:var(--text-dim)">` +
+          `<span><b class="codice">${c.codice}</b> ${c.descrizione||''}</span><span>× ${c.quantita}</span></div>`
+        ).join('') + '</div>';
+    }
   }
   document.getElementById('ant-esito').textContent = '';
   openModal('modal-anteprima');

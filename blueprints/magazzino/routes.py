@@ -425,6 +425,7 @@ def api_lista_distinta_wood():
             'note':          r.note or '',
             'gruppo_alternativa': r.gruppo_alternativa or '',
             'preferita':          bool(r.preferita) if r.gruppo_alternativa else None,
+            'contestuale':        bool(r.contestuale),
         } for r in righe],
         'totale':      totale,
         'mostrate':    len(righe),
@@ -454,6 +455,7 @@ def api_add_distinta_wood():
         # quella con preferita=True viene usata nell'esplosione BOM di default.
         gruppo_alternativa = (data.get('gruppo_alternativa') or '').strip().upper() or None
         preferita = bool(data.get('preferita', True)) if gruppo_alternativa else True
+        contestuale = bool(data.get('contestuale', False))
 
         esistente = DistintaBaseWood.query.filter_by(codice_padre=padre, codice_figlio=figlio).first()
         if esistente:
@@ -462,11 +464,13 @@ def api_add_distinta_wood():
             esistente.note     = note
             esistente.gruppo_alternativa = gruppo_alternativa
             esistente.preferita = preferita
+            esistente.contestuale = contestuale
         else:
             db.session.add(DistintaBaseWood(
                 codice_padre=padre, codice_figlio=figlio,
                 quantita=quantita, livello=livello, note=note,
                 gruppo_alternativa=gruppo_alternativa, preferita=preferita,
+                contestuale=contestuale,
                 creato_il=datetime.utcnow()
             ))
         # Se questa riga diventa la preferita di un gruppo, tutte le altre righe
@@ -501,6 +505,22 @@ def api_seleziona_alternativa_wood(id_riga):
     riga.preferita = True
     db.session.commit()
     return jsonify({'ok': True})
+
+
+@magazzino_bp.route('/api/distinta_base_wood/<int:id_riga>/toggle_contestuale', methods=['POST'])
+def api_toggle_contestuale_wood(id_riga):
+    """
+    Isola lean one-piece-flow: attiva/disattiva 'contestuale' su una riga di
+    distinta base — quando True, questo figlio viene trattato come nato e
+    consumato nello stesso istante del padre (es. FRONTE+RETRO di un
+    cavalletto saldati insieme), mai come stock preesistente da una fase a
+    monte dichiarata a parte. Vedi _esplodi_fino_a_semilavorati_dichiarabili
+    e _registra_evento_consuntivo in blueprints/produzione_pp/routes.py.
+    """
+    riga = DistintaBaseWood.query.get_or_404(id_riga)
+    riga.contestuale = not riga.contestuale
+    db.session.commit()
+    return jsonify({'ok': True, 'contestuale': riga.contestuale})
 
 
 @magazzino_bp.route('/api/distinta_base_wood/<int:id_riga>', methods=['DELETE'])
@@ -553,6 +573,7 @@ def api_modifica_distinta_wood(id_riga):
         riga.note = (data.get('note') or '').strip()
         riga.gruppo_alternativa = (data.get('gruppo_alternativa') or '').strip().upper() or None
         riga.preferita = bool(data.get('preferita', True)) if riga.gruppo_alternativa else True
+        riga.contestuale = bool(data.get('contestuale', riga.contestuale))
         if riga.gruppo_alternativa and riga.preferita:
             (DistintaBaseWood.query.filter_by(codice_padre=padre, gruppo_alternativa=riga.gruppo_alternativa)
              .filter(DistintaBaseWood.id != riga.id).update({'preferita': False}))
