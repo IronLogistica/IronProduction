@@ -1606,7 +1606,7 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                 # Scheda Lavorazione (matrice/punto zero/rullo/satinatura, tutti
                 # per macchine di piega/taglio) — l'avviso lì è sempre falso
                 # allarme, va mostrato solo dove quei parametri hanno senso.
-                'nota': '' if nome_l == 'saldatura' else '⚠️ Parametri non ancora compilati in Parametri di Lavorazione',
+                'nota': '' if 'sald' in nome_l else '⚠️ Parametri non ancora compilati in Parametri di Lavorazione',
             }
             righe_per_materiale.setdefault(materiale, []).append(riga)
 
@@ -2444,7 +2444,7 @@ def api_dichiarazione_approva(eid):
     # _calcola_campi_giacenza) — quindi lo Storico Produzione del Kanban
     # deve contarla nello stesso istante, non restare fermo ai soli rientri
     # DDT dalla verniciatura.
-    if e.componente is None and (e.fase or '').strip().lower() == 'saldatura' and e.pezzi_buoni > 0:
+    if e.componente is None and 'sald' in (e.fase or '').strip().lower() and e.pezzi_buoni > 0:
         o = OrdineProduzione.query.filter_by(codice=e.op_code).first()
         if o:
             p = (KanbanProdotto.query

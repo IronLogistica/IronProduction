@@ -988,7 +988,7 @@ def _grezzo_iw_per_codici(codici):
                       .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
                       .filter(OrdineProduzione.codice_articolo.in_(codici),
                               EventoConsuntivoPP.componente.is_(None),
-                              db.func.lower(EventoConsuntivoPP.fase) == 'saldatura',
+                              db.func.lower(EventoConsuntivoPP.fase).contains('sald'),
                               EventoConsuntivoPP.approvato_direzione.is_(True))
                       .group_by(OrdineProduzione.codice_articolo).all()):
         grezzo_iw[cod] = tot or 0
