@@ -813,6 +813,7 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     # finito in attesa di trattamento esterno.
     carica_prodotto_finito = not (codice_lavorato == o.codice_articolo and avanza_op)
     qta_tagliata = good + scrap  # il materiale si consuma per OGNI pezzo tagliato, buono o scarto
+    avviso_magazzino = None
     if qta_tagliata > 0 and prima_fase:
         try:
             consumi = consumi_override if consumi_override is not None else _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata)
@@ -823,8 +824,15 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
                                                   riferimento=o.codice,
                                                   note=f'Consuntivo {good} pz buoni + {scrap} pz scarto ({codice_lavorato})',
                                                   costo_unitario=costo_corrente)
-        except Exception:
-            pass  # lo scarico giacenza non deve mai bloccare la registrazione del consuntivo
+        except Exception as e:
+            # NON deve mai bloccare la registrazione del consuntivo — ma un
+            # errore qui prima spariva nel nulla, senza traccia da nessuna
+            # parte: ora finisce nei log e nell'audit dell'OP, così la
+            # prossima volta si vede COSA è andato storto invece di doverlo
+            # indovinare da un mancato scarico silenzioso.
+            avviso_magazzino = f'Scarico materiale FALLITO: {e}'
+            log(f'ERRORE scarico giacenza — OP {o.codice}, {codice_lavorato}, evento {event_id}: {e}')
+            _audit(o, 'ERRORE_SCARICO_GIACENZA', f'{codice_lavorato}: {e}', event_id)
 
         try:
             costo = _calcola_costo_standard(codice_lavorato)
@@ -837,8 +845,10 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
                 _registra_movimento_giacenza(codice_lavorato, good, 'carico_produzione',
                                               riferimento=o.codice, note=nota_costo,
                                               costo_unitario=costo['costo_totale'])
-        except Exception:
-            pass  # il carico a magazzino non deve mai bloccare la registrazione del consuntivo
+        except Exception as e:
+            avviso_magazzino = (avviso_magazzino + ' | ' if avviso_magazzino else '') + f'Carico prodotto FALLITO: {e}'
+            log(f'ERRORE carico giacenza — OP {o.codice}, {codice_lavorato}, evento {event_id}: {e}')
+            _audit(o, 'ERRORE_CARICO_GIACENZA', f'{codice_lavorato}: {e}', event_id)
 
     # Varianza di lavorazione: SEMPRE per ogni fase dichiarata (tempo
     # reale vs standard), indipendentemente da _e_prima_fase_del_ciclo — a
@@ -912,6 +922,8 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
                             riga_ciclo.produttivita_pezzi_osservati / (riga_ciclo.produttivita_minuti_osservati / 60), 3)
         except Exception:
             pass  # nessuna varianza registrabile (fase non abbinabile) non deve bloccare il consuntivo
+
+    return avviso_magazzino
 
 
 @pp_bp.post('/api/pp/events')
@@ -2025,8 +2037,8 @@ def api_dichiarazione_crea():
             if qta_f > 0:
                 consumi_override[cod] = qta_f
     event_id = str(uuid.uuid4())
-    _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id,
-                                 componente=componente, consumi_override=consumi_override)
+    avviso_magazzino = _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id,
+                                                     componente=componente, consumi_override=consumi_override)
 
     # Se questa dichiarazione era autorizzata da un 8D approvato, lo consuma:
     # non autorizza più nessuna dichiarazione futura, un'eccedenza successiva
@@ -2040,7 +2052,11 @@ def api_dichiarazione_crea():
             modulo.event_id_consumato = event_id
 
     db.session.commit()
-    return jsonify(ok=True, event_id=event_id, ordine=_ordine(o))
+    # La dichiarazione è comunque registrata (mai bloccata da un problema di
+    # magazzino) — ma se lo scarico/carico giacenza è fallito, l'operatore
+    # deve saperlo SUBITO invece che scoprirlo da una giacenza sbagliata
+    # settimane dopo: 'avviso' non blocca nulla, è solo visibile.
+    return jsonify(ok=True, event_id=event_id, ordine=_ordine(o), avviso_magazzino=avviso_magazzino)
 
 
 SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE = 20  # oltre questa % sopra il pianificato, blocco automatico

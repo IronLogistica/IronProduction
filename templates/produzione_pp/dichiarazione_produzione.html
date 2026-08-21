@@ -338,6 +338,9 @@ async function confermaAnteprima(){
       }
       esito.style.color='#c0392b'; esito.textContent = '⚠️ ' + d.error; return;
     }
+    if(d.avviso_magazzino){
+      alert('⚠️ Dichiarazione registrata, ma:\n\n' + d.avviso_magazzino + '\n\nControlla la giacenza di questo codice in Magazzino — potrebbe non essere aggiornata correttamente. Segnalalo a chi gestisce il programma.');
+    }
     closeModal('modal-anteprima');
     caricaOpAperti();
     caricaReintegroScarti();

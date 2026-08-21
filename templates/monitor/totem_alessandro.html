@@ -425,6 +425,9 @@ async function confermaAnteprima(){
       }
       esito.style.color='#f07070'; esito.textContent = '⚠️ ' + d.error; return;
     }
+    if(d.avviso_magazzino){
+      alert('⚠️ Dichiarazione registrata, ma:\n\n' + d.avviso_magazzino + '\n\nSegnalalo ad Angelo.');
+    }
     closeModal('modal-anteprima');
     caricaOpAperti();
     caricaReintegroScarti();
