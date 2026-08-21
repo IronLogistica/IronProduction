@@ -373,17 +373,32 @@ function renderCicloLavoroInline(cicli, approvvigionamento){
 function renderBOMLista(componenti){
   if(!componenti || !componenti.length) return '';
   return '<ul style="margin:4px 0 4px 18px;padding:0;list-style:none">' + componenti.map(c => `
-    <li style="padding:4px 0;border-left:2px solid var(--border);padding-left:10px;margin-bottom:2px">
+    <li style="padding:4px 0;border-left:2px solid ${c.contestuale?'#1e5fa8':'var(--border)'};padding-left:10px;margin-bottom:2px">
       ${c.livello_effettivo!==undefined ? `<span style="font-size:10px;color:#1e5fa8;font-weight:700;margin-right:6px">SOTTOGRUPPO ${c.livello_effettivo}° LIVELLO</span>` : ''}
       <span class="cod" style="font-weight:700">${c.codice}</span>
       <span style="color:var(--text-dim)"> — ${c.descrizione||'(senza descrizione)'}</span>
       <span style="margin-left:8px;font-weight:600">× ${c.quantita_totale}</span>
       ${c.stock!==null && c.stock!==undefined ? `<span style="margin-left:8px;font-size:11px;color:${c.stock<=0?'#c0392b':'#2a9d5c'}">(stock ${c.stock})</span>` : ''}
       ${c.note ? `<span style="margin-left:8px;font-size:11px;color:#999">${c.note}</span>` : ''}
+      ${c.contestuale ? `<span style="margin-left:8px;font-size:10px;color:#fff;background:#1e5fa8;padding:1px 6px;border-radius:4px;font-weight:700" title="Isola one-piece-flow: nasce e si consuma nello stesso istante del padre, mai stock preesistente">🔗 CONTESTUALE</span>` : ''}
+      <button type="button" class="btn btn-ghost" style="font-size:10px;padding:1px 6px;margin-left:6px" onclick="toggleContestualeAlbero(${c.id}, this)">${c.contestuale?'Scollega':'Segna contestuale'}</button>
       ${renderApprovvigionamentoInline(c.approvvigionamento)}
       ${renderCicloLavoroInline(c.cicli_lavoro, c.approvvigionamento)}
       ${renderBOMLista(c.figli)}
     </li>`).join('') + '</ul>';
+}
+
+async function toggleContestualeAlbero(idRiga, btn){
+  btn.disabled = true;
+  try{
+    const r = await fetch('/api/distinta_base_wood/' + idRiga + '/toggle_contestuale', {method:'POST'});
+    const d = await r.json();
+    if(d.errore){ alert(d.messaggio); btn.disabled=false; return; }
+    const codice = document.getElementById('inp-radice')?.value;
+    if(codice) renderRiepilogoCicli(codice.trim().toUpperCase());
+  }catch(e){
+    alert('Errore di rete durante il salvataggio.'); btn.disabled=false;
+  }
 }
 
 async function renderRiepilogoCicli(codice){

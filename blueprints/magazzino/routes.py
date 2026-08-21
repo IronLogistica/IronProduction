@@ -318,6 +318,7 @@ def _esplodi_bom_wood(codice, qta=1.0, _visitati=None, _profondita=0, _max_profo
             'fornitore':         None,
             'note':              r.note or '',
             'livello_effettivo': _profondita + 1,
+            'contestuale':       bool(r.contestuale),
             'cicli_lavoro':      [],
             'figli':             _esplodi_bom_wood(r.codice_figlio, qta_totale, _visitati, _profondita + 1, _max_profondita),
         })
