@@ -585,6 +585,12 @@ class DistintaBaseWood(db.Model):
     # (Taglio/Trapano ecc.) dichiarata separatamente — quello resta il
     # comportamento normale quando contestuale=False.
     contestuale        = db.Column(db.Boolean, default=False, nullable=False)
+    # Timestamp di quando 'contestuale' è stato attivato (vedi toggle in
+    # blueprints/magazzino/routes.py) — serve a distinguere gli OP aperti
+    # PRIMA di questa data (che restano sul comportamento storico finché
+    # Angelo non li autorizza, vedi OrdineProduzione.contestuale_autorizzato_
+    # da_angelo) da quelli aperti dopo (che usano subito il nuovo comportamento).
+    data_flag_contestuale = db.Column(db.DateTime, nullable=True)
     creato_il     = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_padre_figlio_wood_uc'),)
 
@@ -1108,13 +1114,23 @@ def assicura_operatore_evento_consuntivo():
 
 def assicura_contestuale_distinta_base():
     """Migrazione compatibile con DB già esistenti: aggiunge
-    distinta_base_wood.contestuale (isole lean one-piece-flow: figlio nato e
-    consumato nello stesso istante del padre, es. FRONTE+RETRO saldati
-    insieme) senza ricreare tabelle."""
+    distinta_base_wood.contestuale e distinta_base_wood.data_flag_contestuale
+    (isole lean one-piece-flow: figlio nato e consumato nello stesso istante
+    del padre, es. FRONTE+RETRO saldati insieme) e
+    ordini_produzione_pp.contestuale_autorizzato_da_angelo/
+    data_autorizzazione_contestuale (protezione OP legacy non evasi) senza
+    ricreare tabelle. Backfilla data_flag_contestuale a ORA per righe già
+    flaggate contestuale=True ma senza data (flag attivato prima che questa
+    colonna esistesse) — da questo momento in poi contano come 'appena
+    flaggate' ai fini della protezione degli OP in corso."""
     db_url = os.environ.get('DATABASE_URL', '')
-    if 'postgresql' in db_url or 'postgres' in db_url:
+    is_pg = 'postgresql' in db_url or 'postgres' in db_url
+    if is_pg:
         try:
             db.session.execute(text("ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS contestuale BOOLEAN NOT NULL DEFAULT FALSE"))
+            db.session.execute(text("ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS data_flag_contestuale TIMESTAMP"))
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN IF NOT EXISTS contestuale_autorizzato_da_angelo BOOLEAN NOT NULL DEFAULT FALSE"))
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN IF NOT EXISTS data_autorizzazione_contestuale TIMESTAMP"))
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -1123,6 +1139,26 @@ def assicura_contestuale_distinta_base():
         if 'contestuale' not in colonne:
             db.session.execute(text("ALTER TABLE distinta_base_wood ADD COLUMN contestuale BOOLEAN NOT NULL DEFAULT 0"))
             db.session.commit()
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('distinta_base_wood')}
+        if 'data_flag_contestuale' not in colonne:
+            db.session.execute(text("ALTER TABLE distinta_base_wood ADD COLUMN data_flag_contestuale TIMESTAMP"))
+            db.session.commit()
+        colonne_op = {c['name'] for c in inspect(db.engine).get_columns('ordini_produzione_pp')}
+        if 'contestuale_autorizzato_da_angelo' not in colonne_op:
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN contestuale_autorizzato_da_angelo BOOLEAN NOT NULL DEFAULT 0"))
+            db.session.commit()
+        colonne_op = {c['name'] for c in inspect(db.engine).get_columns('ordini_produzione_pp')}
+        if 'data_autorizzazione_contestuale' not in colonne_op:
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN data_autorizzazione_contestuale TIMESTAMP"))
+            db.session.commit()
+    db.session.execute(text(
+        "UPDATE distinta_base_wood SET data_flag_contestuale = :ora "
+        "WHERE contestuale = TRUE AND data_flag_contestuale IS NULL"
+        if is_pg else
+        "UPDATE distinta_base_wood SET data_flag_contestuale = :ora "
+        "WHERE contestuale = 1 AND data_flag_contestuale IS NULL"
+    ), {'ora': datetime.utcnow()})
+    db.session.commit()
 
 
 class KanbanProdotto(db.Model):
@@ -1950,6 +1986,17 @@ class OrdineProduzione(db.Model):
     data_chiusura_co = db.Column(db.DateTime, nullable=True)
     creato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     aggiornato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Isole one-piece-flow (vedi DistintaBaseWood.contestuale): un OP già
+    # aperto PRIMA che un componente della sua distinta venisse flaggato
+    # 'contestuale', e non ancora completamente evaso, NON passa in automatico
+    # al nuovo comportamento (carico+scarico automatico del figlio, niente
+    # più suo Ordine di Lavoro separato) — resta sul comportamento storico
+    # finché Angelo non lo autorizza esplicitamente qui (evita di alterare a
+    # metà strada un ordine già parzialmente lavorato con la logica vecchia).
+    # Un OP creato DOPO il flag, o già completamente evaso, non ha bisogno di
+    # questa autorizzazione: usa il nuovo comportamento da subito.
+    contestuale_autorizzato_da_angelo = db.Column(db.Boolean, nullable=False, default=False)
+    data_autorizzazione_contestuale = db.Column(db.DateTime, nullable=True)
 
 class EventoConsuntivoPP(db.Model):
     __tablename__ = "pp_eventi_consuntivi"

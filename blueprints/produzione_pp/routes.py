@@ -18,7 +18,8 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
-                    _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO)
+                    _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
+                    _contestuale_attivo_per_op)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 
@@ -690,28 +691,48 @@ def _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata):
     semilavorato appena caricato. Si consuma quindi LUI (il semilavorato,
     dal magazzino), non si riesplode sotto di lui.
 
-    Ritorna (consumi, contestuali): 'consumi' sono gli scarichi normali
-    (presumono un carico avvenuto altrove/prima, es. Taglio/Trapano);
-    'contestuali' sono i figli marcati come "isola one-piece-flow" in
-    distinta base (DistintaBaseWood.contestuale=True, es. FRONTE+RETRO di
-    un cavalletto saldati insieme) — nascono e si consumano nello stesso
-    istante del padre, quindi vanno caricati E scaricati in automatico qui
-    (vedi _registra_evento_consuntivo), mai trattati come stock preesistente.
+    Ritorna (consumi, contestuali, legacy_bloccati): 'consumi' sono gli
+    scarichi normali (presumono un carico avvenuto altrove/prima, es.
+    Taglio/Trapano); 'contestuali' sono i figli marcati come "isola
+    one-piece-flow" in distinta base (DistintaBaseWood.contestuale=True, es.
+    FRONTE+RETRO di un cavalletto saldati insieme) — nascono e si consumano
+    nello stesso istante del padre, quindi vanno caricati E scaricati in
+    automatico qui (vedi _registra_evento_consuntivo), mai trattati come
+    stock preesistente; 'legacy_bloccati' sono i codici che SAREBBERO
+    contestuali ma l'OP è stato aperto prima del flag e non è ancora evaso
+    né autorizzato da Angelo — restano sul comportamento storico (dentro
+    'consumi') per questo OP specifico, e vengono segnalati come avviso.
     """
     codice_base = o.codice_articolo if componente_finale else componente
     consumi = {}
     contestuali = {}
-    _esplodi_fino_a_semilavorati_dichiarabili(codice_base, qta_tagliata, consumi, contestuali)
-    return consumi, contestuali
+    legacy_bloccati = []  # codici che sarebbero contestuali ma l'OP è legacy non autorizzato: avviso per Angelo
+    _esplodi_fino_a_semilavorati_dichiarabili(codice_base, qta_tagliata, consumi, contestuali, o, legacy_bloccati)
+    return consumi, contestuali, legacy_bloccati
 
 
-def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali, _visitati=None):
+def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali, o, legacy_bloccati, _visitati=None):
     _visitati = _visitati if _visitati is not None else set()
     if codice in _visitati:
         return  # mai un ciclo infinito su una distinta configurata male per errore
     _visitati.add(codice)
     for rb in _righe_bom_attive_wood(codice):
         qta_figlio = rb.quantita * qta
+        if rb.contestuale and not _contestuale_attivo_per_op(rb, o):
+            # OP legacy (aperto prima del flag) e non ancora evaso, non
+            # autorizzato da Angelo: resta sul comportamento storico per
+            # QUESTO ordine — nessun carico/scarico automatico, si segnala
+            # soltanto per l'avviso. Il figlio va comunque trattato come
+            # prima (fermarsi qui se ha un proprio ciclo, altrimenti
+            # esplodere sotto — stessa logica del ramo 'else' più sotto).
+            legacy_bloccati.append(rb.codice_figlio)
+            ha_proprio_ciclo_legacy = CicloLavoroWood.query.filter_by(codice=rb.codice_figlio).first() is not None
+            figli_del_figlio_legacy = _righe_bom_attive_wood(rb.codice_figlio)
+            if ha_proprio_ciclo_legacy or not figli_del_figlio_legacy:
+                consumi[rb.codice_figlio] = consumi.get(rb.codice_figlio, 0) + qta_figlio
+            else:
+                _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
+            continue
         if rb.contestuale:
             # Isola one-piece-flow: questo figlio non è mai stato caricato a
             # magazzino da solo (nasce e si assembla nello stesso istante del
@@ -721,7 +742,7 @@ def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali,
             # le SUE materie prime/componenti vanno consumate, a meno che pure
             # loro siano contestuali o abbiano un proprio ciclo dichiarato a parte.
             contestuali[rb.codice_figlio] = contestuali.get(rb.codice_figlio, 0) + qta_figlio
-            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, _visitati)
+            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
             continue
         ha_proprio_ciclo = CicloLavoroWood.query.filter_by(codice=rb.codice_figlio).first() is not None
         figli_del_figlio = _righe_bom_attive_wood(rb.codice_figlio)
@@ -732,7 +753,7 @@ def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali,
             # distinta sotto — e va comunque consumata a questo livello.
             consumi[rb.codice_figlio] = consumi.get(rb.codice_figlio, 0) + qta_figlio
         else:
-            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, _visitati)
+            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
 
 
 def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None, operatore=None):
@@ -836,7 +857,7 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     avviso_magazzino = None
     if qta_tagliata > 0 and prima_fase:
         try:
-            consumi_calcolati, contestuali = _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata)
+            consumi_calcolati, contestuali, legacy_bloccati = _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata)
             consumi = consumi_override if consumi_override is not None else consumi_calcolati
             for cod, qta_consumata in consumi.items():
                 if qta_consumata:
@@ -876,6 +897,23 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
             avviso_magazzino = f'Scarico materiale FALLITO: {e}'
             log(f'ERRORE scarico giacenza — OP {o.codice}, {codice_lavorato}, evento {event_id}: {e}')
             _audit(o, 'ERRORE_SCARICO_GIACENZA', f'{codice_lavorato}: {e}', event_id)
+        else:
+            if legacy_bloccati:
+                # OP aperto prima del flag 'contestuale' e non ancora evaso/
+                # autorizzato: il/i figlio/i sono stati scaricati con la
+                # logica storica (stock preesistente presunto), NON con il
+                # carico+scarico automatico — Angelo deve intervenire a mano
+                # (registrare/verificare la giacenza di questi codici) o
+                # autorizzare esplicitamente l'OP al nuovo comportamento.
+                avviso_magazzino = (
+                    f"Attenzione: {', '.join(sorted(set(legacy_bloccati)))} "
+                    f"risultano 'contestuali' in distinta ma questo OP era già aperto prima "
+                    f"dell'attivazione del flag e non è ancora evaso — trattati con la logica "
+                    f"storica (nessun carico automatico). Serve una verifica manuale di Angelo "
+                    f"sulla giacenza di questi codici, oppure l'autorizzazione esplicita dell'OP "
+                    f"al nuovo comportamento (POST /api/ordini_produzione/{o.codice}/autorizza_contestuale)."
+                )
+                _audit(o, 'CONTESTUALE_LEGACY_BLOCCATO', f'{codice_lavorato}: {sorted(set(legacy_bloccati))}', event_id)
 
         try:
             costo = _calcola_costo_standard(codice_lavorato)
@@ -2292,7 +2330,7 @@ def api_dichiarazione_anteprima():
 
     # Scarico basato su BUONI+SCARTO: il materiale grezzo si consuma per
     # ogni pezzo tagliato, anche quello poi scartato — non solo per i buoni.
-    consumi, contestuali = _calcola_consumi_standard(o, componente_finale, componente, good + scrap)
+    consumi, contestuali, legacy_bloccati = _calcola_consumi_standard(o, componente_finale, componente, good + scrap)
 
     tutti_codici = {codice_caricato} | set(consumi.keys()) | set(contestuali.keys())
     descr_map = {}
@@ -2313,13 +2351,43 @@ def api_dichiarazione_anteprima():
     # niente da caricare. I 'contestuali' (isole one-piece-flow, es.
     # FRONTE+RETRO) si mostrano a parte: verranno caricati E scaricati in
     # automatico alla conferma, non sono uno scarico da stock preesistente.
+    # 'avviso_contestuale_legacy': codici che sarebbero contestuali ma questo
+    # OP è legacy (aperto prima del flag) e non ancora evaso/autorizzato —
+    # in anteprima compaiono dentro 'componenti' (scarico normale, come oggi),
+    # NON in 'componenti_contestuali', finché Angelo non autorizza l'OP.
     return jsonify(ok=True,
         carica=({'codice': codice_caricato, 'descrizione': descr_map.get(codice_caricato, ''), 'quantita': good}
                 if good > 0 else None),
         componenti=[{'codice': cod, 'descrizione': descr_map.get(cod, ''), 'quantita': round(qta, 4)}
                     for cod, qta in consumi.items()],
         componenti_contestuali=[{'codice': cod, 'descrizione': descr_map.get(cod, ''), 'quantita': round(qta, 4)}
-                                 for cod, qta in contestuali.items()])
+                                 for cod, qta in contestuali.items()],
+        avviso_contestuale_legacy=(sorted(set(legacy_bloccati)) if legacy_bloccati else None),
+        op_code=o.codice)
+
+
+@pp_bp.route('/api/ordini_produzione/<codice>/autorizza_contestuale', methods=['POST'])
+def api_autorizza_contestuale_op(codice):
+    """
+    Autorizzazione esplicita di Angelo (PIN capo) per far passare un OP
+    legacy (aperto prima che un componente della sua distinta diventasse
+    'contestuale', e non ancora completamente evaso) al nuovo comportamento
+    automatico — carico+scarico automatico del figlio, niente più suo
+    Ordine di Lavoro separato. Senza questa autorizzazione, l'OP resta sul
+    comportamento storico per tutte le prossime dichiarazioni (vedi
+    _contestuale_attivo_per_op).
+    """
+    d = request.get_json(force=True) if request.is_json else request.args
+    if not _verifica_pin_capo(d):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    o = OrdineProduzione.query.filter_by(codice=(codice or '').strip()).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+    o.contestuale_autorizzato_da_angelo = True
+    o.data_autorizzazione_contestuale = datetime.utcnow()
+    db.session.commit()
+    _audit(o, 'CONTESTUALE_AUTORIZZATO_ANGELO', 'OP autorizzato al nuovo comportamento one-piece-flow', '')
+    return jsonify(ok=True, ordine=_ordine(o))
 
 
 def _verifica_pin_capo(d):
@@ -2556,7 +2624,7 @@ def _storna_evento_consuntivo(e, o):
         # scaricati nello stesso istante (net zero sulla giacenza) — non
         # c'è nessuno stock fantasma da restituire, lo storno riguarda
         # solo i 'consumi' normali (presunto stock preesistente).
-        consumi, _contestuali_storno = _calcola_consumi_standard(o, componente_finale, e.componente, qta_tagliata_originale)
+        consumi, _contestuali_storno, _legacy_storno = _calcola_consumi_standard(o, componente_finale, e.componente, qta_tagliata_originale)
         for cod, qta_consumata in consumi.items():
             if qta_consumata:
                 _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',

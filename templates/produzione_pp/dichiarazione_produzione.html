@@ -116,6 +116,16 @@
   <div class="modal-box" style="width:1100px;max-width:98vw">
     <h3>📦 Conferma movimenti di magazzino</h3>
     <div id="ant-carica" style="margin:10px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:rgba(26,158,92,.08)"></div>
+    <!-- Mostrato SOLO se ci sono componenti 'contestuali' bloccati su un OP legacy (aperto prima del flag, non ancora evaso) -->
+    <div id="ant-contestuale-legacy" style="display:none;margin:10px 0;padding:10px;border:1.5px solid #1e5fa8;border-radius:6px;background:rgba(30,95,168,.08);font-size:12px">
+      <div style="font-weight:700;color:#1e5fa8;margin-bottom:4px">🔗 Componenti one-piece-flow su ordine già aperto</div>
+      <div id="ant-contestuale-legacy-testo" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="ant-contestuale-pin" type="password" placeholder="PIN Angelo" style="width:110px;padding:5px 8px;border-radius:5px;border:1px solid var(--border)">
+        <button type="button" class="btn btn-ghost" onclick="autorizzaContestualeOP()">Autorizza questo OP al nuovo comportamento</button>
+        <span id="ant-contestuale-esito" style="font-size:11px"></span>
+      </div>
+    </div>
     <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin:10px 0 6px">📤 Scarica da magazzino (correggi se serve)</div>
     <div id="ant-componenti" style="max-height:260px;overflow-y:auto"></div>
     <button class="btn btn-primary" style="margin-top:14px" onclick="confermaAnteprima()">✅ Conferma e registra</button>
@@ -275,8 +285,13 @@ async function dichiaraInline(g, c, idInput){
     pezzi_buoni: buoni, pezzi_scarto: scarto, idInput,
   };
 
+  _applicaAnteprima(anteprima);
+  openModal('modal-anteprima');
+}
+
+function _applicaAnteprima(anteprima){
   const car = anteprima.carica;
-  const scartoDich = _anteprimaCorrente.pezzi_scarto || 0;
+  const scartoDich = (_anteprimaCorrente && _anteprimaCorrente.pezzi_scarto) || 0;
   const notaScarto = scartoDich > 0
     ? `<div style="font-size:11px;color:#e6b800;margin-top:6px">⚠️ Lo scarico sotto include anche il materiale consumato per i <b>${scartoDich} pezzi di scarto</b> dichiarati — il ferro tagliato per uno scarto è comunque consumato.</div>`
     : '';
@@ -322,8 +337,21 @@ async function dichiaraInline(g, c, idInput){
         ).join('') + '</div>';
     }
   }
+
+  // OP legacy: componenti che sarebbero one-piece-flow ma questo ordine era
+  // già aperto prima del flag e non ancora evaso — restano nello scarico
+  // normale sopra finché Angelo non autorizza esplicitamente l'OP.
+  const boxLegacy = document.getElementById('ant-contestuale-legacy');
+  if(anteprima.avviso_contestuale_legacy && anteprima.avviso_contestuale_legacy.length){
+    boxLegacy.style.display = 'block';
+    document.getElementById('ant-contestuale-legacy-testo').textContent =
+      `${anteprima.avviso_contestuale_legacy.join(', ')} — questo ordine (${anteprima.op_code}) era già aperto prima dell'attivazione dell'isola one-piece-flow e non è ancora completamente evaso: lo scarico sopra usa la logica storica. Angelo può autorizzare l'ordine al nuovo comportamento (carico+scarico automatico) qui sotto.`;
+    document.getElementById('ant-contestuale-pin').value = '';
+    document.getElementById('ant-contestuale-esito').textContent = '';
+  } else {
+    boxLegacy.style.display = 'none';
+  }
   document.getElementById('ant-esito').textContent = '';
-  openModal('modal-anteprima');
 }
 
 function _antAggiungiRigaMateriale(){
@@ -338,6 +366,32 @@ function _antAggiungiRigaMateriale(){
     `<td style="padding:4px 6px"><button type="button" class="btn btn-ghost" style="color:#e74c3c;padding:2px 8px" onclick="this.closest('tr').remove()" title="Rimuovi questa riga">✕</button></td>`;
   tbody.appendChild(tr);
   tr.querySelector('input[type="text"]').focus();
+}
+
+async function autorizzaContestualeOP(){
+  const esito = document.getElementById('ant-contestuale-esito');
+  const pin = document.getElementById('ant-contestuale-pin').value.trim();
+  if(!_anteprimaCorrente || !_anteprimaCorrente.op_code){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Nessun OP in anteprima.'; return;
+  }
+  if(!pin){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Inserisci il PIN.'; return; }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Verifica...';
+  try{
+    const r = await fetch(`/api/ordini_produzione/${encodeURIComponent(_anteprimaCorrente.op_code)}/autorizza_contestuale`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pin})
+    });
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '❌ ' + (d.error || 'PIN non valido.'); return; }
+    esito.style.color = '#1a9e5c'; esito.textContent = '✅ OP autorizzato — ricalcolo anteprima...';
+    // Ricalcola l'anteprima con gli stessi parametri: ora dovrebbe mostrare
+    // i contestuali nella sezione automatica, non più nello scarico normale.
+    const url = `/api/dichiarazione-produzione/anteprima?op_code=${encodeURIComponent(_anteprimaCorrente.op_code)}&componente=${encodeURIComponent(_anteprimaCorrente.componente || '')}&pezzi_buoni=${_anteprimaCorrente.pezzi_buoni}&pezzi_scarto=${_anteprimaCorrente.pezzi_scarto}&centro_id=${encodeURIComponent(_anteprimaCorrente.centro_id)}`;
+    const r2 = await fetch(url);
+    const anteprima2 = await r2.json();
+    if(anteprima2.ok) _applicaAnteprima(anteprima2);
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
 }
 
 async function confermaAnteprima(){

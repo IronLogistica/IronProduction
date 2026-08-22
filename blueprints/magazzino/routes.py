@@ -254,6 +254,30 @@ def _carica_mappa_distinta_base_wood():
     return mappa
 
 
+def _contestuale_attivo_per_op(rb, o):
+    """
+    Vero se il flag 'contestuale' di QUESTA riga di distinta si applica
+    davvero a QUESTO ordine di produzione. Un OP già aperto PRIMA che il
+    flag venisse attivato, e non ancora completamente evaso, resta sul
+    comportamento storico (figlio con proprio Ordine di Lavoro/scarico
+    separato) finché Angelo non lo autorizza esplicitamente — non si vuole
+    cambiare le regole a metà di un ordine già parzialmente lavorato con la
+    logica vecchia. Un OP creato DOPO il flag, o già completamente evaso,
+    usa subito il nuovo comportamento senza bisogno di autorizzazione.
+    """
+    if not rb.contestuale:
+        return False
+    if rb.data_flag_contestuale is None:
+        return True  # dato storico senza data registrata: considera sempre attivo
+    if getattr(o, 'contestuale_autorizzato_da_angelo', False):
+        return True
+    pianificata = o.qta_pianificata or 0
+    if pianificata > 0 and (o.qta_buona or 0) >= pianificata:
+        return True  # OP già completamente evaso: nulla "in corso" da proteggere
+    creato_dopo_flag = (o.creato_il is not None) and (o.creato_il >= rb.data_flag_contestuale)
+    return creato_dopo_flag
+
+
 def _esplodi_componenti_op(o, _max_profondita=15, mappa_distinta=None):
     """
     Ritorna un nodo per OGNI codice della distinta base di o.codice_articolo
@@ -263,6 +287,16 @@ def _esplodi_componenti_op(o, _max_profondita=15, mappa_distinta=None):
     _righe_bom_attive_wood). Un codice riusato in più punti dell'albero
     compare una sola volta (al moltiplicatore del primo punto in cui viene
     incontrato) — protezione anti-ciclo/doppio conteggio.
+
+    I figli 'contestuali' attivi per questo OP (vedi _contestuale_attivo_per_op
+    — isole one-piece-flow, es. FRONTE/RETRO saldati con il padre nello
+    stesso istante) NON compaiono come proprio nodo: nascono e si consumano
+    nello stesso momento del padre, nessun operatore li dichiara da soli,
+    quindi non devono generare un proprio Ordine di Lavoro/riga di Lista
+    Lavoro/voce sul Monitor Macchina. Si continua comunque a esplodere sotto
+    di loro: i LORO componenti reali (materie prime, semilavorati con una
+    fase a monte davvero dichiarata a parte) restano visibili normalmente.
+
     Condivisa da Monitor Macchina e Lista Tagli (vive qui, non in un blueprint
     specifico, per evitare import circolari fra monitor e produzione_pp).
     'mappa_distinta' opzionale (vedi _carica_mappa_distinta_base_wood): se
@@ -280,7 +314,8 @@ def _esplodi_componenti_op(o, _max_profondita=15, mappa_distinta=None):
                 continue
             visitati.add(r.codice_figlio)
             m = moltiplicatore * (r.quantita or 1.0)
-            risultato.append({'codice': r.codice_figlio, 'moltiplicatore': m})
+            if not _contestuale_attivo_per_op(r, o):
+                risultato.append({'codice': r.codice_figlio, 'moltiplicatore': m})
             walk(r.codice_figlio, m, profondita + 1)
 
     walk(o.codice_articolo, 1.0, 0)
@@ -520,6 +555,7 @@ def api_toggle_contestuale_wood(id_riga):
     """
     riga = DistintaBaseWood.query.get_or_404(id_riga)
     riga.contestuale = not riga.contestuale
+    riga.data_flag_contestuale = datetime.utcnow() if riga.contestuale else None
     db.session.commit()
     return jsonify({'ok': True, 'contestuale': riga.contestuale})
 
