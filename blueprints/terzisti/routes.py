@@ -2,10 +2,10 @@ from flask import Blueprint, render_template, jsonify, request, current_app
 from models import (
     db, Terzista, LavorazioneTerzista, RigaCommessa, FaseRiga, log,
     SchedaTrattamento, TIPI_TRATTAMENTO_SCHEDA, FORNITORI_SCHEDA_DEFAULT,
-    KanbanProdotto, storico_aggiungi_auto, CentroCostoWood,
+    KanbanProdotto, storico_aggiungi_auto, CentroCostoWood, OrdineProduzione,
 )
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
-from blueprints.magazzino.routes import _registra_movimento_giacenza
+from blueprints.magazzino.routes import _registra_movimento_giacenza, _grezzo_iw_per_codici
 from datetime import datetime, date
 import os, re, json, shutil
 import PyPDF2
@@ -350,6 +350,49 @@ def parse_ddt_terzista(path):
 @terzisti_bp.route('/terzisti')
 def index():
     return render_template('terzisti/index.html', active='terzisti')
+
+
+@terzisti_bp.route('/terzisti/da-trattare')
+def pagina_da_trattare():
+    return render_template('terzisti/da_trattare.html', active='terzisti')
+
+
+@terzisti_bp.route('/api/terzisti/materiali_da_trattare')
+def api_materiali_da_trattare():
+    """
+    Materiali GREZZI pronti a magazzino da mandare in trattamento esterno
+    (verniciatura/zincatura) — stessa fonte del 'Grezzo IW' già mostrato in
+    Magazzino/Kanban (_grezzo_iw_per_codici: prodotto finito da Saldatura,
+    ultima fase del ciclo, approvato dalla Direzione, più eventuali
+    rettifiche manuali), qui filtrata alle sole quantità > 0 e presentata
+    come pagina a parte da stampare. Per ogni codice: ultimo fornitore e
+    ultimo trattamento eseguiti, presi dall'ultima Scheda Trattamento
+    creata per quel codice (se mai spedito prima) — nessuno storico ancora
+    se il codice non è mai stato trattato esternamente.
+    """
+    tutti_codici = [row[0] for row in db.session.query(OrdineProduzione.codice_articolo).distinct().all()]
+    grezzo_per_codice = _grezzo_iw_per_codici(tutti_codici) if tutti_codici else {}
+    codici_pronti = sorted(cod for cod, qta in grezzo_per_codice.items() if qta > 0)
+
+    ultima_scheda_per_codice = {}
+    if codici_pronti:
+        for s in (SchedaTrattamento.query
+                  .filter(SchedaTrattamento.codice_articolo.in_(codici_pronti))
+                  .order_by(SchedaTrattamento.creato_il.desc()).all()):
+            if s.codice_articolo not in ultima_scheda_per_codice:
+                ultima_scheda_per_codice[s.codice_articolo] = s
+
+    righe = []
+    for cod in codici_pronti:
+        s = ultima_scheda_per_codice.get(cod)
+        righe.append({
+            'codice': cod,
+            'quantita': grezzo_per_codice[cod],
+            'ultimo_fornitore': s.fornitore if s else None,
+            'ultimo_trattamento': s.info_trattamento.get('label', s.tipo_trattamento) if s else None,
+            'ultima_data': s.creato_il.strftime('%d/%m/%Y') if s and s.creato_il else None,
+        })
+    return jsonify(righe)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
