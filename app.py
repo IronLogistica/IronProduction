@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from flask import Flask, redirect, url_for
 from config import Config
-from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate, assicura_lunghezze_barra_default, assicura_unita_misura_articoli, assicura_finiti_is_kanban, assicura_lead_time_esterno_centri, assicura_ordinato_cliente_wms, assicura_operatore_evento_consuntivo, assicura_contestuale_distinta_base, assicura_event_id_varianza_produzione
+from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate, assicura_lunghezze_barra_default, assicura_unita_misura_articoli, assicura_finiti_is_kanban, assicura_lead_time_esterno_centri, assicura_ordinato_cliente_wms, assicura_operatore_evento_consuntivo, assicura_contestuale_distinta_base, assicura_event_id_varianza_produzione, assicura_contapieghe_matrici
 
 def create_app():
     app = Flask(__name__)
@@ -54,6 +54,7 @@ def create_app():
         assicura_operatore_evento_consuntivo()
         assicura_contestuale_distinta_base()
         assicura_event_id_varianza_produzione()
+        assicura_contapieghe_matrici()
 
     return app
 

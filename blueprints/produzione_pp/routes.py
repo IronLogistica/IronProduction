@@ -13,7 +13,8 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
                     NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
-                    FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D)
+                    FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D,
+                    MatriceWood, ContromatriceWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -1095,6 +1096,28 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
                             riga_ciclo.produttivita_pezzi_osservati / (riga_ciclo.produttivita_minuti_osservati / 60), 3)
         except Exception:
             pass  # nessuna varianza registrabile (fase non abbinabile) non deve bloccare il consuntivo
+
+    # Contapieghe automatico matrice/contromatrice — SEMPRE per ogni fase di
+    # Piega/Curvatubi dichiarata (indipendentemente da prima_fase, come la
+    # Varianza sopra: l'usura fisica dello stampo avviene ad ogni colpo
+    # pressa, non solo alla prima fase del ciclo del codice). Buoni+scarto:
+    # uno scarto consuma comunque un colpo pressa quanto un pezzo buono —
+    # manutenzione preventiva e prevenzione non conformità sull'usura.
+    qta_pieghe = good + scrap
+    if qta_pieghe > 0 and any(k in fase_nome.lower() for k in ('piega', 'curva')):
+        try:
+            scheda_piega = SchedaLavorazioneWood.query.filter_by(codice_padre=codice_lavorato).first()
+            if scheda_piega:
+                if scheda_piega.matrice_id:
+                    matrice = MatriceWood.query.get(scheda_piega.matrice_id)
+                    if matrice:
+                        matrice.contapieghe = (matrice.contapieghe or 0) + qta_pieghe
+                if scheda_piega.contromatrice_id:
+                    contromatrice = ContromatriceWood.query.get(scheda_piega.contromatrice_id)
+                    if contromatrice:
+                        contromatrice.contapieghe = (contromatrice.contapieghe or 0) + qta_pieghe
+        except Exception:
+            pass  # mai bloccare il consuntivo per un contatore di manutenzione
 
     return avviso_magazzino
 

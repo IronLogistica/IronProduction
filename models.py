@@ -608,7 +608,31 @@ class MatriceWood(db.Model):
     id          = db.Column(db.Integer, primary_key=True)
     codice      = db.Column(db.String(50), nullable=False, unique=True)
     descrizione = db.Column(db.String(200), default='')
+    # Contapieghe progressivo automatico — incrementato di (buoni+scarto) ad
+    # ogni dichiarazione su una fase di Piega/Curvatubi che usa questa
+    # matrice (vedi _incrementa_contapieghe_matrice in produzione_pp/routes.py),
+    # per manutenzione preventiva e prevenzione non conformità (una matrice
+    # usurata oltre la sua vita produce pieghe fuori tolleranza). Uno scarto
+    # consuma comunque un colpo pressa quanto un pezzo buono.
+    contapieghe      = db.Column(db.Integer, nullable=False, default=0)
+    vita_max_pieghe  = db.Column(db.Integer, nullable=True)   # soglia oltre la quale segnalare — None = nessuna soglia impostata
     creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ContromatriceWood(db.Model):
+    """
+    Anagrafica contromatrici (piegatrice) — pezzo INDIPENDENTE dalla matrice
+    (può essere abbinata a matrici diverse nel tempo, con una propria vita
+    utile solitamente diversa da quella della matrice). Stesso meccanismo di
+    contapieghe automatico di MatriceWood.
+    """
+    __tablename__ = 'contromatrici_wood'
+    id               = db.Column(db.Integer, primary_key=True)
+    codice           = db.Column(db.String(50), nullable=False, unique=True)
+    descrizione      = db.Column(db.String(200), default='')
+    contapieghe      = db.Column(db.Integer, nullable=False, default=0)
+    vita_max_pieghe  = db.Column(db.Integer, nullable=True)
+    creato_il        = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class RulloWood(db.Model):
@@ -676,11 +700,13 @@ class SchedaLavorazioneWood(db.Model):
     punto_zero                = db.Column(db.String(50), default='')
     indice_assorbimento       = db.Column(db.String(50), default='')
     rullo_id                  = db.Column(db.Integer, db.ForeignKey('rulli_wood.id', ondelete='SET NULL'), nullable=True)
+    contromatrice_id          = db.Column(db.Integer, db.ForeignKey('contromatrici_wood.id', ondelete='SET NULL'), nullable=True)
     impostazione_satinatrice  = db.Column(db.String(100), default='')
     note                      = db.Column(db.String(300), default='')
     creato_il                 = db.Column(db.DateTime, default=datetime.utcnow)
     matrice = db.relationship('MatriceWood')
     rullo   = db.relationship('RulloWood')
+    contromatrice = db.relationship('ContromatriceWood')
     __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_lavorazione_padre_figlio_uc'),)
 
 
@@ -1116,6 +1142,37 @@ def assicura_operatore_evento_consuntivo():
         colonne = {c['name'] for c in inspect(db.engine).get_columns('pp_eventi_consuntivi')}
         if 'operatore' not in colonne:
             db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN operatore VARCHAR(100)"))
+            db.session.commit()
+
+
+def assicura_contapieghe_matrici():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    matrici_wood.contapieghe/vita_max_pieghe e
+    schede_lavorazione_wood.contromatrice_id (la tabella contromatrici_wood
+    è nuova, creata da db.create_all()). Contatore progressivo automatico
+    di pieghe per matrice/contromatrice — manutenzione preventiva e
+    prevenzione non conformità sull'usura degli stampi."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE matrici_wood ADD COLUMN IF NOT EXISTS contapieghe INTEGER NOT NULL DEFAULT 0"))
+            db.session.execute(text("ALTER TABLE matrici_wood ADD COLUMN IF NOT EXISTS vita_max_pieghe INTEGER"))
+            db.session.execute(text("ALTER TABLE schede_lavorazione_wood ADD COLUMN IF NOT EXISTS contromatrice_id INTEGER"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('matrici_wood')}
+        if 'contapieghe' not in colonne:
+            db.session.execute(text("ALTER TABLE matrici_wood ADD COLUMN contapieghe INTEGER NOT NULL DEFAULT 0"))
+            db.session.commit()
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('matrici_wood')}
+        if 'vita_max_pieghe' not in colonne:
+            db.session.execute(text("ALTER TABLE matrici_wood ADD COLUMN vita_max_pieghe INTEGER"))
+            db.session.commit()
+        colonne_scheda = {c['name'] for c in inspect(db.engine).get_columns('schede_lavorazione_wood')}
+        if 'contromatrice_id' not in colonne_scheda:
+            db.session.execute(text("ALTER TABLE schede_lavorazione_wood ADD COLUMN contromatrice_id INTEGER"))
             db.session.commit()
 
 

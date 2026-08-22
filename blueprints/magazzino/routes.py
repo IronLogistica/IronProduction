@@ -9,7 +9,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     CostoPianificatoCentroWood, DRIVER_ATTIVITA_WOOD, VOCI_COSTO_PIANIFICATO_WOOD,
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood,
                     CostoStandardVersioneDettaglioWood, CostoStandardVersioneFaseWood,
-                    MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood,
+                    MatriceWood, RulloWood, ContromatriceWood, LunghezzaBarraWood, SchedaLavorazioneWood,
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
                     EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP)
@@ -2560,6 +2560,11 @@ def pagina_parametri_lavorazione():
     return render_template('parametri_lavorazione_wood.html', active='parametri_lavorazione')
 
 
+@magazzino_bp.route('/contapieghe-wood')
+def pagina_contapieghe():
+    return render_template('contapieghe_wood.html', active='contapieghe')
+
+
 @magazzino_bp.route('/esploratore-prodotto')
 def pagina_esploratore_prodotto():
     """
@@ -2613,6 +2618,65 @@ _lista_rulli, _crea_rullo, _elimina_rullo = _crud_anagrafica_semplice(RulloWood,
 magazzino_bp.add_url_rule('/api/rulli_wood', 'lista_rulli', _lista_rulli, methods=['GET'])
 magazzino_bp.add_url_rule('/api/rulli_wood', 'crea_rullo', _crea_rullo, methods=['POST'])
 magazzino_bp.add_url_rule('/api/rulli_wood/<int:rid>', 'elimina_rullo', _elimina_rullo, methods=['DELETE'])
+
+_lista_contromatrici, _crea_contromatrice, _elimina_contromatrice = _crud_anagrafica_semplice(ContromatriceWood, 'contromatrice')
+magazzino_bp.add_url_rule('/api/contromatrici_wood', 'lista_contromatrici', _lista_contromatrici, methods=['GET'])
+magazzino_bp.add_url_rule('/api/contromatrici_wood', 'crea_contromatrice', _crea_contromatrice, methods=['POST'])
+magazzino_bp.add_url_rule('/api/contromatrici_wood/<int:rid>', 'elimina_contromatrice', _elimina_contromatrice, methods=['DELETE'])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CONTAPIEGHE — manutenzione preventiva matrici/contromatrici (Piega/
+#  Curvatubi). Il contatore si incrementa da solo ad ogni dichiarazione di
+#  produzione (vedi _registra_evento_consuntivo in produzione_pp/routes.py,
+#  blocco "Contapieghe automatico matrice/contromatrice") — qui solo lettura,
+#  impostazione della soglia di vita e reset (quando lo stampo viene
+#  sostituito/rettificato). Nessun blocco alla dichiarazione: solo un
+#  avviso visivo quando si supera la soglia impostata.
+# ══════════════════════════════════════════════════════════════════════════════
+def _riga_contapieghe(r):
+    soglia = r.vita_max_pieghe
+    pct = round(100 * r.contapieghe / soglia, 1) if soglia else None
+    return {
+        'id': r.id, 'codice': r.codice, 'descrizione': r.descrizione or '',
+        'contapieghe': r.contapieghe or 0, 'vita_max_pieghe': soglia,
+        'percentuale_vita': pct,
+        'oltre_soglia': bool(soglia and (r.contapieghe or 0) >= soglia),
+    }
+
+
+@magazzino_bp.route('/api/contapieghe')
+def api_contapieghe():
+    matrici = MatriceWood.query.order_by(MatriceWood.codice).all()
+    contromatrici = ContromatriceWood.query.order_by(ContromatriceWood.codice).all()
+    return jsonify({
+        'matrici': [_riga_contapieghe(r) for r in matrici],
+        'contromatrici': [_riga_contapieghe(r) for r in contromatrici],
+    })
+
+
+def _aggiorna_contapieghe(Model, rid, d):
+    r = Model.query.get_or_404(rid)
+    if 'vita_max_pieghe' in d:
+        val = d.get('vita_max_pieghe')
+        try:
+            r.vita_max_pieghe = int(val) if val not in (None, '') else None
+        except (TypeError, ValueError):
+            return jsonify({'errore': True, 'messaggio': 'Vita max pieghe non valida'}), 400
+    if d.get('reset'):
+        r.contapieghe = 0
+    db.session.commit()
+    return jsonify({'ok': True, 'riga': _riga_contapieghe(r)})
+
+
+@magazzino_bp.route('/api/contapieghe/matrice/<int:rid>', methods=['POST'])
+def api_aggiorna_contapieghe_matrice(rid):
+    return _aggiorna_contapieghe(MatriceWood, rid, request.get_json(force=True))
+
+
+@magazzino_bp.route('/api/contapieghe/contromatrice/<int:rid>', methods=['POST'])
+def api_aggiorna_contapieghe_contromatrice(rid):
+    return _aggiorna_contapieghe(ContromatriceWood, rid, request.get_json(force=True))
 
 
 @magazzino_bp.route('/api/lunghezze_barra_wood', methods=['GET'])
@@ -2731,6 +2795,8 @@ def api_albero_schede_lavorazione(codice_radice):
             'indice_assorbimento': s.indice_assorbimento if s else '',
             'rullo_id': s.rullo_id if s else None,
             'rullo_codice': (s.rullo.codice if s and s.rullo else None),
+            'contromatrice_id': s.contromatrice_id if s else None,
+            'contromatrice_codice': (s.contromatrice.codice if s and s.contromatrice else None),
             'impostazione_satinatrice': s.impostazione_satinatrice if s else '',
             'note': s.note if s else '',
         })
@@ -2750,19 +2816,23 @@ def api_upsert_scheda_lavorazione():
         pezzi_per_barra = float(d['pezzi_per_barra']) if d.get('pezzi_per_barra') not in (None, '') else None
         matrice_id = int(d['matrice_id']) if d.get('matrice_id') not in (None, '') else None
         rullo_id = int(d['rullo_id']) if d.get('rullo_id') not in (None, '') else None
+        contromatrice_id = int(d['contromatrice_id']) if d.get('contromatrice_id') not in (None, '') else None
     except (TypeError, ValueError):
         return jsonify({'errore': True, 'messaggio': 'Valori numerici non validi'}), 400
     if matrice_id and not MatriceWood.query.get(matrice_id):
         return jsonify({'errore': True, 'messaggio': 'Matrice non trovata'}), 404
     if rullo_id and not RulloWood.query.get(rullo_id):
         return jsonify({'errore': True, 'messaggio': 'Rullo non trovato'}), 404
+    if contromatrice_id and not ContromatriceWood.query.get(contromatrice_id):
+        return jsonify({'errore': True, 'messaggio': 'Contromatrice non trovata'}), 404
 
     valori = dict(
         lunghezza_barra_mm=lunghezza_barra_mm, spessore_mm=spessore_mm, pezzi_per_barra=pezzi_per_barra,
         sviluppo=(d.get('sviluppo') or '').strip(), matrice_id=matrice_id,
         punto_zero=(d.get('punto_zero') or '').strip(),
         indice_assorbimento=(d.get('indice_assorbimento') or '').strip(),
-        rullo_id=rullo_id, impostazione_satinatrice=(d.get('impostazione_satinatrice') or '').strip(),
+        rullo_id=rullo_id, contromatrice_id=contromatrice_id,
+        impostazione_satinatrice=(d.get('impostazione_satinatrice') or '').strip(),
         note=(d.get('note') or '').strip(),
     )
     esistente = SchedaLavorazioneWood.query.filter_by(codice_padre=padre, codice_figlio=figlio).first()
