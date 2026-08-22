@@ -12,7 +12,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     MatriceWood, RulloWood, ContromatriceWood, LunghezzaBarraWood, SchedaLavorazioneWood,
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
-                    EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP)
+                    EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -1110,6 +1110,65 @@ def _grezzo_iw_per_codici(codici):
                             .group_by(RettificaGrezzoIW.codice).all()):
         grezzo_iw[cod] = grezzo_iw.get(cod, 0) + (delta_tot or 0)
     return grezzo_iw
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SCARICO GREZZO IW SU VENDITA IRON WOOD → IRON SEGNALETICA — chiamato da
+#  MasterLogistic-WMS quando Angelo carica lì il DDT di ingresso merce
+#  venduta da Iron Wood a Iron Segnaletica: il grezzo lascia il pool di Iron
+#  Wood (viene scaricato qui) nello stesso momento in cui WMS carica il
+#  prodotto finito verniciato sul proprio magazzino (Articolo.stock) — la
+#  colonna "Finiti IS" mostrata in Parametri di Lavorazione/Magazzino legge
+#  quello stock DIRETTAMENTE da WMS (bind ArticoloML), quindi non serve
+#  nessuna chiamata di ritorno per quella parte: aumenta da sola appena WMS
+#  registra il carico.
+#  Auth: STESSO secret condiviso già usato per la direzione opposta
+#  (masterlogistic_client.py — IronProduction → WMS manda
+#  MASTERLOGISTIC_API_TOKEN, verificato da WMS come IRONPRODUCTION_API_TOKEN)
+#  — qui usato al contrario, nessuna nuova variabile d'ambiente da configurare.
+# ══════════════════════════════════════════════════════════════════════════════
+def _auth_wms():
+    token = current_app.config.get('MASTERLOGISTIC_API_TOKEN', '')
+    if not token:
+        return jsonify({'ok': False, 'error': 'Integrazione disabilitata: configurare MASTERLOGISTIC_API_TOKEN'}), 503
+    bearer = request.headers.get('Authorization', '')
+    got = bearer[7:].strip() if bearer.lower().startswith('bearer ') else request.headers.get('X-WMS-Token', '')
+    if got != token:
+        return jsonify({'ok': False, 'error': 'non autorizzato'}), 401
+
+
+@magazzino_bp.route('/api/wms/scarica_grezzo_iw', methods=['POST'])
+def api_wms_scarica_grezzo_iw():
+    """
+    Riduce il Grezzo IW pronto per SKU/quantità indicati — stesso meccanismo
+    cumulativo (RettificaGrezzoIW, mai un valore che sovrascrive) già usato
+    per lo scarico su spedizione a un terzista. Chiamato da MasterLogistic-
+    WMS alla conferma di un DDT di carico la cui riga fornitore combacia con
+    Iron Wood: il materiale è appena stato "venduto" internamente e caricato
+    come prodotto finito su WMS, quindi non è più grezzo pronto qui.
+    """
+    auth = _auth_wms()
+    if auth:
+        return auth
+    d = request.get_json(force=True)
+    sku = str(d.get('sku', '')).strip()
+    try:
+        quantita = float(d.get('quantita'))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'sku/quantita non validi'}), 400
+    if not sku:
+        return jsonify({'ok': False, 'error': 'SKU obbligatorio'}), 400
+    if quantita <= 0:
+        return jsonify({'ok': False, 'error': 'quantita deve essere positiva (questo endpoint scarica soltanto)'}), 400
+
+    db.session.add(RettificaGrezzoIW(
+        codice=sku, delta=-quantita,
+        note='Venduto a Iron Segnaletica — DDT carico MasterLogistic-WMS'
+    ))
+    db.session.commit()
+    residuo = _grezzo_iw_per_codici([sku]).get(sku, 0)
+    log(f'Grezzo IW scaricato da WMS: {sku} -{quantita} -> residuo {residuo}')
+    return jsonify({'ok': True, 'sku': sku, 'grezzo_iw_residuo': residuo})
 
 
 def _calcola_campi_giacenza(righe):
