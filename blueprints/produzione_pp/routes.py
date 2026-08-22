@@ -848,7 +848,7 @@ def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali,
             _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
 
 
-def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None, operatore=None):
+def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None, operatore=None, approvato_direzione=False):
     """
     Nucleo di registrazione di un consuntivo per l'OP o (già lockato con
     with_for_update dal chiamante): crea l'EventoConsuntivoPP, aggiorna
@@ -857,6 +857,14 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     Condivisa da /api/pp/events (integrazione MasterWork) e dal totem a bordo
     macchina (inizio/fine lavoro) — stesso identico comportamento in entrambi
     i casi. NON fa il commit: il chiamante decide quando farlo.
+
+    'approvato_direzione': chi dichiara conta. Le dichiarazioni fatte dalla
+    Dichiarazione di Produzione (dashboard — Angelo/Alessandro, IronProduction)
+    sono GIA' fatte dal titolare o da chi ne fa le veci: non serve nessuna
+    approvazione successiva, entrano approvate. Solo le dichiarazioni degli
+    operai di Saldatura via MasterWork (/api/pp/events) restano da approvare
+    da Angelo — quello è personale non titolare, un controllo in più ha senso
+    lì e non altrove.
 
     'componente': None (o uguale a o.codice_articolo) = si sta consuntivando
     il prodotto finito/assieme finale dell'OP — comportamento storico
@@ -893,7 +901,7 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     db.session.add(EventoConsuntivoPP(event_id=event_id, op_code=o.codice, fase=fase_nome,
                                        componente=None if componente_finale else componente,
                                        timestamp_evento=ts, pezzi_buoni=good, pezzi_scarto=scrap, tempo_minuti=tempo,
-                                       operatore=operatore))
+                                       operatore=operatore, approvato_direzione=approvato_direzione))
     o.tempo_consuntivo_minuti += tempo
     if avanza_op:
         o.qta_buona += good; o.qta_scarto += scrap
@@ -2250,7 +2258,8 @@ def api_dichiarazione_crea():
                 consumi_override[cod] = qta_f
     event_id = str(uuid.uuid4())
     avviso_magazzino = _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id,
-                                                     componente=componente, consumi_override=consumi_override)
+                                                     componente=componente, consumi_override=consumi_override,
+                                                     approvato_direzione=True)
 
     # Se questa dichiarazione era autorizzata da un 8D approvato, lo consuma:
     # non autorizza più nessuna dichiarazione futura, un'eccedenza successiva
