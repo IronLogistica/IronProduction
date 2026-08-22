@@ -1842,6 +1842,44 @@ def api_codici_wood_tutti():
     return jsonify([{'codice': c, 'e_padre': c in padri} for c in codici])
 
 
+@magazzino_bp.route('/api/ricerca_materiale_wood')
+def api_ricerca_materiale_wood():
+    """
+    Menù a ricerca intelligente per la scelta del codice materiale (usato
+    nella maschera di conferma Dichiarazione di Produzione, per sostituire o
+    aggiungere un codice — es. era finito il ferro sp.3, si è usato lo
+    sp.4): cerca su CODICE o DESCRIZIONE, case-insensitive, in ArticoloML
+    (fonte principale, con stock) e — per i codici che ArticoloML non
+    conosce ancora — nella riserva locale DescrizioneCodiceWood (da
+    caricamento massivo Zucchetti). Query vuota o troppo corta (<2 caratteri)
+    non esegue nulla lato server: la UI mostra un elenco iniziale limitato
+    solo su focus, per non restituire l'intero catalogo articoli.
+    """
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    like = f'%{q}%'
+    risultati = {}
+    try:
+        for a in (ArticoloML.query
+                  .filter(db.or_(ArticoloML.sku.ilike(like), ArticoloML.descrizione.ilike(like)))
+                  .order_by(ArticoloML.sku).limit(30).all()):
+            risultati[a.sku] = {'codice': a.sku, 'descrizione': a.descrizione or '', 'stock': a.stock}
+    except Exception:
+        db.session.rollback()
+    if len(risultati) < 30:
+        gia_visti = set(risultati.keys())
+        for d in (DescrizioneCodiceWood.query
+                  .filter(db.or_(DescrizioneCodiceWood.codice.ilike(like), DescrizioneCodiceWood.descrizione.ilike(like)))
+                  .filter(~DescrizioneCodiceWood.codice.in_(gia_visti) if gia_visti else True)
+                  .order_by(DescrizioneCodiceWood.codice).limit(30 - len(risultati)).all()):
+            risultati[d.codice] = {'codice': d.codice, 'descrizione': d.descrizione or '', 'stock': None}
+    q_lower = q.lower()
+    lista = list(risultati.values())
+    lista.sort(key=lambda r: (0 if r['codice'].lower().startswith(q_lower) else 1, r['codice']))
+    return jsonify(lista[:30])
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  CENTRI DI COSTO / REPARTI IRON WOOD — macchine (piegatrice, sega,
 #  foratura...) o lavorazioni esterne (verniciatura esterna, piega esterna).
