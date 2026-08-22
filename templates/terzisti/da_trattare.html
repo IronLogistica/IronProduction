@@ -44,7 +44,7 @@ async function caricaMaterialiDaTrattare(){
     box.innerHTML = '<table class="kanban-table"><thead><tr><th>Codice</th><th>Quantità</th><th>Ultimo fornitore</th><th>Ultimo trattamento eseguito</th><th>Data</th></tr></thead><tbody>' +
       righe.map(r => `<tr>
         <td class="codice">${r.codice}</td>
-        <td style="font-weight:700">${r.quantita}</td>
+        <td style="font-weight:700;font-size:22px">${r.quantita}</td>
         <td>${r.ultimo_fornitore || '<span style="color:var(--text-dim);font-style:italic">mai trattato</span>'}</td>
         <td>${r.ultimo_trattamento || '—'}</td>
         <td style="color:var(--text-dim);font-size:15px">${r.ultima_data || '—'}</td>
