@@ -674,8 +674,9 @@ def _fabbisogno_propagato_per_op(o, mappa_distinta=None):
     Per ogni codice della distinta base di o (compreso il codice_articolo
     stesso), calcola la quantità EFFETTIVAMENTE necessaria — non solo
     pianificata × moltiplicatore di distinta (come mostrato finora), ma
-    comprensiva del fabbisogno indotto da uno scarto su un livello A VALLE
-    (padre in distinta) che consuma questo codice alla PROPRIA prima fase.
+    comprensiva del fabbisogno indotto da uno SCARTO GIA' DICHIARATO su un
+    livello A VALLE (padre in distinta) che consuma questo codice alla
+    PROPRIA prima fase.
 
     Esempio: OP per 16 TR2001, TR2001 consuma 1× TPD32L3440 alla propria
     (unica) fase Piega. A Piega vengono dichiarati 10 buoni + 6 scarti:
@@ -685,41 +686,44 @@ def _fabbisogno_propagato_per_op(o, mappa_distinta=None):
     già tagliati) e non taglia il materiale mancante: il reintegro resta
     invisibile esattamente dove servirebbe agire.
 
-    Regola generale (vale per qualunque coppia padre/figlio di distinta, a
-    qualunque livello, applicata ricorsivamente): il fabbisogno futuro di un
-    componente = quanti tentativi (buoni+scarto) farà ancora la fase che lo
-    consuma per completare il proprio piano, cioè il SALDO di quella fase —
-    ogni tentativo, buono o scartato, consuma comunque un'unità del
-    componente. Non copre lo scarto tra due fasi DELLO STESSO codice (es.
-    Segatrice poi Trapani sullo stesso C121) — lì il saldo diretto di ogni
-    fase è già visibile oggi senza bisogno di propagazione, dato che
-    entrambe le fasi condividono la stessa quantità pianificata di
-    riferimento.
+    ATTENZIONE — la propagazione usa lo SCARTO GIA' DICHIARATO alla fase
+    valle, MAI il suo saldo (quanto ancora manca per completare il piano):
+    il saldo è quasi sempre positivo su un OP appena aperto o ancora in
+    corso, anche con ZERO scarto — è semplicemente lavoro non ancora
+    fatto, del tutto fisiologico. Propagare il saldo (bug di una versione
+    precedente) significava aggiungere l'intero pianificato ad ogni
+    livello della distinta per QUALUNQUE OP in corso, sommandosi e
+    moltiplicandosi scendendo nell'albero — un OP a più livelli (es.
+    Cavalletto → Fronte → C121 → T1515) esplodeva a migliaia di pezzi
+    "da reintegrare" ovunque, pur non essendoci stato nessuno scarto reale.
+    Lo scarto già dichiarato, invece, è un fatto realmente accaduto e
+    limitato: la formula 'necessaria_valle + scarto_valle' equivale
+    esattamente a 'tentativi totali (passato+futuro) della fase valle',
+    che è la vera quantità di componente a monte che servirà nel tempo —
+    la dimostrazione: tentativi_totali = buoni+scarto (già fatti) + saldo
+    (futuri) = buoni+scarto + (necessaria - buoni) = necessaria + scarto.
 
-    Ritorna {codice: qta_necessaria_effettiva}. Usa la STESSA identica
-    definizione di 'saldo' (buoni dichiarati sulla prima fase del ciclo del
-    codice) già usata da api_dichiarazione_op_aperti/api_reintegro_scarti,
-    per restare coerente in tutto il programma.
+    Non copre lo scarto tra due fasi DELLO STESSO codice (es. Segatrice poi
+    Trapani sullo stesso C121) — lì il saldo diretto di ogni fase è già
+    visibile oggi senza bisogno di propagazione, dato che entrambe le fasi
+    condividono la stessa quantità pianificata di riferimento.
+
+    Ritorna {codice: qta_necessaria_effettiva}.
     """
     mappa_distinta = mappa_distinta if mappa_distinta is not None else _carica_mappa_distinta_base_wood()
 
-    # Prima passata: raccoglie tutti i codici raggiungibili E il moltiplicatore
-    # cumulato di distinta per ciascuno (stessa esplosione/protezione
-    # anti-ciclo di _esplodi_componenti_op) — serve sia per le query batch
-    # sia per inizializzare il fabbisogno BASE di ogni codice (pianificata
-    # OP × moltiplicatore), che altrimenti resterebbe a zero per tutto
-    # ciò che non è la radice.
-    moltiplicatore_per_codice = {o.codice_articolo: 1.0}
-    def raccogli(codice, moltiplicatore, visti):
+    # Prima passata: raccoglie tutti i codici raggiungibili (stessa
+    # esplosione/protezione anti-ciclo di _esplodi_componenti_op) per fare
+    # query batch invece che una per nodo.
+    tutti_i_codici = {o.codice_articolo}
+    def raccogli(codice, visti):
         for rb in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
             if rb.codice_figlio in visti:
                 continue
             visti.add(rb.codice_figlio)
-            m = moltiplicatore * (rb.quantita or 1.0)
-            moltiplicatore_per_codice[rb.codice_figlio] = m
-            raccogli(rb.codice_figlio, m, visti)
-    raccogli(o.codice_articolo, 1.0, {o.codice_articolo})
-    tutti_i_codici = set(moltiplicatore_per_codice.keys())
+            tutti_i_codici.add(rb.codice_figlio)
+            raccogli(rb.codice_figlio, visti)
+    raccogli(o.codice_articolo, {o.codice_articolo})
 
     prima_fase_per_codice = {}  # codice -> nome centro della sua prima fase
     if tutti_i_codici:
@@ -728,20 +732,16 @@ def _fabbisogno_propagato_per_op(o, mappa_distinta=None):
             if c.codice not in prima_fase_per_codice and c.centro_costo:
                 prima_fase_per_codice[c.codice] = c.centro_costo.nome
 
-    buoni_per_codice_fase = {}  # (codice, fase_lower) -> buoni dichiarati
-    for componente, fase, tot in (db.session.query(
+    scarto_per_codice_fase = {}  # (codice, fase_lower) -> scarto dichiarato
+    for componente, fase, scarto in (db.session.query(
             EventoConsuntivoPP.componente, EventoConsuntivoPP.fase,
-            db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+            db.func.sum(EventoConsuntivoPP.pezzi_scarto))
             .filter(EventoConsuntivoPP.op_code == o.codice)
             .group_by(EventoConsuntivoPP.componente, EventoConsuntivoPP.fase).all()):
         codice = componente or o.codice_articolo
-        buoni_per_codice_fase[(codice, fase.strip().lower())] = tot or 0
+        scarto_per_codice_fase[(codice, fase.strip().lower())] = scarto or 0
 
-    # Fabbisogno BASE per ogni codice — esattamente il calcolo statico di
-    # sempre (pianificata OP × moltiplicatore cumulato) — su cui la
-    # propagazione aggiunge il fabbisogno indotto da scarti a valle.
-    pianificata = float(o.qta_pianificata or 0)
-    necessaria = {cod: pianificata * m for cod, m in moltiplicatore_per_codice.items()}
+    necessaria = {o.codice_articolo: float(o.qta_pianificata or 0)}
     visitati_walk = set()
 
     def walk(codice):
@@ -749,12 +749,10 @@ def _fabbisogno_propagato_per_op(o, mappa_distinta=None):
             return
         visitati_walk.add(codice)
         fase1 = prima_fase_per_codice.get(codice)
-        if fase1:
-            buoni_qui = buoni_per_codice_fase.get((codice, fase1.strip().lower()), 0)
-            saldo_qui = max(necessaria.get(codice, 0) - buoni_qui, 0)
-            if saldo_qui > 0:
-                for rb in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
-                    necessaria[rb.codice_figlio] = necessaria.get(rb.codice_figlio, 0) + saldo_qui * (rb.quantita or 1.0)
+        scarto_qui = scarto_per_codice_fase.get((codice, fase1.strip().lower()), 0) if fase1 else 0
+        base_qui = necessaria.get(codice, 0)
+        for rb in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
+            necessaria[rb.codice_figlio] = necessaria.get(rb.codice_figlio, 0) + (base_qui + scarto_qui) * (rb.quantita or 1.0)
         for rb in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
             walk(rb.codice_figlio)
 
