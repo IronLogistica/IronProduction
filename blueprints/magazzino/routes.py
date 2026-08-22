@@ -882,6 +882,61 @@ def _flatten_componenti(componenti, aggregato):
             _flatten_componenti(c['figli'], aggregato)
 
 
+@magazzino_bp.route('/api/ordini_produzione_aperti')
+def api_ordini_produzione_aperti():
+    """
+    Elenco dei CODICI PADRE (solo il codice_articolo dell'OP, nessuna
+    esplosione di distinta base — a differenza di /api/fabbisogno_produzione
+    che scende ai componenti) attualmente su Ordini di Produzione aperti,
+    con la quantità pianificata e il saldo ancora da produrre — per
+    informare Commerciale/Post-vendita su MasterLogistic-WMS che quegli
+    articoli sono in produzione, e in che quantità, PRIMA che il prodotto
+    finito compaia caricato a magazzino. Nessuna scrittura qui: solo
+    lettura, interrogato via HTTP da WMS (stesso pattern pull di
+    /api/fabbisogno_produzione, nessun token — sola lettura, dato non
+    sensibile).
+
+    Aggregato per codice_articolo (un articolo può avere più OP aperti
+    contemporaneamente, es. commesse diverse) — 'origine' elenca gli OP
+    che compongono il totale, per un eventuale dettaglio lato WMS.
+    """
+    aggregato = {}  # codice_articolo -> {'qta_pianificata': ..., 'saldo': ..., 'origine': [...]}
+    ordini = OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO)).all()
+    for o in ordini:
+        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        if saldo <= 0:
+            continue
+        cod = o.codice_articolo
+        if cod not in aggregato:
+            aggregato[cod] = {'qta_pianificata': 0, 'saldo': 0, 'origine': []}
+        aggregato[cod]['qta_pianificata'] += (o.qta_pianificata or 0)
+        aggregato[cod]['saldo'] += saldo
+        aggregato[cod]['origine'].append({
+            'op_code': o.codice, 'commessa': o.commessa or '', 'cliente': o.cliente or '',
+            'qta_pianificata': o.qta_pianificata, 'saldo': round(saldo, 3),
+            'data_prevista': o.data_prevista.strftime('%d/%m/%Y') if o.data_prevista else None,
+            'stato': o.stato,
+        })
+
+    risultato = []
+    for codice, dati in aggregato.items():
+        try:
+            art = ArticoloML.query.filter_by(sku=codice).first()
+        except Exception:
+            db.session.rollback()
+            art = None
+        risultato.append({
+            'codice':              codice,
+            'descrizione':         art.descrizione if art else '',
+            'qta_pianificata':     round(dati['qta_pianificata'], 3),
+            'saldo_da_produrre':   round(dati['saldo'], 3),
+            'numero_ordini':       len(dati['origine']),
+            'origine':             dati['origine'],
+        })
+    risultato.sort(key=lambda x: x['codice'])
+    return jsonify({'ordini_in_produzione': risultato, 'generato_il': datetime.utcnow().isoformat()})
+
+
 @magazzino_bp.route('/api/fabbisogno_produzione')
 def api_fabbisogno_produzione():
     """
