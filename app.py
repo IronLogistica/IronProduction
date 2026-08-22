@@ -45,6 +45,12 @@ def create_app():
         db.create_all(bind_key=None)   # solo il DB locale — mai il bind 'masterlogistic'
         init_db()
         inizializza_schema_pp()
+        # DEVE girare PRIMA di migra_schede_lavorazione_unificate(): quella
+        # interroga SchedaLavorazioneWood via ORM, che ora include
+        # contromatrice_id nel modello Python — su un DB dove la colonna
+        # non esiste ancora, QUALSIASI query su quella tabella fallisce con
+        # UndefinedColumn (visto in produzione: il worker non partiva più).
+        assicura_contapieghe_matrici()
         migra_schede_lavorazione_unificate()
         assicura_lunghezze_barra_default()
         assicura_unita_misura_articoli()
@@ -54,7 +60,6 @@ def create_app():
         assicura_operatore_evento_consuntivo()
         assicura_contestuale_distinta_base()
         assicura_event_id_varianza_produzione()
-        assicura_contapieghe_matrici()
 
     return app
 
