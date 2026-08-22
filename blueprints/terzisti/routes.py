@@ -354,7 +354,7 @@ def index():
 
 @terzisti_bp.route('/terzisti/da-trattare')
 def pagina_da_trattare():
-    return render_template('terzisti/da_trattare.html', active='terzisti')
+    return render_template('terzisti/da_trattare.html', active='terzisti_da_trattare')
 
 
 @terzisti_bp.route('/api/terzisti/materiali_da_trattare')
