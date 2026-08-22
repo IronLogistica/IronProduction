@@ -197,17 +197,23 @@ async function caricaReintegroScarti(){
     if(!righe.length){ box.style.display = 'none'; return; }
     box.style.display = 'block';
     document.getElementById('reintegro-count').textContent = righe.length;
-    document.getElementById('reintegro-lista').innerHTML = righe.map(r => `
+    document.getElementById('reintegro-lista').innerHTML = righe.map(r => {
+      const dettaglio = r.indotto_da_scarto_a_valle
+        ? `nessuno scarto diretto qui — servono altri pezzi per rimpiazzare uno scarto avvenuto più avanti nel ciclo`
+        : `scarto totale ${r.scarto_totale}`;
+      return `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
         <div>
           <b class="codice">${r.codice_lavorato}</b>${r.componente ? '' : ' (prodotto finito)'} — ${r.codice_articolo}
-          <div style="font-size:11px;color:var(--text-dim)">${r.op_code} · ${r.commessa || '—'} · ${r.centro_nome} · scarto totale ${r.scarto_totale}</div>
+          ${r.indotto_da_scarto_a_valle ? ' <span style="font-size:9px;background:#e6b800;color:#1c1c1c;padding:1px 6px;border-radius:4px;font-weight:700">🔄 reintegro a monte</span>' : ''}
+          <div style="font-size:11px;color:var(--text-dim)">${r.op_code} · ${r.commessa || '—'} · ${r.centro_nome} · ${dettaglio}</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font-weight:800;color:#e6b800">${r.saldo_da_reintegrare} da rifare</span>
           <button class="btn btn-primary" style="padding:6px 12px;font-size:12px" onclick="vaiAReintegrare(${r.centro_id})">Dichiara →</button>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }catch(e){ /* non bloccare la pagina se questo fallisce */ }
 }
 
@@ -238,8 +244,11 @@ async function caricaOpAperti(){
     const righeComponenti = g.componenti.map((c, j) => {
       const etichetta = c.componente_finale ? `${g.codice_articolo} (prodotto finito)` : c.codice_lavorato;
       const idInput = `dich-inline-${i}-${j}`;
+      const badgeReintegro = c.reintegro_da_scarto_a_valle
+        ? ` <span title="Il saldo include pezzi da rifare per uno scarto avvenuto in una fase successiva del ciclo" style="font-size:9px;background:#e6b800;color:#1c1c1c;padding:1px 6px;border-radius:4px;font-weight:700;white-space:nowrap">🔄 reintegro scarto a valle</span>`
+        : '';
       return `<tr>
-        <td class="codice">${etichetta}</td>
+        <td class="codice">${etichetta}${badgeReintegro}</td>
         <td class="muted" style="font-size:11px">${c.descrizione || '—'}</td>
         <td>${c.qta_necessaria}</td>
         <td>${c.fatti}</td>

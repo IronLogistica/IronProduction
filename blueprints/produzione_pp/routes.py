@@ -669,6 +669,99 @@ def _e_ultima_fase_del_ciclo(codice_lavorato, fase_nome):
     return ultima.centro_costo.nome.strip().lower() == (fase_nome or '').strip().lower()
 
 
+def _fabbisogno_propagato_per_op(o, mappa_distinta=None):
+    """
+    Per ogni codice della distinta base di o (compreso il codice_articolo
+    stesso), calcola la quantità EFFETTIVAMENTE necessaria — non solo
+    pianificata × moltiplicatore di distinta (come mostrato finora), ma
+    comprensiva del fabbisogno indotto da uno scarto su un livello A VALLE
+    (padre in distinta) che consuma questo codice alla PROPRIA prima fase.
+
+    Esempio: OP per 16 TR2001, TR2001 consuma 1× TPD32L3440 alla propria
+    (unica) fase Piega. A Piega vengono dichiarati 10 buoni + 6 scarti:
+    servirà ANCORA tagliare 6 TPD32L3440 in più oltre ai 16 già tagliati —
+    anche se a Taglio nessuno ha scartato nulla direttamente. Senza questa
+    propagazione l'operatore di Taglio vede 'saldo 0' (16 pianificati, 16
+    già tagliati) e non taglia il materiale mancante: il reintegro resta
+    invisibile esattamente dove servirebbe agire.
+
+    Regola generale (vale per qualunque coppia padre/figlio di distinta, a
+    qualunque livello, applicata ricorsivamente): il fabbisogno futuro di un
+    componente = quanti tentativi (buoni+scarto) farà ancora la fase che lo
+    consuma per completare il proprio piano, cioè il SALDO di quella fase —
+    ogni tentativo, buono o scartato, consuma comunque un'unità del
+    componente. Non copre lo scarto tra due fasi DELLO STESSO codice (es.
+    Segatrice poi Trapani sullo stesso C121) — lì il saldo diretto di ogni
+    fase è già visibile oggi senza bisogno di propagazione, dato che
+    entrambe le fasi condividono la stessa quantità pianificata di
+    riferimento.
+
+    Ritorna {codice: qta_necessaria_effettiva}. Usa la STESSA identica
+    definizione di 'saldo' (buoni dichiarati sulla prima fase del ciclo del
+    codice) già usata da api_dichiarazione_op_aperti/api_reintegro_scarti,
+    per restare coerente in tutto il programma.
+    """
+    mappa_distinta = mappa_distinta if mappa_distinta is not None else _carica_mappa_distinta_base_wood()
+
+    # Prima passata: raccoglie tutti i codici raggiungibili E il moltiplicatore
+    # cumulato di distinta per ciascuno (stessa esplosione/protezione
+    # anti-ciclo di _esplodi_componenti_op) — serve sia per le query batch
+    # sia per inizializzare il fabbisogno BASE di ogni codice (pianificata
+    # OP × moltiplicatore), che altrimenti resterebbe a zero per tutto
+    # ciò che non è la radice.
+    moltiplicatore_per_codice = {o.codice_articolo: 1.0}
+    def raccogli(codice, moltiplicatore, visti):
+        for rb in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
+            if rb.codice_figlio in visti:
+                continue
+            visti.add(rb.codice_figlio)
+            m = moltiplicatore * (rb.quantita or 1.0)
+            moltiplicatore_per_codice[rb.codice_figlio] = m
+            raccogli(rb.codice_figlio, m, visti)
+    raccogli(o.codice_articolo, 1.0, {o.codice_articolo})
+    tutti_i_codici = set(moltiplicatore_per_codice.keys())
+
+    prima_fase_per_codice = {}  # codice -> nome centro della sua prima fase
+    if tutti_i_codici:
+        for c in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_i_codici))
+                  .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()):
+            if c.codice not in prima_fase_per_codice and c.centro_costo:
+                prima_fase_per_codice[c.codice] = c.centro_costo.nome
+
+    buoni_per_codice_fase = {}  # (codice, fase_lower) -> buoni dichiarati
+    for componente, fase, tot in (db.session.query(
+            EventoConsuntivoPP.componente, EventoConsuntivoPP.fase,
+            db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+            .filter(EventoConsuntivoPP.op_code == o.codice)
+            .group_by(EventoConsuntivoPP.componente, EventoConsuntivoPP.fase).all()):
+        codice = componente or o.codice_articolo
+        buoni_per_codice_fase[(codice, fase.strip().lower())] = tot or 0
+
+    # Fabbisogno BASE per ogni codice — esattamente il calcolo statico di
+    # sempre (pianificata OP × moltiplicatore cumulato) — su cui la
+    # propagazione aggiunge il fabbisogno indotto da scarti a valle.
+    pianificata = float(o.qta_pianificata or 0)
+    necessaria = {cod: pianificata * m for cod, m in moltiplicatore_per_codice.items()}
+    visitati_walk = set()
+
+    def walk(codice):
+        if codice in visitati_walk:
+            return
+        visitati_walk.add(codice)
+        fase1 = prima_fase_per_codice.get(codice)
+        if fase1:
+            buoni_qui = buoni_per_codice_fase.get((codice, fase1.strip().lower()), 0)
+            saldo_qui = max(necessaria.get(codice, 0) - buoni_qui, 0)
+            if saldo_qui > 0:
+                for rb in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
+                    necessaria[rb.codice_figlio] = necessaria.get(rb.codice_figlio, 0) + saldo_qui * (rb.quantita or 1.0)
+        for rb in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
+            walk(rb.codice_figlio)
+
+    walk(o.codice_articolo)
+    return necessaria
+
+
 def _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata):
     """
     Consumi standard (da distinta base) per QTA_TAGLIATA pezzi — stessa
@@ -1904,14 +1997,18 @@ def api_diagnostica_fasi_op(op_code):
 @pp_bp.get('/api/dichiarazione-produzione/reintegro-scarti')
 def api_reintegro_scarti():
     """
-    Elenco di TUTTI i codici (su qualunque centro di costo interno) dove è
-    stato dichiarato dello scarto E mancano ancora pezzi buoni per
-    completare il pianificato — cioè "ho scartato dei pezzi, li devo
-    rifare". Il meccanismo per dichiararli è lo STESSO di sempre (dichiara
-    di nuovo sulla stessa riga, in Dichiarazione Produzione) — questo
-    endpoint serve solo a renderlo impossibile da perdere: senza, un
-    reintegro da fare si confondeva nella lista generale di tutti gli OP
-    aperti, indipendentemente dal perché mancava ancora qualcosa.
+    Elenco di TUTTI i codici (su qualunque centro di costo interno) dove
+    manca ancora produzione a causa di uno scarto — sia scarto DIRETTO
+    (dichiarato proprio su quella riga) sia scarto INDOTTO da una fase A
+    VALLE che consuma questo codice (vedi _fabbisogno_propagato_per_op):
+    un OP per 16 TR2001 con 10 buoni + 6 scarti alla Piega genera qui ANCHE
+    una riga per il codice figlio (es. TPD32L3440) al Taglio con saldo 6,
+    pur non avendo scarto diretto dichiarato lì — altrimenti il Taglio
+    resterebbe "già completato" (16 pianificati, 16 già tagliati) e nessuno
+    saprebbe che servono altri 6 pezzi per rimpiazzare quelli persi in
+    Piega. Il meccanismo per dichiararli resta lo STESSO di sempre
+    (dichiara di nuovo sulla stessa riga, in Dichiarazione Produzione) —
+    questo endpoint serve solo a renderlo impossibile da perdere.
     """
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
               .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
@@ -1943,6 +2040,7 @@ def api_reintegro_scarti():
 
     risultato = []
     for o in ordini:
+        fabbisogno_effettivo = _fabbisogno_propagato_per_op(o, mappa_distinta=mappa_distinta)
         for comp in componenti_per_op[o.id]:
             codice_comp = comp['codice']
             componente_finale = (codice_comp == o.codice_articolo)
@@ -1952,10 +2050,12 @@ def api_reintegro_scarti():
                 if not centro:
                     continue
                 chiave = (o.codice, componente_param, centro.nome.strip().lower())
-                dati = dati_per_riga.get(chiave)
-                if not dati or dati['scarto'] <= 0:
-                    continue  # nessuno scarto dichiarato qui: non è un reintegro
-                qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+                dati = dati_per_riga.get(chiave) or {'buoni': 0, 'scarto': 0}
+                qta_necessaria_base = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+                qta_necessaria = round(fabbisogno_effettivo.get(codice_comp, qta_necessaria_base), 4)
+                indotto_da_valle = qta_necessaria > qta_necessaria_base
+                if dati['scarto'] <= 0 and not indotto_da_valle:
+                    continue  # nessuno scarto qui, né diretto né indotto da una fase a valle: non è un reintegro
                 saldo = max(qta_necessaria - dati['buoni'], 0)
                 if saldo <= 0:
                     continue  # lo scarto c'è stato ma è già stato rifatto: niente da reintegrare
@@ -1965,6 +2065,7 @@ def api_reintegro_scarti():
                     'centro_id': centro.id, 'centro_nome': centro.nome,
                     'qta_necessaria': qta_necessaria, 'buoni': dati['buoni'], 'scarto_totale': dati['scarto'],
                     'saldo_da_reintegrare': saldo,
+                    'indotto_da_scarto_a_valle': indotto_da_valle,
                 })
     risultato.sort(key=lambda r: -r['saldo_da_reintegrare'])
     return jsonify(risultato)
@@ -1980,7 +2081,12 @@ def api_dichiarazione_op_aperti(cid):
     Stesso motore di risoluzione già usato in Monitor/LIVE: esplode la
     distinta base di ogni OP aperto e tiene solo i codici il cui Ciclo di
     Lavoro passa da QUESTO centro, con il saldo calcolato sui consuntivi già
-    dichiarati per quel componente specifico.
+    dichiarati per quel componente specifico. 'qta_necessaria' include il
+    fabbisogno propagato da eventuali scarti su una fase A VALLE che
+    consuma questo codice (vedi _fabbisogno_propagato_per_op) — altrimenti
+    un componente a monte (es. il Taglio di un semilavorato) risulterebbe
+    "già completato" anche quando servono altri pezzi per rimpiazzare uno
+    scarto avvenuto più avanti nel ciclo (es. alla Piega).
     """
     centro = CentroCostoWood.query.get_or_404(cid)
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
@@ -2027,6 +2133,7 @@ def api_dichiarazione_op_aperti(cid):
 
     risultato = []
     for o in ordini:
+        fabbisogno_effettivo = _fabbisogno_propagato_per_op(o, mappa_distinta=mappa_distinta)
         gruppo_componenti = []
         for comp in componenti_per_op[o.id]:
             codice_comp = comp['codice']
@@ -2047,7 +2154,8 @@ def api_dichiarazione_op_aperti(cid):
             componente_finale = (codice_comp == o.codice_articolo)
             componente_param = None if componente_finale else codice_comp
             es_ultima_fase = componente_finale and _e_ultima_fase_del_ciclo(codice_comp, centro.nome)
-            qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+            qta_necessaria_base = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+            qta_necessaria = round(fabbisogno_effettivo.get(codice_comp, qta_necessaria_base), 4)
             fatti = fatti_per_componente.get((o.codice, componente_param), 0)
             saldo = max(qta_necessaria - fatti, 0)
             if saldo <= 0:
@@ -2056,6 +2164,7 @@ def api_dichiarazione_op_aperti(cid):
                 'componente': componente_param, 'componente_finale': es_ultima_fase,
                 'codice_lavorato': codice_comp, 'descrizione': descrizione_per_codice.get(codice_comp, ''),
                 'qta_necessaria': qta_necessaria, 'fatti': fatti, 'saldo': saldo,
+                'reintegro_da_scarto_a_valle': qta_necessaria > qta_necessaria_base,
             })
         if not gruppo_componenti:
             continue
