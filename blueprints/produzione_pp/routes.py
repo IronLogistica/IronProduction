@@ -1079,6 +1079,7 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
                     varianza_manodopera=round(costo_reale_mdo - costo_standard_mdo, 4),
                     varianza_tariffa_lavorazione=round(var_tariffa_lav, 4) if fase_congelata else 0,
                     varianza_tariffa_manodopera=round(var_tariffa_mdo, 4) if fase_congelata else 0,
+                    event_id=event_id,
                 ))
 
                 # Auto-apprendimento del tempo standard: media cumulativa
@@ -2765,6 +2766,19 @@ def _storna_evento_consuntivo(e, o):
                        f'su {centro_evento.nome} (nessuna dichiarazione rimasta)')
                 db.session.delete(numero_lista)
 
+    # Toglie anche le righe di Varianza di Produzione generate da questo
+    # evento (vedi VarianzaProduzioneWood.event_id) — altrimenti restavano
+    # come residuo storico che non corrisponde più a nessuna produzione
+    # reale, gonfiando l'Analisi Costo di quell'OP con una varianza fantasma.
+    # Righe create PRIMA che questo campo esistesse hanno event_id=NULL e
+    # non vengono toccate (dato storico non recuperabile).
+    varianze_da_togliere = VarianzaProduzioneWood.query.filter_by(event_id=e.event_id).all()
+    if varianze_da_togliere:
+        _audit(o, 'STORNO_VARIANZA_PRODUZIONE',
+               f'tolte {len(varianze_da_togliere)} riga/he di varianza legate all\'evento {e.event_id}')
+        for v in varianze_da_togliere:
+            db.session.delete(v)
+
 
 @pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/annulla')
 def api_dichiarazione_annulla(eid):
@@ -2774,14 +2788,16 @@ def api_dichiarazione_annulla(eid):
     tipicamente qui, nella coda di approvazione, prima ancora che il capo
     se ne accorga nello storico). Non modifica i numeri sul posto: inverte
     esattamente quantità OP, giacenza (ri-carica i materiali scaricati,
-    ri-scarica il prodotto caricato) e tempo, poi elimina l'evento. La
-    correzione via MasterWork (es. il saldatore aveva segnato 100 invece
-    di 80) resta comunque un intervento SEPARATO che Angelo fa di là, per
-    conto suo — qui si toglie solo l'errore da IronProduction.
-    ⚠️ LIMITE: le eventuali righe di Varianza di Produzione legate a questo
-    evento NON vengono rimosse (restano come residuo storico) — non alterano
-    la giacenza, solo l'Analisi Costo di quell'OP potrebbe mostrare una
-    varianza in più che non riflette più produzione reale.
+    ri-scarica il prodotto caricato), tempo ed eventuale Varianza di
+    Produzione collegata, poi elimina l'evento. La correzione via
+    MasterWork (es. il saldatore aveva segnato 100 invece di 80) resta
+    comunque un intervento SEPARATO che Angelo fa di là, per conto suo —
+    qui si toglie solo l'errore da IronProduction.
+    ⚠️ LIMITE RESIDUO: le righe di Varianza di Produzione create PRIMA che
+    esistesse VarianzaProduzioneWood.event_id (dato storico) non hanno un
+    collegamento diretto all'evento e non vengono rimosse dallo storno —
+    quelle vecchie restano come residuo, non alterano la giacenza ma
+    potrebbero mostrare una varianza in più nell'Analisi Costo di quell'OP.
     """
     d = request.get_json(force=True)
     if not (_verifica_pin_capo(d) or _verifica_pin_direzione(d)):

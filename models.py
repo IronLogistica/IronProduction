@@ -424,6 +424,13 @@ class VarianzaProduzioneWood(db.Model):
     varianza_manodopera         = db.Column(db.Float, default=0)  # manodopera TOTALE: reale − standard
     varianza_tariffa_lavorazione = db.Column(db.Float, default=0)  # SOLO quota dovuta al cambio tariffa macchina (0 se non congelata)
     varianza_tariffa_manodopera  = db.Column(db.Float, default=0)  # SOLO quota dovuta al cambio tariffa manodopera (0 se non congelata)
+    # Collega questa riga all'EventoConsuntivoPP che l'ha generata — usato
+    # SOLO per rimuovere la varianza quando l'evento viene stornato (vedi
+    # _storna_evento_consuntivo), altrimenti lo storno lasciava la varianza
+    # come residuo storico che non corrisponde più a nessuna produzione
+    # reale, generando confusione nell'Analisi Costo. NULL per le righe
+    # create prima di questo campo (dato storico, non recuperabile).
+    event_id                    = db.Column(db.String(100), nullable=True, index=True)
     creato_il                   = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -1109,6 +1116,27 @@ def assicura_operatore_evento_consuntivo():
         colonne = {c['name'] for c in inspect(db.engine).get_columns('pp_eventi_consuntivi')}
         if 'operatore' not in colonne:
             db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN operatore VARCHAR(100)"))
+            db.session.commit()
+
+
+def assicura_event_id_varianza_produzione():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    varianze_produzione_wood.event_id — collega ogni riga di varianza
+    all'evento consuntivo che l'ha generata, per poterla rimuovere quando
+    l'evento viene stornato (vedi _storna_evento_consuntivo). NULL per le
+    righe esistenti (dato storico, non recuperabile)."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE varianze_produzione_wood ADD COLUMN IF NOT EXISTS event_id VARCHAR(100)"))
+            db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_varianze_produzione_wood_event_id ON varianze_produzione_wood (event_id)"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('varianze_produzione_wood')}
+        if 'event_id' not in colonne:
+            db.session.execute(text("ALTER TABLE varianze_produzione_wood ADD COLUMN event_id VARCHAR(100)"))
             db.session.commit()
 
 
