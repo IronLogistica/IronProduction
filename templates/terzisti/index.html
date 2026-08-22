@@ -301,15 +301,44 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
           <th>Terzista</th><th>Trattamento</th><th>Codice</th><th>Descrizione</th>
           <th>DDT Uscita</th><th>Data uscita</th>
           <th>Spedita</th><th>Rientrata</th><th>Residua</th>
-          <th>Avanz.</th><th>DDT Rientro</th><th>Stato</th>
+          <th>Avanz.</th><th>DDT Rientro</th><th>Stato</th><th></th>
         </tr></thead>
         <tbody id="tz-tbody">
-          <tr><td colspan="12"><div class="empty-state"><div class="ei">⏳</div><p>Caricamento…</p></div></td></tr>
+          <tr><td colspan="13"><div class="empty-state"><div class="ei">⏳</div><p>Caricamento…</p></div></td></tr>
         </tbody>
       </table>
     </div>
 
   </main>
+</div>
+
+<!-- ══ RESIDUO PER FORNITORE (aggregato su più DDT) ══════════════════════════ -->
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr postazione-hdr">📊 Residuo per Fornitore — totale in mano a ciascun terzista, per codice</div>
+  <div class="tz-table-wrap">
+    <table class="tz-t">
+      <thead><tr><th>Fornitore</th><th>Codice</th><th>Descrizione</th><th>Quantità residua</th></tr></thead>
+      <tbody id="residuo-fornitore-tbody">
+        <tr><td colspan="4"><div class="empty-state"><div class="ei">⏳</div><p>Caricamento…</p></div></td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<!-- ══ MODALE: dettaglio DDT che compongono il residuo ══════════════════════ -->
+<div class="modal-overlay" id="m-dettaglio-residuo">
+  <div class="modal-box" style="width:560px;max-width:96vw">
+    <h3 id="dr-titolo" style="margin-top:0">Dettaglio</h3>
+    <div class="tz-table-wrap">
+      <table class="tz-t">
+        <thead><tr><th>DDT Uscita</th><th>Data</th><th>Spedita</th><th>Rientrata</th><th>Residua</th><th></th></tr></thead>
+        <tbody id="dr-tbody"></tbody>
+      </table>
+    </div>
+    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
+      <button class="btn btn-ghost" onclick="closeModal('m-dettaglio-residuo')">Chiudi</button>
+    </div>
+  </div>
 </div>
 
 <!-- ══ STORICO SCHEDE TRATTAMENTI ESTERNI ═══════════════════════════════════ -->
@@ -553,8 +582,64 @@ async function carica(){
     aggKPI(); renderTable();
   }catch(e){
     document.getElementById('tz-tbody').innerHTML=
-      '<tr><td colspan="12"><div class="empty-state"><div class="ei">❌</div><p>Errore caricamento</p></div></td></tr>';
+      '<tr><td colspan="13"><div class="empty-state"><div class="ei">❌</div><p>Errore caricamento</p></div></td></tr>';
   }
+  caricaResiduoPerFornitore();
+}
+
+async function correggiQtaSpedita(lavorazioneId, qtaAttuale, ddt){
+  const inserito = prompt(`DDT ${ddt || '?'} — quantità spedita attualmente registrata: ${qtaAttuale}.\nInserisci la quantità corretta:`, qtaAttuale);
+  if(inserito === null) return;
+  const nuovaQta = parseInt(inserito, 10);
+  if(isNaN(nuovaQta) || nuovaQta < 0){ alert('⚠️ Inserisci un numero valido (≥ 0).'); return; }
+  if(nuovaQta === qtaAttuale) return;
+  try{
+    const r = await fetch(`/api/lavorazioni/${lavorazioneId}/correggi_qta_spedita`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nuova_qta: nuovaQta})
+    });
+    const d = await r.json();
+    if(!d.ok){ alert('❌ ' + (d.error || 'Errore durante la correzione.')); return; }
+    if(d.avviso) alert('⚠️ ' + d.avviso);
+    carica();
+  }catch(e){ alert('❌ Errore di rete durante la correzione.'); }
+}
+
+let _residuoFornitore = [];
+async function caricaResiduoPerFornitore(){
+  const tb = document.getElementById('residuo-fornitore-tbody');
+  try{
+    const r = await fetch('/api/terzisti/residuo_per_fornitore');
+    _residuoFornitore = await r.json();
+    if(!_residuoFornitore.length){
+      tb.innerHTML = '<tr><td colspan="4"><div class="empty-state"><div class="ei">📭</div><p>Nessun residuo aperto presso i terzisti.</p></div></td></tr>';
+      return;
+    }
+    tb.innerHTML = _residuoFornitore.map((g, i) => `
+      <tr>
+        <td>🏭 ${g.terzista}</td>
+        <td class="cod">${g.codice}</td>
+        <td class="desc-c" title="${g.desc||''}">${g.desc || '—'}</td>
+        <td><span class="qta q-res" style="cursor:pointer;text-decoration:underline" onclick="apriDettaglioResiduo(${i})" title="Vedi i DDT che compongono questo totale">${g.residua}</span></td>
+      </tr>`).join('');
+  }catch(e){
+    tb.innerHTML = '<tr><td colspan="4"><div class="empty-state"><div class="ei">❌</div><p>Errore caricamento</p></div></td></tr>';
+  }
+}
+
+function apriDettaglioResiduo(indice){
+  const g = _residuoFornitore[indice];
+  if(!g) return;
+  document.getElementById('dr-titolo').textContent = `${g.codice} — ${g.terzista} (totale residuo: ${g.residua})`;
+  document.getElementById('dr-tbody').innerHTML = g.dettaglio.map(x => `
+    <tr>
+      <td><span class="ddt-tag">${x.ddt_uscita || '—'}</span></td>
+      <td style="color:var(--text-dim);white-space:nowrap;font-size:.7rem">${x.data_uscita || '—'}</td>
+      <td><span class="qta q-out">${x.qta_spedita}</span></td>
+      <td><span class="qta q-in">${x.qta_rientrata}</span></td>
+      <td><span class="qta q-res">${x.qta_residua}</span></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="closeModal('m-dettaglio-residuo'); correggiQtaSpedita(${x.lavorazione_id}, ${x.qta_spedita}, '${(x.ddt_uscita||'').replace(/'/g,"\\'")}')" title="Correggi quantità spedita">✏️</button></td>
+    </tr>`).join('');
+  openModal('m-dettaglio-residuo');
 }
 
 function aggKPI(){
@@ -580,7 +665,7 @@ function renderTable(){
   if(_soloAp) righe=righe.filter(d=>d.stato!=='RIENTRATA');
   if(!righe.length){
     document.getElementById('tz-tbody').innerHTML=
-      `<tr><td colspan="12"><div class="empty-state"><div class="ei">📭</div>
+      `<tr><td colspan="13"><div class="empty-state"><div class="ei">📭</div>
        <p>Nessuna lavorazione trovata.</p></div></td></tr>`;
     return;
   }
@@ -610,6 +695,7 @@ function renderTable(){
       <td><span class="prog-w"><span class="prog-f ${bc}" style="width:${pct}%"></span></span>${pct}%</td>
       <td>${ddr}</td>
       <td><span class="badge-s ${sc}">${si} ${d.stato.replace('_',' ')}</span></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="correggiQtaSpedita(${d.id}, ${d.qta_spedita}, '${(d.ddt_uscita||'').replace(/'/g,"\\'")}')" title="Correggi quantità spedita">✏️</button></td>
     </tr>`;
   });
   document.getElementById('tz-tbody').innerHTML=html;
