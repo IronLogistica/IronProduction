@@ -2164,15 +2164,26 @@ def api_reintegro_scarti():
                 saldo = max(qta_necessaria - dati['buoni'], 0)
                 if saldo <= 0:
                     continue  # lo scarto c'è stato ma è già stato rifatto: niente da reintegrare
+                # 'Da rifare' NON è il saldo generale dell'ordine (quello è
+                # 'quanto manca in tutto per chiudere l'ordine', comprende
+                # anche produzione normale non ancora fatta) — è SOLO la
+                # quantità imputabile allo scarto: lo scarto diretto
+                # dichiarato su questa riga, oppure — se indotto da una fase
+                # a valle — la parte in più richiesta rispetto al pianificato
+                # originale. Non può comunque superare il saldo residuo
+                # (non ha senso "dover rifare" più di quanto in totale manca
+                # ancora da produrre).
+                da_rifare = dati['scarto'] if dati['scarto'] > 0 else round(max(qta_necessaria - qta_necessaria_base, 0), 4)
+                da_rifare = min(da_rifare, saldo)
                 risultato.append({
                     'op_code': o.codice, 'commessa': o.commessa or '', 'codice_articolo': o.codice_articolo,
                     'componente': componente_param, 'codice_lavorato': codice_comp,
                     'centro_id': centro.id, 'centro_nome': centro.nome,
                     'qta_necessaria': qta_necessaria, 'buoni': dati['buoni'], 'scarto_totale': dati['scarto'],
-                    'saldo_da_reintegrare': saldo,
+                    'da_rifare': da_rifare, 'saldo_ordine': saldo,
                     'indotto_da_scarto_a_valle': indotto_da_valle,
                 })
-    risultato.sort(key=lambda r: -r['saldo_da_reintegrare'])
+    risultato.sort(key=lambda r: -r['da_rifare'])
     return jsonify(risultato)
 
 

@@ -209,7 +209,10 @@ async function caricaReintegroScarti(){
           <div style="font-size:11px;color:var(--text-dim)">${r.op_code} · ${r.commessa || '—'} · ${r.centro_nome} · ${dettaglio}</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-weight:800;color:#e6b800">${r.saldo_da_reintegrare} da rifare</span>
+          <div style="text-align:right">
+            <div style="font-weight:800;color:#e6b800;font-size:14px">${r.da_rifare} da rifare</div>
+            <div style="font-size:10px;color:var(--text-dim)">saldo totale ordine: ${r.saldo_ordine}</div>
+          </div>
           <button class="btn btn-primary" style="padding:6px 12px;font-size:12px" onclick="vaiAReintegrare(${r.centro_id})">Dichiara →</button>
         </div>
       </div>`;
