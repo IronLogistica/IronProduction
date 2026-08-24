@@ -67,6 +67,7 @@
   <thead>
     {# Riga intestazioni gruppo #}
     <tr class="thead-group">
+      <th style="width:26px;background:rgba(255,255,255,.02)"></th>
       <th colspan="2" style="text-align:left;padding-left:10px;background:rgba(30,111,165,.06);border-right:2px solid var(--border)">Articolo</th>
       <th style="background:rgba(30,111,165,.06);border-right:1px solid var(--border)">WMS</th>
       <th style="background:rgba(240,112,112,.06);color:#f07070;border-right:1px solid rgba(240,112,112,.2)">Residuo<br>da Prod.</th>
@@ -80,6 +81,7 @@
     </tr>
     {# Riga sottotitoli #}
     <tr class="thead-sub">
+      <th style="width:26px" title="Trascina ⠿ per riordinare le righe a piacimento"></th>
       <th style="text-align:left;padding-left:10px;min-width:80px;max-width:110px">Codice</th>
       <th style="text-align:left;min-width:140px;border-right:2px solid var(--border)">Descrizione</th>
       <th style="border-right:1px solid var(--border)" title="Scheda WMS completa">📊</th>
@@ -108,7 +110,12 @@
   {% set codice_prod = parti[0] if parti|length > 1 else '' %}
   {% set descr_prod  = parti[1] if parti|length > 1 else parti[0] %}
 
-  <tr data-pid="{{ p.id }}" class="row-{{ buf }}">
+  <tr data-pid="{{ p.id }}" class="row-{{ buf }}" draggable="true"
+      ondragstart="dragStartRiga(event)" ondragover="dragOverRiga(event)"
+      ondrop="dropRiga(event)" ondragend="dragEndRiga(event)">
+
+    {# Col 0: maniglia di trascinamento — ordine manuale a piacimento #}
+    <td class="drag-handle-cell" title="Trascina su/giù per riordinare">⠿</td>
 
     {# Col 1: Codice #}
     <td class="prod-code" style="padding-left:10px;font-family:monospace;font-size:11px;color:var(--steel2);white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis">
@@ -188,7 +195,7 @@
 
   </tr>
   {% else %}
-  <tr><td colspan="14" style="text-align:center;color:var(--text-dim);padding:36px;font-style:italic">
+  <tr><td colspan="15" style="text-align:center;color:var(--text-dim);padding:36px;font-style:italic">
     Nessun prodotto. Clicca <strong style="color:var(--steel2)">➕ Nuovo Kanban</strong> per aggiungere il primo.
   </td></tr>
   {% endfor %}
@@ -198,7 +205,7 @@
   {% if prodotti %}
   <tfoot>
     <tr class="tfoot-totali">
-      <td colspan="3" style="text-align:right;padding-right:12px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);border-right:1px solid var(--border)">Totali</td>
+      <td colspan="4" style="text-align:right;padding-right:12px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);border-right:1px solid var(--border)">Totali</td>
       <td class="num" style="background:rgba(240,112,112,.07);color:#f07070;font-weight:900">
         {{ prodotti|sum(attribute='in_prod') }}
       </td>
@@ -233,6 +240,15 @@
   padding:6px 8px;border-bottom:1px solid var(--border);
   text-align:center;font-weight:800;color:var(--steel2)
 }
+/* ── Riordino manuale righe: trascina la maniglia ⠿ su/giù ── */
+.drag-handle-cell {
+  cursor:grab; text-align:center; color:var(--text-dim); font-size:13px;
+  width:26px; user-select:none; letter-spacing:-2px;
+}
+.drag-handle-cell:hover { color:var(--steel2); }
+#kbtable tbody tr[draggable="true"].dragging { opacity:.35; }
+#kbtable tbody tr.drag-over-top    { box-shadow: inset 0 2px 0 var(--steel2); }
+#kbtable tbody tr.drag-over-bottom { box-shadow: inset 0 -2px 0 var(--steel2); }
 .thead-sub th {
   font-size:9px;text-transform:uppercase;letter-spacing:.3px;
   padding:5px 6px;background:var(--dark2);border-bottom:2px solid var(--border);
@@ -1204,5 +1220,56 @@ function confermaSposta() {
   }).catch(() => showToast('❌ Errore di rete', true));
 }
 document.getElementById('pinSposta').addEventListener('keydown', e => { if (e.key === 'Enter') confermaSposta(); });
+
+// ── Riordino manuale righe (drag & drop): Angelo trascina ⠿ su/giù per
+// mettere le righe nell'ordine che vuole — nessuna logica automatica
+// dietro, solo una preferenza di lettura salvata in KanbanProdotto.sort_order.
+let _dragPid = null;
+
+function dragStartRiga(e) {
+  const tr = e.currentTarget;
+  _dragPid = tr.dataset.pid;
+  tr.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+  e.dataTransfer.setData('text/plain', _dragPid);   // richiesto da Firefox per abilitare il drag
+}
+
+function dragOverRiga(e) {
+  e.preventDefault();
+  const tr = e.currentTarget;
+  if (!tr || tr.dataset.pid === _dragPid) return;
+  const rect = tr.getBoundingClientRect();
+  const meta = e.clientY < rect.top + rect.height / 2;
+  document.querySelectorAll('#kbtable tbody tr').forEach(r => r.classList.remove('drag-over-top', 'drag-over-bottom'));
+  tr.classList.add(meta ? 'drag-over-top' : 'drag-over-bottom');
+}
+
+function dropRiga(e) {
+  e.preventDefault();
+  const targetTr = e.currentTarget;
+  const draggedTr = document.querySelector(`tr[data-pid="${_dragPid}"]`);
+  if (!draggedTr || draggedTr === targetTr) return;
+  const rect = targetTr.getBoundingClientRect();
+  const prima = e.clientY < rect.top + rect.height / 2;
+  targetTr.parentNode.insertBefore(draggedTr, prima ? targetTr : targetTr.nextSibling);
+  salvaOrdineRighe();
+}
+
+function dragEndRiga() {
+  document.querySelectorAll('#kbtable tbody tr').forEach(r => r.classList.remove('dragging', 'drag-over-top', 'drag-over-bottom'));
+  _dragPid = null;
+}
+
+function salvaOrdineRighe() {
+  const ids = Array.from(document.querySelectorAll('#kbtable tbody tr[data-pid]'))
+    .map(tr => parseInt(tr.dataset.pid, 10));
+  fetch('/api/kanban/riordina', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ordine: ids})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) showToast('↕️ Ordine salvato');
+    else showToast('❌ ' + (d.error || 'Errore salvataggio ordine'), true);
+  }).catch(() => showToast('❌ Errore di rete durante il salvataggio ordine', true));
+}
 
 {% endblock %}

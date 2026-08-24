@@ -870,6 +870,35 @@ def api_elimina(kid):
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
 
+@kanban_bp.route('/api/kanban/riordina', methods=['POST'])
+def api_riordina():
+    """
+    Ordine manuale a piacimento delle righe prodotto in un gruppo Kanban —
+    Angelo trascina una riga su/giù e questa lista qui salva il nuovo ordine
+    così com'è: niente logica automatica dietro, è una preferenza personale
+    di lettura, non un dato calcolato. Riceve la lista COMPLETA degli id
+    del gruppo nell'ordine desiderato e riscrive KanbanProdotto.sort_order
+    in sequenza (0, 1, 2, ...) — bastano gli id del gruppo trascinato, non
+    serve toccare gli altri gruppi.
+    """
+    d = request.get_json(force=True)
+    ordine = d.get('ordine') or []
+    if not isinstance(ordine, list) or not ordine:
+        return jsonify({'ok': False, 'error': 'Lista ordine mancante o vuota'}), 400
+    try:
+        ids = [int(x) for x in ordine]
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'Id non validi nella lista ordine'}), 400
+    prodotti = {p.id: p for p in KanbanProdotto.query.filter(KanbanProdotto.id.in_(ids)).all()}
+    for posizione, pid in enumerate(ids):
+        p = prodotti.get(pid)
+        if p:
+            p.sort_order = posizione
+    db.session.commit()
+    log(f'Kanban: riordinate manualmente {len(ids)} righe')
+    return jsonify({'ok': True, 'aggiornate': len(ids)})
+
+
 @kanban_bp.route('/api/kanban/<int:kid>/sposta', methods=['POST'])
 def api_sposta(kid):
     """Sposta un prodotto in un altro gruppo Kanban (richiede PIN)."""
