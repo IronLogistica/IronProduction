@@ -120,21 +120,6 @@
   </div>
 </div>
 
-<div class="mon-section" style="margin-top:14px" id="box-da-trasferire">
-  <div class="section-hdr postazione-hdr" style="display:flex;justify-content:space-between;align-items:center;background:#854f0b">
-    <span>⚠️ Parametri da trasferire ai figli veri</span>
-    <span id="trasf-badge" style="font-size:11px;background:rgba(0,0,0,.25);padding:4px 10px;border-radius:6px;display:none">0</span>
-  </div>
-  <div style="padding:14px">
-    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
-      Questi parametri sono registrati su un codice che ora risulta senza Ciclo di Lavoro proprio (quindi inibito
-      nella tabella sotto) — quasi sempre perché furono inseriti prima che la distinta fosse scomposta fino ai figli
-      veri. Scegli su quale figlio spostarli (o eliminali se sono ormai duplicati/obsoleti).
-    </p>
-    <div id="lista-da-trasferire">Verifica in corso...</div>
-  </div>
-</div>
-
 <div class="mon-section" style="margin-top:14px">
   <div class="section-hdr postazione-hdr" style="display:flex;justify-content:space-between;align-items:center">
     <span>📋 Tabella di lavorazione — <span id="titolo-radice">—</span></span>
@@ -387,13 +372,13 @@ async function caricaAlbero(){
   box.innerHTML = 'Caricamento...'; stato.textContent = '';
   document.getElementById('riga-in-modifica').style.display = 'none';
   try{
-    const r = await fetch('/api/schede_lavorazione_wood/albero/' + encodeURIComponent(codice));
+    const r = await fetch('/api/parametri_lavorazione_wood/albero/' + encodeURIComponent(codice));
     const d = await r.json();
     if(!d.trovato){
       box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna distinta base trovata per questo codice — verifica che sia un codice padre valido in Distinta Base Iron Wood.</p>';
       return;
     }
-    stato.textContent = `${d.righe.length} righe (padre/figlio) trovate nell'albero di ${codice}.`;
+    stato.textContent = `${d.righe.length} codici trovati nell'albero di ${codice}.`;
     box.innerHTML = renderTabellaAlbero(d.righe);
     renderRiepilogoCicli(codice);
     popolaSelectCodiciCiclo(d.righe);
@@ -481,12 +466,12 @@ async function renderRiepilogoCicli(codice){
 
 function popolaSelectCodiciCiclo(righe){
   const sel = document.getElementById('cl-select-codice');
-  const codici = [...new Set(righe.flatMap(x => [x.codice_padre, x.codice_figlio]))].sort();
+  const codici = [...new Set(righe.map(x => x.codice))].sort();
   sel.innerHTML = '<option value="">— seleziona un codice dell\'albero —</option>' +
     codici.map(c => `<option value="${c}">${c}</option>`).join('');
 }
 
-function evidenziaRiga(indice, padre, figlio){
+function evidenziaRiga(indice, codice){
   document.querySelectorAll('.riga-attiva').forEach(tr => tr.classList.remove('riga-attiva'));
   const tr = document.getElementById('riga-' + indice);
   if(tr){
@@ -495,37 +480,39 @@ function evidenziaRiga(indice, padre, figlio){
   }
   const etichetta = document.getElementById('riga-in-modifica');
   etichetta.style.display = '';
-  etichetta.querySelector('b').textContent = `${padre} → ${figlio}`;
+  etichetta.querySelector('b').textContent = codice;
 }
 
 function renderTabellaAlbero(righe){
+  // Elenco PIATTO — un codice, una riga: niente distinzione padre/figlio
+  // da capire, un pezzo fisico ha sempre gli stessi parametri ovunque
+  // venga usato.
   let html = '<table class="kanban-table"><thead><tr>' +
-    '<th>Padre</th><th>Figlio</th><th>Tipo / U.M.<br>(figlio)</th><th>Ciclo di<br>Lavoro (figlio)</th><th>Codice<br>MasterWork</th><th>Lunghezza<br>Barra</th><th>Spessore<br>(mm)</th><th>pz/Barra</th><th>Sviluppo</th>' +
+    '<th>Codice</th><th>Tipo / U.M.</th><th>Ciclo di<br>Lavoro</th><th>Codice<br>MasterWork</th><th>Lunghezza<br>Barra</th><th>Spessore<br>(mm)</th><th>pz/Barra</th><th>Sviluppo</th>' +
     '<th>Matrice</th><th>Contromatrice</th><th>Punto 0</th><th>Indice<br>assorbimento</th><th>Rullo<br>Sgolatrice</th>' +
     '<th>Impostazione<br>Satinatrice</th><th>Note</th></tr></thead><tbody>';
   righe.forEach((x, i) => {
-    const nFasiFiglio = x.n_fasi_ciclo_lavoro_figlio || 0;
-    // Senza un Ciclo di Lavoro associato al figlio, non c'è nessuna macchina
-    // a cui questi parametri si riferiscano: i campi restano DISABILITATI,
-    // non ha senso poterli compilare. Appena il figlio HA un ciclo, gli
-    // stessi campi diventano obbligatori — quelli ancora vuoti si
-    // evidenziano in arancione, così lo schema completo si legge al volo:
-    // basta scorrere la tabella e vedere dove manca ancora qualcosa.
-    const inibito = nFasiFiglio === 0;
-    const badgeCiclo = nFasiFiglio > 0
-      ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#2a9d5c" onclick="selezionaCodiceCicloTabella('${x.codice_figlio}')">✅ ${nFasiFiglio} fasi</button>`
-      : `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#c0392b" onclick="selezionaCodiceCicloTabella('${x.codice_figlio}')">⚠️ Nessuno</button>`;
-    const a = x.approvvigionamento_figlio || {};
-    const tipoInline = `<select style="width:150px;font-size:10px" onchange="salvaApprovvigionamentoRiga('${x.codice_figlio}',this.value,null)"><option value="DA_CLASSIFICARE" ${a.tipo_approvvigionamento==='DA_CLASSIFICARE'?'selected':''}>Da classificare</option><option value="MATERIA_PRIMA_FORNITORE" ${a.tipo_approvvigionamento==='MATERIA_PRIMA_FORNITORE'?'selected':''}>Materia prima</option><option value="COMPONENTE_ACQUISTO" ${a.tipo_approvvigionamento==='COMPONENTE_ACQUISTO'?'selected':''}>Componente acquisto</option><option value="LASERATO" ${a.tipo_approvvigionamento==='LASERATO'?'selected':''}>Laserato</option></select><input style="width:55px;margin-top:3px" placeholder="U.M." value="${a.unita_misura||''}" onchange="salvaApprovvigionamentoRiga('${x.codice_figlio}',null,this.value)">`; 
-    const f = `onfocus="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')"`;
+    const nFasi = x.n_fasi_ciclo_lavoro || 0;
+    // Senza un Ciclo di Lavoro associato, non c'è nessuna macchina a cui
+    // questi parametri si riferiscano: i campi restano DISABILITATI, non
+    // ha senso poterli compilare. Appena il codice HA un ciclo, gli stessi
+    // campi diventano obbligatori — quelli ancora vuoti si evidenziano in
+    // arancione, così lo schema completo si legge al volo: basta scorrere
+    // la tabella e vedere dove manca ancora qualcosa.
+    const inibito = nFasi === 0;
+    const badgeCiclo = nFasi > 0
+      ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#2a9d5c" onclick="selezionaCodiceCicloTabella('${x.codice}')">✅ ${nFasi} fasi</button>`
+      : `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#c0392b" onclick="selezionaCodiceCicloTabella('${x.codice}')">⚠️ Nessuno</button>`;
+    const a = x.approvvigionamento || {};
+    const tipoInline = `<select style="width:150px;font-size:10px" onchange="salvaApprovvigionamentoRiga('${x.codice}',this.value,null)"><option value="DA_CLASSIFICARE" ${a.tipo_approvvigionamento==='DA_CLASSIFICARE'?'selected':''}>Da classificare</option><option value="MATERIA_PRIMA_FORNITORE" ${a.tipo_approvvigionamento==='MATERIA_PRIMA_FORNITORE'?'selected':''}>Materia prima</option><option value="COMPONENTE_ACQUISTO" ${a.tipo_approvvigionamento==='COMPONENTE_ACQUISTO'?'selected':''}>Componente acquisto</option><option value="LASERATO" ${a.tipo_approvvigionamento==='LASERATO'?'selected':''}>Laserato</option></select><input style="width:55px;margin-top:3px" placeholder="U.M." value="${a.unita_misura||''}" onchange="salvaApprovvigionamentoRiga('${x.codice}',null,this.value)">`; 
+    const f = `onfocus="evidenziaRiga(${i},'${x.codice}')"`;
     const dis = inibito ? 'disabled title="Nessun Ciclo di Lavoro associato a questo codice: niente da parametrizzare finché non gliene assegni uno"' : '';
     // Bordo arancione = obbligatorio (ha un ciclo) MA ancora vuoto — si vede a colpo d'occhio cosa manca.
     const oblig = (val) => (!inibito && (val === null || val === undefined || val === '')) ? 'style="border:2px solid #e6b800"' : '';
-    html += `<tr id="riga-${i}" onclick="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')">      <td class="codice">${x.codice_padre}</td>
-      <td class="codice">${x.codice_figlio}</td>
+    html += `<tr id="riga-${i}" onclick="evidenziaRiga(${i},'${x.codice}')">      <td class="codice">${x.codice}</td>
       <td>${tipoInline}</td>
       <td>${badgeCiclo}</td>
-      <td><input type="text" value="${x.codice_masterwork_figlio||''}" placeholder="—" title="Codice con cui MasterWork conosce questo stesso pezzo, se diverso da questo" style="width:100px" ${f} onchange="salvaCodiceMasterWork(${i},this.value)"></td>
+      <td><input type="text" value="${x.codice_masterwork||''}" placeholder="—" title="Codice con cui MasterWork conosce questo stesso pezzo, se diverso da questo" style="width:100px" ${f} onchange="salvaCodiceMasterWork(${i},this.value)"></td>
       <td><select style="width:80px" ${dis} ${oblig(x.lunghezza_barra_mm)} ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
       <td><input type="number" step="0.1" min="0" value="${x.spessore_mm??''}" style="width:65px" ${dis} ${oblig(x.spessore_mm)} ${f} onchange="salvaCella(${i},'spessore_mm',this.value)"></td>
       <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${dis} ${oblig(x.pezzi_per_barra)} ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
@@ -550,11 +537,11 @@ async function salvaCodiceMasterWork(indice, valore){
   try{
     const r = await fetch('/api/mappa-codici-masterwork/per-codice-ironproduction', {
       method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({codice_ironproduction: riga.codice_figlio, codice_masterwork: valore})
+      body: JSON.stringify({codice_ironproduction: riga.codice, codice_masterwork: valore})
     });
     const d = await r.json();
     if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
-    riga.codice_masterwork_figlio = valore;
+    riga.codice_masterwork = valore;
     showToast(valore ? '✅ Corrispondenza salvata' : '✅ Corrispondenza rimossa');
   }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
 }
@@ -568,7 +555,7 @@ function selezionaCodiceCicloTabella(codice){
 async function salvaCella(indice, campo, valore){
   const riga = window._RIGHE_ALBERO[indice];
   const payload = {
-    codice_padre: riga.codice_padre, codice_figlio: riga.codice_figlio,
+    codice: riga.codice,
     lunghezza_barra_mm: riga.lunghezza_barra_mm, spessore_mm: riga.spessore_mm, pezzi_per_barra: riga.pezzi_per_barra,
     sviluppo: riga.sviluppo, matrice_id: riga.matrice_id, punto_zero: riga.punto_zero,
     indice_assorbimento: riga.indice_assorbimento, rullo_id: riga.rullo_id, contromatrice_id: riga.contromatrice_id,
@@ -576,13 +563,12 @@ async function salvaCella(indice, campo, valore){
   };
   payload[campo] = (campo === 'matrice_id' || campo === 'rullo_id' || campo === 'contromatrice_id') ? (valore ? parseInt(valore) : null) : valore;
   try{
-    const r = await fetch('/api/schede_lavorazione_wood', {
+    const r = await fetch('/api/parametri_lavorazione_wood', {
       method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
     });
     const d = await r.json();
     if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
     riga[campo] = (campo === 'matrice_id' || campo === 'rullo_id' || campo === 'contromatrice_id') ? (valore ? parseInt(valore) : null) : valore;
-    riga.id = d.id;
     showToast('✅ Salvato');
   }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
 }
@@ -708,73 +694,6 @@ caricaMatrici();
 caricaRulli();
 caricaContromatrici();
 caricaRadici();
-caricaSchedeDaTrasferire();
-
-async function caricaSchedeDaTrasferire(){
-  const box = document.getElementById('lista-da-trasferire');
-  const badge = document.getElementById('trasf-badge');
-  const sezione = document.getElementById('box-da-trasferire');
-  try{
-    const r = await fetch('/api/schede_lavorazione_wood/da-trasferire');
-    const righe = await r.json();
-    if(!righe.length){ sezione.style.display = 'none'; return; }
-    sezione.style.display = '';
-    badge.style.display = '';
-    badge.textContent = righe.length;
-    box.innerHTML = righe.map(s => {
-      const parametri = [
-        s.lunghezza_barra_mm ? `Barra ${s.lunghezza_barra_mm}mm` : null,
-        s.spessore_mm ? `Sp. ${s.spessore_mm}mm` : null,
-        s.pezzi_per_barra ? `${s.pezzi_per_barra} pz/barra` : null,
-        s.sviluppo ? `Sv. ${s.sviluppo}` : null,
-        s.punto_zero ? `P0 ${s.punto_zero}` : null,
-        s.impostazione_satinatrice ? `Satin. ${s.impostazione_satinatrice}` : null,
-      ].filter(Boolean).join(' · ');
-      const opzioniCandidati = s.candidati.map(c => `<option value="${c}">${c}</option>`).join('');
-      const selettore = s.candidati.length
-        ? `<select id="trasf-dest-${s.id}" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border)">${opzioniCandidati}</select>
-           <button class="btn btn-primary" style="padding:6px 12px;font-size:12px" onclick="trasferisciScheda(${s.id})">➡️ Trasferisci</button>`
-        : `<input id="trasf-dest-${s.id}" type="text" placeholder="Codice figlio..." style="width:140px;padding:6px 8px;border-radius:6px;border:1px solid var(--border)">
-           <button class="btn btn-primary" style="padding:6px 12px;font-size:12px" onclick="trasferisciScheda(${s.id})">➡️ Trasferisci</button>`;
-      return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:rgba(230,184,0,.06)">
-        <div style="margin-bottom:6px"><b class="codice">${s.codice_padre} → ${s.codice_figlio}</b></div>
-        <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">${parametri || '(solo note)'}${s.note ? ' · Note: ' + s.note : ''}</div>
-        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
-          ${selettore}
-          <button class="btn btn-danger" style="padding:6px 12px;font-size:12px" onclick="eliminaSchedaOrfana(${s.id})">🗑️ Elimina (obsoleta)</button>
-        </div>
-      </div>`;
-    }).join('');
-  }catch(e){
-    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
-  }
-}
-
-async function trasferisciScheda(sid){
-  const destinazione = document.getElementById('trasf-dest-' + sid).value.trim();
-  if(!destinazione){ alert('⚠️ Indica il codice figlio di destinazione.'); return; }
-  try{
-    const r = await fetch(`/api/schede_lavorazione_wood/${sid}/trasferisci`, {
-      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({destinazione})
-    });
-    const d = await r.json();
-    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
-    showToast('✅ Parametri trasferiti');
-    caricaSchedeDaTrasferire();
-    if(RADICE_ATTIVA) caricaAlbero();
-  }catch(e){ alert('❌ Errore di rete.'); }
-}
-
-async function eliminaSchedaOrfana(sid){
-  if(!confirm('Eliminare questi parametri? Non verranno trasferiti da nessuna parte.')) return;
-  try{
-    const r = await fetch(`/api/schede_lavorazione_wood/${sid}`, {method:'DELETE'});
-    const d = await r.json();
-    if(!d.ok){ alert('⚠️ Errore durante l\'eliminazione.'); return; }
-    caricaSchedeDaTrasferire();
-    if(RADICE_ATTIVA) caricaAlbero();
-  }catch(e){ alert('❌ Errore di rete.'); }
-}
 
 // Arrivo da un link incrociato (es. da Magazzino/Distinta Base): ?radice=CODICE apre subito l'albero.
 (function apriDaQueryString(){

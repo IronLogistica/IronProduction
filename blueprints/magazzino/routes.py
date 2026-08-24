@@ -13,7 +13,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
                     EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log,
-                    KanbanProdotto, MappaCodiceMasterWork)
+                    KanbanProdotto, MappaCodiceMasterWork, ParametriLavorazioneWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -2890,6 +2890,96 @@ def _flatten_albero_lavorazione(codice_radice, _visitati=None, _profondita=0, _m
     for f in figli:
         coppie.extend(_flatten_albero_lavorazione(f.codice_figlio, _visitati, _profondita + 1, _max_profondita))
     return coppie
+
+
+@magazzino_bp.route('/api/parametri_lavorazione_wood/albero/<codice_radice>')
+def api_albero_parametri_lavorazione(codice_radice):
+    """
+    Come /api/schede_lavorazione_wood/albero, ma PIATTO — un codice, una
+    riga, non più coppie padre/figlio: niente distinzione da mostrare né
+    da capire, solo l'elenco di tutti i codici che compaiono nell'albero
+    di questa radice (compresa la radice stessa) con i loro parametri.
+    """
+    codice_radice = codice_radice.strip().upper()
+    coppie = _flatten_albero_lavorazione(codice_radice)
+    codici = sorted({codice_radice} | {f for _, f in coppie})
+    if not codici or (len(codici) == 1 and not coppie):
+        return jsonify({'trovato': False, 'righe': []})
+
+    parametri = {p.codice: p for p in ParametriLavorazioneWood.query.filter(ParametriLavorazioneWood.codice.in_(codici)).all()}
+    conteggio_fasi = dict(
+        db.session.query(CicloLavoroWood.codice, db.func.count(CicloLavoroWood.id))
+        .filter(CicloLavoroWood.codice.in_(codici))
+        .group_by(CicloLavoroWood.codice).all()
+    )
+    approvvigionamenti = {a.codice: a for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()}
+    mappe_masterwork = {m.codice_ironproduction: m.codice_masterwork for m in
+                         MappaCodiceMasterWork.query.filter(MappaCodiceMasterWork.codice_ironproduction.in_(codici)).all()}
+
+    righe = []
+    for cod in codici:
+        p = parametri.get(cod)
+        a = approvvigionamenti.get(cod)
+        righe.append({
+            'codice': cod,
+            'n_fasi_ciclo_lavoro': conteggio_fasi.get(cod, 0),
+            'codice_masterwork': mappe_masterwork.get(cod, ''),
+            'approvvigionamento': {'tipo_approvvigionamento': a.tipo_approvvigionamento if a else 'DA_CLASSIFICARE',
+                                    'unita_misura': a.unita_misura if a else ''},
+            'lunghezza_barra_mm': p.lunghezza_barra_mm if p else None,
+            'spessore_mm': p.spessore_mm if p else None,
+            'pezzi_per_barra': p.pezzi_per_barra if p else None,
+            'sviluppo': p.sviluppo if p else '',
+            'matrice_id': p.matrice_id if p else None,
+            'punto_zero': p.punto_zero if p else '',
+            'indice_assorbimento': p.indice_assorbimento if p else '',
+            'rullo_id': p.rullo_id if p else None,
+            'contromatrice_id': p.contromatrice_id if p else None,
+            'impostazione_satinatrice': p.impostazione_satinatrice if p else '',
+            'note': p.note if p else '',
+        })
+    return jsonify({'trovato': True, 'righe': righe})
+
+
+@magazzino_bp.route('/api/parametri_lavorazione_wood', methods=['POST'])
+def api_upsert_parametri_lavorazione():
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip().upper()
+    if not codice:
+        return jsonify({'errore': True, 'messaggio': 'Codice obbligatorio'}), 400
+    try:
+        lunghezza_barra_mm = float(d['lunghezza_barra_mm']) if d.get('lunghezza_barra_mm') not in (None, '') else None
+        spessore_mm = float(d['spessore_mm']) if d.get('spessore_mm') not in (None, '') else None
+        pezzi_per_barra = float(d['pezzi_per_barra']) if d.get('pezzi_per_barra') not in (None, '') else None
+        matrice_id = int(d['matrice_id']) if d.get('matrice_id') not in (None, '') else None
+        rullo_id = int(d['rullo_id']) if d.get('rullo_id') not in (None, '') else None
+        contromatrice_id = int(d['contromatrice_id']) if d.get('contromatrice_id') not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Valori numerici non validi'}), 400
+    if matrice_id and not MatriceWood.query.get(matrice_id):
+        return jsonify({'errore': True, 'messaggio': 'Matrice non trovata'}), 404
+    if rullo_id and not RulloWood.query.get(rullo_id):
+        return jsonify({'errore': True, 'messaggio': 'Rullo non trovato'}), 404
+    if contromatrice_id and not ContromatriceWood.query.get(contromatrice_id):
+        return jsonify({'errore': True, 'messaggio': 'Contromatrice non trovata'}), 404
+
+    valori = dict(
+        lunghezza_barra_mm=lunghezza_barra_mm, spessore_mm=spessore_mm, pezzi_per_barra=pezzi_per_barra,
+        sviluppo=(d.get('sviluppo') or '').strip(), matrice_id=matrice_id,
+        punto_zero=(d.get('punto_zero') or '').strip(),
+        indice_assorbimento=(d.get('indice_assorbimento') or '').strip(),
+        rullo_id=rullo_id, contromatrice_id=contromatrice_id,
+        impostazione_satinatrice=(d.get('impostazione_satinatrice') or '').strip(),
+        note=(d.get('note') or '').strip(),
+    )
+    esistente = ParametriLavorazioneWood.query.get(codice)
+    if esistente:
+        for k, v in valori.items():
+            setattr(esistente, k, v)
+    else:
+        db.session.add(ParametriLavorazioneWood(codice=codice, **valori))
+    db.session.commit()
+    return jsonify({'ok': True})
 
 
 @magazzino_bp.route('/api/schede_lavorazione_wood/radici')

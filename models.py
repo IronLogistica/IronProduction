@@ -782,6 +782,65 @@ def migra_schede_lavorazione_unificate():
             db.session.rollback()
 
 
+class ParametriLavorazioneWood(db.Model):
+    """
+    Parametri macchina PER CODICE — non più per coppia padre/figlio. Un
+    pezzo fisico (una barra, un laserato) ha sempre la stessa lunghezza,
+    spessore, matrice ecc. indipendentemente da QUALE prodotto finito lo
+    usa: la vecchia SchedaLavorazioneWood (chiave padre+figlio) obbligava a
+    inserire gli stessi dati più volte se lo stesso codice compariva sotto
+    più padri diversi, e generava dati "orfani" quando la distinta veniva
+    scomposta più a fondo nel tempo. Sostituisce SchedaLavorazioneWood
+    (che resta nel DB per storico, non più scritta).
+    """
+    __tablename__ = 'parametri_lavorazione_wood'
+    codice                    = db.Column(db.String(50), primary_key=True)
+    lunghezza_barra_mm        = db.Column(db.Float, nullable=True)
+    spessore_mm               = db.Column(db.Float, nullable=True)
+    pezzi_per_barra           = db.Column(db.Float, nullable=True)
+    sviluppo                  = db.Column(db.String(50), default='')
+    matrice_id                = db.Column(db.Integer, db.ForeignKey('matrici_wood.id', ondelete='SET NULL'), nullable=True)
+    punto_zero                = db.Column(db.String(50), default='')
+    indice_assorbimento       = db.Column(db.String(50), default='')
+    rullo_id                  = db.Column(db.Integer, db.ForeignKey('rulli_wood.id', ondelete='SET NULL'), nullable=True)
+    contromatrice_id          = db.Column(db.Integer, db.ForeignKey('contromatrici_wood.id', ondelete='SET NULL'), nullable=True)
+    impostazione_satinatrice  = db.Column(db.String(100), default='')
+    note                      = db.Column(db.String(300), default='')
+    aggiornato_il             = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+def migra_parametri_lavorazione_flat():
+    """
+    UNA TANTUM: se parametri_lavorazione_wood è ancora vuota, consolida i
+    dati già presenti in SchedaLavorazioneWood (chiave padre+figlio) in
+    UNA riga per codice_figlio — se lo stesso figlio compariva sotto più
+    padri con dati diversi, vince il primo valore NON VUOTO trovato per
+    ogni campo (nessun dato perso, nessuna scelta arbitraria che sovrascriva
+    un valore già buono con uno vuoto). Si ferma da sola appena la tabella
+    nuova ha almeno una riga — non sovrascrive mai dati già inseriti lì.
+    """
+    if ParametriLavorazioneWood.query.count() > 0:
+        return
+    campi = ['lunghezza_barra_mm', 'spessore_mm', 'pezzi_per_barra', 'sviluppo', 'matrice_id',
+             'punto_zero', 'indice_assorbimento', 'rullo_id', 'contromatrice_id',
+             'impostazione_satinatrice', 'note']
+    consolidato = {}
+    for s in SchedaLavorazioneWood.query.order_by(SchedaLavorazioneWood.id).all():
+        acc = consolidato.setdefault(s.codice_figlio, {})
+        for c in campi:
+            valore = getattr(s, c)
+            if valore not in (None, '') and acc.get(c) in (None, ''):
+                acc[c] = valore
+    for codice, valori in consolidato.items():
+        db.session.add(ParametriLavorazioneWood(codice=codice, **valori))
+    if consolidato:
+        try:
+            db.session.commit()
+            log(f"Migrazione parametri lavorazione: consolidati {len(consolidato)} codici in parametri_lavorazione_wood")
+        except Exception:
+            db.session.rollback()
+
+
 class NumeroListaLavoroWood(db.Model):
     """
     Numero identificativo di ogni Lista di Lavoro stampata (es. CUT/001,
