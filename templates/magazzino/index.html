@@ -266,8 +266,9 @@ async function caricaMagazzinoWood(){
     }
     let html = `<div style="overflow-x:auto"><table class="mat-table"><thead><tr>
       <th>Codice</th><th>Descrizione</th><th>Tipologia</th>
-      <th class="mt-th-stock">+ Stock IW<div class="mt-formula">Giacenza fisica registrata</div></th>
       <th class="mt-th-stock">Grezzo IW<div class="mt-formula">Prodotto assemblato ma NON ANCORA verniciato: totale prodotto (consuntivi) meno quanto già spedito a trattamento esterno</div></th>
+      <th class="mt-th-stock">Q.tà in Trattamento<div class="mt-formula">Presso il terzista (zincatura/verniciatura): spedita ma non ancora rientrata — stessa fonte di "In Trattamento" nella scheda WMS del Kanban</div></th>
+      <th class="mt-th-stock">+ Stock IW<div class="mt-formula">Giacenza fisica registrata</div></th>
       <th class="mt-th-impegnato">− Impegnato OP<div class="mt-formula">Stock − Giacenza residua dopo aver simulato il consumo di TUTTI gli OP aperti, in ordine di priorità, nettando a ogni nodo della distinta contro lo stock già disponibile (incluso il semilavorato già prodotto)</div></th>
       <th class="mt-th-ordinato">+ Ordinato Fornitori<div class="mt-formula">Somma di (qtà ordinata − qtà ricevuta) sulle righe di Ordine di Acquisto ancora aperte per questo codice</div></th>
       <th class="mt-th-ordinato">+ Ordinato in Produzione<div class="mt-formula">Residuo (da fare − fatto) sugli Ordini di Produzione ancora aperti per questo codice — l'alternativa a produrlo in casa invece che comprarlo</div></th>
@@ -289,18 +290,21 @@ async function caricaMagazzinoWood(){
             </button>
           </div>` : ''}
         </td>
+        <td class="${g.grezzo_iw>0?'mt-val-stock':'mt-val-zero'}">
+          <div style="display:flex;align-items:center;gap:4px">
+            <span>${g.grezzo_iw>0?g.grezzo_iw:0}</span>
+            <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="apriRettificaGrezzoIW('${esc(g.codice)}')" title="Rettifica manuale (scarti, rotture in trasporto, ecc.)">✏️</button>
+          </div>
+        </td>
+        <td class="${g.in_trattamento>0?'mt-val-stock':'mt-val-zero'}">
+          ${g.in_trattamento>0?g.in_trattamento:0}
+        </td>
         <td class="${g.quantita>0?'mt-val-stock':'mt-val-zero'}">
           <div style="display:flex;align-items:center;gap:4px">
             <input type="number" step="0.01" value="${g.quantita}" id="stock-${g.codice}"
                    style="width:80px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);background:var(--dark3);color:inherit">
             <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="salvaStock('${g.codice}')" title="Salva nuovo stock">💾</button>
             <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="ricostruisciDaDdt('${esc(g.codice)}')" title="Ricostruisci lo stock SOLO dai rientri DDT già registrati, scartando altre modifiche accumulate">🧹</button>
-          </div>
-        </td>
-        <td class="${g.grezzo_iw>0?'mt-val-stock':'mt-val-zero'}">
-          <div style="display:flex;align-items:center;gap:4px">
-            <span>${g.grezzo_iw>0?g.grezzo_iw:0}</span>
-            <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="apriRettificaGrezzoIW('${esc(g.codice)}')" title="Rettifica manuale (scarti, rotture in trasporto, ecc.)">✏️</button>
           </div>
         </td>
         <td class="${g.impegnato>0?'mt-val-impegnato':'mt-val-zero'}">

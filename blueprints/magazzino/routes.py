@@ -1113,6 +1113,37 @@ def _grezzo_iw_per_codici(codici):
     return grezzo_iw
 
 
+def _in_trattamento_per_codici(codici):
+    """
+    Quantità attualmente PRESSO IL TERZISTA (spedita ma non ancora
+    rientrata) per un elenco di codici — stessa fonte/logica già usata per
+    'In Trattamento' nella scheda WMS del Kanban (_aggiorna_grezzi_in_vern_
+    da_ddt) e per il residuo per fornitore in Terzisti
+    (api_residuo_per_fornitore): per ogni LavorazioneTerzista non ancora
+    RIENTRATA, la quota ancora presso il terzista è qta spedita meno qta
+    già rientrata parzialmente. FUNZIONE CONDIVISA, stesso numero ovunque
+    compaia — qui usata per la colonna 'Q.tà in Trattamento' di Magazzino.
+    """
+    if not codici:
+        return {}
+    in_trattamento = {}
+    codici_set = set(codici)
+    query = LavorazioneTerzista.query.filter(LavorazioneTerzista.stato != 'RIENTRATA')
+    for lav in query.all():
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            continue
+        codice = (note_j.get('codice') or '').strip()
+        if codice not in codici_set:
+            continue
+        qta_rientrata = int(note_j.get('qta_rientrata', 0))
+        residua = max((lav.qta or 0) - qta_rientrata, 0)
+        if residua > 0:
+            in_trattamento[codice] = in_trattamento.get(codice, 0) + residua
+    return in_trattamento
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  SCARICO FINITI IW SU VENDITA IRON WOOD → IRON SEGNALETICA — chiamato da
 #  MasterLogistic-WMS quando Iron Segnaletica carica lì il DDT di ACQUISTO
@@ -1228,6 +1259,7 @@ def _calcola_campi_giacenza(righe):
     # una lettura di quel valore; None = non ancora sincronizzato, 0 non è
     # un'assunzione sicura da fare al posto suo).
     grezzo_iw = _grezzo_iw_per_codici(codici)
+    in_trattamento = _in_trattamento_per_codici(codici)
 
     ordinato_produzione = {}
     for cod, qta_pian, qta_buona in (db.session.query(OrdineProduzione.codice_articolo,
@@ -1284,6 +1316,7 @@ def _calcola_campi_giacenza(righe):
         imp = impegnato.get(g.codice, 0)
         ord_ = ordinato.get(g.codice, 0)
         grz = grezzo_iw.get(g.codice, 0)
+        in_tratt = in_trattamento.get(g.codice, 0)
         ord_prod = ordinato_produzione.get(g.codice, 0)
         scorta_min = getattr(g, 'scorta_minima_wms', None) or 0
         ord_cliente_wms = getattr(g, 'ordinato_cliente_wms', None) or 0
@@ -1302,7 +1335,7 @@ def _calcola_campi_giacenza(righe):
             'ha_op_proprio': g.codice in codici_padre_da_op,
             'codice_padre_manuale': g.codice in codici_padre_manuali,
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
-            'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
+            'grezzo_iw': grz, 'in_trattamento': in_tratt, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
             'scorta_minima': getattr(g, 'scorta_minima_wms', None),
             'scorta_minima_wms_aggiornato_il': (g.scorta_minima_wms_aggiornato_il.strftime('%d/%m/%Y %H:%M')
                 if getattr(g, 'scorta_minima_wms_aggiornato_il', None) else None),
