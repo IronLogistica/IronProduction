@@ -82,36 +82,38 @@ def _aggiorna_residuo_produzione(p, op_per_sku=None):
     p.in_prod = int(sum(max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0) for o in op_aperti))
 
 
-def _aggiorna_grezzi_e_trattamento(p, op_per_sku=None, lav_per_sku=None):
+def _aggiorna_grezzi_e_trattamento(p, op_per_sku=None, lav_per_sku=None, grezzo_iw_per_sku=None):
     """
     'Grezzi' e 'In Trattamento' (VERN./ZINC.) NON sono più campi da inserire
     a mano: derivano da dati che IronProduction ha già.
-    - Grezzi = totale prodotto dalle Dichiarazioni di Produzione (somma
-      qta_buona su TUTTI gli Ordini di Produzione, aperti e chiusi, di
-      questo codice — non solo quelli ancora aperti come in_prod) MENO
-      quanto è già stato spedito a un terzista per il trattamento esterno
-      (LavorazioneTerzista.qta, DDT uscita) — quello che è partito non è
-      più "grezzo in casa", è "in trattamento".
-    - In Trattamento = quanto di quello spedito NON è ancora rientrato
-      (qta − qta_rientrata sulle lavorazioni non RIENTRATA), dagli stessi
-      DDT (blueprints/terzisti — vedi _aggiorna_kanban_da_rientro_ddt per il
-      lato "rientro" che alza invece 'verniciati'/Finiti IW).
+    - Grezzi = STESSA fonte di 'GREZZI IW' ovunque altro nell'app
+      (_grezzo_iw_per_codici: solo dichiarazioni a Saldatura APPROVATE
+      dalla Direzione, più le rettifiche cumulative — spedizione a
+      terzista, vendita a Iron Segnaletica, ecc.). PRIMA questo campo
+      usava una formula SUA (qta_buona di TUTTI gli OP a qualunque fase,
+      senza richiedere approvazione Direzione) che poteva mostrare un
+      numero diverso da 'GREZZI IW' per lo stesso prodotto — corretto per
+      avere un'unica fonte di verità in tutta l'app.
+    - In Trattamento = quanto è stato spedito a un terzista e NON ancora
+      rientrato (qta − qta_rientrata sulle lavorazioni non RIENTRATA),
+      dagli stessi DDT (blueprints/terzisti — vedi
+      _aggiorna_kanban_da_rientro_ddt per il lato "rientro" che alza
+      invece 'verniciati'/Finiti IW).
 
-    op_per_sku/lav_per_sku: mappe precalcolate (vedi sopra) per evitare due
-    query per prodotto quando si scorre l'intera board — altrimenti
-    interroga il DB solo per questo prodotto (uso singolo).
+    op_per_sku/lav_per_sku/grezzo_iw_per_sku: mappe precalcolate (vedi
+    sopra) per evitare più query per prodotto quando si scorre l'intera
+    board — altrimenti interroga il DB solo per questo prodotto (uso
+    singolo, es. risincronizza-wms).
     """
     sku = sku_da_nome_prodotto(p.prodotto)
     if not sku:
         return
     sku_upper = sku.upper()
 
-    if op_per_sku is not None:
-        tutti_op = op_per_sku.get(sku_upper, [])
+    if grezzo_iw_per_sku is not None:
+        p.grezzi = max(grezzo_iw_per_sku.get(sku, 0), 0)
     else:
-        tutti_op = OrdineProduzione.query.filter(
-            db.func.upper(OrdineProduzione.codice_articolo) == sku_upper).all()
-    totale_prodotto = int(sum(o.qta_buona or 0 for o in tutti_op))
+        p.grezzi = max(_grezzo_iw_per_codici([sku]).get(sku, 0), 0)
 
     if lav_per_sku is not None:
         lavorazioni_con_note = lav_per_sku.get(sku_upper, [])
@@ -126,14 +128,11 @@ def _aggiorna_grezzi_e_trattamento(p, op_per_sku=None, lav_per_sku=None):
             if (note_j.get('codice') or '').strip().upper() == sku_upper:
                 lavorazioni_con_note.append((lav, note_j))
 
-    totale_spedito = 0
     totale_in_viaggio = 0
     for lav, note_j in lavorazioni_con_note:
-        totale_spedito += lav.qta or 0
         if lav.stato != 'RIENTRATA':
             totale_in_viaggio += max((lav.qta or 0) - int(note_j.get('qta_rientrata', 0)), 0)
 
-    p.grezzi = max(totale_prodotto - totale_spedito, 0)
     p.in_vern = totale_in_viaggio
 
 
@@ -463,9 +462,11 @@ def index(url_key):
     op_per_sku = _mappa_op_per_sku()
     lav_per_sku = _mappa_lavorazioni_terzisti_per_sku()
     giacenza_per_sku = _mappa_giacenza_per_sku()
+    skus_board = list({sku_da_nome_prodotto(p.prodotto) for p in prodotti if sku_da_nome_prodotto(p.prodotto)})
+    grezzo_iw_per_sku = _grezzo_iw_per_codici(skus_board) if skus_board else {}
     for p in prodotti:
         _aggiorna_residuo_produzione(p, op_per_sku)
-        _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku)
+        _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku, grezzo_iw_per_sku)
         _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
     db.session.commit()
 
