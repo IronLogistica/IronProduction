@@ -2521,6 +2521,69 @@ def api_non_conformita_8d_decidi(mid):
     return jsonify(ok=True, stato=m.stato)
 
 
+CATEGORIE_SCHEDA_MATERIALE = [
+    ('TAGLIO', ['sega', 'tagli']),
+    ('PIEGATURA', ['pieg', 'curvatub', 'curva']),
+    ('SVASATURA', ['svas', 'sgola']),
+    ('FORATURA', ['fora', 'punzon', 'trapan']),
+    ('SALDATURA', ['sald']),
+]
+
+
+def _categoria_scheda_materiale(nome_centro):
+    """
+    Riconosce a quale delle 5 caselle della Scheda Identificazione
+    Materiale (Taglio/Piegatura/Svasatura/Foratura/Saldatura) corrisponde
+    un centro di costo, per parola chiave nel nome — stesso principio già
+    usato altrove nell'app per riconoscere le macchine (es. ZONE_STANDARD
+    in avanzamento.py), qui con le 5 categorie specifiche di questa scheda
+    cartacea. None se non riconosciuto (nessuna casella spuntata piuttosto
+    che spuntarne una a caso).
+    """
+    nome_l = (nome_centro or '').lower()
+    for categoria, parole in CATEGORIE_SCHEDA_MATERIALE:
+        if any(p in nome_l for p in parole):
+            return categoria
+    return None
+
+
+@pp_bp.get('/scheda-materiale-stampa')
+def pagina_scheda_materiale_stampa():
+    """
+    Scheda Identificazione Materiale, formato A5, pronta da stampare —
+    stesso modulo cartaceo già in uso (IRON, rev.1 - 03/2026): Codice,
+    Descrizione, Quantità, casella spuntata su Lavorazione Eseguita
+    (il centro di costo su cui si sta dichiarando ORA) e su Prossima
+    Lavorazione (il centro successivo nel Ciclo di Lavoro di questo
+    codice, se c'è) — compilati dal programma, Alessandro controlla solo
+    che siano quelli giusti prima di stampare. Operatore e Data restano
+    da scrivere a mano, come sul modulo cartaceo.
+    """
+    codice = (request.args.get('codice') or '').strip()
+    descrizione = (request.args.get('descrizione') or '').strip()
+    quantita = (request.args.get('quantita') or '').strip()
+    centro_id = request.args.get('centro_id', type=int)
+
+    centro_corrente = CentroCostoWood.query.get(centro_id) if centro_id else None
+    categoria_eseguita = _categoria_scheda_materiale(centro_corrente.nome) if centro_corrente else None
+
+    categoria_prossima = None
+    if codice and centro_id:
+        riga_corrente = (CicloLavoroWood.query.filter_by(codice=codice, centro_costo_id=centro_id)
+                          .order_by(CicloLavoroWood.sequenza).first())
+        if riga_corrente:
+            prossima = (CicloLavoroWood.query.filter_by(codice=codice)
+                        .filter(CicloLavoroWood.sequenza > riga_corrente.sequenza)
+                        .order_by(CicloLavoroWood.sequenza).first())
+            if prossima and prossima.centro_costo:
+                categoria_prossima = _categoria_scheda_materiale(prossima.centro_costo.nome)
+
+    return render_template('produzione_pp/scheda_materiale_stampa.html',
+        codice=codice, descrizione=descrizione, quantita=quantita,
+        categorie=CATEGORIE_SCHEDA_MATERIALE,
+        categoria_eseguita=categoria_eseguita, categoria_prossima=categoria_prossima)
+
+
 @pp_bp.get('/api/dichiarazione-produzione/anteprima')
 def api_dichiarazione_anteprima():
     """

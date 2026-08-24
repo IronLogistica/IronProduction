@@ -322,6 +322,7 @@ async function caricaOpAperti(){
   box.innerHTML = gruppi.map((g, i) => {
     const righeComponenti = g.componenti.map((c, j) => {
       const etichetta = c.componente_finale ? `${g.codice_articolo} (prodotto finito)` : c.codice_lavorato;
+      const codicePulito = c.componente_finale ? g.codice_articolo : c.codice_lavorato;
       const idInput = `dich-inline-${i}-${j}`;
       return `<tr>
         <td class="codice">${etichetta}</td>
@@ -336,6 +337,7 @@ async function caricaOpAperti(){
                  style="width:52px;padding:8px;font-size:15px;border-radius:6px;border:1px solid #e6b800;background:var(--dark3);color:#e6b800">
         </td>
         <td><button class="btn btn-primary" style="padding:8px 12px;font-size:13px" onclick='dichiaraInline(${JSON.stringify(g)}, ${JSON.stringify(c)}, "${idInput}")'>✅</button></td>
+        <td><button class="btn btn-ghost" style="padding:8px 10px;font-size:13px" onclick='stampaSchedaMateriale(${JSON.stringify(codicePulito)}, ${JSON.stringify(c.descrizione||'')}, "${idInput}", ${_centroCorrente})' title="Stampa Scheda Identificazione Materiale (A5)">🖨️</button></td>
       </tr>`;
     }).join('');
     return `<div class="mon-section" style="margin-bottom:10px">` +
@@ -345,6 +347,13 @@ async function caricaOpAperti(){
       `<div id="gruppo-${i}" style="display:none;padding:0 14px 12px;overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descr.</th><th>Necessari</th><th>Fatti</th><th>Saldo</th><th>Buoni/Scarto</th><th></th></tr></thead><tbody>${righeComponenti}</tbody></table></div>` +
       `</div>`;
   }).join('');
+}
+
+function stampaSchedaMateriale(codice, descrizione, idInput, centroId){
+  const inputBuoni = document.getElementById(idInput);
+  const quantita = (inputBuoni && inputBuoni.value) ? inputBuoni.value : '';
+  const params = new URLSearchParams({codice, descrizione, quantita, centro_id: centroId || ''});
+  window.open('/scheda-materiale-stampa?' + params.toString(), '_blank');
 }
 
 async function dichiaraInline(g, c, idInput){
