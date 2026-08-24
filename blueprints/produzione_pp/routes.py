@@ -854,13 +854,29 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     # reale vs standard), indipendentemente da _e_prima_fase_del_ciclo — a
     # differenza di scarico/carico materiali, ogni fase ha il proprio tempo
     # standard e va sempre tracciata, anche quella successiva alla prima.
-    if good > 0:
+    if tempo > 0:
         try:
             riga_ciclo = (CicloLavoroWood.query.filter_by(codice=codice_lavorato)
                           .join(CicloLavoroWood.centro_costo)
                           .filter(db.func.lower(CentroCostoWood.nome) == fase_nome.lower())
                           .first())
-            if riga_ciclo and riga_ciclo.produttivita_oraria:
+            # Apprendimento produttività: SEMPRE (anche con good=0, es. un
+            # turno interrotto da una pausa dove alla ripresa non è ancora
+            # uscito nessun pezzo buono) — quei minuti sono comunque tempo
+            # speso su quella commessa e DEVONO rallentare la produttività
+            # calcolata, altrimenti la stima del tempo residuo per finirla
+            # (Cruscotto KPI) resta ottimisticamente cieca alle pause reali.
+            # La Varianza di Produzione (costo per pezzo) invece resta
+            # legata a good>0: non ha senso calcolare una varianza "a pezzo"
+            # quando i pezzi sono zero.
+            if riga_ciclo and not riga_ciclo.produttivita_oraria_manuale:
+                riga_ciclo.produttivita_pezzi_osservati = (riga_ciclo.produttivita_pezzi_osservati or 0) + good
+                riga_ciclo.produttivita_minuti_osservati = (riga_ciclo.produttivita_minuti_osservati or 0) + tempo
+                if riga_ciclo.produttivita_minuti_osservati >= 15:  # almeno 15 minuti di storico prima di fidarsi
+                    riga_ciclo.produttivita_oraria = round(
+                        riga_ciclo.produttivita_pezzi_osservati / (riga_ciclo.produttivita_minuti_osservati / 60), 3)
+
+            if good > 0 and riga_ciclo and riga_ciclo.produttivita_oraria:
                 fase_congelata = None
                 if componente_finale:
                     legame = LegameCostoStandardOrdineWood.query.get(o.codice)
@@ -908,18 +924,6 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
                     varianza_tariffa_lavorazione=round(var_tariffa_lav, 4) if fase_congelata else 0,
                     varianza_tariffa_manodopera=round(var_tariffa_mdo, 4) if fase_congelata else 0,
                 ))
-
-                # Auto-apprendimento del tempo standard: media cumulativa
-                # pezzi/minuti osservati (non sovrascrive di colpo col dato
-                # di un solo evento, si stabilizza mano a mano che arrivano
-                # più consuntivi) — salta le righe che il capo ha bloccato
-                # a mano con produttivita_oraria_manuale.
-                if not riga_ciclo.produttivita_oraria_manuale and ore_reali > 0:
-                    riga_ciclo.produttivita_pezzi_osservati = (riga_ciclo.produttivita_pezzi_osservati or 0) + good
-                    riga_ciclo.produttivita_minuti_osservati = (riga_ciclo.produttivita_minuti_osservati or 0) + tempo
-                    if riga_ciclo.produttivita_minuti_osservati >= 15:  # almeno 15 minuti di storico prima di fidarsi
-                        riga_ciclo.produttivita_oraria = round(
-                            riga_ciclo.produttivita_pezzi_osservati / (riga_ciclo.produttivita_minuti_osservati / 60), 3)
         except Exception:
             pass  # nessuna varianza registrabile (fase non abbinabile) non deve bloccare il consuntivo
 
