@@ -12,7 +12,8 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     MatriceWood, RulloWood, ContromatriceWood, LunghezzaBarraWood, SchedaLavorazioneWood,
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
-                    EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log)
+                    EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log,
+                    KanbanProdotto)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -1113,15 +1114,15 @@ def _grezzo_iw_per_codici(codici):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  SCARICO GREZZO IW SU VENDITA IRON WOOD → IRON SEGNALETICA — chiamato da
-#  MasterLogistic-WMS quando Angelo carica lì il DDT di ingresso merce
-#  venduta da Iron Wood a Iron Segnaletica: il grezzo lascia il pool di Iron
-#  Wood (viene scaricato qui) nello stesso momento in cui WMS carica il
-#  prodotto finito verniciato sul proprio magazzino (Articolo.stock) — la
-#  colonna "Finiti IS" mostrata in Parametri di Lavorazione/Magazzino legge
-#  quello stock DIRETTAMENTE da WMS (bind ArticoloML), quindi non serve
-#  nessuna chiamata di ritorno per quella parte: aumenta da sola appena WMS
-#  registra il carico.
+#  SCARICO FINITI IW SU VENDITA IRON WOOD → IRON SEGNALETICA — chiamato da
+#  MasterLogistic-WMS quando Iron Segnaletica carica lì il DDT di ACQUISTO
+#  della merce venduta da Iron Wood. Il grezzo era già stato consumato molto
+#  prima (Saldatura o Verniciatura interna) diventando "Finiti IW" — sia che
+#  gli 80/100 pezzi siano rientrati verniciati da un terzista esterno, sia
+#  che i restanti 20/100 siano stati verniciati al centro di costo interno
+#  "Verniciatura" e dichiarati in produzione, finiscono nello STESSO bucket
+#  "Finiti IW". La vendita a Iron Segnaletica scarica quindi FINITI IW, MAI
+#  Grezzo IW (che a quel punto è già a zero da tempo per quei pezzi).
 #  Auth: STESSO secret condiviso già usato per la direzione opposta
 #  (masterlogistic_client.py — IronProduction → WMS manda
 #  MASTERLOGISTIC_API_TOKEN, verificato da WMS come IRONPRODUCTION_API_TOKEN)
@@ -1137,15 +1138,16 @@ def _auth_wms():
         return jsonify({'ok': False, 'error': 'non autorizzato'}), 401
 
 
-@magazzino_bp.route('/api/wms/scarica_grezzo_iw', methods=['POST'])
-def api_wms_scarica_grezzo_iw():
+@magazzino_bp.route('/api/wms/scarica_finiti_iw', methods=['POST'])
+def api_wms_scarica_finiti_iw():
     """
-    Riduce il Grezzo IW pronto per SKU/quantità indicati — stesso meccanismo
-    cumulativo (RettificaGrezzoIW, mai un valore che sovrascrive) già usato
-    per lo scarico su spedizione a un terzista. Chiamato da MasterLogistic-
-    WMS alla conferma di un DDT di carico la cui riga fornitore combacia con
-    Iron Wood: il materiale è appena stato "venduto" internamente e caricato
-    come prodotto finito su WMS, quindi non è più grezzo pronto qui.
+    Riduce FINITI IW per SKU/quantità indicati — sia il magazzino locale
+    (GiacenzaWood, letto dalla pagina Materiali) sia il contatore Kanban
+    (KanbanProdotto.verniciati, se il codice ha una scheda Kanban). Chiamato
+    da MasterLogistic-WMS alla conferma di un DDT di ACQUISTO da Iron Wood:
+    il prodotto è già finito/verniciato (a prescindere che sia rientrato da
+    un terzista o verniciato al centro interno), quindi esce da qui, non dal
+    Grezzo IW (già consumato molto prima).
     """
     auth = _auth_wms()
     if auth:
@@ -1161,14 +1163,28 @@ def api_wms_scarica_grezzo_iw():
     if quantita <= 0:
         return jsonify({'ok': False, 'error': 'quantita deve essere positiva (questo endpoint scarica soltanto)'}), 400
 
-    db.session.add(RettificaGrezzoIW(
-        codice=sku, delta=-quantita,
-        note='Venduto a Iron Segnaletica — DDT carico MasterLogistic-WMS'
-    ))
+    _registra_movimento_giacenza(sku, -quantita, 'scarico_produzione',
+                                  riferimento='WMS', note='Venduto a Iron Segnaletica — DDT acquisto MasterLogistic-WMS')
+
+    kanban_verniciati_dopo = None
+    p = (KanbanProdotto.query
+         .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{sku.upper()}%'))
+         .first())
+    if p:
+        prima = p.verniciati or 0
+        p.verniciati = max(0, prima - quantita)
+        kanban_verniciati_dopo = p.verniciati
+        if prima - quantita < 0:
+            log(f"WARN scarico Finiti IW [{sku}]: richiesti {quantita} ma Kanban aveva solo {prima} "
+                f"'verniciati' — contatore Kanban azzerato, verificare manualmente il disallineamento")
+
     db.session.commit()
-    residuo = _grezzo_iw_per_codici([sku]).get(sku, 0)
-    log(f'Grezzo IW scaricato da WMS: {sku} -{quantita} -> residuo {residuo}')
-    return jsonify({'ok': True, 'sku': sku, 'grezzo_iw_residuo': residuo})
+    nuova_giacenza = GiacenzaWood.query.get(sku)
+    log(f'Finiti IW scaricato da WMS: {sku} -{quantita} -> giacenza {nuova_giacenza.quantita if nuova_giacenza else "?"}'
+        + (f', Kanban verniciati -> {kanban_verniciati_dopo}' if p else ' (nessuna scheda Kanban per questo codice)'))
+    return jsonify({'ok': True, 'sku': sku,
+                     'giacenza_residua': nuova_giacenza.quantita if nuova_giacenza else None,
+                     'kanban_verniciati_residuo': kanban_verniciati_dopo})
 
 
 def _calcola_campi_giacenza(righe):
