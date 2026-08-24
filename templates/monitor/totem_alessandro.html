@@ -126,7 +126,7 @@
         <input id="inp-codice" class="big-input" type="text" placeholder="Codice o descrizione (es. T200, o 'transenna')" autocomplete="off"
                onkeydown="if(event.key==='Enter') cercaArticolo()" oninput="ricercaDocCodice(this)" onfocus="ricercaDocCodice(this)">
         <button class="btn btn-primary" onclick="cercaArticolo()">🔍</button>
-        <div id="doc-dropdown" style="display:none;position:absolute;top:100%;left:0;right:56px;z-index:40;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:260px;overflow-y:auto;margin-top:4px"></div>
+        <div id="doc-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:260px;overflow-y:auto"></div>
       </div>
     </div>
   </div>
@@ -491,6 +491,13 @@ caricaCentri();
 let CODICE_ATTIVO = null;
 
 let _docRicercaTimer = null;
+function posizionaDocDropdown(input){
+  const dropdown = document.getElementById('doc-dropdown');
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = rect.width + 'px';
+}
 async function ricercaDocCodice(input){
   const dropdown = document.getElementById('doc-dropdown');
   const q = input.value.trim();
@@ -504,6 +511,7 @@ async function ricercaDocCodice(input){
     }catch(e){ dropdown.style.display = 'none'; return; }
     if(!risultati || !risultati.length){
       dropdown.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:13px">Nessun codice trovato</div>';
+      posizionaDocDropdown(input);
       dropdown.style.display = 'block';
       return;
     }
@@ -515,6 +523,7 @@ async function ricercaDocCodice(input){
                 ${x.descrizione ? `<div style="font-size:12px;color:var(--text-dim);margin-top:2px">${x.descrizione}</div>` : ''}
               </div>`;
     }).join('');
+    posizionaDocDropdown(input);
     dropdown.style.display = 'block';
   }, 220);
 }
@@ -527,6 +536,11 @@ document.addEventListener('click', e => {
   const dropdown = document.getElementById('doc-dropdown');
   if(dropdown && dropdown.style.display !== 'none' && e.target.id !== 'inp-codice') dropdown.style.display = 'none';
 });
+window.addEventListener('scroll', () => {
+  const dropdown = document.getElementById('doc-dropdown');
+  const input = document.getElementById('inp-codice');
+  if(dropdown && dropdown.style.display !== 'none' && input) posizionaDocDropdown(input);
+}, true);
 
 function cercaArticolo(){
   const val = document.getElementById('inp-codice').value.trim();
