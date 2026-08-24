@@ -512,7 +512,7 @@ function renderTabellaAlbero(righe){
     html += `<tr id="riga-${i}" onclick="evidenziaRiga(${i},'${x.codice}')">      <td class="codice">${x.codice}</td>
       <td>${tipoInline}</td>
       <td>${badgeCiclo}</td>
-      <td><input type="text" value="${x.codice_masterwork||''}" placeholder="—" title="Codice con cui MasterWork conosce questo stesso pezzo, se diverso da questo" style="width:100px" ${f} onchange="salvaCodiceMasterWork(${i},this.value)"></td>
+      <td>${_pluCellaMasterWorkHTML(i, x.codice_masterwork)}</td>
       <td><select style="width:80px" ${dis} ${oblig(x.lunghezza_barra_mm)} ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
       <td><input type="number" step="0.1" min="0" value="${x.spessore_mm??''}" style="width:65px" ${dis} ${oblig(x.spessore_mm)} ${f} onchange="salvaCella(${i},'spessore_mm',this.value)"></td>
       <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${dis} ${oblig(x.pezzi_per_barra)} ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
@@ -530,6 +530,86 @@ function renderTabellaAlbero(righe){
   window._RIGHE_ALBERO = righe;
   return html;
 }
+
+function _pluCellaMasterWorkHTML(indice, valoreIniziale){
+  const val = (valoreIniziale || '').replace(/"/g, '&quot;');
+  return `<input type="text" value="${val}" placeholder="—" autocomplete="off" title="Codice con cui MasterWork conosce questo stesso pezzo, se diverso da questo" ` +
+    `style="width:100px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px" ` +
+    `oninput="_pluRicercaMasterWorkInput(this,${indice})" onfocus="_pluRicercaMasterWorkInput(this,${indice})" onchange="salvaCodiceMasterWork(${indice},this.value)">`;
+}
+
+// Un SOLO dropdown condiviso da tutte le righe (non uno per riga) — la
+// tabella vive dentro .mon-section (overflow:hidden) e uno scroll
+// orizzontale proprio: position:absolute verrebbe tagliato via a
+// prescindere dallo z-index. position:fixed scavalca l'overflow:hidden di
+// un antenato, riposizionato via JS su ogni apertura/scroll.
+let _pluMwIndiceAttivo = null;
+function _assicuraPluMwDropdown(){
+  let dd = document.getElementById('plu-mw-dropdown');
+  if(!dd){
+    dd = document.createElement('div');
+    dd.id = 'plu-mw-dropdown';
+    dd.style.cssText = 'display:none;position:fixed;z-index:9999;min-width:220px;background:var(--dark2,#1c2733);border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.35);max-height:200px;overflow-y:auto';
+    document.body.appendChild(dd);
+  }
+  return dd;
+}
+function _posizionaPluMwDropdown(input){
+  const dd = _assicuraPluMwDropdown();
+  const rect = input.getBoundingClientRect();
+  dd.style.top = (rect.bottom + 4) + 'px';
+  dd.style.left = rect.left + 'px';
+  dd.style.width = Math.max(rect.width, 220) + 'px';
+}
+
+let _pluRicercaMwTimer = null;
+async function _pluRicercaMasterWorkInput(input, indice){
+  const dropdown = _assicuraPluMwDropdown();
+  _pluMwIndiceAttivo = indice;
+  const q = input.value.trim();
+  clearTimeout(_pluRicercaMwTimer);
+  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  _pluRicercaMwTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/mappa-codici-masterwork/ricerca?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessuna corrispondenza già usata</div>';
+      _posizionaPluMwDropdown(input);
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = risultati.map(x => {
+      const cod = String(x.codice_masterwork).replace(/"/g, '&quot;');
+      return `<div class="wms-item" onmousedown="_pluSceltaMasterWork('${cod}')">` +
+        `<div><b class="codice">${x.codice_masterwork}</b><br><span style="font-size:11px;color:var(--text-dim)">già usato per ${x.codice_ironproduction}</span></div></div>`;
+    }).join('');
+    _posizionaPluMwDropdown(input);
+    dropdown.style.display = 'block';
+  }, 220);
+}
+
+function _pluSceltaMasterWork(codice){
+  const dropdown = document.getElementById('plu-mw-dropdown');
+  const input = document.activeElement;
+  if(input && input.tagName === 'INPUT') input.value = codice;
+  dropdown.style.display = 'none';
+  dropdown.innerHTML = '';
+  if(_pluMwIndiceAttivo !== null) salvaCodiceMasterWork(_pluMwIndiceAttivo, codice);
+}
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('plu-mw-dropdown');
+  if(dropdown && dropdown.style.display !== 'none' && e.target !== document.activeElement && !dropdown.contains(e.target)){
+    dropdown.style.display = 'none';
+  }
+});
+window.addEventListener('scroll', () => {
+  const dropdown = document.getElementById('plu-mw-dropdown');
+  const input = document.activeElement;
+  if(dropdown && dropdown.style.display !== 'none' && input && input.tagName === 'INPUT') _posizionaPluMwDropdown(input);
+}, true);
 
 async function salvaCodiceMasterWork(indice, valore){
   const riga = window._RIGHE_ALBERO[indice];

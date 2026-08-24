@@ -3148,6 +3148,32 @@ def api_scheda_trasferisci(sid):
     return jsonify({'ok': True})
 
 
+@magazzino_bp.route('/api/mappa-codici-masterwork/ricerca')
+def api_ricerca_mappa_codici_masterwork():
+    """
+    Menù a ricerca intelligente per il campo 'Codice MasterWork' della
+    Tabella di Lavorazione — cerca tra le corrispondenze GIÀ INSERITE
+    (codice_masterwork o codice_ironproduction), per riconoscimento rapido
+    se una convenzione di nome simile è già stata usata altrove (es. digiti
+    'S-14' e vedi che S-14-A, S-14-B, S-14-C sono già stati assegnati ad
+    altri codici) — evita typo e duplicati di nomenclatura. Suggerisce, non
+    obbliga: il campo resta testo libero, un codice MasterWork nuovo mai
+    visto prima si può sempre digitare per intero.
+    """
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    like = f'%{q}%'
+    righe = (MappaCodiceMasterWork.query
+             .filter(db.or_(MappaCodiceMasterWork.codice_masterwork.ilike(like),
+                             MappaCodiceMasterWork.codice_ironproduction.ilike(like)))
+             .order_by(MappaCodiceMasterWork.codice_masterwork).limit(30).all())
+    q_lower = q.lower()
+    lista = [{'codice_masterwork': m.codice_masterwork, 'codice_ironproduction': m.codice_ironproduction} for m in righe]
+    lista.sort(key=lambda r: (0 if r['codice_masterwork'].lower().startswith(q_lower) else 1, r['codice_masterwork']))
+    return jsonify(lista)
+
+
 @magazzino_bp.route('/api/mappa-codici-masterwork/per-codice-ironproduction', methods=['PUT'])
 def api_mappa_codice_masterwork_upsert():
     """
