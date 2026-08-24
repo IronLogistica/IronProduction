@@ -209,24 +209,6 @@
   </div>
 </div>
 
-<!-- ══ MODAL: DICHIARA PRODUZIONE (scarto/tempo, quando serve) ══ -->
-<div class="modal-overlay" id="modal-dichiara">
-  <div class="modal-box">
-    <h3>✅ Dichiara produzione — <span id="dich-titolo"></span></h3>
-    <label class="modal-label" style="margin-top:0">Pezzi buoni</label>
-    <input id="dich-buoni" class="modal-input" type="number" min="0" value="0">
-    <label class="modal-label">Pezzi di scarto</label>
-    <input id="dich-scarto" class="modal-input" type="number" min="0" value="0">
-    <label class="modal-label">Tempo impiegato (minuti)</label>
-    <input id="dich-tempo" class="modal-input" type="number" min="0" value="0">
-    <button class="btn btn-primary" style="margin-top:14px;width:100%;justify-content:center" onclick="salvaDichiarazione()">💾 Registra dichiarazione</button>
-    <span id="dich-esito" style="font-size:13px;display:block;margin-top:8px;text-align:center"></span>
-    <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modal-dichiara')">Chiudi</button>
-    </div>
-  </div>
-</div>
-
 <div class="toast" id="toast"></div>
 
 <script>
@@ -258,8 +240,6 @@ function openModal(id){ document.getElementById(id).classList.add('open'); }
 // ma SENZA Area Capo, Diagnostica bug fasi e Area Direzione: quei comandi non
 // competono ad Alessandro, restano riservati alla pagina completa.
 let _centroCorrente = null;
-let _opInDichiarazione = null;
-let _componenteInDichiarazione = null;
 let _anteprimaCorrente = null;
 
 async function caricaCentri(){
@@ -476,25 +456,6 @@ function toggleGruppoOp(i){
   const aperto = el.style.display !== 'none';
   el.style.display = aperto ? 'none' : 'block';
   freccia.textContent = aperto ? '▶' : '▼';
-}
-
-async function salvaDichiarazione(){
-  const esito = document.getElementById('dich-esito');
-  const payload = {
-    op_code: _opInDichiarazione, centro_id: _centroCorrente, componente: _componenteInDichiarazione,
-    pezzi_buoni: document.getElementById('dich-buoni').value,
-    pezzi_scarto: document.getElementById('dich-scarto').value,
-    tempo_minuti: document.getElementById('dich-tempo').value,
-  };
-  try{
-    const r = await fetch('/api/dichiarazione-produzione', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
-    const d = await r.json();
-    if(!d.ok){ esito.style.color='#f07070'; esito.textContent = '⚠️ ' + d.error; return; }
-    esito.style.color = '#5debb0'; esito.textContent = '✓ Registrata.';
-    setTimeout(()=>{ closeModal('modal-dichiara'); caricaOpAperti(); }, 700);
-  }catch(e){
-    esito.style.color = '#f07070'; esito.textContent = '❌ Errore di rete.';
-  }
 }
 
 caricaCentri();
