@@ -13,7 +13,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
                     EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log,
-                    KanbanProdotto)
+                    KanbanProdotto, MappaCodiceMasterWork)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -2937,6 +2937,8 @@ def api_albero_schede_lavorazione(codice_radice):
     )
 
     approvvigionamenti = {a.codice: a for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici_albero)).all()}
+    mappe_masterwork = {m.codice_ironproduction: m.codice_masterwork for m in
+                         MappaCodiceMasterWork.query.filter(MappaCodiceMasterWork.codice_ironproduction.in_(codici_albero)).all()}
     righe = []
     for padre, figlio in sorted(coppie_uniche, key=lambda x: x[0]):
         s = schede.get((padre, figlio))
@@ -2944,6 +2946,7 @@ def api_albero_schede_lavorazione(codice_radice):
             'id': s.id if s else None, 'codice_padre': padre, 'codice_figlio': figlio,
             'n_fasi_ciclo_lavoro_padre': conteggio_fasi.get(padre, 0),
             'n_fasi_ciclo_lavoro_figlio': conteggio_fasi.get(figlio, 0),
+            'codice_masterwork_figlio': mappe_masterwork.get(figlio, ''),
             # I parametri articolo sono indipendenti: sia il padre sia il figlio
             # possono essere materia prima, laserato, acquisto ecc. e avere U.M./ciclo propri.
             'approvvigionamento_padre': {'tipo_approvvigionamento': approvvigionamenti.get(padre).tipo_approvvigionamento if approvvigionamenti.get(padre) else 'DA_CLASSIFICARE', 'unita_misura': approvvigionamenti.get(padre).unita_misura if approvvigionamenti.get(padre) else ''},
@@ -2964,6 +2967,46 @@ def api_albero_schede_lavorazione(codice_radice):
             'note': s.note if s else '',
         })
     return jsonify({'trovato': True, 'righe': righe})
+
+
+@magazzino_bp.route('/api/mappa-codici-masterwork/per-codice-ironproduction', methods=['PUT'])
+def api_mappa_codice_masterwork_upsert():
+    """
+    Salvataggio INLINE della corrispondenza MasterWork, una per riga della
+    Tabella di Lavorazione (accanto al codice figlio, non in una sezione
+    separata) — Angelo la compila lì dove serve, mentre guarda il codice
+    a cui si riferisce. Aggiorna se esiste già una corrispondenza per
+    questo codice_ironproduction, la crea se non c'è, la cancella se il
+    valore mandato è vuoto (campo svuotato in tabella = nessuna
+    corrispondenza necessaria).
+    """
+    d = request.get_json(force=True)
+    codice_ip = (d.get('codice_ironproduction') or '').strip()
+    codice_mw = (d.get('codice_masterwork') or '').strip()
+    if not codice_ip:
+        return jsonify({'errore': True, 'messaggio': 'Codice IronProduction mancante'}), 400
+
+    esistente = MappaCodiceMasterWork.query.filter_by(codice_ironproduction=codice_ip).first()
+
+    if not codice_mw:
+        if esistente:
+            db.session.delete(esistente)
+            db.session.commit()
+        return jsonify({'ok': True, 'cancellato': True})
+
+    conflitto = MappaCodiceMasterWork.query.filter(
+        MappaCodiceMasterWork.codice_masterwork == codice_mw,
+        MappaCodiceMasterWork.codice_ironproduction != codice_ip).first()
+    if conflitto:
+        return jsonify({'errore': True,
+                         'messaggio': f'Il codice MasterWork "{codice_mw}" è già associato a "{conflitto.codice_ironproduction}"'}), 409
+
+    if esistente:
+        esistente.codice_masterwork = codice_mw
+    else:
+        db.session.add(MappaCodiceMasterWork(codice_ironproduction=codice_ip, codice_masterwork=codice_mw))
+    db.session.commit()
+    return jsonify({'ok': True})
 
 
 @magazzino_bp.route('/api/schede_lavorazione_wood', methods=['POST'])

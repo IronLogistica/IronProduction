@@ -179,27 +179,6 @@
     </div>
   </div>
 </div>
-
-<div class="mon-section" style="margin-top:16px">
-  <div class="section-hdr">🔗 Corrispondenze codici MasterWork</div>
-  <div style="padding:14px">
-    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
-      MasterWork conosce lo stesso pezzo con un codice SUO, diverso da quello usato qui in IronProduction per
-      distinta base e ciclo di lavoro (es. IronProduction <code>M16-SRI</code> = MasterWork <code>S-14-A</code>).
-      Quando arriva un evento da MasterWork con un componente presente qui sotto, viene tradotto automaticamente
-      nel codice IronProduction prima di essere registrato — senza questa corrispondenza l'evento non trova nessun
-      componente nella distinta e l'Ordine di Produzione non avanza correttamente.
-    </p>
-    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
-      <input id="mcm-codice-ip" type="text" placeholder="Codice IronProduction (es. M16-SRI)" style="width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
-      <span style="color:var(--text-dim)">=</span>
-      <input id="mcm-codice-mw" type="text" placeholder="Codice MasterWork (es. S-14-A)" style="width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
-      <input id="mcm-note" type="text" placeholder="Note (facoltativo)" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
-      <button class="btn btn-primary" onclick="aggiungiMappaCodiceMasterWork()">➕ Aggiungi corrispondenza</button>
-    </div>
-    <div id="mcm-lista">Caricamento...</div>
-  </div>
-</div>
 {% endblock %}
 {% block scripts %}
 let RADICI = [];
@@ -506,37 +485,63 @@ function evidenziaRiga(indice, padre, figlio){
 
 function renderTabellaAlbero(righe){
   let html = '<table class="kanban-table"><thead><tr>' +
-    '<th>Padre</th><th>Figlio</th><th>Tipo / U.M.<br>(figlio)</th><th>Ciclo di<br>Lavoro (figlio)</th><th>Lunghezza<br>Barra</th><th>Spessore<br>(mm)</th><th>pz/Barra</th><th>Sviluppo</th>' +
+    '<th>Padre</th><th>Figlio</th><th>Tipo / U.M.<br>(figlio)</th><th>Ciclo di<br>Lavoro (figlio)</th><th>Codice<br>MasterWork</th><th>Lunghezza<br>Barra</th><th>Spessore<br>(mm)</th><th>pz/Barra</th><th>Sviluppo</th>' +
     '<th>Matrice</th><th>Contromatrice</th><th>Punto 0</th><th>Indice<br>assorbimento</th><th>Rullo<br>Sgolatrice</th>' +
     '<th>Impostazione<br>Satinatrice</th><th>Note</th></tr></thead><tbody>';
   righe.forEach((x, i) => {
     const nFasiFiglio = x.n_fasi_ciclo_lavoro_figlio || 0;
+    // Senza un Ciclo di Lavoro associato al figlio, non c'è nessuna macchina
+    // a cui questi parametri si riferiscano: i campi restano DISABILITATI,
+    // non ha senso poterli compilare. Appena il figlio HA un ciclo, gli
+    // stessi campi diventano obbligatori — quelli ancora vuoti si
+    // evidenziano in arancione, così lo schema completo si legge al volo:
+    // basta scorrere la tabella e vedere dove manca ancora qualcosa.
+    const inibito = nFasiFiglio === 0;
     const badgeCiclo = nFasiFiglio > 0
       ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#2a9d5c" onclick="selezionaCodiceCicloTabella('${x.codice_figlio}')">✅ ${nFasiFiglio} fasi</button>`
       : `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#c0392b" onclick="selezionaCodiceCicloTabella('${x.codice_figlio}')">⚠️ Nessuno</button>`;
     const a = x.approvvigionamento_figlio || {};
     const tipoInline = `<select style="width:150px;font-size:10px" onchange="salvaApprovvigionamentoRiga('${x.codice_figlio}',this.value,null)"><option value="DA_CLASSIFICARE" ${a.tipo_approvvigionamento==='DA_CLASSIFICARE'?'selected':''}>Da classificare</option><option value="MATERIA_PRIMA_FORNITORE" ${a.tipo_approvvigionamento==='MATERIA_PRIMA_FORNITORE'?'selected':''}>Materia prima</option><option value="COMPONENTE_ACQUISTO" ${a.tipo_approvvigionamento==='COMPONENTE_ACQUISTO'?'selected':''}>Componente acquisto</option><option value="LASERATO" ${a.tipo_approvvigionamento==='LASERATO'?'selected':''}>Laserato</option></select><input style="width:55px;margin-top:3px" placeholder="U.M." value="${a.unita_misura||''}" onchange="salvaApprovvigionamentoRiga('${x.codice_figlio}',null,this.value)">`; 
     const f = `onfocus="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')"`;
+    const dis = inibito ? 'disabled title="Nessun Ciclo di Lavoro associato a questo codice: niente da parametrizzare finché non gliene assegni uno"' : '';
+    // Bordo arancione = obbligatorio (ha un ciclo) MA ancora vuoto — si vede a colpo d'occhio cosa manca.
+    const oblig = (val) => (!inibito && (val === null || val === undefined || val === '')) ? 'style="border:2px solid #e6b800"' : '';
     html += `<tr id="riga-${i}" onclick="evidenziaRiga(${i},'${x.codice_padre}','${x.codice_figlio}')">      <td class="codice">${x.codice_padre}</td>
       <td class="codice">${x.codice_figlio}</td>
       <td>${tipoInline}</td>
       <td>${badgeCiclo}</td>
-      <td><select style="width:80px" ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
-      <td><input type="number" step="0.1" min="0" value="${x.spessore_mm??''}" style="width:65px" ${f} onchange="salvaCella(${i},'spessore_mm',this.value)"></td>
-      <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
-      <td><input type="text" value="${x.sviluppo||''}" style="width:100px" ${f} onchange="salvaCella(${i},'sviluppo',this.value)"></td>
-      <td><select style="width:90px" ${f} onchange="salvaCella(${i},'matrice_id',this.value)">${optionsMatrici(x.matrice_id)}</select></td>
-      <td><select style="width:100px" ${f} onchange="salvaCella(${i},'contromatrice_id',this.value)">${optionsContromatrici(x.contromatrice_id)}</select></td>
-      <td><input type="text" value="${x.punto_zero||''}" style="width:70px" ${f} onchange="salvaCella(${i},'punto_zero',this.value)"></td>
-      <td><input type="text" value="${x.indice_assorbimento||''}" style="width:80px" ${f} onchange="salvaCella(${i},'indice_assorbimento',this.value)"></td>
-      <td><select style="width:90px" ${f} onchange="salvaCella(${i},'rullo_id',this.value)">${optionsRulli(x.rullo_id)}</select></td>
-      <td><input type="text" value="${x.impostazione_satinatrice||''}" style="width:110px" ${f} onchange="salvaCella(${i},'impostazione_satinatrice',this.value)"></td>
+      <td><input type="text" value="${x.codice_masterwork_figlio||''}" placeholder="—" title="Codice con cui MasterWork conosce questo stesso pezzo, se diverso da questo" style="width:100px" ${f} onchange="salvaCodiceMasterWork(${i},this.value)"></td>
+      <td><select style="width:80px" ${dis} ${oblig(x.lunghezza_barra_mm)} ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
+      <td><input type="number" step="0.1" min="0" value="${x.spessore_mm??''}" style="width:65px" ${dis} ${oblig(x.spessore_mm)} ${f} onchange="salvaCella(${i},'spessore_mm',this.value)"></td>
+      <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${dis} ${oblig(x.pezzi_per_barra)} ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
+      <td><input type="text" value="${x.sviluppo||''}" style="width:100px" ${dis} ${oblig(x.sviluppo)} ${f} onchange="salvaCella(${i},'sviluppo',this.value)"></td>
+      <td><select style="width:90px" ${dis} ${f} onchange="salvaCella(${i},'matrice_id',this.value)">${optionsMatrici(x.matrice_id)}</select></td>
+      <td><select style="width:100px" ${dis} ${f} onchange="salvaCella(${i},'contromatrice_id',this.value)">${optionsContromatrici(x.contromatrice_id)}</select></td>
+      <td><input type="text" value="${x.punto_zero||''}" style="width:70px" ${dis} ${oblig(x.punto_zero)} ${f} onchange="salvaCella(${i},'punto_zero',this.value)"></td>
+      <td><input type="text" value="${x.indice_assorbimento||''}" style="width:80px" ${dis} ${f} onchange="salvaCella(${i},'indice_assorbimento',this.value)"></td>
+      <td><select style="width:90px" ${dis} ${f} onchange="salvaCella(${i},'rullo_id',this.value)">${optionsRulli(x.rullo_id)}</select></td>
+      <td><input type="text" value="${x.impostazione_satinatrice||''}" style="width:110px" ${dis} ${f} onchange="salvaCella(${i},'impostazione_satinatrice',this.value)"></td>
       <td><input type="text" value="${x.note||''}" style="width:140px" ${f} onchange="salvaCella(${i},'note',this.value)"></td>
     </tr>`;
   });
   html += '</tbody></table>';
   window._RIGHE_ALBERO = righe;
   return html;
+}
+
+async function salvaCodiceMasterWork(indice, valore){
+  const riga = window._RIGHE_ALBERO[indice];
+  valore = valore.trim();
+  try{
+    const r = await fetch('/api/mappa-codici-masterwork/per-codice-ironproduction', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice_ironproduction: riga.codice_figlio, codice_masterwork: valore})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    riga.codice_masterwork_figlio = valore;
+    showToast(valore ? '✅ Corrispondenza salvata' : '✅ Corrispondenza rimossa');
+  }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
 }
 
 function selezionaCodiceCicloTabella(codice){
@@ -688,59 +693,6 @@ caricaMatrici();
 caricaRulli();
 caricaContromatrici();
 caricaRadici();
-caricaMappaCodiciMasterWork();
-
-async function caricaMappaCodiciMasterWork(){
-  const box = document.getElementById('mcm-lista');
-  box.innerHTML = 'Caricamento...';
-  try{
-    const r = await fetch('/api/mappa-codici-masterwork');
-    const righe = await r.json();
-    if(!righe.length){ box.innerHTML = '<p style="color:var(--text-dim);font-style:italic">Nessuna corrispondenza configurata.</p>'; return; }
-    box.innerHTML = '<table class="kanban-table"><thead><tr><th style="text-align:left">Codice IronProduction</th><th style="text-align:left">Codice MasterWork</th><th style="text-align:left">Note</th><th></th></tr></thead><tbody>' +
-      righe.map(m => `<tr>
-        <td class="codice" style="text-align:left">${m.codice_ironproduction}</td>
-        <td class="codice" style="text-align:left;color:var(--accent2)">${m.codice_masterwork}</td>
-        <td style="text-align:left;color:var(--text-dim)">${m.note || '—'}</td>
-        <td><button class="btn btn-danger" style="padding:4px 10px;font-size:11px" onclick="eliminaMappaCodiceMasterWork(${m.id})">🗑️</button></td>
-      </tr>`).join('') + '</tbody></table>';
-  }catch(e){
-    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
-  }
-}
-
-async function aggiungiMappaCodiceMasterWork(){
-  const codiceIp = document.getElementById('mcm-codice-ip').value.trim();
-  const codiceMw = document.getElementById('mcm-codice-mw').value.trim();
-  const note = document.getElementById('mcm-note').value.trim();
-  if(!codiceIp || !codiceMw){ alert('⚠️ Inserisci entrambi i codici.'); return; }
-  try{
-    const r = await fetch('/api/mappa-codici-masterwork', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({codice_ironproduction: codiceIp, codice_masterwork: codiceMw, note})
-    });
-    const d = await r.json();
-    if(!d.ok){ alert('⚠️ ' + d.error); return; }
-    document.getElementById('mcm-codice-ip').value = '';
-    document.getElementById('mcm-codice-mw').value = '';
-    document.getElementById('mcm-note').value = '';
-    caricaMappaCodiciMasterWork();
-  }catch(e){
-    alert('❌ Errore di rete.');
-  }
-}
-
-async function eliminaMappaCodiceMasterWork(mid){
-  if(!confirm('Eliminare questa corrispondenza?')) return;
-  try{
-    const r = await fetch('/api/mappa-codici-masterwork/' + mid, {method:'DELETE'});
-    const d = await r.json();
-    if(!d.ok){ alert('⚠️ ' + (d.error || 'Errore')); return; }
-    caricaMappaCodiciMasterWork();
-  }catch(e){
-    alert('❌ Errore di rete.');
-  }
-}
 
 // Arrivo da un link incrociato (es. da Magazzino/Distinta Base): ?radice=CODICE apre subito l'albero.
 (function apriDaQueryString(){
