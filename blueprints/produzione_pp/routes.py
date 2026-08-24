@@ -14,7 +14,7 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
                     NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
                     FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D,
-                    MatriceWood, ContromatriceWood)
+                    MatriceWood, ContromatriceWood, MappaCodiceMasterWork)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -627,6 +627,30 @@ def api_ordini_attivi():
     rows = [o for o in rows if _is_carpenteria(o.asa)]
     return jsonify(orders=[_ordine(o) for o in sorted(rows, key=lambda o: (o.data_prevista is None, o.data_prevista, o.priorita, o.codice))])
 
+def _fasi_corrispondono(nome_centro, fase_nome):
+    """
+    Confronto fase↔centro di costo TOLLERANTE, non un'uguaglianza esatta —
+    BUG REALE VERIFICATO IN PRODUZIONE che questa funzione esiste per
+    correggere: MasterWork manda in 'descrizione_fase' un testo libero
+    configurato per articolo (es. 'Saldatura Frontale c/Assemblaggio'),
+    non necessariamente identico al nome del Centro di Costo qui in
+    IronProduction ('Saldatura') — MasterWork stesso riconosce la
+    saldatura per parola chiave ('saldatura' in descrizione_fase.lower()),
+    non per uguaglianza esatta, quindi un confronto esatto qui era
+    strutturalmente incompatibile: l'evento veniva registrato (Grezzo IW
+    lo vede, perché quel calcolo filtra sempre e solo su fase='saldatura'
+    esatto — un caso a parte), ma _e_prima_fase_del_ciclo/
+    _e_ultima_fase_del_ciclo restituivano sempre False per un nome più
+    lungo di quello configurato, quindi l'Ordine di Produzione non
+    avanzava mai (quota buona/stato), pur avendo scaricato materiale e
+    registrato tutto il resto correttamente.
+    """
+    a, b = (nome_centro or '').strip().lower(), (fase_nome or '').strip().lower()
+    if not a or not b:
+        return False
+    return a == b or a in b or b in a
+
+
 def _e_prima_fase_del_ciclo(codice_lavorato, fase_nome):
     """
     Vero se fase_nome è la PRIMA fase del Ciclo di Lavoro di questo codice —
@@ -643,7 +667,7 @@ def _e_prima_fase_del_ciclo(codice_lavorato, fase_nome):
              .order_by(CicloLavoroWood.sequenza).first())
     if not prima or not prima.centro_costo:
         return True
-    return prima.centro_costo.nome.strip().lower() == (fase_nome or '').strip().lower()
+    return _fasi_corrispondono(prima.centro_costo.nome, fase_nome)
 
 
 def _e_ultima_fase_del_ciclo(codice_lavorato, fase_nome):
@@ -667,7 +691,7 @@ def _e_ultima_fase_del_ciclo(codice_lavorato, fase_nome):
               .order_by(CicloLavoroWood.sequenza.desc()).first())
     if not ultima or not ultima.centro_costo:
         return True
-    return ultima.centro_costo.nome.strip().lower() == (fase_nome or '').strip().lower()
+    return _fasi_corrispondono(ultima.centro_costo.nome, fase_nome)
 
 
 def _fabbisogno_propagato_per_op(o, mappa_distinta=None):
@@ -1150,13 +1174,60 @@ def api_evento():
         if not o: return jsonify(ok=False, error='OP non trovato'), 404
         if not _is_carpenteria(o.asa) or o.stato not in ('Rilasciato','In esecuzione'):
             return jsonify(ok=False, error='OP non attivo o non disponibile per Carpenteria Propria'), 409
+
+        # MasterWork conosce lo stesso pezzo con un codice SUO (es. 'S-14-A'),
+        # diverso dal codice usato qui in IronProduction (es. 'M16-SRI') per
+        # distinta base/ciclo di lavoro — senza tradurlo, nessun componente
+        # della distinta corrisponderebbe MAI e l'evento non farebbe avanzare
+        # l'OP né scaricare i materiali giusti. Vedi Parametri di Lavorazione
+        # → Corrispondenze MasterWork per gestire le associazioni.
+        componente_raw = str(d['componente']).strip() if d.get('componente') else None
+        componente = componente_raw
+        if componente_raw:
+            mappa = MappaCodiceMasterWork.query.filter_by(codice_masterwork=componente_raw).first()
+            if mappa:
+                componente = mappa.codice_ironproduction
+
         _registra_evento_consuntivo(o, str(d['fase']).strip(), ts, good, scrap, tempo, str(d['event_id']).strip(),
-                                     componente=(str(d['componente']).strip() if d.get('componente') else None),
+                                     componente=componente,
                                      operatore=(str(d['operatore']).strip() if d.get('operatore') else None))
         db.session.commit(); return jsonify(ok=True, deduplicated=False, ordine=_ordine(o)), 201
     except ValueError as exc: return jsonify(ok=False, error=str(exc)), 400
     except IntegrityError:
         db.session.rollback(); return jsonify(ok=True, deduplicated=True), 200
+
+
+@pp_bp.get('/api/mappa-codici-masterwork')
+def api_mappa_codici_masterwork_lista():
+    righe = MappaCodiceMasterWork.query.order_by(MappaCodiceMasterWork.codice_ironproduction).all()
+    return jsonify([{
+        'id': m.id, 'codice_ironproduction': m.codice_ironproduction,
+        'codice_masterwork': m.codice_masterwork, 'note': m.note,
+    } for m in righe])
+
+
+@pp_bp.post('/api/mappa-codici-masterwork')
+def api_mappa_codici_masterwork_crea():
+    d = request.get_json(force=True)
+    codice_ip = (d.get('codice_ironproduction') or '').strip()
+    codice_mw = (d.get('codice_masterwork') or '').strip()
+    if not codice_ip or not codice_mw:
+        return jsonify(ok=False, error='Servono entrambi i codici'), 400
+    if MappaCodiceMasterWork.query.filter_by(codice_masterwork=codice_mw).first():
+        return jsonify(ok=False, error=f'Il codice MasterWork "{codice_mw}" è già associato a un altro codice'), 409
+    m = MappaCodiceMasterWork(codice_ironproduction=codice_ip, codice_masterwork=codice_mw,
+                               note=(d.get('note') or '').strip())
+    db.session.add(m)
+    db.session.commit()
+    return jsonify(ok=True, id=m.id)
+
+
+@pp_bp.delete('/api/mappa-codici-masterwork/<int:mid>')
+def api_mappa_codici_masterwork_elimina(mid):
+    m = MappaCodiceMasterWork.query.get_or_404(mid)
+    db.session.delete(m)
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════

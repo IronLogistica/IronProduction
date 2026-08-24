@@ -1011,6 +1011,27 @@ class ArticoloApprovvigionamento(db.Model):
     aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class MappaCodiceMasterWork(db.Model):
+    """
+    Corrispondenza tra un codice Iron Wood/IronProduction (distinta base,
+    ciclo di lavoro) e il codice CON CUI LO STESSO PEZZO è conosciuto
+    dentro MasterWork (es. IronProduction 'M16-SRI' = MasterWork 'S-14-A')
+    — i due sistemi usano convenzioni di codifica diverse per lo stesso
+    pezzo fisico. Quando un evento arriva da MasterWork
+    (POST /api/pp/events) con un componente in questa mappa, viene
+    tradotto nel codice IronProduction PRIMA di essere processato —
+    altrimenti _registra_evento_consuntivo non trova nessun componente
+    corrispondente nella distinta base e l'evento non fa avanzare
+    correttamente l'Ordine di Produzione né scarica i materiali giusti.
+    """
+    __tablename__ = 'mappa_codici_masterwork'
+    id = db.Column(db.Integer, primary_key=True)
+    codice_ironproduction = db.Column(db.String(100), nullable=False, index=True)
+    codice_masterwork = db.Column(db.String(100), nullable=False, unique=True, index=True)
+    note = db.Column(db.String(300), default='')
+    creato_il = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 def assicura_unita_misura_articoli():
     """Migrazione compatibile con DB già esistenti: aggiunge la UoM senza ricreare tabelle."""
     db_url = os.environ.get('DATABASE_URL', '')

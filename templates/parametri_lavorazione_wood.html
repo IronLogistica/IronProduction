@@ -179,6 +179,27 @@
     </div>
   </div>
 </div>
+
+<div class="mon-section" style="margin-top:16px">
+  <div class="section-hdr">🔗 Corrispondenze codici MasterWork</div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+      MasterWork conosce lo stesso pezzo con un codice SUO, diverso da quello usato qui in IronProduction per
+      distinta base e ciclo di lavoro (es. IronProduction <code>M16-SRI</code> = MasterWork <code>S-14-A</code>).
+      Quando arriva un evento da MasterWork con un componente presente qui sotto, viene tradotto automaticamente
+      nel codice IronProduction prima di essere registrato — senza questa corrispondenza l'evento non trova nessun
+      componente nella distinta e l'Ordine di Produzione non avanza correttamente.
+    </p>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:14px">
+      <input id="mcm-codice-ip" type="text" placeholder="Codice IronProduction (es. M16-SRI)" style="width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <span style="color:var(--text-dim)">=</span>
+      <input id="mcm-codice-mw" type="text" placeholder="Codice MasterWork (es. S-14-A)" style="width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <input id="mcm-note" type="text" placeholder="Note (facoltativo)" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <button class="btn btn-primary" onclick="aggiungiMappaCodiceMasterWork()">➕ Aggiungi corrispondenza</button>
+    </div>
+    <div id="mcm-lista">Caricamento...</div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 let RADICI = [];
@@ -667,6 +688,59 @@ caricaMatrici();
 caricaRulli();
 caricaContromatrici();
 caricaRadici();
+caricaMappaCodiciMasterWork();
+
+async function caricaMappaCodiciMasterWork(){
+  const box = document.getElementById('mcm-lista');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/mappa-codici-masterwork');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:var(--text-dim);font-style:italic">Nessuna corrispondenza configurata.</p>'; return; }
+    box.innerHTML = '<table class="kanban-table"><thead><tr><th style="text-align:left">Codice IronProduction</th><th style="text-align:left">Codice MasterWork</th><th style="text-align:left">Note</th><th></th></tr></thead><tbody>' +
+      righe.map(m => `<tr>
+        <td class="codice" style="text-align:left">${m.codice_ironproduction}</td>
+        <td class="codice" style="text-align:left;color:var(--accent2)">${m.codice_masterwork}</td>
+        <td style="text-align:left;color:var(--text-dim)">${m.note || '—'}</td>
+        <td><button class="btn btn-danger" style="padding:4px 10px;font-size:11px" onclick="eliminaMappaCodiceMasterWork(${m.id})">🗑️</button></td>
+      </tr>`).join('') + '</tbody></table>';
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+async function aggiungiMappaCodiceMasterWork(){
+  const codiceIp = document.getElementById('mcm-codice-ip').value.trim();
+  const codiceMw = document.getElementById('mcm-codice-mw').value.trim();
+  const note = document.getElementById('mcm-note').value.trim();
+  if(!codiceIp || !codiceMw){ alert('⚠️ Inserisci entrambi i codici.'); return; }
+  try{
+    const r = await fetch('/api/mappa-codici-masterwork', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice_ironproduction: codiceIp, codice_masterwork: codiceMw, note})
+    });
+    const d = await r.json();
+    if(!d.ok){ alert('⚠️ ' + d.error); return; }
+    document.getElementById('mcm-codice-ip').value = '';
+    document.getElementById('mcm-codice-mw').value = '';
+    document.getElementById('mcm-note').value = '';
+    caricaMappaCodiciMasterWork();
+  }catch(e){
+    alert('❌ Errore di rete.');
+  }
+}
+
+async function eliminaMappaCodiceMasterWork(mid){
+  if(!confirm('Eliminare questa corrispondenza?')) return;
+  try{
+    const r = await fetch('/api/mappa-codici-masterwork/' + mid, {method:'DELETE'});
+    const d = await r.json();
+    if(!d.ok){ alert('⚠️ ' + (d.error || 'Errore')); return; }
+    caricaMappaCodiciMasterWork();
+  }catch(e){
+    alert('❌ Errore di rete.');
+  }
+}
 
 // Arrivo da un link incrociato (es. da Magazzino/Distinta Base): ?radice=CODICE apre subito l'albero.
 (function apriDaQueryString(){
