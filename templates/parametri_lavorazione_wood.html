@@ -120,6 +120,21 @@
   </div>
 </div>
 
+<div class="mon-section" style="margin-top:14px" id="box-da-trasferire">
+  <div class="section-hdr postazione-hdr" style="display:flex;justify-content:space-between;align-items:center;background:#854f0b">
+    <span>⚠️ Parametri da trasferire ai figli veri</span>
+    <span id="trasf-badge" style="font-size:11px;background:rgba(0,0,0,.25);padding:4px 10px;border-radius:6px;display:none">0</span>
+  </div>
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
+      Questi parametri sono registrati su un codice che ora risulta senza Ciclo di Lavoro proprio (quindi inibito
+      nella tabella sotto) — quasi sempre perché furono inseriti prima che la distinta fosse scomposta fino ai figli
+      veri. Scegli su quale figlio spostarli (o eliminali se sono ormai duplicati/obsoleti).
+    </p>
+    <div id="lista-da-trasferire">Verifica in corso...</div>
+  </div>
+</div>
+
 <div class="mon-section" style="margin-top:14px">
   <div class="section-hdr postazione-hdr" style="display:flex;justify-content:space-between;align-items:center">
     <span>📋 Tabella di lavorazione — <span id="titolo-radice">—</span></span>
@@ -693,6 +708,73 @@ caricaMatrici();
 caricaRulli();
 caricaContromatrici();
 caricaRadici();
+caricaSchedeDaTrasferire();
+
+async function caricaSchedeDaTrasferire(){
+  const box = document.getElementById('lista-da-trasferire');
+  const badge = document.getElementById('trasf-badge');
+  const sezione = document.getElementById('box-da-trasferire');
+  try{
+    const r = await fetch('/api/schede_lavorazione_wood/da-trasferire');
+    const righe = await r.json();
+    if(!righe.length){ sezione.style.display = 'none'; return; }
+    sezione.style.display = '';
+    badge.style.display = '';
+    badge.textContent = righe.length;
+    box.innerHTML = righe.map(s => {
+      const parametri = [
+        s.lunghezza_barra_mm ? `Barra ${s.lunghezza_barra_mm}mm` : null,
+        s.spessore_mm ? `Sp. ${s.spessore_mm}mm` : null,
+        s.pezzi_per_barra ? `${s.pezzi_per_barra} pz/barra` : null,
+        s.sviluppo ? `Sv. ${s.sviluppo}` : null,
+        s.punto_zero ? `P0 ${s.punto_zero}` : null,
+        s.impostazione_satinatrice ? `Satin. ${s.impostazione_satinatrice}` : null,
+      ].filter(Boolean).join(' · ');
+      const opzioniCandidati = s.candidati.map(c => `<option value="${c}">${c}</option>`).join('');
+      const selettore = s.candidati.length
+        ? `<select id="trasf-dest-${s.id}" style="padding:6px 8px;border-radius:6px;border:1px solid var(--border)">${opzioniCandidati}</select>
+           <button class="btn btn-primary" style="padding:6px 12px;font-size:12px" onclick="trasferisciScheda(${s.id})">➡️ Trasferisci</button>`
+        : `<input id="trasf-dest-${s.id}" type="text" placeholder="Codice figlio..." style="width:140px;padding:6px 8px;border-radius:6px;border:1px solid var(--border)">
+           <button class="btn btn-primary" style="padding:6px 12px;font-size:12px" onclick="trasferisciScheda(${s.id})">➡️ Trasferisci</button>`;
+      return `<div style="border:1px solid var(--border);border-radius:8px;padding:12px;margin-bottom:10px;background:rgba(230,184,0,.06)">
+        <div style="margin-bottom:6px"><b class="codice">${s.codice_padre} → ${s.codice_figlio}</b></div>
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:10px">${parametri || '(solo note)'}${s.note ? ' · Note: ' + s.note : ''}</div>
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          ${selettore}
+          <button class="btn btn-danger" style="padding:6px 12px;font-size:12px" onclick="eliminaSchedaOrfana(${s.id})">🗑️ Elimina (obsoleta)</button>
+        </div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+async function trasferisciScheda(sid){
+  const destinazione = document.getElementById('trasf-dest-' + sid).value.trim();
+  if(!destinazione){ alert('⚠️ Indica il codice figlio di destinazione.'); return; }
+  try{
+    const r = await fetch(`/api/schede_lavorazione_wood/${sid}/trasferisci`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({destinazione})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    showToast('✅ Parametri trasferiti');
+    caricaSchedeDaTrasferire();
+    if(RADICE_ATTIVA) caricaAlbero();
+  }catch(e){ alert('❌ Errore di rete.'); }
+}
+
+async function eliminaSchedaOrfana(sid){
+  if(!confirm('Eliminare questi parametri? Non verranno trasferiti da nessuna parte.')) return;
+  try{
+    const r = await fetch(`/api/schede_lavorazione_wood/${sid}`, {method:'DELETE'});
+    const d = await r.json();
+    if(!d.ok){ alert('⚠️ Errore durante l\'eliminazione.'); return; }
+    caricaSchedeDaTrasferire();
+    if(RADICE_ATTIVA) caricaAlbero();
+  }catch(e){ alert('❌ Errore di rete.'); }
+}
 
 // Arrivo da un link incrociato (es. da Magazzino/Distinta Base): ?radice=CODICE apre subito l'albero.
 (function apriDaQueryString(){

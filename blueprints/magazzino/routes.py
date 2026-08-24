@@ -2969,6 +2969,95 @@ def api_albero_schede_lavorazione(codice_radice):
     return jsonify({'trovato': True, 'righe': righe})
 
 
+@magazzino_bp.route('/api/schede_lavorazione_wood/da-trasferire')
+def api_schede_da_trasferire():
+    """
+    DIAGNOSTICA — trova righe di SchedaLavorazioneWood con parametri già
+    compilati ma il cui FIGLIO non ha nessun Ciclo di Lavoro proprio (quindi
+    ora inibite dalla nuova tabella) — quasi sempre perché i parametri
+    furono inseriti quando la distinta non era ancora scomposta fino in
+    fondo, e in realtà appartengono a un figlio più a valle di QUEL codice
+    (es. dati su C12→C12-F, ma C12-F è a sua volta padre di C121 che ha il
+    ciclo vero). Per ogni riga così, propone come possibili destinazioni i
+    FIGLI DIRETTI del codice orfano che HANNO un ciclo di lavoro proprio —
+    non trasferisce niente da solo: Angelo sceglie dove, o elimina se il
+    dato è ormai duplicato/obsoleto.
+    """
+    CAMPI_PARAMETRO = ['lunghezza_barra_mm', 'spessore_mm', 'pezzi_per_barra', 'sviluppo',
+                        'matrice_id', 'punto_zero', 'indice_assorbimento', 'rullo_id',
+                        'contromatrice_id', 'impostazione_satinatrice']
+
+    tutte = SchedaLavorazioneWood.query.all()
+    if not tutte:
+        return jsonify([])
+
+    codici_figlio = {s.codice_figlio for s in tutte}
+    conteggio_fasi = dict(
+        db.session.query(CicloLavoroWood.codice, db.func.count(CicloLavoroWood.id))
+        .filter(CicloLavoroWood.codice.in_(codici_figlio))
+        .group_by(CicloLavoroWood.codice).all()
+    )
+
+    orfane = [s for s in tutte
+              if conteggio_fasi.get(s.codice_figlio, 0) == 0
+              and any(getattr(s, c) not in (None, '') for c in CAMPI_PARAMETRO)]
+    if not orfane:
+        return jsonify([])
+
+    # Figli diretti (in Distinta Base) di ogni codice orfano, per proporre
+    # dove andrebbero spostati i suoi parametri — solo quelli che hanno
+    # DAVVERO un ciclo di lavoro proprio, altrimenti la proposta non
+    # risolverebbe nulla.
+    codici_orfani = {s.codice_figlio for s in orfane}
+    figli_diretti = {}
+    for dbw in DistintaBaseWood.query.filter(DistintaBaseWood.codice_padre.in_(codici_orfani)).all():
+        if conteggio_fasi.get(dbw.codice_figlio) or CicloLavoroWood.query.filter_by(codice=dbw.codice_figlio).first():
+            figli_diretti.setdefault(dbw.codice_padre, []).append(dbw.codice_figlio)
+
+    return jsonify([{
+        'id': s.id, 'codice_padre': s.codice_padre, 'codice_figlio': s.codice_figlio,
+        'lunghezza_barra_mm': s.lunghezza_barra_mm, 'spessore_mm': s.spessore_mm,
+        'pezzi_per_barra': s.pezzi_per_barra, 'sviluppo': s.sviluppo,
+        'punto_zero': s.punto_zero, 'indice_assorbimento': s.indice_assorbimento,
+        'impostazione_satinatrice': s.impostazione_satinatrice, 'note': s.note,
+        'candidati': figli_diretti.get(s.codice_figlio, []),
+    } for s in orfane])
+
+
+@magazzino_bp.route('/api/schede_lavorazione_wood/<int:sid>/trasferisci', methods=['POST'])
+def api_scheda_trasferisci(sid):
+    """
+    Sposta i parametri macchina di una riga orfana (id=sid, codice_padre/
+    codice_figlio) sulla coppia (codice_figlio, destinazione) — dove
+    'destinazione' è UN FIGLIO VERO che ha un ciclo di lavoro proprio.
+    Se la destinazione ha già una sua riga con dati, questi NON vengono
+    sovrascritti — solo i campi ancora vuoti là vengono riempiti con
+    quelli della riga orfana, per non perdere lavoro già fatto sul figlio
+    giusto. La riga orfana viene poi eliminata (i dati non restano duplicati
+    in due posti).
+    """
+    d = request.get_json(force=True)
+    destinazione = (d.get('destinazione') or '').strip().upper()
+    if not destinazione:
+        return jsonify({'errore': True, 'messaggio': 'Indica il codice figlio di destinazione'}), 400
+    orfana = SchedaLavorazioneWood.query.get_or_404(sid)
+
+    CAMPI = ['lunghezza_barra_mm', 'spessore_mm', 'pezzi_per_barra', 'sviluppo', 'matrice_id',
+             'punto_zero', 'indice_assorbimento', 'rullo_id', 'contromatrice_id',
+             'impostazione_satinatrice', 'note']
+    target = SchedaLavorazioneWood.query.filter_by(codice_padre=orfana.codice_figlio, codice_figlio=destinazione).first()
+    if not target:
+        target = SchedaLavorazioneWood(codice_padre=orfana.codice_figlio, codice_figlio=destinazione)
+        db.session.add(target)
+    for campo in CAMPI:
+        valore_target = getattr(target, campo)
+        if valore_target in (None, ''):
+            setattr(target, campo, getattr(orfana, campo))
+    db.session.delete(orfana)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
 @magazzino_bp.route('/api/mappa-codici-masterwork/per-codice-ironproduction', methods=['PUT'])
 def api_mappa_codice_masterwork_upsert():
     """
