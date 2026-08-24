@@ -327,15 +327,19 @@
       </div>
     </div>
 
-    {# ── RIGA 2: Grezzi + In Trattamento (più piccoli) ── #}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
-      <div style="background:rgba(30,111,165,.06);border:1px solid var(--border);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:14px">
-        <div style="text-align:center;min-width:60px">
-          <div style="font-size:9px;text-transform:uppercase;color:var(--steel2);margin-bottom:2px">Grezzi</div>
-          <div style="font-size:24px;font-weight:900;color:var(--steel2)" id="wsStockGrezzi">—</div>
-        </div>
-        <div style="font-size:10px;color:var(--text-dim);line-height:1.4">Prodotti lavorati,<br>non ancora trattati</div>
-      </div>
+    {# ── RIGA 2: In Trattamento ── #}
+    {# Il box 'Grezzi' (campo KanbanProdotto.grezzi, stima locale da
+       Dichiarazioni+DDT) è stato RIMOSSO: duplicava 'GREZZI IW' sopra con
+       una formula diversa (non filtra per fase Saldatura, non richiede
+       approvazione Direzione, non sa nulla della Verniciatura interna) e i
+       due numeri potevano divergere mostrando due valori diversi per lo
+       stesso concetto. 'GREZZI IW' resta l'unica fonte, collegata a tutto
+       il resto (Materiali da Trattare, reintegro scarti, contestuale,
+       terzisti, vendita a Iron Segnaletica). Il campo p.grezzi in sé NON è
+       stato toccato (resta nel modello/DB, calcolato ma non più mostrato
+       qui) — le formule di Saldo Contabile (LT/BT) in cima continuano a
+       usarlo, non ancora aggiornate per usare Grezzo IW al suo posto. #}
+    <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:16px">
       <div style="background:rgba(230,184,0,.05);border:1px solid rgba(230,184,0,.2);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:14px">
         <div style="text-align:center;min-width:60px">
           <div style="font-size:9px;text-transform:uppercase;color:#f0c040;margin-bottom:2px">In Trattamento</div>
@@ -920,7 +924,6 @@ function _caricaSchedaWms(pid) {
     // ── WMS dati (opzionali — se non connesso mostra comunque il resto) ──
     if (d && !d.wms_errore) {
       document.getElementById('wsStockVern').textContent   = d.stock_verniciati ?? '—';
-      document.getElementById('wsStockGrezzi').textContent = d.stock_grezzi     ?? '—';
       document.getElementById('wsInVern').textContent      = d.in_vern          ?? '—';
       const wsIS = document.getElementById('wsStockIS');
       if (wsIS) wsIS.textContent = d.stock_is ?? d.finiti_is ?? '—';
@@ -942,7 +945,7 @@ function _caricaSchedaWms(pid) {
       }
     } else {
       // Calcola saldi dai campi Kanban locali (visibili nel tabellone)
-      ['wsStockVern','wsStockGrezzi','wsInVern','wsStockIS'].forEach(id => {
+      ['wsStockVern','wsInVern','wsStockIS'].forEach(id => {
         const el = document.getElementById(id); if (el) el.textContent = '—';
       });
     }
