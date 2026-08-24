@@ -81,6 +81,13 @@
   <iframe id="kpi-iframe" src="" style="flex:1;border:none;width:100%;background:#fff"></iframe>
 </div>
 
+<div id="reintegro-box" style="display:none;margin-bottom:14px;border:1.5px solid #e6b800;border-radius:8px;overflow:hidden">
+  <div style="padding:10px 14px;display:flex;justify-content:space-between;align-items:center;background:rgba(230,184,0,.1)">
+    <span style="font-weight:700;color:#e6b800">🔄 Reintegro Scarti su questa macchina — <span id="reintegro-count">0</span></span>
+  </div>
+  <div id="reintegro-lista" style="padding:0 14px 12px"></div>
+</div>
+
 <table class="tabella-totem">
   <thead><tr>
     <th>Priority</th><th>N° Commessa</th><th>N° pz in produzione</th><th>Codice e Immagine</th>
@@ -179,6 +186,33 @@ function chiudiKpiOverlay(){
   _kpiOverlayAperto = false;
 }
 setInterval(() => { if(!_kpiOverlayAperto) window.location.reload(); }, 60000);
+
+// Reintegro Scarti — solo lettura qui (niente dichiarazione da questa
+// pagina): informa l'operaio/il capo che qualcosa va rifatto per colpa
+// dello scarto, la dichiarazione vera si fa da Dichiarazione Produzione.
+async function caricaReintegroScartiTotem(){
+  try{
+    const r = await fetch('/api/dichiarazione-produzione/reintegro-scarti?centro_id={{ centro.id }}');
+    const righe = await r.json();
+    const box = document.getElementById('reintegro-box');
+    if(!righe.length){ box.style.display = 'none'; return; }
+    box.style.display = 'block';
+    document.getElementById('reintegro-count').textContent = righe.length;
+    document.getElementById('reintegro-lista').innerHTML = righe.map(r => `
+      <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-top:1px solid rgba(230,184,0,.25)">
+        <div>
+          <b class="codice">${r.codice_lavorato}</b>${r.componente ? '' : ' (prodotto finito)'} — ${r.codice_articolo}
+          ${r.indotto_da_scarto_a_valle ? ' <span style="font-size:9px;background:#e6b800;color:#1c1c1c;padding:1px 6px;border-radius:4px;font-weight:700">🔄 reintegro a monte</span>' : ''}
+          <div style="font-size:11px;color:var(--muted)">${r.op_code} · ${r.commessa || '—'}</div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-weight:800;color:#e6b800;font-size:14px">${r.da_rifare} da rifare</div>
+          <div style="font-size:10px;color:var(--muted)">saldo totale ordine: ${r.saldo_ordine}</div>
+        </div>
+      </div>`).join('');
+  }catch(e){ /* non bloccare il totem se questo fallisce */ }
+}
+caricaReintegroScartiTotem();
 </script>
 </body>
 </html>

@@ -2100,21 +2100,26 @@ def api_diagnostica_fasi_op(op_code):
 
 
 @pp_bp.get('/api/dichiarazione-produzione/reintegro-scarti')
+@pp_bp.get('/api/dichiarazione-produzione/reintegro-scarti')
 def api_reintegro_scarti():
     """
-    Elenco di TUTTI i codici (su qualunque centro di costo interno) dove
-    manca ancora produzione a causa di uno scarto — sia scarto DIRETTO
-    (dichiarato proprio su quella riga) sia scarto INDOTTO da una fase A
-    VALLE che consuma questo codice (vedi _fabbisogno_propagato_per_op):
-    un OP per 16 TR2001 con 10 buoni + 6 scarti alla Piega genera qui ANCHE
-    una riga per il codice figlio (es. TPD32L3440) al Taglio con saldo 6,
-    pur non avendo scarto diretto dichiarato lì — altrimenti il Taglio
-    resterebbe "già completato" (16 pianificati, 16 già tagliati) e nessuno
-    saprebbe che servono altri 6 pezzi per rimpiazzare quelli persi in
-    Piega. Il meccanismo per dichiararli resta lo STESSO di sempre
-    (dichiara di nuovo sulla stessa riga, in Dichiarazione Produzione) —
-    questo endpoint serve solo a renderlo impossibile da perdere.
+    Elenco di TUTTI i codici (su qualunque centro di costo interno, o SOLO
+    su un centro specifico con ?centro_id=X — usato dal Totem Live e dal
+    Monitor di ogni macchina, per mostrare solo quello che riguarda QUELLA
+    macchina) dove manca ancora produzione a causa di uno scarto — sia
+    scarto DIRETTO (dichiarato proprio su quella riga) sia scarto INDOTTO
+    da una fase A VALLE che consuma questo codice (vedi
+    _fabbisogno_propagato_per_op): un OP per 16 TR2001 con 10 buoni + 6
+    scarti alla Piega genera qui ANCHE una riga per il codice figlio (es.
+    TPD32L3440) al Taglio con saldo 6, pur non avendo scarto diretto
+    dichiarato lì — altrimenti il Taglio resterebbe "già completato" (16
+    pianificati, 16 già tagliati) e nessuno saprebbe che servono altri 6
+    pezzi per rimpiazzare quelli persi in Piega. Il meccanismo per
+    dichiararli resta lo STESSO di sempre (dichiara di nuovo sulla stessa
+    riga, in Dichiarazione Produzione) — questo endpoint serve solo a
+    renderlo impossibile da perdere.
     """
+    centro_filtro = request.args.get('centro_id', type=int)
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
               .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
     if not ordini:
@@ -2153,6 +2158,8 @@ def api_reintegro_scarti():
             for ciclo in fasi_per_codice.get(codice_comp, []):
                 centro = centri_interni.get(ciclo.centro_costo_id)
                 if not centro:
+                    continue
+                if centro_filtro and centro.id != centro_filtro:
                     continue
                 chiave = (o.codice, componente_param, centro.nome.strip().lower())
                 dati = dati_per_riga.get(chiave) or {'buoni': 0, 'scarto': 0}
