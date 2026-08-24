@@ -110,12 +110,10 @@
   {% set codice_prod = parti[0] if parti|length > 1 else '' %}
   {% set descr_prod  = parti[1] if parti|length > 1 else parti[0] %}
 
-  <tr data-pid="{{ p.id }}" class="row-{{ buf }}" draggable="true"
-      ondragstart="dragStartRiga(event)" ondragover="dragOverRiga(event)"
-      ondrop="dropRiga(event)" ondragend="dragEndRiga(event)">
+  <tr data-pid="{{ p.id }}" class="row-{{ buf }}">
 
     {# Col 0: maniglia di trascinamento — ordine manuale a piacimento #}
-    <td class="drag-handle-cell" title="Trascina su/giù per riordinare">⠿</td>
+    <td class="drag-handle-cell" title="Trascina su/giù per riordinare" onpointerdown="iniziaDragRiga(event, this)">⠿</td>
 
     {# Col 1: Codice #}
     <td class="prod-code" style="padding-left:10px;font-family:monospace;font-size:11px;color:var(--steel2);white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis">
@@ -243,10 +241,11 @@
 /* ── Riordino manuale righe: trascina la maniglia ⠿ su/giù ── */
 .drag-handle-cell {
   cursor:grab; text-align:center; color:var(--text-dim); font-size:13px;
-  width:26px; user-select:none; letter-spacing:-2px;
+  width:26px; user-select:none; letter-spacing:-2px; touch-action:none;
 }
+.drag-handle-cell:active { cursor:grabbing; }
 .drag-handle-cell:hover { color:var(--steel2); }
-#kbtable tbody tr[draggable="true"].dragging { opacity:.35; }
+#kbtable tbody tr.dragging { opacity:.5; background:rgba(37,137,199,.08); }
 #kbtable tbody tr.drag-over-top    { box-shadow: inset 0 2px 0 var(--steel2); }
 #kbtable tbody tr.drag-over-bottom { box-shadow: inset 0 -2px 0 var(--steel2); }
 .thead-sub th {
@@ -1221,43 +1220,49 @@ function confermaSposta() {
 }
 document.getElementById('pinSposta').addEventListener('keydown', e => { if (e.key === 'Enter') confermaSposta(); });
 
-// ── Riordino manuale righe (drag & drop): Angelo trascina ⠿ su/giù per
-// mettere le righe nell'ordine che vuole — nessuna logica automatica
-// dietro, solo una preferenza di lettura salvata in KanbanProdotto.sort_order.
-let _dragPid = null;
+// ── Riordino manuale righe: Angelo trascina ⠿ su/giù per mettere le righe
+// nell'ordine che vuole — nessuna logica automatica dietro, solo una
+// preferenza di lettura personale, salvata in KanbanProdotto.sort_order.
+// Basato su Pointer Events (NON sull'API HTML5 drag-and-drop nativa, troppo
+// inaffidabile su righe di tabella tra browser diversi e non funziona affatto
+// su touch/tablet senza polyfill) — pointerdown/pointermove/pointerup
+// funzionano allo stesso modo sia con mouse sia con touch.
+let _dragEl = null;
 
-function dragStartRiga(e) {
-  const tr = e.currentTarget;
-  _dragPid = tr.dataset.pid;
+function iniziaDragRiga(e, handle) {
+  e.preventDefault();
+  const tr = handle.closest('tr[data-pid]');
+  if (!tr) return;
+  _dragEl = tr;
   tr.classList.add('dragging');
-  e.dataTransfer.effectAllowed = 'move';
-  e.dataTransfer.setData('text/plain', _dragPid);   // richiesto da Firefox per abilitare il drag
+  handle.setPointerCapture(e.pointerId);
+  document.addEventListener('pointermove', dragMoveRiga);
+  document.addEventListener('pointerup', dragFineRiga, {once: true});
+  document.addEventListener('pointercancel', dragFineRiga, {once: true});
 }
 
-function dragOverRiga(e) {
-  e.preventDefault();
-  const tr = e.currentTarget;
-  if (!tr || tr.dataset.pid === _dragPid) return;
-  const rect = tr.getBoundingClientRect();
-  const meta = e.clientY < rect.top + rect.height / 2;
-  document.querySelectorAll('#kbtable tbody tr').forEach(r => r.classList.remove('drag-over-top', 'drag-over-bottom'));
-  tr.classList.add(meta ? 'drag-over-top' : 'drag-over-bottom');
+function dragMoveRiga(e) {
+  if (!_dragEl) return;
+  const y = e.clientY;
+  const righe = Array.from(document.querySelectorAll('#kbtable tbody tr[data-pid]'));
+  righe.forEach(r => r.classList.remove('drag-over-top', 'drag-over-bottom'));
+  for (const riga of righe) {
+    if (riga === _dragEl) continue;
+    const rect = riga.getBoundingClientRect();
+    if (y >= rect.top && y <= rect.bottom) {
+      const prima = y < rect.top + rect.height / 2;
+      riga.classList.add(prima ? 'drag-over-top' : 'drag-over-bottom');
+      riga.parentNode.insertBefore(_dragEl, prima ? riga : riga.nextSibling);
+      break;
+    }
+  }
 }
 
-function dropRiga(e) {
-  e.preventDefault();
-  const targetTr = e.currentTarget;
-  const draggedTr = document.querySelector(`tr[data-pid="${_dragPid}"]`);
-  if (!draggedTr || draggedTr === targetTr) return;
-  const rect = targetTr.getBoundingClientRect();
-  const prima = e.clientY < rect.top + rect.height / 2;
-  targetTr.parentNode.insertBefore(draggedTr, prima ? targetTr : targetTr.nextSibling);
-  salvaOrdineRighe();
-}
-
-function dragEndRiga() {
+function dragFineRiga() {
+  document.removeEventListener('pointermove', dragMoveRiga);
   document.querySelectorAll('#kbtable tbody tr').forEach(r => r.classList.remove('dragging', 'drag-over-top', 'drag-over-bottom'));
-  _dragPid = null;
+  if (_dragEl) salvaOrdineRighe();
+  _dragEl = null;
 }
 
 function salvaOrdineRighe() {
