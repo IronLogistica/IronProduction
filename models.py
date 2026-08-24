@@ -424,6 +424,13 @@ class VarianzaProduzioneWood(db.Model):
     varianza_manodopera         = db.Column(db.Float, default=0)  # manodopera TOTALE: reale − standard
     varianza_tariffa_lavorazione = db.Column(db.Float, default=0)  # SOLO quota dovuta al cambio tariffa macchina (0 se non congelata)
     varianza_tariffa_manodopera  = db.Column(db.Float, default=0)  # SOLO quota dovuta al cambio tariffa manodopera (0 se non congelata)
+    # Collega questa riga all'EventoConsuntivoPP che l'ha generata — usato
+    # SOLO per rimuovere la varianza quando l'evento viene stornato (vedi
+    # _storna_evento_consuntivo), altrimenti lo storno lasciava la varianza
+    # come residuo storico che non corrisponde più a nessuna produzione
+    # reale, generando confusione nell'Analisi Costo. NULL per le righe
+    # create prima di questo campo (dato storico, non recuperabile).
+    event_id                    = db.Column(db.String(100), nullable=True, index=True)
     creato_il                   = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -575,6 +582,22 @@ class DistintaBaseWood(db.Model):
     # esistente, che non cambia e non deve sapere di questi due campi.
     pezzi_per_barra    = db.Column(db.Float, nullable=True)
     sviluppo           = db.Column(db.String(50), nullable=True)   # es. "L. 1.932" — testo libero, alcune schede hanno note tipo "D.V." attaccate
+    # ── Isole lean one-piece-flow (es. FRONTE+RETRO di un cavalletto, saldati
+    # insieme nello stesso istante): questo figlio non viene MAI dichiarato/
+    # caricato a magazzino da solo — nasce e si consuma nello stesso momento
+    # in cui si dichiara il codice padre. Quando True, la registrazione del
+    # consuntivo del padre carica e scarica IN AUTOMATICO anche questo
+    # figlio (vedi _esplodi_fino_a_semilavorati_dichiarabili), invece di
+    # trattarlo come un semilavorato già in giacenza da una fase a monte
+    # (Taglio/Trapano ecc.) dichiarata separatamente — quello resta il
+    # comportamento normale quando contestuale=False.
+    contestuale        = db.Column(db.Boolean, default=False, nullable=False)
+    # Timestamp di quando 'contestuale' è stato attivato (vedi toggle in
+    # blueprints/magazzino/routes.py) — serve a distinguere gli OP aperti
+    # PRIMA di questa data (che restano sul comportamento storico finché
+    # Angelo non li autorizza, vedi OrdineProduzione.contestuale_autorizzato_
+    # da_angelo) da quelli aperti dopo (che usano subito il nuovo comportamento).
+    data_flag_contestuale = db.Column(db.DateTime, nullable=True)
     creato_il     = db.Column(db.DateTime, default=datetime.utcnow)
     __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_padre_figlio_wood_uc'),)
 
@@ -585,7 +608,31 @@ class MatriceWood(db.Model):
     id          = db.Column(db.Integer, primary_key=True)
     codice      = db.Column(db.String(50), nullable=False, unique=True)
     descrizione = db.Column(db.String(200), default='')
+    # Contapieghe progressivo automatico — incrementato di (buoni+scarto) ad
+    # ogni dichiarazione su una fase di Piega/Curvatubi che usa questa
+    # matrice (vedi _incrementa_contapieghe_matrice in produzione_pp/routes.py),
+    # per manutenzione preventiva e prevenzione non conformità (una matrice
+    # usurata oltre la sua vita produce pieghe fuori tolleranza). Uno scarto
+    # consuma comunque un colpo pressa quanto un pezzo buono.
+    contapieghe      = db.Column(db.Integer, nullable=False, default=0)
+    vita_max_pieghe  = db.Column(db.Integer, nullable=True)   # soglia oltre la quale segnalare — None = nessuna soglia impostata
     creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class ContromatriceWood(db.Model):
+    """
+    Anagrafica contromatrici (piegatrice) — pezzo INDIPENDENTE dalla matrice
+    (può essere abbinata a matrici diverse nel tempo, con una propria vita
+    utile solitamente diversa da quella della matrice). Stesso meccanismo di
+    contapieghe automatico di MatriceWood.
+    """
+    __tablename__ = 'contromatrici_wood'
+    id               = db.Column(db.Integer, primary_key=True)
+    codice           = db.Column(db.String(50), nullable=False, unique=True)
+    descrizione      = db.Column(db.String(200), default='')
+    contapieghe      = db.Column(db.Integer, nullable=False, default=0)
+    vita_max_pieghe  = db.Column(db.Integer, nullable=True)
+    creato_il        = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class RulloWood(db.Model):
@@ -653,11 +700,13 @@ class SchedaLavorazioneWood(db.Model):
     punto_zero                = db.Column(db.String(50), default='')
     indice_assorbimento       = db.Column(db.String(50), default='')
     rullo_id                  = db.Column(db.Integer, db.ForeignKey('rulli_wood.id', ondelete='SET NULL'), nullable=True)
+    contromatrice_id          = db.Column(db.Integer, db.ForeignKey('contromatrici_wood.id', ondelete='SET NULL'), nullable=True)
     impostazione_satinatrice  = db.Column(db.String(100), default='')
     note                      = db.Column(db.String(300), default='')
     creato_il                 = db.Column(db.DateTime, default=datetime.utcnow)
     matrice = db.relationship('MatriceWood')
     rullo   = db.relationship('RulloWood')
+    contromatrice = db.relationship('ContromatriceWood')
     __table_args__ = (db.UniqueConstraint('codice_padre', 'codice_figlio', name='_lavorazione_padre_figlio_uc'),)
 
 
@@ -1094,6 +1143,107 @@ def assicura_operatore_evento_consuntivo():
         if 'operatore' not in colonne:
             db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN operatore VARCHAR(100)"))
             db.session.commit()
+
+
+def assicura_contapieghe_matrici():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    matrici_wood.contapieghe/vita_max_pieghe e
+    schede_lavorazione_wood.contromatrice_id (la tabella contromatrici_wood
+    è nuova, creata da db.create_all()). Contatore progressivo automatico
+    di pieghe per matrice/contromatrice — manutenzione preventiva e
+    prevenzione non conformità sull'usura degli stampi."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE matrici_wood ADD COLUMN IF NOT EXISTS contapieghe INTEGER NOT NULL DEFAULT 0"))
+            db.session.execute(text("ALTER TABLE matrici_wood ADD COLUMN IF NOT EXISTS vita_max_pieghe INTEGER"))
+            db.session.execute(text("ALTER TABLE schede_lavorazione_wood ADD COLUMN IF NOT EXISTS contromatrice_id INTEGER"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('matrici_wood')}
+        if 'contapieghe' not in colonne:
+            db.session.execute(text("ALTER TABLE matrici_wood ADD COLUMN contapieghe INTEGER NOT NULL DEFAULT 0"))
+            db.session.commit()
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('matrici_wood')}
+        if 'vita_max_pieghe' not in colonne:
+            db.session.execute(text("ALTER TABLE matrici_wood ADD COLUMN vita_max_pieghe INTEGER"))
+            db.session.commit()
+        colonne_scheda = {c['name'] for c in inspect(db.engine).get_columns('schede_lavorazione_wood')}
+        if 'contromatrice_id' not in colonne_scheda:
+            db.session.execute(text("ALTER TABLE schede_lavorazione_wood ADD COLUMN contromatrice_id INTEGER"))
+            db.session.commit()
+
+
+def assicura_event_id_varianza_produzione():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    varianze_produzione_wood.event_id — collega ogni riga di varianza
+    all'evento consuntivo che l'ha generata, per poterla rimuovere quando
+    l'evento viene stornato (vedi _storna_evento_consuntivo). NULL per le
+    righe esistenti (dato storico, non recuperabile)."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE varianze_produzione_wood ADD COLUMN IF NOT EXISTS event_id VARCHAR(100)"))
+            db.session.execute(text("CREATE INDEX IF NOT EXISTS ix_varianze_produzione_wood_event_id ON varianze_produzione_wood (event_id)"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('varianze_produzione_wood')}
+        if 'event_id' not in colonne:
+            db.session.execute(text("ALTER TABLE varianze_produzione_wood ADD COLUMN event_id VARCHAR(100)"))
+            db.session.commit()
+
+
+def assicura_contestuale_distinta_base():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    distinta_base_wood.contestuale e distinta_base_wood.data_flag_contestuale
+    (isole lean one-piece-flow: figlio nato e consumato nello stesso istante
+    del padre, es. FRONTE+RETRO saldati insieme) e
+    ordini_produzione_pp.contestuale_autorizzato_da_angelo/
+    data_autorizzazione_contestuale (protezione OP legacy non evasi) senza
+    ricreare tabelle. Backfilla data_flag_contestuale a ORA per righe già
+    flaggate contestuale=True ma senza data (flag attivato prima che questa
+    colonna esistesse) — da questo momento in poi contano come 'appena
+    flaggate' ai fini della protezione degli OP in corso."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    is_pg = 'postgresql' in db_url or 'postgres' in db_url
+    if is_pg:
+        try:
+            db.session.execute(text("ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS contestuale BOOLEAN NOT NULL DEFAULT FALSE"))
+            db.session.execute(text("ALTER TABLE distinta_base_wood ADD COLUMN IF NOT EXISTS data_flag_contestuale TIMESTAMP"))
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN IF NOT EXISTS contestuale_autorizzato_da_angelo BOOLEAN NOT NULL DEFAULT FALSE"))
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN IF NOT EXISTS data_autorizzazione_contestuale TIMESTAMP"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('distinta_base_wood')}
+        if 'contestuale' not in colonne:
+            db.session.execute(text("ALTER TABLE distinta_base_wood ADD COLUMN contestuale BOOLEAN NOT NULL DEFAULT 0"))
+            db.session.commit()
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('distinta_base_wood')}
+        if 'data_flag_contestuale' not in colonne:
+            db.session.execute(text("ALTER TABLE distinta_base_wood ADD COLUMN data_flag_contestuale TIMESTAMP"))
+            db.session.commit()
+        colonne_op = {c['name'] for c in inspect(db.engine).get_columns('ordini_produzione_pp')}
+        if 'contestuale_autorizzato_da_angelo' not in colonne_op:
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN contestuale_autorizzato_da_angelo BOOLEAN NOT NULL DEFAULT 0"))
+            db.session.commit()
+        colonne_op = {c['name'] for c in inspect(db.engine).get_columns('ordini_produzione_pp')}
+        if 'data_autorizzazione_contestuale' not in colonne_op:
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN data_autorizzazione_contestuale TIMESTAMP"))
+            db.session.commit()
+    db.session.execute(text(
+        "UPDATE distinta_base_wood SET data_flag_contestuale = :ora "
+        "WHERE contestuale = TRUE AND data_flag_contestuale IS NULL"
+        if is_pg else
+        "UPDATE distinta_base_wood SET data_flag_contestuale = :ora "
+        "WHERE contestuale = 1 AND data_flag_contestuale IS NULL"
+    ), {'ora': datetime.utcnow()})
+    db.session.commit()
 
 
 class KanbanProdotto(db.Model):
@@ -1921,6 +2071,17 @@ class OrdineProduzione(db.Model):
     data_chiusura_co = db.Column(db.DateTime, nullable=True)
     creato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
     aggiornato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # Isole one-piece-flow (vedi DistintaBaseWood.contestuale): un OP già
+    # aperto PRIMA che un componente della sua distinta venisse flaggato
+    # 'contestuale', e non ancora completamente evaso, NON passa in automatico
+    # al nuovo comportamento (carico+scarico automatico del figlio, niente
+    # più suo Ordine di Lavoro separato) — resta sul comportamento storico
+    # finché Angelo non lo autorizza esplicitamente qui (evita di alterare a
+    # metà strada un ordine già parzialmente lavorato con la logica vecchia).
+    # Un OP creato DOPO il flag, o già completamente evaso, non ha bisogno di
+    # questa autorizzazione: usa il nuovo comportamento da subito.
+    contestuale_autorizzato_da_angelo = db.Column(db.Boolean, nullable=False, default=False)
+    data_autorizzazione_contestuale = db.Column(db.DateTime, nullable=True)
 
 class EventoConsuntivoPP(db.Model):
     __tablename__ = "pp_eventi_consuntivi"

@@ -66,9 +66,30 @@
 </head>
 <body>
 <div class="toolbar">
-  <a class="btn-torna" href="/liste-lavoro/{{ centro.id }}">← Torna a Ordine Lavoro {{ centro.nome }}</a>
+  <a class="btn-torna" href="/liste-lavoro/{{ centro.id }}" onclick="return tornaIndietro(event)">← Torna a Ordine Lavoro {{ centro.nome }}</a>
   <button class="btn-print" onclick="window.print()">🖨️ Stampa</button>
 </div>
+<script>
+  // Questa pagina viene SEMPRE aperta con window.open(...,'_blank') — sia
+  // dal totem di produzione sia dalla pagina admin di Liste di Lavoro — mai
+  // con una navigazione diretta nella stessa scheda. "Torna a" deve quindi
+  // solo CHIUDERE questa scheda: si ritorna così a qualunque schermata ci
+  // fosse sotto (il totem dell'operaio, o la pagina di chi l'ha aperta),
+  // invece di forzare sempre la stessa destinazione fissa (prima mandava
+  // sempre alla pagina admin, anche quando si arrivava dal totem).
+  // href resta come fallback per browser che non permettono lo script-close
+  // di una scheda (rarissimo per finestre aperte da window.open).
+  function tornaIndietro(e) {
+    e.preventDefault();
+    const href = e.currentTarget.href;   // va letto SUBITO: e.currentTarget diventa null dopo la gestione sincrona dell'evento, il setTimeout qui sotto non potrebbe più leggerlo
+    window.close();
+    setTimeout(function () {
+      if (window.history.length > 1) window.history.back();
+      else window.location.href = href;
+    }, 300);
+    return false;
+  }
+</script>
 
 {% if not dati %}
 <div class="sheet"><h1>Ordine di Produzione non trovato</h1><p style="text-align:center">Codice cercato: {{ codice }}</p></div>

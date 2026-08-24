@@ -2,10 +2,11 @@ from flask import Blueprint, render_template, jsonify, request, current_app
 from models import (
     db, Terzista, LavorazioneTerzista, RigaCommessa, FaseRiga, log,
     SchedaTrattamento, TIPI_TRATTAMENTO_SCHEDA, FORNITORI_SCHEDA_DEFAULT,
-    KanbanProdotto, storico_aggiungi_auto, CentroCostoWood,
+    KanbanProdotto, storico_aggiungi_auto, CentroCostoWood, OrdineProduzione,
+    RettificaGrezzoIW,
 )
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
-from blueprints.magazzino.routes import _registra_movimento_giacenza
+from blueprints.magazzino.routes import _registra_movimento_giacenza, _grezzo_iw_per_codici
 from datetime import datetime, date
 import os, re, json, shutil
 import PyPDF2
@@ -352,6 +353,49 @@ def index():
     return render_template('terzisti/index.html', active='terzisti')
 
 
+@terzisti_bp.route('/terzisti/da-trattare')
+def pagina_da_trattare():
+    return render_template('terzisti/da_trattare.html', active='terzisti_da_trattare')
+
+
+@terzisti_bp.route('/api/terzisti/materiali_da_trattare')
+def api_materiali_da_trattare():
+    """
+    Materiali GREZZI pronti a magazzino da mandare in trattamento esterno
+    (verniciatura/zincatura) — stessa fonte del 'Grezzo IW' già mostrato in
+    Magazzino/Kanban (_grezzo_iw_per_codici: prodotto finito da Saldatura,
+    ultima fase del ciclo, approvato dalla Direzione, più eventuali
+    rettifiche manuali), qui filtrata alle sole quantità > 0 e presentata
+    come pagina a parte da stampare. Per ogni codice: ultimo fornitore e
+    ultimo trattamento eseguiti, presi dall'ultima Scheda Trattamento
+    creata per quel codice (se mai spedito prima) — nessuno storico ancora
+    se il codice non è mai stato trattato esternamente.
+    """
+    tutti_codici = [row[0] for row in db.session.query(OrdineProduzione.codice_articolo).distinct().all()]
+    grezzo_per_codice = _grezzo_iw_per_codici(tutti_codici) if tutti_codici else {}
+    codici_pronti = sorted(cod for cod, qta in grezzo_per_codice.items() if qta > 0)
+
+    ultima_scheda_per_codice = {}
+    if codici_pronti:
+        for s in (SchedaTrattamento.query
+                  .filter(SchedaTrattamento.codice_articolo.in_(codici_pronti))
+                  .order_by(SchedaTrattamento.creato_il.desc()).all()):
+            if s.codice_articolo not in ultima_scheda_per_codice:
+                ultima_scheda_per_codice[s.codice_articolo] = s
+
+    righe = []
+    for cod in codici_pronti:
+        s = ultima_scheda_per_codice.get(cod)
+        righe.append({
+            'codice': cod,
+            'quantita': grezzo_per_codice[cod],
+            'ultimo_fornitore': s.fornitore if s else None,
+            'ultimo_trattamento': s.info_trattamento.get('label', s.tipo_trattamento) if s else None,
+            'ultima_data': s.creato_il.strftime('%d/%m/%Y') if s and s.creato_il else None,
+        })
+    return jsonify(righe)
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  SCHEDE TRATTAMENTI ESTERNI — cartellino da stampare con QR code
 #  (conto vendita: arredo urbano / segnaletica stradale)
@@ -624,8 +668,10 @@ def conferma_ddt_uscita():
 
         for art in articoli:
             # note_json porta tutti i dati strutturati dell'articolo
+            codice_art = art.get('codice', '')
+            qta_art = int(art.get('qta', 0))
             note_j = json.dumps({
-                'codice':      art.get('codice', ''),
+                'codice':      codice_art,
                 'desc':        art.get('desc', ''),
                 'trattamento': trattamento,
                 'filename_pdf': filename,
@@ -636,7 +682,7 @@ def conferma_ddt_uscita():
                 riga_id           = None,   # BUG FIX: 0 violava FK su PostgreSQL
                 terzista_id       = tz_id,  # None se terzista non estratto (nullable)
                 fase              = trattamento or 'Trattamento Esterno',
-                qta               = int(art.get('qta', 0)),
+                qta               = qta_art,
                 data_uscita       = data_ddt,
                 data_rientro_prev = rientro_prev,
                 stato             = 'ATTESA_RIENTRO',
@@ -645,6 +691,18 @@ def conferma_ddt_uscita():
                 note              = note_j,
             )
             db.session.add(lav)
+            db.session.flush()   # serve lav.id per tracciare la rettifica
+            # Spedito = non più "in casa": scala il Grezzo IW pronto per lo
+            # stesso importo, così Materiali da Trattare mostra solo quello
+            # che è DAVVERO ancora a magazzino, non quello già partito per
+            # il terzista. Stesso meccanismo (cumulativo, mai un valore che
+            # sovrascrive) delle rettifiche manuali di Angelo — vedi
+            # RettificaGrezzoIW e _grezzo_iw_per_codici.
+            if codice_art and qta_art:
+                db.session.add(RettificaGrezzoIW(
+                    codice=codice_art, delta=-qta_art,
+                    note=f'Spedito a terzista — DDT uscita {numero_ddt} (lavorazione #{lav.id})'
+                ))
 
         # Archivia PDF
         done = DONE_FOLDER()
@@ -880,3 +938,101 @@ def api_spedizioni_terzisti():
             'stato':            stato,
         })
     return jsonify(risultati)
+
+
+@terzisti_bp.route('/api/lavorazioni/<int:lid>/correggi_qta_spedita', methods=['POST'])
+def api_correggi_qta_spedita(lid):
+    """
+    Corregge la quantità SPEDITA (uscita) di una lavorazione/DDT già
+    confermato — es. si pensava di aver spedito 100 ma erano in realtà 95.
+    Aggiusta insieme:
+    - la riga stessa (LavorazioneTerzista.qta), da cui derivano
+      dinamicamente qta_residua/stato/percentuale visti in tabella e nelle
+      card KPI in alto — nessun altro campo da toccare a mano lì
+    - il Grezzo IW pronto a magazzino (RettificaGrezzoIW), con SOLO la
+      differenza (delta), stesso meccanismo cumulativo delle rettifiche
+      manuali — se la correzione è verso il basso (spedito MENO di quanto
+      registrato), la differenza torna disponibile come pronta a magazzino
+      (non è mai davvero partita); se è verso l'alto, viene scalata la
+      differenza in più
+    """
+    d = request.get_json(force=True)
+    try:
+        nuova_qta = int(d['nuova_qta'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'nuova_qta mancante o non numerica'}), 400
+    if nuova_qta < 0:
+        return jsonify({'ok': False, 'error': 'La quantità non può essere negativa'}), 400
+
+    lav = LavorazioneTerzista.query.get_or_404(lid)
+    vecchia_qta = lav.qta
+    if nuova_qta == vecchia_qta:
+        return jsonify({'ok': True, 'invariato': True})
+
+    try:
+        note_j = json.loads(lav.note or '{}')
+    except Exception:
+        note_j = {}
+    codice = note_j.get('codice', '')
+    qta_rientrata = int(note_j.get('qta_rientrata', 0))
+
+    avviso = None
+    if nuova_qta < qta_rientrata:
+        # Caso anomalo: risultano rientrati più pezzi di quanti se ne
+        # spediscano ora — non blocchiamo (l'errore originale potrebbe
+        # essere proprio nella spedizione, e il rientro è già successo
+        # davvero), ma segnaliamo per una verifica manuale.
+        avviso = (f"Attenzione: risultano già {qta_rientrata} pezzi rientrati, "
+                  f"più della nuova quantità spedita ({nuova_qta}) — verifica il DDT di rientro.")
+
+    delta_correzione = nuova_qta - vecchia_qta   # negativo se si corregge al ribasso
+    lav.qta = nuova_qta
+    if codice and delta_correzione:
+        # Delta di segno OPPOSTO alla correzione della spedita: se si
+        # spedisce di MENO (delta_correzione negativo), quella differenza
+        # non è mai partita → torna pronta a magazzino (rettifica positiva).
+        db.session.add(RettificaGrezzoIW(
+            codice=codice, delta=-delta_correzione,
+            note=f'Correzione qtà spedita DDT {lav.ddt_uscita or "?"}: da {vecchia_qta} a {nuova_qta} (lavorazione #{lav.id})'
+        ))
+    db.session.commit()
+    log(f'Corretta qtà spedita lavorazione #{lav.id} (DDT {lav.ddt_uscita}): {vecchia_qta} -> {nuova_qta}')
+    return jsonify({'ok': True, 'qta_spedita': nuova_qta, 'avviso': avviso})
+
+
+@terzisti_bp.route('/api/terzisti/residuo_per_fornitore')
+def api_residuo_per_fornitore():
+    """
+    Riepilogo per FORNITORE + CODICE del totale ancora residuo presso ogni
+    terzista — un codice può essere finito su più DDT diversi nel tempo
+    (spedizioni successive), questa vista li somma per dare "quanto ho
+    fisicamente in mano da lui in questo momento", con il dettaglio dei
+    singoli DDT che compongono quel totale per il popup di approfondimento.
+    """
+    lavorazioni = LavorazioneTerzista.query.order_by(LavorazioneTerzista.data_uscita.desc()).all()
+    gruppi = {}   # (terzista, codice) -> {'residua': int, 'dettaglio': [...]}
+    for lav in lavorazioni:
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            note_j = {}
+        codice = note_j.get('codice', '')
+        if not codice:
+            continue
+        qta_rientrata = int(note_j.get('qta_rientrata', 0))
+        qta_residua = max(0, lav.qta - qta_rientrata)
+        if qta_residua <= 0:
+            continue  # completamente rientrato: non pesa più sul residuo presso il fornitore
+        tz = Terzista.query.get(lav.terzista_id)
+        nome_terzista = tz.nome if tz else '(fornitore sconosciuto)'
+        chiave = (nome_terzista, codice)
+        if chiave not in gruppi:
+            gruppi[chiave] = {'terzista': nome_terzista, 'codice': codice, 'desc': note_j.get('desc', ''),
+                               'residua': 0, 'dettaglio': []}
+        gruppi[chiave]['residua'] += qta_residua
+        gruppi[chiave]['dettaglio'].append({
+            'lavorazione_id': lav.id, 'ddt_uscita': lav.ddt_uscita, 'data_uscita': lav.data_uscita,
+            'qta_spedita': lav.qta, 'qta_rientrata': qta_rientrata, 'qta_residua': qta_residua,
+        })
+    righe = sorted(gruppi.values(), key=lambda r: (-r['residua']))
+    return jsonify(righe)

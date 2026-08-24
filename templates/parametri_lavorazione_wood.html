@@ -29,6 +29,7 @@
     <button class="btn btn-primary" onclick="toggleSottoparametro('barra')">📏 Gestisci sottoparametri: Lunghezza Barra</button>
     <button class="btn btn-primary" onclick="toggleSottoparametro('matrice')">🔧 Gestisci sottoparametri: Matrice</button>
     <button class="btn btn-primary" onclick="toggleSottoparametro('rullo')">🎯 Gestisci sottoparametri: Rullo Sgolatrice</button>
+    <button class="btn btn-primary" onclick="toggleSottoparametro('contromatrice')">🔨 Gestisci sottoparametri: Contromatrice</button>
   </div>
 
   <div id="box-barra" style="padding:0 14px 14px;display:none">
@@ -61,6 +62,18 @@
         <button class="btn btn-primary" onclick="creaRullo()">➕ Aggiungi</button>
       </div>
       <div id="rul-lista" style="font-size:13px;color:#666">Caricamento...</div>
+    </div>
+  </div>
+
+  <div id="box-contromatrice" style="padding:0 14px 14px;display:none">
+    <div style="border-top:1px solid var(--border);padding-top:14px">
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
+        <input id="ctm-codice" type="text" placeholder="Codice contromatrice" style="width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="ctm-desc" type="text" placeholder="Descrizione" style="flex:1;min-width:150px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="creaContromatrice()">➕ Aggiungi</button>
+      </div>
+      <p style="font-size:11px;color:var(--text-dim);margin:0 0 8px">Il contapieghe di ogni contromatrice si vede/gestisce nella pagina <a href="/contapieghe-wood">🔧 Contapieghe</a>.</p>
+      <div id="ctm-lista" style="font-size:13px;color:#666">Caricamento...</div>
     </div>
   </div>
 </div>
@@ -289,6 +302,30 @@ async function eliminaRullo(id){
   caricaRulli(); if(RADICE_ATTIVA) caricaAlbero();
 }
 
+// ── CONTROMATRICI ────────────────────────────────────────────────────────
+async function caricaContromatrici(){
+  const r = await fetch('/api/contromatrici_wood'); const righe = await r.json();
+  document.getElementById('ctm-lista').innerHTML = righe.length ? (
+    '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th></th></tr></thead><tbody>' +
+    righe.map(m => `<tr><td class="codice">${m.codice}</td><td>${m.descrizione||'—'}</td><td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaContromatrice(${m.id})">🗑️</button></td></tr>`).join('') +
+    '</tbody></table></div>'
+  ) : '<p style="color:#aaa;font-style:italic">Nessuna contromatrice inserita ancora.</p>';
+  window._CONTROMATRICI = righe;
+}
+async function creaContromatrice(){
+  const payload = {codice: document.getElementById('ctm-codice').value.trim(), descrizione: document.getElementById('ctm-desc').value.trim()};
+  const r = await fetch('/api/contromatrici_wood', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+  const d = await r.json();
+  if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+  document.getElementById('ctm-codice').value=''; document.getElementById('ctm-desc').value='';
+  caricaContromatrici();
+}
+async function eliminaContromatrice(id){
+  if(!confirm('Eliminare questa contromatrice?')) return;
+  await fetch('/api/contromatrici_wood/' + id, {method:'DELETE'});
+  caricaContromatrici(); if(RADICE_ATTIVA) caricaAlbero();
+}
+
 // ── NAVIGAZIONE RADICI (Codice padre generale) ──────────────────────────
 async function caricaRadici(){
   try{
@@ -311,6 +348,10 @@ function optionsMatrici(selezionata){
 }
 function optionsRulli(selezionata){
   return '<option value="">—</option>' + (window._RULLI||[]).map(m =>
+    `<option value="${m.id}" ${m.id===selezionata?'selected':''}>${m.codice}</option>`).join('');
+}
+function optionsContromatrici(selezionata){
+  return '<option value="">—</option>' + (window._CONTROMATRICI||[]).map(m =>
     `<option value="${m.id}" ${m.id===selezionata?'selected':''}>${m.codice}</option>`).join('');
 }
 function optionsLunghezzaBarra(selezionata){
@@ -373,17 +414,32 @@ function renderCicloLavoroInline(cicli, approvvigionamento){
 function renderBOMLista(componenti){
   if(!componenti || !componenti.length) return '';
   return '<ul style="margin:4px 0 4px 18px;padding:0;list-style:none">' + componenti.map(c => `
-    <li style="padding:4px 0;border-left:2px solid var(--border);padding-left:10px;margin-bottom:2px">
+    <li style="padding:4px 0;border-left:2px solid ${c.contestuale?'#1e5fa8':'var(--border)'};padding-left:10px;margin-bottom:2px">
       ${c.livello_effettivo!==undefined ? `<span style="font-size:10px;color:#1e5fa8;font-weight:700;margin-right:6px">SOTTOGRUPPO ${c.livello_effettivo}° LIVELLO</span>` : ''}
       <span class="cod" style="font-weight:700">${c.codice}</span>
       <span style="color:var(--text-dim)"> — ${c.descrizione||'(senza descrizione)'}</span>
       <span style="margin-left:8px;font-weight:600">× ${c.quantita_totale}</span>
       ${c.stock!==null && c.stock!==undefined ? `<span style="margin-left:8px;font-size:11px;color:${c.stock<=0?'#c0392b':'#2a9d5c'}">(stock ${c.stock})</span>` : ''}
       ${c.note ? `<span style="margin-left:8px;font-size:11px;color:#999">${c.note}</span>` : ''}
+      ${c.contestuale ? `<span style="margin-left:8px;font-size:10px;color:#fff;background:#1e5fa8;padding:1px 6px;border-radius:4px;font-weight:700" title="Isola one-piece-flow: nasce e si consuma nello stesso istante del padre, mai stock preesistente">🔗 CONTESTUALE</span>` : ''}
+      <button type="button" class="btn btn-ghost" style="font-size:10px;padding:1px 6px;margin-left:6px" onclick="toggleContestualeAlbero(${c.id}, this)">${c.contestuale?'Scollega':'Segna contestuale'}</button>
       ${renderApprovvigionamentoInline(c.approvvigionamento)}
       ${renderCicloLavoroInline(c.cicli_lavoro, c.approvvigionamento)}
       ${renderBOMLista(c.figli)}
     </li>`).join('') + '</ul>';
+}
+
+async function toggleContestualeAlbero(idRiga, btn){
+  btn.disabled = true;
+  try{
+    const r = await fetch('/api/distinta_base_wood/' + idRiga + '/toggle_contestuale', {method:'POST'});
+    const d = await r.json();
+    if(d.errore){ alert(d.messaggio); btn.disabled=false; return; }
+    const codice = document.getElementById('inp-radice')?.value;
+    if(codice) renderRiepilogoCicli(codice.trim().toUpperCase());
+  }catch(e){
+    alert('Errore di rete durante il salvataggio.'); btn.disabled=false;
+  }
 }
 
 async function renderRiepilogoCicli(codice){
@@ -430,7 +486,7 @@ function evidenziaRiga(indice, padre, figlio){
 function renderTabellaAlbero(righe){
   let html = '<table class="kanban-table"><thead><tr>' +
     '<th>Padre</th><th>Figlio</th><th>Tipo / U.M.<br>(figlio)</th><th>Ciclo di<br>Lavoro (figlio)</th><th>Lunghezza<br>Barra</th><th>Spessore<br>(mm)</th><th>pz/Barra</th><th>Sviluppo</th>' +
-    '<th>Matrice</th><th>Punto 0</th><th>Indice<br>assorbimento</th><th>Rullo<br>Sgolatrice</th>' +
+    '<th>Matrice</th><th>Contromatrice</th><th>Punto 0</th><th>Indice<br>assorbimento</th><th>Rullo<br>Sgolatrice</th>' +
     '<th>Impostazione<br>Satinatrice</th><th>Note</th></tr></thead><tbody>';
   righe.forEach((x, i) => {
     const nFasiFiglio = x.n_fasi_ciclo_lavoro_figlio || 0;
@@ -449,6 +505,7 @@ function renderTabellaAlbero(righe){
       <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
       <td><input type="text" value="${x.sviluppo||''}" style="width:100px" ${f} onchange="salvaCella(${i},'sviluppo',this.value)"></td>
       <td><select style="width:90px" ${f} onchange="salvaCella(${i},'matrice_id',this.value)">${optionsMatrici(x.matrice_id)}</select></td>
+      <td><select style="width:100px" ${f} onchange="salvaCella(${i},'contromatrice_id',this.value)">${optionsContromatrici(x.contromatrice_id)}</select></td>
       <td><input type="text" value="${x.punto_zero||''}" style="width:70px" ${f} onchange="salvaCella(${i},'punto_zero',this.value)"></td>
       <td><input type="text" value="${x.indice_assorbimento||''}" style="width:80px" ${f} onchange="salvaCella(${i},'indice_assorbimento',this.value)"></td>
       <td><select style="width:90px" ${f} onchange="salvaCella(${i},'rullo_id',this.value)">${optionsRulli(x.rullo_id)}</select></td>
@@ -473,17 +530,17 @@ async function salvaCella(indice, campo, valore){
     codice_padre: riga.codice_padre, codice_figlio: riga.codice_figlio,
     lunghezza_barra_mm: riga.lunghezza_barra_mm, spessore_mm: riga.spessore_mm, pezzi_per_barra: riga.pezzi_per_barra,
     sviluppo: riga.sviluppo, matrice_id: riga.matrice_id, punto_zero: riga.punto_zero,
-    indice_assorbimento: riga.indice_assorbimento, rullo_id: riga.rullo_id,
+    indice_assorbimento: riga.indice_assorbimento, rullo_id: riga.rullo_id, contromatrice_id: riga.contromatrice_id,
     impostazione_satinatrice: riga.impostazione_satinatrice, note: riga.note,
   };
-  payload[campo] = valore;
+  payload[campo] = (campo === 'matrice_id' || campo === 'rullo_id' || campo === 'contromatrice_id') ? (valore ? parseInt(valore) : null) : valore;
   try{
     const r = await fetch('/api/schede_lavorazione_wood', {
       method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)
     });
     const d = await r.json();
     if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
-    riga[campo] = (campo === 'matrice_id' || campo === 'rullo_id') ? (valore ? parseInt(valore) : null) : valore;
+    riga[campo] = (campo === 'matrice_id' || campo === 'rullo_id' || campo === 'contromatrice_id') ? (valore ? parseInt(valore) : null) : valore;
     riga.id = d.id;
     showToast('✅ Salvato');
   }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
@@ -608,6 +665,7 @@ async function eliminaFaseCiclo(id){
 caricaLunghezzeBarra();
 caricaMatrici();
 caricaRulli();
+caricaContromatrici();
 caricaRadici();
 
 // Arrivo da un link incrociato (es. da Magazzino/Distinta Base): ?radice=CODICE apre subito l'albero.

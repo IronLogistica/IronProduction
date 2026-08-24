@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🔧 Contapieghe — Matrici e Contromatrici</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim)">
+      Contatore progressivo automatico: ogni pezzo dichiarato a Piega/Curvatubi (buono O scarto — uno scarto consuma
+      comunque un colpo pressa) incrementa da solo il contapieghe della matrice e della contromatrice usate su quella
+      lavorazione (impostate in Parametri di Lavorazione). Imposta qui la vita massima di ciascuna: quando la si
+      supera, la riga si evidenzia — è solo un avviso visivo, non blocca nessuna dichiarazione. Quando uno stampo
+      viene sostituito o rettificato, azzera il suo contatore con "Reset".
+    </p>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div style="padding:14px;display:flex;justify-content:space-between;align-items:center">
+    <div style="font-weight:700">🔩 Matrici</div>
+    <div style="display:flex;gap:8px">
+      <input id="nuova-matrice-codice" type="text" placeholder="Codice" style="width:120px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)">
+      <input id="nuova-matrice-descrizione" type="text" placeholder="Descrizione" style="width:220px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)">
+      <button class="btn btn-primary" onclick="creaMatrice()">➕ Aggiungi</button>
+    </div>
+  </div>
+  <div id="tabella-matrici" style="padding:0 14px 14px;overflow-x:auto">Caricamento...</div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div style="padding:14px;display:flex;justify-content:space-between;align-items:center">
+    <div style="font-weight:700">🔨 Contromatrici</div>
+    <div style="display:flex;gap:8px">
+      <input id="nuova-contromatrice-codice" type="text" placeholder="Codice" style="width:120px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)">
+      <input id="nuova-contromatrice-descrizione" type="text" placeholder="Descrizione" style="width:220px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)">
+      <button class="btn btn-primary" onclick="creaContromatrice()">➕ Aggiungi</button>
+    </div>
+  </div>
+  <div id="tabella-contromatrici" style="padding:0 14px 14px;overflow-x:auto">Caricamento...</div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+async function api(url, options={}) {
+  const r = await fetch(url, options);
+  const d = await r.json();
+  if (!r.ok) throw new Error(d.messaggio || d.error || 'Errore');
+  return d;
+}
+
+function renderTabella(righe, tipo) {
+  if (!righe.length) return '<p style="color:var(--text-dim);font-style:italic;font-size:12px">Nessuna riga — aggiungine una sopra.</p>';
+  return '<table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>Contapieghe</th><th>Vita max</th><th>% vita</th><th></th></tr></thead><tbody>' +
+    righe.map(r => {
+      const pct = r.percentuale_vita;
+      const colore = r.oltre_soglia ? '#c0392b' : (pct !== null && pct >= 80 ? '#e6b800' : '#2a9d5c');
+      const barra = pct !== null
+        ? `<div style="width:100px;height:10px;background:rgba(255,255,255,.08);border-radius:5px;overflow:hidden;display:inline-block;vertical-align:middle">
+             <div style="width:${Math.min(pct,100)}%;height:100%;background:${colore}"></div>
+           </div> <span style="font-size:11px;color:${colore};font-weight:700">${pct}%</span>`
+        : '<span style="font-size:11px;color:var(--text-dim)">— nessuna soglia</span>';
+      return `<tr ${r.oltre_soglia ? 'style="background:rgba(192,57,43,.08)"' : ''}>
+        <td class="codice">${r.codice}${r.oltre_soglia ? ' ⚠️' : ''}</td>
+        <td style="color:var(--text-dim)">${r.descrizione || '—'}</td>
+        <td style="font-weight:700">${r.contapieghe}</td>
+        <td><input type="number" min="0" value="${r.vita_max_pieghe ?? ''}" placeholder="—" style="width:80px;padding:4px 6px;border-radius:5px;border:1px solid var(--border)"
+              onchange="salvaSoglia('${tipo}', ${r.id}, this.value)"></td>
+        <td>${barra}</td>
+        <td><button class="btn btn-ghost" style="font-size:11px;padding:4px 8px" onclick="resetContatore('${tipo}', ${r.id}, '${r.codice}')">🔄 Reset</button></td>
+      </tr>`;
+    }).join('') + '</tbody></table>';
+}
+
+async function caricaContapieghe() {
+  try {
+    const d = await api('/api/contapieghe');
+    document.getElementById('tabella-matrici').innerHTML = renderTabella(d.matrici, 'matrice');
+    document.getElementById('tabella-contromatrici').innerHTML = renderTabella(d.contromatrici, 'contromatrice');
+  } catch (e) {
+    document.getElementById('tabella-matrici').innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+async function salvaSoglia(tipo, id, valore) {
+  try {
+    await api(`/api/contapieghe/${tipo}/${id}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({vita_max_pieghe: valore === '' ? null : valore})
+    });
+    caricaContapieghe();
+  } catch (e) { alert('⚠️ ' + e.message); }
+}
+
+async function resetContatore(tipo, id, codice) {
+  if (!confirm(`Azzerare il contapieghe di "${codice}"? Da fare solo dopo sostituzione/rettifica dello stampo.`)) return;
+  try {
+    await api(`/api/contapieghe/${tipo}/${id}`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({reset: true})
+    });
+    caricaContapieghe();
+  } catch (e) { alert('⚠️ ' + e.message); }
+}
+
+async function creaMatrice() {
+  const codice = document.getElementById('nuova-matrice-codice').value.trim();
+  const descrizione = document.getElementById('nuova-matrice-descrizione').value.trim();
+  if (!codice) { alert('Il codice è obbligatorio'); return; }
+  try {
+    await api('/api/matrici_wood', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({codice, descrizione})});
+    document.getElementById('nuova-matrice-codice').value = '';
+    document.getElementById('nuova-matrice-descrizione').value = '';
+    caricaContapieghe();
+  } catch (e) { alert('⚠️ ' + e.message); }
+}
+
+async function creaContromatrice() {
+  const codice = document.getElementById('nuova-contromatrice-codice').value.trim();
+  const descrizione = document.getElementById('nuova-contromatrice-descrizione').value.trim();
+  if (!codice) { alert('Il codice è obbligatorio'); return; }
+  try {
+    await api('/api/contromatrici_wood', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({codice, descrizione})});
+    document.getElementById('nuova-contromatrice-codice').value = '';
+    document.getElementById('nuova-contromatrice-descrizione').value = '';
+    caricaContapieghe();
+  } catch (e) { alert('⚠️ ' + e.message); }
+}
+
+caricaContapieghe();
+{% endblock %}

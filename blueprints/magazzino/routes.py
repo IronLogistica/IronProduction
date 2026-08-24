@@ -9,10 +9,11 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     CostoPianificatoCentroWood, DRIVER_ATTIVITA_WOOD, VOCI_COSTO_PIANIFICATO_WOOD,
                     CostoStandardVersioneWood, LegameCostoStandardOrdineWood,
                     CostoStandardVersioneDettaglioWood, CostoStandardVersioneFaseWood,
-                    MatriceWood, RulloWood, LunghezzaBarraWood, SchedaLavorazioneWood,
+                    MatriceWood, RulloWood, ContromatriceWood, LunghezzaBarraWood, SchedaLavorazioneWood,
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
-                    EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP)
+                    EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log,
+                    KanbanProdotto)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -254,6 +255,30 @@ def _carica_mappa_distinta_base_wood():
     return mappa
 
 
+def _contestuale_attivo_per_op(rb, o):
+    """
+    Vero se il flag 'contestuale' di QUESTA riga di distinta si applica
+    davvero a QUESTO ordine di produzione. Un OP già aperto PRIMA che il
+    flag venisse attivato, e non ancora completamente evaso, resta sul
+    comportamento storico (figlio con proprio Ordine di Lavoro/scarico
+    separato) finché Angelo non lo autorizza esplicitamente — non si vuole
+    cambiare le regole a metà di un ordine già parzialmente lavorato con la
+    logica vecchia. Un OP creato DOPO il flag, o già completamente evaso,
+    usa subito il nuovo comportamento senza bisogno di autorizzazione.
+    """
+    if not rb.contestuale:
+        return False
+    if rb.data_flag_contestuale is None:
+        return True  # dato storico senza data registrata: considera sempre attivo
+    if getattr(o, 'contestuale_autorizzato_da_angelo', False):
+        return True
+    pianificata = o.qta_pianificata or 0
+    if pianificata > 0 and (o.qta_buona or 0) >= pianificata:
+        return True  # OP già completamente evaso: nulla "in corso" da proteggere
+    creato_dopo_flag = (o.creato_il is not None) and (o.creato_il >= rb.data_flag_contestuale)
+    return creato_dopo_flag
+
+
 def _esplodi_componenti_op(o, _max_profondita=15, mappa_distinta=None):
     """
     Ritorna un nodo per OGNI codice della distinta base di o.codice_articolo
@@ -263,6 +288,16 @@ def _esplodi_componenti_op(o, _max_profondita=15, mappa_distinta=None):
     _righe_bom_attive_wood). Un codice riusato in più punti dell'albero
     compare una sola volta (al moltiplicatore del primo punto in cui viene
     incontrato) — protezione anti-ciclo/doppio conteggio.
+
+    I figli 'contestuali' attivi per questo OP (vedi _contestuale_attivo_per_op
+    — isole one-piece-flow, es. FRONTE/RETRO saldati con il padre nello
+    stesso istante) NON compaiono come proprio nodo: nascono e si consumano
+    nello stesso momento del padre, nessun operatore li dichiara da soli,
+    quindi non devono generare un proprio Ordine di Lavoro/riga di Lista
+    Lavoro/voce sul Monitor Macchina. Si continua comunque a esplodere sotto
+    di loro: i LORO componenti reali (materie prime, semilavorati con una
+    fase a monte davvero dichiarata a parte) restano visibili normalmente.
+
     Condivisa da Monitor Macchina e Lista Tagli (vive qui, non in un blueprint
     specifico, per evitare import circolari fra monitor e produzione_pp).
     'mappa_distinta' opzionale (vedi _carica_mappa_distinta_base_wood): se
@@ -280,7 +315,8 @@ def _esplodi_componenti_op(o, _max_profondita=15, mappa_distinta=None):
                 continue
             visitati.add(r.codice_figlio)
             m = moltiplicatore * (r.quantita or 1.0)
-            risultato.append({'codice': r.codice_figlio, 'moltiplicatore': m})
+            if not _contestuale_attivo_per_op(r, o):
+                risultato.append({'codice': r.codice_figlio, 'moltiplicatore': m})
             walk(r.codice_figlio, m, profondita + 1)
 
     walk(o.codice_articolo, 1.0, 0)
@@ -318,6 +354,7 @@ def _esplodi_bom_wood(codice, qta=1.0, _visitati=None, _profondita=0, _max_profo
             'fornitore':         None,
             'note':              r.note or '',
             'livello_effettivo': _profondita + 1,
+            'contestuale':       bool(r.contestuale),
             'cicli_lavoro':      [],
             'figli':             _esplodi_bom_wood(r.codice_figlio, qta_totale, _visitati, _profondita + 1, _max_profondita),
         })
@@ -425,6 +462,7 @@ def api_lista_distinta_wood():
             'note':          r.note or '',
             'gruppo_alternativa': r.gruppo_alternativa or '',
             'preferita':          bool(r.preferita) if r.gruppo_alternativa else None,
+            'contestuale':        bool(r.contestuale),
         } for r in righe],
         'totale':      totale,
         'mostrate':    len(righe),
@@ -454,6 +492,7 @@ def api_add_distinta_wood():
         # quella con preferita=True viene usata nell'esplosione BOM di default.
         gruppo_alternativa = (data.get('gruppo_alternativa') or '').strip().upper() or None
         preferita = bool(data.get('preferita', True)) if gruppo_alternativa else True
+        contestuale = bool(data.get('contestuale', False))
 
         esistente = DistintaBaseWood.query.filter_by(codice_padre=padre, codice_figlio=figlio).first()
         if esistente:
@@ -462,11 +501,13 @@ def api_add_distinta_wood():
             esistente.note     = note
             esistente.gruppo_alternativa = gruppo_alternativa
             esistente.preferita = preferita
+            esistente.contestuale = contestuale
         else:
             db.session.add(DistintaBaseWood(
                 codice_padre=padre, codice_figlio=figlio,
                 quantita=quantita, livello=livello, note=note,
                 gruppo_alternativa=gruppo_alternativa, preferita=preferita,
+                contestuale=contestuale,
                 creato_il=datetime.utcnow()
             ))
         # Se questa riga diventa la preferita di un gruppo, tutte le altre righe
@@ -501,6 +542,23 @@ def api_seleziona_alternativa_wood(id_riga):
     riga.preferita = True
     db.session.commit()
     return jsonify({'ok': True})
+
+
+@magazzino_bp.route('/api/distinta_base_wood/<int:id_riga>/toggle_contestuale', methods=['POST'])
+def api_toggle_contestuale_wood(id_riga):
+    """
+    Isola lean one-piece-flow: attiva/disattiva 'contestuale' su una riga di
+    distinta base — quando True, questo figlio viene trattato come nato e
+    consumato nello stesso istante del padre (es. FRONTE+RETRO di un
+    cavalletto saldati insieme), mai come stock preesistente da una fase a
+    monte dichiarata a parte. Vedi _esplodi_fino_a_semilavorati_dichiarabili
+    e _registra_evento_consuntivo in blueprints/produzione_pp/routes.py.
+    """
+    riga = DistintaBaseWood.query.get_or_404(id_riga)
+    riga.contestuale = not riga.contestuale
+    riga.data_flag_contestuale = datetime.utcnow() if riga.contestuale else None
+    db.session.commit()
+    return jsonify({'ok': True, 'contestuale': riga.contestuale})
 
 
 @magazzino_bp.route('/api/distinta_base_wood/<int:id_riga>', methods=['DELETE'])
@@ -553,6 +611,7 @@ def api_modifica_distinta_wood(id_riga):
         riga.note = (data.get('note') or '').strip()
         riga.gruppo_alternativa = (data.get('gruppo_alternativa') or '').strip().upper() or None
         riga.preferita = bool(data.get('preferita', True)) if riga.gruppo_alternativa else True
+        riga.contestuale = bool(data.get('contestuale', riga.contestuale))
         if riga.gruppo_alternativa and riga.preferita:
             (DistintaBaseWood.query.filter_by(codice_padre=padre, gruppo_alternativa=riga.gruppo_alternativa)
              .filter(DistintaBaseWood.id != riga.id).update({'preferita': False}))
@@ -824,6 +883,61 @@ def _flatten_componenti(componenti, aggregato):
             _flatten_componenti(c['figli'], aggregato)
 
 
+@magazzino_bp.route('/api/ordini_produzione_aperti')
+def api_ordini_produzione_aperti():
+    """
+    Elenco dei CODICI PADRE (solo il codice_articolo dell'OP, nessuna
+    esplosione di distinta base — a differenza di /api/fabbisogno_produzione
+    che scende ai componenti) attualmente su Ordini di Produzione aperti,
+    con la quantità pianificata e il saldo ancora da produrre — per
+    informare Commerciale/Post-vendita su MasterLogistic-WMS che quegli
+    articoli sono in produzione, e in che quantità, PRIMA che il prodotto
+    finito compaia caricato a magazzino. Nessuna scrittura qui: solo
+    lettura, interrogato via HTTP da WMS (stesso pattern pull di
+    /api/fabbisogno_produzione, nessun token — sola lettura, dato non
+    sensibile).
+
+    Aggregato per codice_articolo (un articolo può avere più OP aperti
+    contemporaneamente, es. commesse diverse) — 'origine' elenca gli OP
+    che compongono il totale, per un eventuale dettaglio lato WMS.
+    """
+    aggregato = {}  # codice_articolo -> {'qta_pianificata': ..., 'saldo': ..., 'origine': [...]}
+    ordini = OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO)).all()
+    for o in ordini:
+        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        if saldo <= 0:
+            continue
+        cod = o.codice_articolo
+        if cod not in aggregato:
+            aggregato[cod] = {'qta_pianificata': 0, 'saldo': 0, 'origine': []}
+        aggregato[cod]['qta_pianificata'] += (o.qta_pianificata or 0)
+        aggregato[cod]['saldo'] += saldo
+        aggregato[cod]['origine'].append({
+            'op_code': o.codice, 'commessa': o.commessa or '', 'cliente': o.cliente or '',
+            'qta_pianificata': o.qta_pianificata, 'saldo': round(saldo, 3),
+            'data_prevista': o.data_prevista.strftime('%d/%m/%Y') if o.data_prevista else None,
+            'stato': o.stato,
+        })
+
+    risultato = []
+    for codice, dati in aggregato.items():
+        try:
+            art = ArticoloML.query.filter_by(sku=codice).first()
+        except Exception:
+            db.session.rollback()
+            art = None
+        risultato.append({
+            'codice':              codice,
+            'descrizione':         art.descrizione if art else '',
+            'qta_pianificata':     round(dati['qta_pianificata'], 3),
+            'saldo_da_produrre':   round(dati['saldo'], 3),
+            'numero_ordini':       len(dati['origine']),
+            'origine':             dati['origine'],
+        })
+    risultato.sort(key=lambda x: x['codice'])
+    return jsonify({'ordini_in_produzione': risultato, 'generato_il': datetime.utcnow().isoformat()})
+
+
 @magazzino_bp.route('/api/fabbisogno_produzione')
 def api_fabbisogno_produzione():
     """
@@ -988,7 +1102,7 @@ def _grezzo_iw_per_codici(codici):
                       .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
                       .filter(OrdineProduzione.codice_articolo.in_(codici),
                               EventoConsuntivoPP.componente.is_(None),
-                              db.func.lower(EventoConsuntivoPP.fase) == 'saldatura',
+                              db.func.lower(EventoConsuntivoPP.fase).contains('sald'),
                               EventoConsuntivoPP.approvato_direzione.is_(True))
                       .group_by(OrdineProduzione.codice_articolo).all()):
         grezzo_iw[cod] = tot or 0
@@ -997,6 +1111,111 @@ def _grezzo_iw_per_codici(codici):
                             .group_by(RettificaGrezzoIW.codice).all()):
         grezzo_iw[cod] = grezzo_iw.get(cod, 0) + (delta_tot or 0)
     return grezzo_iw
+
+
+def _in_trattamento_per_codici(codici):
+    """
+    Quantità attualmente PRESSO IL TERZISTA (spedita ma non ancora
+    rientrata) per un elenco di codici — stessa fonte/logica già usata per
+    'In Trattamento' nella scheda WMS del Kanban (_aggiorna_grezzi_in_vern_
+    da_ddt) e per il residuo per fornitore in Terzisti
+    (api_residuo_per_fornitore): per ogni LavorazioneTerzista non ancora
+    RIENTRATA, la quota ancora presso il terzista è qta spedita meno qta
+    già rientrata parzialmente. FUNZIONE CONDIVISA, stesso numero ovunque
+    compaia — qui usata per la colonna 'Q.tà in Trattamento' di Magazzino.
+    """
+    if not codici:
+        return {}
+    in_trattamento = {}
+    codici_set = set(codici)
+    query = LavorazioneTerzista.query.filter(LavorazioneTerzista.stato != 'RIENTRATA')
+    for lav in query.all():
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            continue
+        codice = (note_j.get('codice') or '').strip()
+        if codice not in codici_set:
+            continue
+        qta_rientrata = int(note_j.get('qta_rientrata', 0))
+        residua = max((lav.qta or 0) - qta_rientrata, 0)
+        if residua > 0:
+            in_trattamento[codice] = in_trattamento.get(codice, 0) + residua
+    return in_trattamento
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SCARICO FINITI IW SU VENDITA IRON WOOD → IRON SEGNALETICA — chiamato da
+#  MasterLogistic-WMS quando Iron Segnaletica carica lì il DDT di ACQUISTO
+#  della merce venduta da Iron Wood. Il grezzo era già stato consumato molto
+#  prima (Saldatura o Verniciatura interna) diventando "Finiti IW" — sia che
+#  gli 80/100 pezzi siano rientrati verniciati da un terzista esterno, sia
+#  che i restanti 20/100 siano stati verniciati al centro di costo interno
+#  "Verniciatura" e dichiarati in produzione, finiscono nello STESSO bucket
+#  "Finiti IW". La vendita a Iron Segnaletica scarica quindi FINITI IW, MAI
+#  Grezzo IW (che a quel punto è già a zero da tempo per quei pezzi).
+#  Auth: STESSO secret condiviso già usato per la direzione opposta
+#  (masterlogistic_client.py — IronProduction → WMS manda
+#  MASTERLOGISTIC_API_TOKEN, verificato da WMS come IRONPRODUCTION_API_TOKEN)
+#  — qui usato al contrario, nessuna nuova variabile d'ambiente da configurare.
+# ══════════════════════════════════════════════════════════════════════════════
+def _auth_wms():
+    token = current_app.config.get('MASTERLOGISTIC_API_TOKEN', '')
+    if not token:
+        return jsonify({'ok': False, 'error': 'Integrazione disabilitata: configurare MASTERLOGISTIC_API_TOKEN'}), 503
+    bearer = request.headers.get('Authorization', '')
+    got = bearer[7:].strip() if bearer.lower().startswith('bearer ') else request.headers.get('X-WMS-Token', '')
+    if got != token:
+        return jsonify({'ok': False, 'error': 'non autorizzato'}), 401
+
+
+@magazzino_bp.route('/api/wms/scarica_finiti_iw', methods=['POST'])
+def api_wms_scarica_finiti_iw():
+    """
+    Riduce FINITI IW per SKU/quantità indicati — sia il magazzino locale
+    (GiacenzaWood, letto dalla pagina Materiali) sia il contatore Kanban
+    (KanbanProdotto.verniciati, se il codice ha una scheda Kanban). Chiamato
+    da MasterLogistic-WMS alla conferma di un DDT di ACQUISTO da Iron Wood:
+    il prodotto è già finito/verniciato (a prescindere che sia rientrato da
+    un terzista o verniciato al centro interno), quindi esce da qui, non dal
+    Grezzo IW (già consumato molto prima).
+    """
+    auth = _auth_wms()
+    if auth:
+        return auth
+    d = request.get_json(force=True)
+    sku = str(d.get('sku', '')).strip()
+    try:
+        quantita = float(d.get('quantita'))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'sku/quantita non validi'}), 400
+    if not sku:
+        return jsonify({'ok': False, 'error': 'SKU obbligatorio'}), 400
+    if quantita <= 0:
+        return jsonify({'ok': False, 'error': 'quantita deve essere positiva (questo endpoint scarica soltanto)'}), 400
+
+    _registra_movimento_giacenza(sku, -quantita, 'scarico_produzione',
+                                  riferimento='WMS', note='Venduto a Iron Segnaletica — DDT acquisto MasterLogistic-WMS')
+
+    kanban_verniciati_dopo = None
+    p = (KanbanProdotto.query
+         .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{sku.upper()}%'))
+         .first())
+    if p:
+        prima = p.verniciati or 0
+        p.verniciati = max(0, prima - quantita)
+        kanban_verniciati_dopo = p.verniciati
+        if prima - quantita < 0:
+            log(f"WARN scarico Finiti IW [{sku}]: richiesti {quantita} ma Kanban aveva solo {prima} "
+                f"'verniciati' — contatore Kanban azzerato, verificare manualmente il disallineamento")
+
+    db.session.commit()
+    nuova_giacenza = GiacenzaWood.query.get(sku)
+    log(f'Finiti IW scaricato da WMS: {sku} -{quantita} -> giacenza {nuova_giacenza.quantita if nuova_giacenza else "?"}'
+        + (f', Kanban verniciati -> {kanban_verniciati_dopo}' if p else ' (nessuna scheda Kanban per questo codice)'))
+    return jsonify({'ok': True, 'sku': sku,
+                     'giacenza_residua': nuova_giacenza.quantita if nuova_giacenza else None,
+                     'kanban_verniciati_residuo': kanban_verniciati_dopo})
 
 
 def _calcola_campi_giacenza(righe):
@@ -1040,6 +1259,7 @@ def _calcola_campi_giacenza(righe):
     # una lettura di quel valore; None = non ancora sincronizzato, 0 non è
     # un'assunzione sicura da fare al posto suo).
     grezzo_iw = _grezzo_iw_per_codici(codici)
+    in_trattamento = _in_trattamento_per_codici(codici)
 
     ordinato_produzione = {}
     for cod, qta_pian, qta_buona in (db.session.query(OrdineProduzione.codice_articolo,
@@ -1096,6 +1316,7 @@ def _calcola_campi_giacenza(righe):
         imp = impegnato.get(g.codice, 0)
         ord_ = ordinato.get(g.codice, 0)
         grz = grezzo_iw.get(g.codice, 0)
+        in_tratt = in_trattamento.get(g.codice, 0)
         ord_prod = ordinato_produzione.get(g.codice, 0)
         scorta_min = getattr(g, 'scorta_minima_wms', None) or 0
         ord_cliente_wms = getattr(g, 'ordinato_cliente_wms', None) or 0
@@ -1114,7 +1335,7 @@ def _calcola_campi_giacenza(righe):
             'ha_op_proprio': g.codice in codici_padre_da_op,
             'codice_padre_manuale': g.codice in codici_padre_manuali,
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
-            'grezzo_iw': grz, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
+            'grezzo_iw': grz, 'in_trattamento': in_tratt, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
             'scorta_minima': getattr(g, 'scorta_minima_wms', None),
             'scorta_minima_wms_aggiornato_il': (g.scorta_minima_wms_aggiornato_il.strftime('%d/%m/%Y %H:%M')
                 if getattr(g, 'scorta_minima_wms_aggiornato_il', None) else None),
@@ -1782,6 +2003,44 @@ def api_codici_wood_tutti():
     figli  = {row[0] for row in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
     codici = sorted(padri | figli)
     return jsonify([{'codice': c, 'e_padre': c in padri} for c in codici])
+
+
+@magazzino_bp.route('/api/ricerca_materiale_wood')
+def api_ricerca_materiale_wood():
+    """
+    Menù a ricerca intelligente per la scelta del codice materiale (usato
+    nella maschera di conferma Dichiarazione di Produzione, per sostituire o
+    aggiungere un codice — es. era finito il ferro sp.3, si è usato lo
+    sp.4): cerca su CODICE o DESCRIZIONE, case-insensitive, in ArticoloML
+    (fonte principale, con stock) e — per i codici che ArticoloML non
+    conosce ancora — nella riserva locale DescrizioneCodiceWood (da
+    caricamento massivo Zucchetti). Query vuota o troppo corta (<2 caratteri)
+    non esegue nulla lato server: la UI mostra un elenco iniziale limitato
+    solo su focus, per non restituire l'intero catalogo articoli.
+    """
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    like = f'%{q}%'
+    risultati = {}
+    try:
+        for a in (ArticoloML.query
+                  .filter(db.or_(ArticoloML.sku.ilike(like), ArticoloML.descrizione.ilike(like)))
+                  .order_by(ArticoloML.sku).limit(30).all()):
+            risultati[a.sku] = {'codice': a.sku, 'descrizione': a.descrizione or '', 'stock': a.stock}
+    except Exception:
+        db.session.rollback()
+    if len(risultati) < 30:
+        gia_visti = set(risultati.keys())
+        for d in (DescrizioneCodiceWood.query
+                  .filter(db.or_(DescrizioneCodiceWood.codice.ilike(like), DescrizioneCodiceWood.descrizione.ilike(like)))
+                  .filter(~DescrizioneCodiceWood.codice.in_(gia_visti) if gia_visti else True)
+                  .order_by(DescrizioneCodiceWood.codice).limit(30 - len(risultati)).all()):
+            risultati[d.codice] = {'codice': d.codice, 'descrizione': d.descrizione or '', 'stock': None}
+    q_lower = q.lower()
+    lista = list(risultati.values())
+    lista.sort(key=lambda r: (0 if r['codice'].lower().startswith(q_lower) else 1, r['codice']))
+    return jsonify(lista[:30])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2464,6 +2723,11 @@ def pagina_parametri_lavorazione():
     return render_template('parametri_lavorazione_wood.html', active='parametri_lavorazione')
 
 
+@magazzino_bp.route('/contapieghe-wood')
+def pagina_contapieghe():
+    return render_template('contapieghe_wood.html', active='contapieghe')
+
+
 @magazzino_bp.route('/esploratore-prodotto')
 def pagina_esploratore_prodotto():
     """
@@ -2517,6 +2781,65 @@ _lista_rulli, _crea_rullo, _elimina_rullo = _crud_anagrafica_semplice(RulloWood,
 magazzino_bp.add_url_rule('/api/rulli_wood', 'lista_rulli', _lista_rulli, methods=['GET'])
 magazzino_bp.add_url_rule('/api/rulli_wood', 'crea_rullo', _crea_rullo, methods=['POST'])
 magazzino_bp.add_url_rule('/api/rulli_wood/<int:rid>', 'elimina_rullo', _elimina_rullo, methods=['DELETE'])
+
+_lista_contromatrici, _crea_contromatrice, _elimina_contromatrice = _crud_anagrafica_semplice(ContromatriceWood, 'contromatrice')
+magazzino_bp.add_url_rule('/api/contromatrici_wood', 'lista_contromatrici', _lista_contromatrici, methods=['GET'])
+magazzino_bp.add_url_rule('/api/contromatrici_wood', 'crea_contromatrice', _crea_contromatrice, methods=['POST'])
+magazzino_bp.add_url_rule('/api/contromatrici_wood/<int:rid>', 'elimina_contromatrice', _elimina_contromatrice, methods=['DELETE'])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  CONTAPIEGHE — manutenzione preventiva matrici/contromatrici (Piega/
+#  Curvatubi). Il contatore si incrementa da solo ad ogni dichiarazione di
+#  produzione (vedi _registra_evento_consuntivo in produzione_pp/routes.py,
+#  blocco "Contapieghe automatico matrice/contromatrice") — qui solo lettura,
+#  impostazione della soglia di vita e reset (quando lo stampo viene
+#  sostituito/rettificato). Nessun blocco alla dichiarazione: solo un
+#  avviso visivo quando si supera la soglia impostata.
+# ══════════════════════════════════════════════════════════════════════════════
+def _riga_contapieghe(r):
+    soglia = r.vita_max_pieghe
+    pct = round(100 * r.contapieghe / soglia, 1) if soglia else None
+    return {
+        'id': r.id, 'codice': r.codice, 'descrizione': r.descrizione or '',
+        'contapieghe': r.contapieghe or 0, 'vita_max_pieghe': soglia,
+        'percentuale_vita': pct,
+        'oltre_soglia': bool(soglia and (r.contapieghe or 0) >= soglia),
+    }
+
+
+@magazzino_bp.route('/api/contapieghe')
+def api_contapieghe():
+    matrici = MatriceWood.query.order_by(MatriceWood.codice).all()
+    contromatrici = ContromatriceWood.query.order_by(ContromatriceWood.codice).all()
+    return jsonify({
+        'matrici': [_riga_contapieghe(r) for r in matrici],
+        'contromatrici': [_riga_contapieghe(r) for r in contromatrici],
+    })
+
+
+def _aggiorna_contapieghe(Model, rid, d):
+    r = Model.query.get_or_404(rid)
+    if 'vita_max_pieghe' in d:
+        val = d.get('vita_max_pieghe')
+        try:
+            r.vita_max_pieghe = int(val) if val not in (None, '') else None
+        except (TypeError, ValueError):
+            return jsonify({'errore': True, 'messaggio': 'Vita max pieghe non valida'}), 400
+    if d.get('reset'):
+        r.contapieghe = 0
+    db.session.commit()
+    return jsonify({'ok': True, 'riga': _riga_contapieghe(r)})
+
+
+@magazzino_bp.route('/api/contapieghe/matrice/<int:rid>', methods=['POST'])
+def api_aggiorna_contapieghe_matrice(rid):
+    return _aggiorna_contapieghe(MatriceWood, rid, request.get_json(force=True))
+
+
+@magazzino_bp.route('/api/contapieghe/contromatrice/<int:rid>', methods=['POST'])
+def api_aggiorna_contapieghe_contromatrice(rid):
+    return _aggiorna_contapieghe(ContromatriceWood, rid, request.get_json(force=True))
 
 
 @magazzino_bp.route('/api/lunghezze_barra_wood', methods=['GET'])
@@ -2635,6 +2958,8 @@ def api_albero_schede_lavorazione(codice_radice):
             'indice_assorbimento': s.indice_assorbimento if s else '',
             'rullo_id': s.rullo_id if s else None,
             'rullo_codice': (s.rullo.codice if s and s.rullo else None),
+            'contromatrice_id': s.contromatrice_id if s else None,
+            'contromatrice_codice': (s.contromatrice.codice if s and s.contromatrice else None),
             'impostazione_satinatrice': s.impostazione_satinatrice if s else '',
             'note': s.note if s else '',
         })
@@ -2654,19 +2979,23 @@ def api_upsert_scheda_lavorazione():
         pezzi_per_barra = float(d['pezzi_per_barra']) if d.get('pezzi_per_barra') not in (None, '') else None
         matrice_id = int(d['matrice_id']) if d.get('matrice_id') not in (None, '') else None
         rullo_id = int(d['rullo_id']) if d.get('rullo_id') not in (None, '') else None
+        contromatrice_id = int(d['contromatrice_id']) if d.get('contromatrice_id') not in (None, '') else None
     except (TypeError, ValueError):
         return jsonify({'errore': True, 'messaggio': 'Valori numerici non validi'}), 400
     if matrice_id and not MatriceWood.query.get(matrice_id):
         return jsonify({'errore': True, 'messaggio': 'Matrice non trovata'}), 404
     if rullo_id and not RulloWood.query.get(rullo_id):
         return jsonify({'errore': True, 'messaggio': 'Rullo non trovato'}), 404
+    if contromatrice_id and not ContromatriceWood.query.get(contromatrice_id):
+        return jsonify({'errore': True, 'messaggio': 'Contromatrice non trovata'}), 404
 
     valori = dict(
         lunghezza_barra_mm=lunghezza_barra_mm, spessore_mm=spessore_mm, pezzi_per_barra=pezzi_per_barra,
         sviluppo=(d.get('sviluppo') or '').strip(), matrice_id=matrice_id,
         punto_zero=(d.get('punto_zero') or '').strip(),
         indice_assorbimento=(d.get('indice_assorbimento') or '').strip(),
-        rullo_id=rullo_id, impostazione_satinatrice=(d.get('impostazione_satinatrice') or '').strip(),
+        rullo_id=rullo_id, contromatrice_id=contromatrice_id,
+        impostazione_satinatrice=(d.get('impostazione_satinatrice') or '').strip(),
         note=(d.get('note') or '').strip(),
     )
     esistente = SchedaLavorazioneWood.query.filter_by(codice_padre=padre, codice_figlio=figlio).first()

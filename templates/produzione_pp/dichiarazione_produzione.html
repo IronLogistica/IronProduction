@@ -116,6 +116,16 @@
   <div class="modal-box" style="width:1100px;max-width:98vw">
     <h3>📦 Conferma movimenti di magazzino</h3>
     <div id="ant-carica" style="margin:10px 0;padding:10px;border:1px solid var(--border);border-radius:6px;background:rgba(26,158,92,.08)"></div>
+    <!-- Mostrato SOLO se ci sono componenti 'contestuali' bloccati su un OP legacy (aperto prima del flag, non ancora evaso) -->
+    <div id="ant-contestuale-legacy" style="display:none;margin:10px 0;padding:10px;border:1.5px solid #1e5fa8;border-radius:6px;background:rgba(30,95,168,.08);font-size:12px">
+      <div style="font-weight:700;color:#1e5fa8;margin-bottom:4px">🔗 Componenti one-piece-flow su ordine già aperto</div>
+      <div id="ant-contestuale-legacy-testo" style="margin-bottom:8px"></div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="ant-contestuale-pin" type="password" placeholder="PIN Angelo" style="width:110px;padding:5px 8px;border-radius:5px;border:1px solid var(--border)">
+        <button type="button" class="btn btn-ghost" onclick="autorizzaContestualeOP()">Autorizza questo OP al nuovo comportamento</button>
+        <span id="ant-contestuale-esito" style="font-size:11px"></span>
+      </div>
+    </div>
     <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin:10px 0 6px">📤 Scarica da magazzino (correggi se serve)</div>
     <div id="ant-componenti" style="max-height:260px;overflow-y:auto"></div>
     <button class="btn btn-primary" style="margin-top:14px" onclick="confermaAnteprima()">✅ Conferma e registra</button>
@@ -187,17 +197,23 @@ async function caricaReintegroScarti(){
     if(!righe.length){ box.style.display = 'none'; return; }
     box.style.display = 'block';
     document.getElementById('reintegro-count').textContent = righe.length;
-    document.getElementById('reintegro-lista').innerHTML = righe.map(r => `
+    document.getElementById('reintegro-lista').innerHTML = righe.map(r => {
+      const dettaglio = r.indotto_da_scarto_a_valle
+        ? `nessuno scarto diretto qui — servono altri pezzi per rimpiazzare uno scarto avvenuto più avanti nel ciclo`
+        : `scarto totale ${r.scarto_totale}`;
+      return `
       <div style="display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px solid var(--border)">
         <div>
           <b class="codice">${r.codice_lavorato}</b>${r.componente ? '' : ' (prodotto finito)'} — ${r.codice_articolo}
-          <div style="font-size:11px;color:var(--text-dim)">${r.op_code} · ${r.commessa || '—'} · ${r.centro_nome} · scarto totale ${r.scarto_totale}</div>
+          ${r.indotto_da_scarto_a_valle ? ' <span style="font-size:9px;background:#e6b800;color:#1c1c1c;padding:1px 6px;border-radius:4px;font-weight:700">🔄 reintegro a monte</span>' : ''}
+          <div style="font-size:11px;color:var(--text-dim)">${r.op_code} · ${r.commessa || '—'} · ${r.centro_nome} · ${dettaglio}</div>
         </div>
         <div style="display:flex;align-items:center;gap:10px">
           <span style="font-weight:800;color:#e6b800">${r.saldo_da_reintegrare} da rifare</span>
           <button class="btn btn-primary" style="padding:6px 12px;font-size:12px" onclick="vaiAReintegrare(${r.centro_id})">Dichiara →</button>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   }catch(e){ /* non bloccare la pagina se questo fallisce */ }
 }
 
@@ -228,8 +244,11 @@ async function caricaOpAperti(){
     const righeComponenti = g.componenti.map((c, j) => {
       const etichetta = c.componente_finale ? `${g.codice_articolo} (prodotto finito)` : c.codice_lavorato;
       const idInput = `dich-inline-${i}-${j}`;
+      const badgeReintegro = c.reintegro_da_scarto_a_valle
+        ? ` <span title="Il saldo include pezzi da rifare per uno scarto avvenuto in una fase successiva del ciclo" style="font-size:9px;background:#e6b800;color:#1c1c1c;padding:1px 6px;border-radius:4px;font-weight:700;white-space:nowrap">🔄 reintegro scarto a valle</span>`
+        : '';
       return `<tr>
-        <td class="codice">${etichetta}</td>
+        <td class="codice">${etichetta}${badgeReintegro}</td>
         <td class="muted" style="font-size:11px">${c.descrizione || '—'}</td>
         <td>${c.qta_necessaria}</td>
         <td>${c.fatti}</td>
@@ -275,8 +294,13 @@ async function dichiaraInline(g, c, idInput){
     pezzi_buoni: buoni, pezzi_scarto: scarto, idInput,
   };
 
+  _applicaAnteprima(anteprima);
+  openModal('modal-anteprima');
+}
+
+function _applicaAnteprima(anteprima){
   const car = anteprima.carica;
-  const scartoDich = _anteprimaCorrente.pezzi_scarto || 0;
+  const scartoDich = (_anteprimaCorrente && _anteprimaCorrente.pezzi_scarto) || 0;
   const notaScarto = scartoDich > 0
     ? `<div style="font-size:11px;color:#e6b800;margin-top:6px">⚠️ Lo scarico sotto include anche il materiale consumato per i <b>${scartoDich} pezzi di scarto</b> dichiarati — il ferro tagliato per uno scarto è comunque consumato.</div>`
     : '';
@@ -298,28 +322,155 @@ async function dichiaraInline(g, c, idInput){
       + notaScarto;
 
     const box = document.getElementById('ant-componenti');
-    if(!anteprima.componenti.length){
-      box.innerHTML = '<p style="color:var(--text-dim);font-style:italic;font-size:12px">Nessun componente da scaricare (distinta base non trovata per questo codice).</p>';
-    } else {
-      box.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed"><colgroup><col style="width:22%"><col style="width:58%"><col style="width:20%"></colgroup>' +
-        '<thead><tr><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Codice</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Descrizione</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Quantità</th></tr></thead><tbody>' +
-        anteprima.componenti.map((comp, k) =>
-          `<tr><td class="codice" style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${comp.codice}</td>` +
-          `<td style="padding:4px 6px;color:var(--text-dim);overflow-wrap:break-word">${comp.descrizione||'—'}</td>` +
-          `<td style="padding:4px 6px"><input id="ant-qta-${k}" type="number" step="0.01" min="0" value="${comp.quantita}" data-codice="${comp.codice}" style="width:85px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px"></td></tr>`
-        ).join('') + '</tbody></table>';
+    box.innerHTML = '<table id="ant-tabella-componenti" style="width:100%;border-collapse:collapse;font-size:12px;table-layout:fixed"><colgroup><col style="width:26%"><col style="width:44%"><col style="width:18%"><col style="width:12%"></colgroup>' +
+      '<thead><tr><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Codice</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Descrizione</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Quantità</th><th></th></tr></thead><tbody id="ant-righe-componenti">' +
+      (anteprima.componenti.length ? anteprima.componenti.map((comp, k) =>
+        `<tr data-riga-materiale>${_antCellaCodiceHTML(comp.codice)}` +
+        `<td class="ant-desc-riga" style="padding:4px 6px;color:var(--text-dim);overflow-wrap:break-word">${comp.descrizione||'—'}</td>` +
+        `<td style="padding:4px 6px"><input type="number" step="0.01" min="0" value="${comp.quantita}" style="width:85px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px"></td>` +
+        `<td style="padding:4px 6px"><button type="button" class="btn btn-ghost" style="color:#e74c3c;padding:2px 8px" onclick="this.closest('tr').remove()" title="Rimuovi questa riga">✕</button></td></tr>`
+      ).join('') : '') + '</tbody></table>' +
+      (anteprima.componenti.length ? '' : '<p style="color:var(--text-dim);font-style:italic;font-size:12px;margin-top:6px">Nessun componente da distinta base — aggiungi manualmente il materiale usato.</p>') +
+      `<div style="margin-top:8px"><button type="button" class="btn btn-ghost" onclick="_antAggiungiRigaMateriale()">➕ Aggiungi materiale (es. sostituzione spessore/codice)</button></div>` +
+      `<div style="font-size:11px;color:var(--text-dim);margin-top:4px;font-style:italic">Puoi correggere il codice (es. era finito il ferro sp.3, hai usato lo sp.4) o aggiungere righe extra — lo scarico avverrà sui codici indicati qui, non su quelli di distinta base.</div>`;
+
+    // Isole one-piece-flow (es. FRONTE+RETRO assemblati insieme): mostrati
+    // solo come info, NON modificabili — vengono caricati e scaricati in
+    // automatico alla conferma, non passano da consumi_override.
+    if(anteprima.componenti_contestuali && anteprima.componenti_contestuali.length){
+      box.innerHTML += '<div style="margin-top:10px;padding-top:8px;border-top:1px dashed var(--border)">' +
+        '<div style="font-size:11px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-bottom:4px">🔗 Assemblati contestualmente (automatico)</div>' +
+        anteprima.componenti_contestuali.map(c =>
+          `<div style="display:flex;justify-content:space-between;font-size:12px;padding:3px 6px;color:var(--text-dim)">` +
+          `<span><b class="codice">${c.codice}</b> ${c.descrizione||''}</span><span>× ${c.quantita}</span></div>`
+        ).join('') + '</div>';
     }
   }
+
+  // OP legacy: componenti che sarebbero one-piece-flow ma questo ordine era
+  // già aperto prima del flag e non ancora evaso — restano nello scarico
+  // normale sopra finché Angelo non autorizza esplicitamente l'OP.
+  const boxLegacy = document.getElementById('ant-contestuale-legacy');
+  if(anteprima.avviso_contestuale_legacy && anteprima.avviso_contestuale_legacy.length){
+    boxLegacy.style.display = 'block';
+    document.getElementById('ant-contestuale-legacy-testo').textContent =
+      `${anteprima.avviso_contestuale_legacy.join(', ')} — questo ordine (${anteprima.op_code}) era già aperto prima dell'attivazione dell'isola one-piece-flow e non è ancora completamente evaso: lo scarico sopra usa la logica storica. Angelo può autorizzare l'ordine al nuovo comportamento (carico+scarico automatico) qui sotto.`;
+    document.getElementById('ant-contestuale-pin').value = '';
+    document.getElementById('ant-contestuale-esito').textContent = '';
+  } else {
+    boxLegacy.style.display = 'none';
+  }
   document.getElementById('ant-esito').textContent = '';
-  openModal('modal-anteprima');
+}
+
+function _antCellaCodiceHTML(codiceIniziale){
+  const val = (codiceIniziale || '').replace(/"/g, '&quot;');
+  return `<td style="padding:4px 6px;position:relative">` +
+    `<input type="text" value="${val}" placeholder="cerca codice o descrizione..." autocomplete="off" ` +
+    `style="width:100%;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px;font-family:monospace" ` +
+    `oninput="_antRicercaMaterialeInput(this)" onfocus="_antRicercaMaterialeInput(this)">` +
+    `<div class="ant-materiale-dropdown" style="display:none;position:absolute;top:100%;left:6px;right:6px;z-index:30;background:var(--dark2,#1c2733);border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.35);max-height:220px;overflow-y:auto"></div>` +
+    `</td>`;
+}
+
+let _antRicercaTimer = null;
+async function _antRicercaMaterialeInput(input){
+  const dropdown = input.nextElementSibling;
+  const q = input.value.trim();
+  clearTimeout(_antRicercaTimer);
+  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  _antRicercaTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/ricerca_materiale_wood?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessun codice trovato</div>';
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = risultati.map(x => {
+      const stockTxt = (x.stock !== null && x.stock !== undefined) ? ` <span style="font-size:10px;color:${x.stock<=0?'#f07070':'#5debb0'}">(stock ${x.stock})</span>` : '';
+      const cod = String(x.codice).replace(/"/g, '&quot;');
+      const desc = String(x.descrizione || '').replace(/"/g, '&quot;');
+      return `<div class="wms-item" onmousedown="_antSceltaMateriale(this, '${cod}', '${desc}')">` +
+        `<div><b class="codice">${x.codice}</b>${stockTxt}${x.descrizione ? `<br><span style="font-size:11px;color:var(--text-dim)">${x.descrizione}</span>` : ''}</div></div>`;
+    }).join('');
+    dropdown.style.display = 'block';
+  }, 220);
+}
+
+function _antSceltaMateriale(el, codice, descrizione){
+  const dropdown = el.closest('.ant-materiale-dropdown');
+  const input = dropdown.previousElementSibling;
+  input.value = codice;
+  const tr = input.closest('tr');
+  const cellaDesc = tr.querySelector('.ant-desc-riga');
+  if(cellaDesc) cellaDesc.textContent = descrizione || '—';
+  dropdown.style.display = 'none';
+  dropdown.innerHTML = '';
+}
+document.addEventListener('click', e => {
+  document.querySelectorAll('.ant-materiale-dropdown').forEach(dd => {
+    if(dd.style.display !== 'none' && !e.target.closest('td')?.contains(dd)) dd.style.display = 'none';
+  });
+});
+
+function _antAggiungiRigaMateriale(){
+  const tbody = document.getElementById('ant-righe-componenti');
+  if(!tbody) return;
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-riga-materiale', '');
+  tr.innerHTML =
+    _antCellaCodiceHTML('') +
+    `<td class="ant-desc-riga" style="padding:4px 6px;color:var(--text-dim)">—</td>` +
+    `<td style="padding:4px 6px"><input type="number" step="0.01" min="0" value="0" style="width:85px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px"></td>` +
+    `<td style="padding:4px 6px"><button type="button" class="btn btn-ghost" style="color:#e74c3c;padding:2px 8px" onclick="this.closest('tr').remove()" title="Rimuovi questa riga">✕</button></td>`;
+  tbody.appendChild(tr);
+  tr.querySelector('input[type="text"]').focus();
+}
+
+async function autorizzaContestualeOP(){
+  const esito = document.getElementById('ant-contestuale-esito');
+  const pin = document.getElementById('ant-contestuale-pin').value.trim();
+  if(!_anteprimaCorrente || !_anteprimaCorrente.op_code){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Nessun OP in anteprima.'; return;
+  }
+  if(!pin){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Inserisci il PIN.'; return; }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Verifica...';
+  try{
+    const r = await fetch(`/api/ordini_produzione/${encodeURIComponent(_anteprimaCorrente.op_code)}/autorizza_contestuale`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({pin})
+    });
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '❌ ' + (d.error || 'PIN non valido.'); return; }
+    esito.style.color = '#1a9e5c'; esito.textContent = '✅ OP autorizzato — ricalcolo anteprima...';
+    // Ricalcola l'anteprima con gli stessi parametri: ora dovrebbe mostrare
+    // i contestuali nella sezione automatica, non più nello scarico normale.
+    const url = `/api/dichiarazione-produzione/anteprima?op_code=${encodeURIComponent(_anteprimaCorrente.op_code)}&componente=${encodeURIComponent(_anteprimaCorrente.componente || '')}&pezzi_buoni=${_anteprimaCorrente.pezzi_buoni}&pezzi_scarto=${_anteprimaCorrente.pezzi_scarto}&centro_id=${encodeURIComponent(_anteprimaCorrente.centro_id)}`;
+    const r2 = await fetch(url);
+    const anteprima2 = await r2.json();
+    if(anteprima2.ok) _applicaAnteprima(anteprima2);
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
 }
 
 async function confermaAnteprima(){
   const esito = document.getElementById('ant-esito');
   document.getElementById('ant-blocco-8d').style.display = 'none';
-  const inputsQta = document.querySelectorAll('#ant-componenti input[data-codice]');
+  // Legge codice+quantità riga per riga (non più campi fissi): il codice è
+  // modificabile — permette di sostituire un materiale finito (es. ferro
+  // sp.3 → sp.4 usato al suo posto) o aggiungere righe extra non previste
+  // dalla distinta base, tramite il pulsante "Aggiungi materiale".
+  const righe = document.querySelectorAll('#ant-righe-componenti tr[data-riga-materiale]');
   const consumi = {};
-  inputsQta.forEach(inp => { consumi[inp.dataset.codice] = parseFloat(inp.value) || 0; });
+  righe.forEach(tr => {
+    const codice = (tr.querySelector('input[type="text"]')?.value || '').trim().toUpperCase();
+    const qta = parseFloat(tr.querySelector('input[type="number"]')?.value) || 0;
+    if(codice && qta > 0) consumi[codice] = (consumi[codice] || 0) + qta;
+  });
 
   const payload = { ..._anteprimaCorrente, tempo_minuti: 0, consumi };
   try{

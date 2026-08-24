@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  #tabella-da-trattare table.kanban-table { font-size: 17px; min-width: 0; }
+  #tabella-da-trattare table.kanban-table th { font-size: 13px; padding: 12px 10px; }
+  #tabella-da-trattare table.kanban-table td { padding: 14px 10px; }
+  @media print {
+    .sidebar, .page-toolbar, .btn { display: none !important; }
+    body { background: #fff !important; }
+    .mon-section { border: none !important; box-shadow: none !important; }
+    #tabella-da-trattare table.kanban-table { font-size: 15px; }
+  }
+</style>
+<div class="page-toolbar">
+  <div class="page-title">📋 Materiali da Trattare — pronti per il terzista</div>
+  <button class="btn btn-primary" onclick="window.print()">🖨️ Stampa</button>
+  <a class="btn btn-ghost" href="/terzisti">← Torna a Terzisti</a>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:14px;color:var(--text-dim)">
+      Materiali grezzi già saldati (o rettificati manualmente) presenti a magazzino, pronti per essere spediti a
+      zincatura/verniciatura — stessa fonte del "Grezzo IW" di Magazzino/Kanban. Ultimo fornitore e ultimo
+      trattamento sono presi dall'ultima Scheda Trattamento creata per quel codice, se già spedito in passato.
+    </p>
+  </div>
+</div>
+
+<div class="mon-section" style="margin-top:14px">
+  <div id="tabella-da-trattare" style="padding:14px;overflow-x:auto">Caricamento...</div>
+</div>
+{% endblock %}
+{% block scripts %}
+async function caricaMaterialiDaTrattare(){
+  const box = document.getElementById('tabella-da-trattare');
+  try{
+    const r = await fetch('/api/terzisti/materiali_da_trattare');
+    const righe = await r.json();
+    if(!righe.length){
+      box.innerHTML = '<p style="color:var(--text-dim);font-style:italic">Nessun materiale grezzo pronto da trattare al momento.</p>';
+      return;
+    }
+    box.innerHTML = '<table class="kanban-table"><thead><tr><th>Codice</th><th>Quantità</th><th>Ultimo fornitore</th><th>Ultimo trattamento eseguito</th><th>Data</th></tr></thead><tbody>' +
+      righe.map(r => `<tr>
+        <td class="codice">${r.codice}</td>
+        <td style="font-weight:700;font-size:22px">${r.quantita}</td>
+        <td>${r.ultimo_fornitore || '<span style="color:var(--text-dim);font-style:italic">mai trattato</span>'}</td>
+        <td>${r.ultimo_trattamento || '—'}</td>
+        <td style="color:var(--text-dim);font-size:15px">${r.ultima_data || '—'}</td>
+      </tr>`).join('') + '</tbody></table>';
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+caricaMaterialiDaTrattare();
+{% endblock %}

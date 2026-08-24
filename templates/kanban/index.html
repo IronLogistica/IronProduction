@@ -67,6 +67,7 @@
   <thead>
     {# Riga intestazioni gruppo #}
     <tr class="thead-group">
+      <th style="width:26px;background:rgba(255,255,255,.02)"></th>
       <th colspan="2" style="text-align:left;padding-left:10px;background:rgba(30,111,165,.06);border-right:2px solid var(--border)">Articolo</th>
       <th style="background:rgba(30,111,165,.06);border-right:1px solid var(--border)">WMS</th>
       <th style="background:rgba(240,112,112,.06);color:#f07070;border-right:1px solid rgba(240,112,112,.2)">Residuo<br>da Prod.</th>
@@ -80,6 +81,7 @@
     </tr>
     {# Riga sottotitoli #}
     <tr class="thead-sub">
+      <th style="width:26px" title="Trascina ⠿ per riordinare le righe a piacimento"></th>
       <th style="text-align:left;padding-left:10px;min-width:80px;max-width:110px">Codice</th>
       <th style="text-align:left;min-width:140px;border-right:2px solid var(--border)">Descrizione</th>
       <th style="border-right:1px solid var(--border)" title="Scheda WMS completa">📊</th>
@@ -109,6 +111,9 @@
   {% set descr_prod  = parti[1] if parti|length > 1 else parti[0] %}
 
   <tr data-pid="{{ p.id }}" class="row-{{ buf }}">
+
+    {# Col 0: maniglia di trascinamento — ordine manuale a piacimento #}
+    <td class="drag-handle-cell" title="Trascina su/giù per riordinare" onpointerdown="iniziaDragRiga(event, this)">⠿</td>
 
     {# Col 1: Codice #}
     <td class="prod-code" style="padding-left:10px;font-family:monospace;font-size:11px;color:var(--steel2);white-space:nowrap;max-width:110px;overflow:hidden;text-overflow:ellipsis">
@@ -188,7 +193,7 @@
 
   </tr>
   {% else %}
-  <tr><td colspan="14" style="text-align:center;color:var(--text-dim);padding:36px;font-style:italic">
+  <tr><td colspan="15" style="text-align:center;color:var(--text-dim);padding:36px;font-style:italic">
     Nessun prodotto. Clicca <strong style="color:var(--steel2)">➕ Nuovo Kanban</strong> per aggiungere il primo.
   </td></tr>
   {% endfor %}
@@ -198,7 +203,7 @@
   {% if prodotti %}
   <tfoot>
     <tr class="tfoot-totali">
-      <td colspan="3" style="text-align:right;padding-right:12px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);border-right:1px solid var(--border)">Totali</td>
+      <td colspan="4" style="text-align:right;padding-right:12px;font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:var(--text-dim);border-right:1px solid var(--border)">Totali</td>
       <td class="num" style="background:rgba(240,112,112,.07);color:#f07070;font-weight:900">
         {{ prodotti|sum(attribute='in_prod') }}
       </td>
@@ -233,6 +238,16 @@
   padding:6px 8px;border-bottom:1px solid var(--border);
   text-align:center;font-weight:800;color:var(--steel2)
 }
+/* ── Riordino manuale righe: trascina la maniglia ⠿ su/giù ── */
+.drag-handle-cell {
+  cursor:grab; text-align:center; color:var(--text-dim); font-size:13px;
+  width:26px; user-select:none; letter-spacing:-2px; touch-action:none;
+}
+.drag-handle-cell:active { cursor:grabbing; }
+.drag-handle-cell:hover { color:var(--steel2); }
+#kbtable tbody tr.dragging { opacity:.5; background:rgba(37,137,199,.08); }
+#kbtable tbody tr.drag-over-top    { box-shadow: inset 0 2px 0 var(--steel2); }
+#kbtable tbody tr.drag-over-bottom { box-shadow: inset 0 -2px 0 var(--steel2); }
 .thead-sub th {
   font-size:9px;text-transform:uppercase;letter-spacing:.3px;
   padding:5px 6px;background:var(--dark2);border-bottom:2px solid var(--border);
@@ -327,15 +342,19 @@
       </div>
     </div>
 
-    {# ── RIGA 2: Grezzi + In Trattamento (più piccoli) ── #}
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:16px">
-      <div style="background:rgba(30,111,165,.06);border:1px solid var(--border);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:14px">
-        <div style="text-align:center;min-width:60px">
-          <div style="font-size:9px;text-transform:uppercase;color:var(--steel2);margin-bottom:2px">Grezzi</div>
-          <div style="font-size:24px;font-weight:900;color:var(--steel2)" id="wsStockGrezzi">—</div>
-        </div>
-        <div style="font-size:10px;color:var(--text-dim);line-height:1.4">Prodotti lavorati,<br>non ancora trattati</div>
-      </div>
+    {# ── RIGA 2: In Trattamento ── #}
+    {# Il box 'Grezzi' (campo KanbanProdotto.grezzi, stima locale da
+       Dichiarazioni+DDT) è stato RIMOSSO: duplicava 'GREZZI IW' sopra con
+       una formula diversa (non filtra per fase Saldatura, non richiede
+       approvazione Direzione, non sa nulla della Verniciatura interna) e i
+       due numeri potevano divergere mostrando due valori diversi per lo
+       stesso concetto. 'GREZZI IW' resta l'unica fonte, collegata a tutto
+       il resto (Materiali da Trattare, reintegro scarti, contestuale,
+       terzisti, vendita a Iron Segnaletica). Il campo p.grezzi in sé NON è
+       stato toccato (resta nel modello/DB, calcolato ma non più mostrato
+       qui) — le formule di Saldo Contabile (LT/BT) in cima continuano a
+       usarlo, non ancora aggiornate per usare Grezzo IW al suo posto. #}
+    <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:16px">
       <div style="background:rgba(230,184,0,.05);border:1px solid rgba(230,184,0,.2);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:14px">
         <div style="text-align:center;min-width:60px">
           <div style="font-size:9px;text-transform:uppercase;color:#f0c040;margin-bottom:2px">In Trattamento</div>
@@ -920,7 +939,6 @@ function _caricaSchedaWms(pid) {
     // ── WMS dati (opzionali — se non connesso mostra comunque il resto) ──
     if (d && !d.wms_errore) {
       document.getElementById('wsStockVern').textContent   = d.stock_verniciati ?? '—';
-      document.getElementById('wsStockGrezzi').textContent = d.stock_grezzi     ?? '—';
       document.getElementById('wsInVern').textContent      = d.in_vern          ?? '—';
       const wsIS = document.getElementById('wsStockIS');
       if (wsIS) wsIS.textContent = d.stock_is ?? d.finiti_is ?? '—';
@@ -942,7 +960,7 @@ function _caricaSchedaWms(pid) {
       }
     } else {
       // Calcola saldi dai campi Kanban locali (visibili nel tabellone)
-      ['wsStockVern','wsStockGrezzi','wsInVern','wsStockIS'].forEach(id => {
+      ['wsStockVern','wsInVern','wsStockIS'].forEach(id => {
         const el = document.getElementById(id); if (el) el.textContent = '—';
       });
     }
@@ -1201,5 +1219,62 @@ function confermaSposta() {
   }).catch(() => showToast('❌ Errore di rete', true));
 }
 document.getElementById('pinSposta').addEventListener('keydown', e => { if (e.key === 'Enter') confermaSposta(); });
+
+// ── Riordino manuale righe: Angelo trascina ⠿ su/giù per mettere le righe
+// nell'ordine che vuole — nessuna logica automatica dietro, solo una
+// preferenza di lettura personale, salvata in KanbanProdotto.sort_order.
+// Basato su Pointer Events (NON sull'API HTML5 drag-and-drop nativa, troppo
+// inaffidabile su righe di tabella tra browser diversi e non funziona affatto
+// su touch/tablet senza polyfill) — pointerdown/pointermove/pointerup
+// funzionano allo stesso modo sia con mouse sia con touch.
+let _dragEl = null;
+
+function iniziaDragRiga(e, handle) {
+  e.preventDefault();
+  const tr = handle.closest('tr[data-pid]');
+  if (!tr) return;
+  _dragEl = tr;
+  tr.classList.add('dragging');
+  handle.setPointerCapture(e.pointerId);
+  document.addEventListener('pointermove', dragMoveRiga);
+  document.addEventListener('pointerup', dragFineRiga, {once: true});
+  document.addEventListener('pointercancel', dragFineRiga, {once: true});
+}
+
+function dragMoveRiga(e) {
+  if (!_dragEl) return;
+  const y = e.clientY;
+  const righe = Array.from(document.querySelectorAll('#kbtable tbody tr[data-pid]'));
+  righe.forEach(r => r.classList.remove('drag-over-top', 'drag-over-bottom'));
+  for (const riga of righe) {
+    if (riga === _dragEl) continue;
+    const rect = riga.getBoundingClientRect();
+    if (y >= rect.top && y <= rect.bottom) {
+      const prima = y < rect.top + rect.height / 2;
+      riga.classList.add(prima ? 'drag-over-top' : 'drag-over-bottom');
+      riga.parentNode.insertBefore(_dragEl, prima ? riga : riga.nextSibling);
+      break;
+    }
+  }
+}
+
+function dragFineRiga() {
+  document.removeEventListener('pointermove', dragMoveRiga);
+  document.querySelectorAll('#kbtable tbody tr').forEach(r => r.classList.remove('dragging', 'drag-over-top', 'drag-over-bottom'));
+  if (_dragEl) salvaOrdineRighe();
+  _dragEl = null;
+}
+
+function salvaOrdineRighe() {
+  const ids = Array.from(document.querySelectorAll('#kbtable tbody tr[data-pid]'))
+    .map(tr => parseInt(tr.dataset.pid, 10));
+  fetch('/api/kanban/riordina', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ordine: ids})
+  }).then(r => r.json()).then(d => {
+    if (d.ok) showToast('↕️ Ordine salvato');
+    else showToast('❌ ' + (d.error || 'Errore salvataggio ordine'), true);
+  }).catch(() => showToast('❌ Errore di rete durante il salvataggio ordine', true));
+}
 
 {% endblock %}

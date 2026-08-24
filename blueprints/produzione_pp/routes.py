@@ -13,12 +13,14 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
                     NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
-                    FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D)
+                    FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D,
+                    MatriceWood, ContromatriceWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
-                    _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO)
+                    _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
+                    _contestuale_attivo_per_op)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 
@@ -668,6 +670,97 @@ def _e_ultima_fase_del_ciclo(codice_lavorato, fase_nome):
     return ultima.centro_costo.nome.strip().lower() == (fase_nome or '').strip().lower()
 
 
+def _fabbisogno_propagato_per_op(o, mappa_distinta=None):
+    """
+    Per ogni codice della distinta base di o (compreso il codice_articolo
+    stesso), calcola la quantità EFFETTIVAMENTE necessaria — non solo
+    pianificata × moltiplicatore di distinta (come mostrato finora), ma
+    comprensiva del fabbisogno indotto da uno SCARTO GIA' DICHIARATO su un
+    livello A VALLE (padre in distinta) che consuma questo codice alla
+    PROPRIA prima fase.
+
+    Esempio: OP per 16 TR2001, TR2001 consuma 1× TPD32L3440 alla propria
+    (unica) fase Piega. A Piega vengono dichiarati 10 buoni + 6 scarti:
+    servirà ANCORA tagliare 6 TPD32L3440 in più oltre ai 16 già tagliati —
+    anche se a Taglio nessuno ha scartato nulla direttamente. Senza questa
+    propagazione l'operatore di Taglio vede 'saldo 0' (16 pianificati, 16
+    già tagliati) e non taglia il materiale mancante: il reintegro resta
+    invisibile esattamente dove servirebbe agire.
+
+    ATTENZIONE — la propagazione usa lo SCARTO GIA' DICHIARATO alla fase
+    valle, MAI il suo saldo (quanto ancora manca per completare il piano):
+    il saldo è quasi sempre positivo su un OP appena aperto o ancora in
+    corso, anche con ZERO scarto — è semplicemente lavoro non ancora
+    fatto, del tutto fisiologico. Propagare il saldo (bug di una versione
+    precedente) significava aggiungere l'intero pianificato ad ogni
+    livello della distinta per QUALUNQUE OP in corso, sommandosi e
+    moltiplicandosi scendendo nell'albero — un OP a più livelli (es.
+    Cavalletto → Fronte → C121 → T1515) esplodeva a migliaia di pezzi
+    "da reintegrare" ovunque, pur non essendoci stato nessuno scarto reale.
+    Lo scarto già dichiarato, invece, è un fatto realmente accaduto e
+    limitato: la formula 'necessaria_valle + scarto_valle' equivale
+    esattamente a 'tentativi totali (passato+futuro) della fase valle',
+    che è la vera quantità di componente a monte che servirà nel tempo —
+    la dimostrazione: tentativi_totali = buoni+scarto (già fatti) + saldo
+    (futuri) = buoni+scarto + (necessaria - buoni) = necessaria + scarto.
+
+    Non copre lo scarto tra due fasi DELLO STESSO codice (es. Segatrice poi
+    Trapani sullo stesso C121) — lì il saldo diretto di ogni fase è già
+    visibile oggi senza bisogno di propagazione, dato che entrambe le fasi
+    condividono la stessa quantità pianificata di riferimento.
+
+    Ritorna {codice: qta_necessaria_effettiva}.
+    """
+    mappa_distinta = mappa_distinta if mappa_distinta is not None else _carica_mappa_distinta_base_wood()
+
+    # Prima passata: raccoglie tutti i codici raggiungibili (stessa
+    # esplosione/protezione anti-ciclo di _esplodi_componenti_op) per fare
+    # query batch invece che una per nodo.
+    tutti_i_codici = {o.codice_articolo}
+    def raccogli(codice, visti):
+        for rb in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
+            if rb.codice_figlio in visti:
+                continue
+            visti.add(rb.codice_figlio)
+            tutti_i_codici.add(rb.codice_figlio)
+            raccogli(rb.codice_figlio, visti)
+    raccogli(o.codice_articolo, {o.codice_articolo})
+
+    prima_fase_per_codice = {}  # codice -> nome centro della sua prima fase
+    if tutti_i_codici:
+        for c in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_i_codici))
+                  .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()):
+            if c.codice not in prima_fase_per_codice and c.centro_costo:
+                prima_fase_per_codice[c.codice] = c.centro_costo.nome
+
+    scarto_per_codice_fase = {}  # (codice, fase_lower) -> scarto dichiarato
+    for componente, fase, scarto in (db.session.query(
+            EventoConsuntivoPP.componente, EventoConsuntivoPP.fase,
+            db.func.sum(EventoConsuntivoPP.pezzi_scarto))
+            .filter(EventoConsuntivoPP.op_code == o.codice)
+            .group_by(EventoConsuntivoPP.componente, EventoConsuntivoPP.fase).all()):
+        codice = componente or o.codice_articolo
+        scarto_per_codice_fase[(codice, fase.strip().lower())] = scarto or 0
+
+    necessaria = {o.codice_articolo: float(o.qta_pianificata or 0)}
+    visitati_walk = set()
+
+    def walk(codice):
+        if codice in visitati_walk:
+            return
+        visitati_walk.add(codice)
+        fase1 = prima_fase_per_codice.get(codice)
+        scarto_qui = scarto_per_codice_fase.get((codice, fase1.strip().lower()), 0) if fase1 else 0
+        base_qui = necessaria.get(codice, 0)
+        for rb in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
+            necessaria[rb.codice_figlio] = necessaria.get(rb.codice_figlio, 0) + (base_qui + scarto_qui) * (rb.quantita or 1.0)
+        for rb in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
+            walk(rb.codice_figlio)
+
+    walk(o.codice_articolo)
+    return necessaria
+
+
 def _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata):
     """
     Consumi standard (da distinta base) per QTA_TAGLIATA pezzi — stessa
@@ -689,20 +782,60 @@ def _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata):
     stesse materie prime due volte, e in più scaricare a sua volta il
     semilavorato appena caricato. Si consuma quindi LUI (il semilavorato,
     dal magazzino), non si riesplode sotto di lui.
+
+    Ritorna (consumi, contestuali, legacy_bloccati): 'consumi' sono gli
+    scarichi normali (presumono un carico avvenuto altrove/prima, es.
+    Taglio/Trapano); 'contestuali' sono i figli marcati come "isola
+    one-piece-flow" in distinta base (DistintaBaseWood.contestuale=True, es.
+    FRONTE+RETRO di un cavalletto saldati insieme) — nascono e si consumano
+    nello stesso istante del padre, quindi vanno caricati E scaricati in
+    automatico qui (vedi _registra_evento_consuntivo), mai trattati come
+    stock preesistente; 'legacy_bloccati' sono i codici che SAREBBERO
+    contestuali ma l'OP è stato aperto prima del flag e non è ancora evaso
+    né autorizzato da Angelo — restano sul comportamento storico (dentro
+    'consumi') per questo OP specifico, e vengono segnalati come avviso.
     """
     codice_base = o.codice_articolo if componente_finale else componente
     consumi = {}
-    _esplodi_fino_a_semilavorati_dichiarabili(codice_base, qta_tagliata, consumi)
-    return consumi
+    contestuali = {}
+    legacy_bloccati = []  # codici che sarebbero contestuali ma l'OP è legacy non autorizzato: avviso per Angelo
+    _esplodi_fino_a_semilavorati_dichiarabili(codice_base, qta_tagliata, consumi, contestuali, o, legacy_bloccati)
+    return consumi, contestuali, legacy_bloccati
 
 
-def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, _visitati=None):
+def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali, o, legacy_bloccati, _visitati=None):
     _visitati = _visitati if _visitati is not None else set()
     if codice in _visitati:
         return  # mai un ciclo infinito su una distinta configurata male per errore
     _visitati.add(codice)
     for rb in _righe_bom_attive_wood(codice):
         qta_figlio = rb.quantita * qta
+        if rb.contestuale and not _contestuale_attivo_per_op(rb, o):
+            # OP legacy (aperto prima del flag) e non ancora evaso, non
+            # autorizzato da Angelo: resta sul comportamento storico per
+            # QUESTO ordine — nessun carico/scarico automatico, si segnala
+            # soltanto per l'avviso. Il figlio va comunque trattato come
+            # prima (fermarsi qui se ha un proprio ciclo, altrimenti
+            # esplodere sotto — stessa logica del ramo 'else' più sotto).
+            legacy_bloccati.append(rb.codice_figlio)
+            ha_proprio_ciclo_legacy = CicloLavoroWood.query.filter_by(codice=rb.codice_figlio).first() is not None
+            figli_del_figlio_legacy = _righe_bom_attive_wood(rb.codice_figlio)
+            if ha_proprio_ciclo_legacy or not figli_del_figlio_legacy:
+                consumi[rb.codice_figlio] = consumi.get(rb.codice_figlio, 0) + qta_figlio
+            else:
+                _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
+            continue
+        if rb.contestuale:
+            # Isola one-piece-flow: questo figlio non è mai stato caricato a
+            # magazzino da solo (nasce e si assembla nello stesso istante del
+            # padre) — va accumulato a parte per il carico+scarico automatico,
+            # MAI messo tra i 'consumi' normali (che presumono stock già
+            # esistente). Si continua comunque a esplodere sotto di lui: anche
+            # le SUE materie prime/componenti vanno consumate, a meno che pure
+            # loro siano contestuali o abbiano un proprio ciclo dichiarato a parte.
+            contestuali[rb.codice_figlio] = contestuali.get(rb.codice_figlio, 0) + qta_figlio
+            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
+            continue
         ha_proprio_ciclo = CicloLavoroWood.query.filter_by(codice=rb.codice_figlio).first() is not None
         figli_del_figlio = _righe_bom_attive_wood(rb.codice_figlio)
         if ha_proprio_ciclo or not figli_del_figlio:
@@ -712,10 +845,10 @@ def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, _visitati=No
             # distinta sotto — e va comunque consumata a questo livello.
             consumi[rb.codice_figlio] = consumi.get(rb.codice_figlio, 0) + qta_figlio
         else:
-            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, _visitati)
+            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
 
 
-def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None, operatore=None):
+def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None, operatore=None, approvato_direzione=False):
     """
     Nucleo di registrazione di un consuntivo per l'OP o (già lockato con
     with_for_update dal chiamante): crea l'EventoConsuntivoPP, aggiorna
@@ -724,6 +857,14 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     Condivisa da /api/pp/events (integrazione MasterWork) e dal totem a bordo
     macchina (inizio/fine lavoro) — stesso identico comportamento in entrambi
     i casi. NON fa il commit: il chiamante decide quando farlo.
+
+    'approvato_direzione': chi dichiara conta. Le dichiarazioni fatte dalla
+    Dichiarazione di Produzione (dashboard — Angelo/Alessandro, IronProduction)
+    sono GIA' fatte dal titolare o da chi ne fa le veci: non serve nessuna
+    approvazione successiva, entrano approvate. Solo le dichiarazioni degli
+    operai di Saldatura via MasterWork (/api/pp/events) restano da approvare
+    da Angelo — quello è personale non titolare, un controllo in più ha senso
+    lì e non altrove.
 
     'componente': None (o uguale a o.codice_articolo) = si sta consuntivando
     il prodotto finito/assieme finale dell'OP — comportamento storico
@@ -760,7 +901,7 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     db.session.add(EventoConsuntivoPP(event_id=event_id, op_code=o.codice, fase=fase_nome,
                                        componente=None if componente_finale else componente,
                                        timestamp_evento=ts, pezzi_buoni=good, pezzi_scarto=scrap, tempo_minuti=tempo,
-                                       operatore=operatore))
+                                       operatore=operatore, approvato_direzione=approvato_direzione))
     o.tempo_consuntivo_minuti += tempo
     if avanza_op:
         o.qta_buona += good; o.qta_scarto += scrap
@@ -816,13 +957,36 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     avviso_magazzino = None
     if qta_tagliata > 0 and prima_fase:
         try:
-            consumi = consumi_override if consumi_override is not None else _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata)
+            consumi_calcolati, contestuali, legacy_bloccati = _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata)
+            consumi = consumi_override if consumi_override is not None else consumi_calcolati
             for cod, qta_consumata in consumi.items():
                 if qta_consumata:
                     costo_corrente = _calcola_costo_standard(cod)['costo_totale']
                     _registra_movimento_giacenza(cod, -qta_consumata, 'scarico_produzione',
                                                   riferimento=o.codice,
                                                   note=f'Consuntivo {good} pz buoni + {scrap} pz scarto ({codice_lavorato})',
+                                                  costo_unitario=costo_corrente)
+            # Isole one-piece-flow (DistintaBaseWood.contestuale=True, es.
+            # FRONTE+RETRO di un cavalletto saldati insieme): questi figli non
+            # sono MAI stock preesistente, nascono e si consumano nello stesso
+            # istante del padre — si carica il fabbisogno e lo si scarica
+            # subito dopo, così restano tracciati (costo, storico movimenti)
+            # senza mai lasciare una giacenza fantasma né andare in negativo.
+            # Non passa da consumi_override: è un comportamento automatico
+            # legato al flag di distinta, non un valore che il capo reparto
+            # corregge a mano nell'anteprima.
+            for cod, qta_consumata in contestuali.items():
+                if qta_consumata:
+                    costo_corrente = _calcola_costo_standard(cod)['costo_totale']
+                    _registra_movimento_giacenza(cod, qta_consumata, 'carico_produzione',
+                                                  riferimento=o.codice,
+                                                  note=(f'Assemblato contestualmente in {fase_nome} ({codice_lavorato}) '
+                                                        f'— isola one-piece-flow, mai dichiarato a parte'),
+                                                  costo_unitario=costo_corrente)
+                    _registra_movimento_giacenza(cod, -qta_consumata, 'scarico_produzione',
+                                                  riferimento=o.codice,
+                                                  note=(f'Consuntivo {good} pz buoni + {scrap} pz scarto '
+                                                        f'— assemblato contestualmente in {codice_lavorato}'),
                                                   costo_unitario=costo_corrente)
         except Exception as e:
             # NON deve mai bloccare la registrazione del consuntivo — ma un
@@ -833,6 +997,23 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
             avviso_magazzino = f'Scarico materiale FALLITO: {e}'
             log(f'ERRORE scarico giacenza — OP {o.codice}, {codice_lavorato}, evento {event_id}: {e}')
             _audit(o, 'ERRORE_SCARICO_GIACENZA', f'{codice_lavorato}: {e}', event_id)
+        else:
+            if legacy_bloccati:
+                # OP aperto prima del flag 'contestuale' e non ancora evaso/
+                # autorizzato: il/i figlio/i sono stati scaricati con la
+                # logica storica (stock preesistente presunto), NON con il
+                # carico+scarico automatico — Angelo deve intervenire a mano
+                # (registrare/verificare la giacenza di questi codici) o
+                # autorizzare esplicitamente l'OP al nuovo comportamento.
+                avviso_magazzino = (
+                    f"Attenzione: {', '.join(sorted(set(legacy_bloccati)))} "
+                    f"risultano 'contestuali' in distinta ma questo OP era già aperto prima "
+                    f"dell'attivazione del flag e non è ancora evaso — trattati con la logica "
+                    f"storica (nessun carico automatico). Serve una verifica manuale di Angelo "
+                    f"sulla giacenza di questi codici, oppure l'autorizzazione esplicita dell'OP "
+                    f"al nuovo comportamento (POST /api/ordini_produzione/{o.codice}/autorizza_contestuale)."
+                )
+                _audit(o, 'CONTESTUALE_LEGACY_BLOCCATO', f'{codice_lavorato}: {sorted(set(legacy_bloccati))}', event_id)
 
         try:
             costo = _calcola_costo_standard(codice_lavorato)
@@ -923,9 +1104,32 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
                     varianza_manodopera=round(costo_reale_mdo - costo_standard_mdo, 4),
                     varianza_tariffa_lavorazione=round(var_tariffa_lav, 4) if fase_congelata else 0,
                     varianza_tariffa_manodopera=round(var_tariffa_mdo, 4) if fase_congelata else 0,
+                    event_id=event_id,
                 ))
         except Exception:
             pass  # nessuna varianza registrabile (fase non abbinabile) non deve bloccare il consuntivo
+
+    # Contapieghe automatico matrice/contromatrice — SEMPRE per ogni fase di
+    # Piega/Curvatubi dichiarata (indipendentemente da prima_fase, come la
+    # Varianza sopra: l'usura fisica dello stampo avviene ad ogni colpo
+    # pressa, non solo alla prima fase del ciclo del codice). Buoni+scarto:
+    # uno scarto consuma comunque un colpo pressa quanto un pezzo buono —
+    # manutenzione preventiva e prevenzione non conformità sull'usura.
+    qta_pieghe = good + scrap
+    if qta_pieghe > 0 and any(k in fase_nome.lower() for k in ('piega', 'curva')):
+        try:
+            scheda_piega = SchedaLavorazioneWood.query.filter_by(codice_padre=codice_lavorato).first()
+            if scheda_piega:
+                if scheda_piega.matrice_id:
+                    matrice = MatriceWood.query.get(scheda_piega.matrice_id)
+                    if matrice:
+                        matrice.contapieghe = (matrice.contapieghe or 0) + qta_pieghe
+                if scheda_piega.contromatrice_id:
+                    contromatrice = ContromatriceWood.query.get(scheda_piega.contromatrice_id)
+                    if contromatrice:
+                        contromatrice.contapieghe = (contromatrice.contapieghe or 0) + qta_pieghe
+        except Exception:
+            pass  # mai bloccare il consuntivo per un contatore di manutenzione
 
     return avviso_magazzino
 
@@ -1610,7 +1814,7 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                 # Scheda Lavorazione (matrice/punto zero/rullo/satinatura, tutti
                 # per macchine di piega/taglio) — l'avviso lì è sempre falso
                 # allarme, va mostrato solo dove quei parametri hanno senso.
-                'nota': '' if nome_l == 'saldatura' else '⚠️ Parametri non ancora compilati in Parametri di Lavorazione',
+                'nota': '' if 'sald' in nome_l else '⚠️ Parametri non ancora compilati in Parametri di Lavorazione',
             }
             righe_per_materiale.setdefault(materiale, []).append(riga)
 
@@ -1827,14 +2031,18 @@ def api_diagnostica_fasi_op(op_code):
 @pp_bp.get('/api/dichiarazione-produzione/reintegro-scarti')
 def api_reintegro_scarti():
     """
-    Elenco di TUTTI i codici (su qualunque centro di costo interno) dove è
-    stato dichiarato dello scarto E mancano ancora pezzi buoni per
-    completare il pianificato — cioè "ho scartato dei pezzi, li devo
-    rifare". Il meccanismo per dichiararli è lo STESSO di sempre (dichiara
-    di nuovo sulla stessa riga, in Dichiarazione Produzione) — questo
-    endpoint serve solo a renderlo impossibile da perdere: senza, un
-    reintegro da fare si confondeva nella lista generale di tutti gli OP
-    aperti, indipendentemente dal perché mancava ancora qualcosa.
+    Elenco di TUTTI i codici (su qualunque centro di costo interno) dove
+    manca ancora produzione a causa di uno scarto — sia scarto DIRETTO
+    (dichiarato proprio su quella riga) sia scarto INDOTTO da una fase A
+    VALLE che consuma questo codice (vedi _fabbisogno_propagato_per_op):
+    un OP per 16 TR2001 con 10 buoni + 6 scarti alla Piega genera qui ANCHE
+    una riga per il codice figlio (es. TPD32L3440) al Taglio con saldo 6,
+    pur non avendo scarto diretto dichiarato lì — altrimenti il Taglio
+    resterebbe "già completato" (16 pianificati, 16 già tagliati) e nessuno
+    saprebbe che servono altri 6 pezzi per rimpiazzare quelli persi in
+    Piega. Il meccanismo per dichiararli resta lo STESSO di sempre
+    (dichiara di nuovo sulla stessa riga, in Dichiarazione Produzione) —
+    questo endpoint serve solo a renderlo impossibile da perdere.
     """
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
               .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
@@ -1866,6 +2074,7 @@ def api_reintegro_scarti():
 
     risultato = []
     for o in ordini:
+        fabbisogno_effettivo = _fabbisogno_propagato_per_op(o, mappa_distinta=mappa_distinta)
         for comp in componenti_per_op[o.id]:
             codice_comp = comp['codice']
             componente_finale = (codice_comp == o.codice_articolo)
@@ -1875,10 +2084,12 @@ def api_reintegro_scarti():
                 if not centro:
                     continue
                 chiave = (o.codice, componente_param, centro.nome.strip().lower())
-                dati = dati_per_riga.get(chiave)
-                if not dati or dati['scarto'] <= 0:
-                    continue  # nessuno scarto dichiarato qui: non è un reintegro
-                qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+                dati = dati_per_riga.get(chiave) or {'buoni': 0, 'scarto': 0}
+                qta_necessaria_base = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+                qta_necessaria = round(fabbisogno_effettivo.get(codice_comp, qta_necessaria_base), 4)
+                indotto_da_valle = qta_necessaria > qta_necessaria_base
+                if dati['scarto'] <= 0 and not indotto_da_valle:
+                    continue  # nessuno scarto qui, né diretto né indotto da una fase a valle: non è un reintegro
                 saldo = max(qta_necessaria - dati['buoni'], 0)
                 if saldo <= 0:
                     continue  # lo scarto c'è stato ma è già stato rifatto: niente da reintegrare
@@ -1888,6 +2099,7 @@ def api_reintegro_scarti():
                     'centro_id': centro.id, 'centro_nome': centro.nome,
                     'qta_necessaria': qta_necessaria, 'buoni': dati['buoni'], 'scarto_totale': dati['scarto'],
                     'saldo_da_reintegrare': saldo,
+                    'indotto_da_scarto_a_valle': indotto_da_valle,
                 })
     risultato.sort(key=lambda r: -r['saldo_da_reintegrare'])
     return jsonify(risultato)
@@ -1903,7 +2115,12 @@ def api_dichiarazione_op_aperti(cid):
     Stesso motore di risoluzione già usato in Monitor/LIVE: esplode la
     distinta base di ogni OP aperto e tiene solo i codici il cui Ciclo di
     Lavoro passa da QUESTO centro, con il saldo calcolato sui consuntivi già
-    dichiarati per quel componente specifico.
+    dichiarati per quel componente specifico. 'qta_necessaria' include il
+    fabbisogno propagato da eventuali scarti su una fase A VALLE che
+    consuma questo codice (vedi _fabbisogno_propagato_per_op) — altrimenti
+    un componente a monte (es. il Taglio di un semilavorato) risulterebbe
+    "già completato" anche quando servono altri pezzi per rimpiazzare uno
+    scarto avvenuto più avanti nel ciclo (es. alla Piega).
     """
     centro = CentroCostoWood.query.get_or_404(cid)
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
@@ -1950,6 +2167,7 @@ def api_dichiarazione_op_aperti(cid):
 
     risultato = []
     for o in ordini:
+        fabbisogno_effettivo = _fabbisogno_propagato_per_op(o, mappa_distinta=mappa_distinta)
         gruppo_componenti = []
         for comp in componenti_per_op[o.id]:
             codice_comp = comp['codice']
@@ -1970,7 +2188,8 @@ def api_dichiarazione_op_aperti(cid):
             componente_finale = (codice_comp == o.codice_articolo)
             componente_param = None if componente_finale else codice_comp
             es_ultima_fase = componente_finale and _e_ultima_fase_del_ciclo(codice_comp, centro.nome)
-            qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+            qta_necessaria_base = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+            qta_necessaria = round(fabbisogno_effettivo.get(codice_comp, qta_necessaria_base), 4)
             fatti = fatti_per_componente.get((o.codice, componente_param), 0)
             saldo = max(qta_necessaria - fatti, 0)
             if saldo <= 0:
@@ -1979,6 +2198,7 @@ def api_dichiarazione_op_aperti(cid):
                 'componente': componente_param, 'componente_finale': es_ultima_fase,
                 'codice_lavorato': codice_comp, 'descrizione': descrizione_per_codice.get(codice_comp, ''),
                 'qta_necessaria': qta_necessaria, 'fatti': fatti, 'saldo': saldo,
+                'reintegro_da_scarto_a_valle': qta_necessaria > qta_necessaria_base,
             })
         if not gruppo_componenti:
             continue
@@ -2042,7 +2262,8 @@ def api_dichiarazione_crea():
                 consumi_override[cod] = qta_f
     event_id = str(uuid.uuid4())
     avviso_magazzino = _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id,
-                                                     componente=componente, consumi_override=consumi_override)
+                                                     componente=componente, consumi_override=consumi_override,
+                                                     approvato_direzione=True)
 
     # Se questa dichiarazione era autorizzata da un 8D approvato, lo consuma:
     # non autorizza più nessuna dichiarazione futura, un'eccedenza successiva
@@ -2253,9 +2474,9 @@ def api_dichiarazione_anteprima():
 
     # Scarico basato su BUONI+SCARTO: il materiale grezzo si consuma per
     # ogni pezzo tagliato, anche quello poi scartato — non solo per i buoni.
-    consumi = _calcola_consumi_standard(o, componente_finale, componente, good + scrap)
+    consumi, contestuali, legacy_bloccati = _calcola_consumi_standard(o, componente_finale, componente, good + scrap)
 
-    tutti_codici = {codice_caricato} | set(consumi.keys())
+    tutti_codici = {codice_caricato} | set(consumi.keys()) | set(contestuali.keys())
     descr_map = {}
     try:
         for a in ArticoloML.query.filter(ArticoloML.sku.in_(tutti_codici)).all():
@@ -2271,12 +2492,46 @@ def api_dichiarazione_anteprima():
 
     # Il CARICO a magazzino resta SOLO sui pezzi buoni — uno scarto non
     # diventa mai scorta utilizzabile. Se good=0 (solo scarto dichiarato),
-    # niente da caricare.
+    # niente da caricare. I 'contestuali' (isole one-piece-flow, es.
+    # FRONTE+RETRO) si mostrano a parte: verranno caricati E scaricati in
+    # automatico alla conferma, non sono uno scarico da stock preesistente.
+    # 'avviso_contestuale_legacy': codici che sarebbero contestuali ma questo
+    # OP è legacy (aperto prima del flag) e non ancora evaso/autorizzato —
+    # in anteprima compaiono dentro 'componenti' (scarico normale, come oggi),
+    # NON in 'componenti_contestuali', finché Angelo non autorizza l'OP.
     return jsonify(ok=True,
         carica=({'codice': codice_caricato, 'descrizione': descr_map.get(codice_caricato, ''), 'quantita': good}
                 if good > 0 else None),
         componenti=[{'codice': cod, 'descrizione': descr_map.get(cod, ''), 'quantita': round(qta, 4)}
-                    for cod, qta in consumi.items()])
+                    for cod, qta in consumi.items()],
+        componenti_contestuali=[{'codice': cod, 'descrizione': descr_map.get(cod, ''), 'quantita': round(qta, 4)}
+                                 for cod, qta in contestuali.items()],
+        avviso_contestuale_legacy=(sorted(set(legacy_bloccati)) if legacy_bloccati else None),
+        op_code=o.codice)
+
+
+@pp_bp.route('/api/ordini_produzione/<codice>/autorizza_contestuale', methods=['POST'])
+def api_autorizza_contestuale_op(codice):
+    """
+    Autorizzazione esplicita di Angelo (PIN capo) per far passare un OP
+    legacy (aperto prima che un componente della sua distinta diventasse
+    'contestuale', e non ancora completamente evaso) al nuovo comportamento
+    automatico — carico+scarico automatico del figlio, niente più suo
+    Ordine di Lavoro separato. Senza questa autorizzazione, l'OP resta sul
+    comportamento storico per tutte le prossime dichiarazioni (vedi
+    _contestuale_attivo_per_op).
+    """
+    d = request.get_json(force=True) if request.is_json else request.args
+    if not _verifica_pin_capo(d):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    o = OrdineProduzione.query.filter_by(codice=(codice or '').strip()).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+    o.contestuale_autorizzato_da_angelo = True
+    o.data_autorizzazione_contestuale = datetime.utcnow()
+    db.session.commit()
+    _audit(o, 'CONTESTUALE_AUTORIZZATO_ANGELO', 'OP autorizzato al nuovo comportamento one-piece-flow', '')
+    return jsonify(ok=True, ordine=_ordine(o))
 
 
 def _verifica_pin_capo(d):
@@ -2448,7 +2703,7 @@ def api_dichiarazione_approva(eid):
     # _calcola_campi_giacenza) — quindi lo Storico Produzione del Kanban
     # deve contarla nello stesso istante, non restare fermo ai soli rientri
     # DDT dalla verniciatura.
-    if e.componente is None and (e.fase or '').strip().lower() == 'saldatura' and e.pezzi_buoni > 0:
+    if e.componente is None and 'sald' in (e.fase or '').strip().lower() and e.pezzi_buoni > 0:
         o = OrdineProduzione.query.filter_by(codice=e.op_code).first()
         if o:
             p = (KanbanProdotto.query
@@ -2508,7 +2763,12 @@ def _storna_evento_consuntivo(e, o):
         # Buoni+scarto: il materiale scaricato in dichiarazione copriva
         # ANCHE i pezzi di scarto (consumano ferro come quelli buoni),
         # quindi lo storno deve ripristinare la stessa quantità totale.
-        consumi = _calcola_consumi_standard(o, componente_finale, e.componente, qta_tagliata_originale)
+        # 'contestuali' (isole one-piece-flow) non richiedono nessun
+        # ripristino: alla dichiarazione originale erano stati caricati E
+        # scaricati nello stesso istante (net zero sulla giacenza) — non
+        # c'è nessuno stock fantasma da restituire, lo storno riguarda
+        # solo i 'consumi' normali (presunto stock preesistente).
+        consumi, _contestuali_storno, _legacy_storno = _calcola_consumi_standard(o, componente_finale, e.componente, qta_tagliata_originale)
         for cod, qta_consumata in consumi.items():
             if qta_consumata:
                 _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',
@@ -2542,6 +2802,19 @@ def _storna_evento_consuntivo(e, o):
                        f'su {centro_evento.nome} (nessuna dichiarazione rimasta)')
                 db.session.delete(numero_lista)
 
+    # Toglie anche le righe di Varianza di Produzione generate da questo
+    # evento (vedi VarianzaProduzioneWood.event_id) — altrimenti restavano
+    # come residuo storico che non corrisponde più a nessuna produzione
+    # reale, gonfiando l'Analisi Costo di quell'OP con una varianza fantasma.
+    # Righe create PRIMA che questo campo esistesse hanno event_id=NULL e
+    # non vengono toccate (dato storico non recuperabile).
+    varianze_da_togliere = VarianzaProduzioneWood.query.filter_by(event_id=e.event_id).all()
+    if varianze_da_togliere:
+        _audit(o, 'STORNO_VARIANZA_PRODUZIONE',
+               f'tolte {len(varianze_da_togliere)} riga/he di varianza legate all\'evento {e.event_id}')
+        for v in varianze_da_togliere:
+            db.session.delete(v)
+
 
 @pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/annulla')
 def api_dichiarazione_annulla(eid):
@@ -2551,14 +2824,16 @@ def api_dichiarazione_annulla(eid):
     tipicamente qui, nella coda di approvazione, prima ancora che il capo
     se ne accorga nello storico). Non modifica i numeri sul posto: inverte
     esattamente quantità OP, giacenza (ri-carica i materiali scaricati,
-    ri-scarica il prodotto caricato) e tempo, poi elimina l'evento. La
-    correzione via MasterWork (es. il saldatore aveva segnato 100 invece
-    di 80) resta comunque un intervento SEPARATO che Angelo fa di là, per
-    conto suo — qui si toglie solo l'errore da IronProduction.
-    ⚠️ LIMITE: le eventuali righe di Varianza di Produzione legate a questo
-    evento NON vengono rimosse (restano come residuo storico) — non alterano
-    la giacenza, solo l'Analisi Costo di quell'OP potrebbe mostrare una
-    varianza in più che non riflette più produzione reale.
+    ri-scarica il prodotto caricato), tempo ed eventuale Varianza di
+    Produzione collegata, poi elimina l'evento. La correzione via
+    MasterWork (es. il saldatore aveva segnato 100 invece di 80) resta
+    comunque un intervento SEPARATO che Angelo fa di là, per conto suo —
+    qui si toglie solo l'errore da IronProduction.
+    ⚠️ LIMITE RESIDUO: le righe di Varianza di Produzione create PRIMA che
+    esistesse VarianzaProduzioneWood.event_id (dato storico) non hanno un
+    collegamento diretto all'evento e non vengono rimosse dallo storno —
+    quelle vecchie restano come residuo, non alterano la giacenza ma
+    potrebbero mostrare una varianza in più nell'Analisi Costo di quell'OP.
     """
     d = request.get_json(force=True)
     if not (_verifica_pin_capo(d) or _verifica_pin_direzione(d)):
