@@ -5,7 +5,8 @@ from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo,
-                    NumeroListaLavoroWood, SchedaLavorazioneWood, ArticoloML, DescrizioneCodiceWood)
+                    NumeroListaLavoroWood, SchedaLavorazioneWood, ArticoloML, DescrizioneCodiceWood,
+                    ParametriLavorazioneWood)
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
                     _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo,
                     _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO)
@@ -442,8 +443,8 @@ def totem_macchina(cid):
         codici_lavorati = {c['codice_lavorato'] for g in gruppi for c in g['componenti']}
         scheda_per_codice = {}
         if codici_lavorati:
-            for s in SchedaLavorazioneWood.query.filter(SchedaLavorazioneWood.codice_padre.in_(codici_lavorati)).all():
-                scheda_per_codice.setdefault(s.codice_padre, s)  # una scheda per codice: basta la prima trovata
+            for s in ParametriLavorazioneWood.query.filter(ParametriLavorazioneWood.codice.in_(codici_lavorati)).all():
+                scheda_per_codice[s.codice] = s
         for g in gruppi:
             for c in g['componenti']:
                 s = scheda_per_codice.get(c['codice_lavorato'])

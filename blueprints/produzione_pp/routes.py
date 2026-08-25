@@ -14,7 +14,8 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
                     NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
                     FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D,
-                    MatriceWood, ContromatriceWood, MappaCodiceMasterWork, RettificaGrezzoIW)
+                    MatriceWood, ContromatriceWood, MappaCodiceMasterWork, RettificaGrezzoIW,
+                    ParametriLavorazioneWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -1143,7 +1144,7 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
     qta_pieghe = good + scrap
     if qta_pieghe > 0 and any(k in fase_nome.lower() for k in ('piega', 'curva')):
         try:
-            scheda_piega = SchedaLavorazioneWood.query.filter_by(codice_padre=codice_lavorato).first()
+            scheda_piega = ParametriLavorazioneWood.query.get(codice_lavorato)
             if scheda_piega:
                 if scheda_piega.matrice_id:
                     matrice = MatriceWood.query.get(scheda_piega.matrice_id)
@@ -1827,11 +1828,10 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
     componenti_di_centro = [c for c in moltiplicatore_per_codice
                             if CicloLavoroWood.query.filter_by(codice=c, centro_costo_id=centro.id).first()]
 
-    schede = (SchedaLavorazioneWood.query
-              .filter(SchedaLavorazioneWood.codice_padre.in_(componenti_di_centro)).all()) if componenti_di_centro else []
-    schede_per_padre = {}
-    for s in schede:
-        schede_per_padre.setdefault(s.codice_padre, []).append(s)
+    parametri_per_codice = {}
+    if componenti_di_centro:
+        for p in ParametriLavorazioneWood.query.filter(ParametriLavorazioneWood.codice.in_(componenti_di_centro)).all():
+            parametri_per_codice[p.codice] = p
 
     righe_per_materiale = {}
     for codice_comp in componenti_di_centro:
@@ -1853,42 +1853,44 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                           .scalar()) or 0)
         saldo = max(nr_pz_da_fare - pezzi_fatti, 0)
 
-        schede_padre = schede_per_padre.get(codice_comp)
-        if schede_padre:
-            for s in schede_padre:
-                pz_per_barra = s.pezzi_per_barra if mostra_barra else None
-                nr_barre = int((saldo + pz_per_barra - 1) // pz_per_barra) if (mostra_barra and pz_per_barra) else None
-                riga = {
-                    'codice': codice_comp, 'materiale': s.codice_figlio, 'misura': s.sviluppo or '',
-                    'lunghezza_barra_mm': s.lunghezza_barra_mm if mostra_barra else None,
-                    'spessore_mm': s.spessore_mm if mostra_barra else None,
-                    'matrice': (s.matrice.codice if s.matrice else '') if mostra_piega else '',
-                    'punto_zero': (s.punto_zero or '') if mostra_piega else '',
-                    'indice_assorbimento': (s.indice_assorbimento or '') if mostra_piega else '',
-                    'rullo': (s.rullo.codice if s.rullo else '') if mostra_rullo else '',
-                    'impostazione_satinatrice': (s.impostazione_satinatrice or '') if mostra_satinatura else '',
-                    'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti, 'saldo': saldo,
-                    'pz_per_barra': pz_per_barra, 'nr_barre': nr_barre, 'nota': '',
-                }
-                righe_per_materiale.setdefault(s.codice_figlio, []).append(riga)
+        # 'Materiale' mostrato in tabella è SEMPRE il primo figlio diretto in
+        # Distinta Base di codice_comp — un dato di distinta, indipendente
+        # dai parametri macchina (che ora sono per codice_comp stesso, non
+        # più legati a una coppia padre/figlio — vedi ParametriLavorazioneWood).
+        figli = _righe_bom_attive_wood(codice_comp)
+        materiale = figli[0].codice_figlio if figli else '—'
+
+        par = parametri_per_codice.get(codice_comp)
+        if par:
+            pz_per_barra = par.pezzi_per_barra if mostra_barra else None
+            nr_barre = int((saldo + pz_per_barra - 1) // pz_per_barra) if (mostra_barra and pz_per_barra) else None
+            riga = {
+                'codice': codice_comp, 'materiale': materiale, 'misura': par.sviluppo or '',
+                'lunghezza_barra_mm': par.lunghezza_barra_mm if mostra_barra else None,
+                'spessore_mm': par.spessore_mm if mostra_barra else None,
+                'matrice': (par.matrice.codice if par.matrice else '') if mostra_piega else '',
+                'punto_zero': (par.punto_zero or '') if mostra_piega else '',
+                'indice_assorbimento': (par.indice_assorbimento or '') if mostra_piega else '',
+                'rullo': (par.rullo.codice if par.rullo else '') if mostra_rullo else '',
+                'impostazione_satinatrice': (par.impostazione_satinatrice or '') if mostra_satinatura else '',
+                'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti, 'saldo': saldo,
+                'pz_per_barra': pz_per_barra, 'nr_barre': nr_barre, 'nota': '',
+            }
         else:
-            # Nessun parametro compilato ancora per questo componente in Parametri
-            # di Lavorazione — materiale di riserva preso dal primo figlio diretto
-            # in Distinta Base, così la riga compare comunque nella lista.
-            figli = _righe_bom_attive_wood(codice_comp)
-            materiale = figli[0].codice_figlio if figli else '—'
+            # Nessun parametro compilato ancora per questo componente in
+            # Parametri di Lavorazione — la riga compare comunque nella lista.
             riga = {
                 'codice': codice_comp, 'materiale': materiale, 'misura': '', 'lunghezza_barra_mm': None,
                 'matrice': '', 'punto_zero': '', 'indice_assorbimento': '', 'rullo': '',
                 'impostazione_satinatrice': '', 'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti,
                 'saldo': saldo, 'pz_per_barra': None, 'nr_barre': None,
                 # In Saldatura non si compilano mai (né servono) i parametri di
-                # Scheda Lavorazione (matrice/punto zero/rullo/satinatura, tutti
-                # per macchine di piega/taglio) — l'avviso lì è sempre falso
-                # allarme, va mostrato solo dove quei parametri hanno senso.
+                # Parametri di Lavorazione (matrice/punto zero/rullo/satinatura,
+                # tutti per macchine di piega/taglio) — l'avviso lì è sempre
+                # falso allarme, va mostrato solo dove quei parametri hanno senso.
                 'nota': '' if 'sald' in nome_l else '⚠️ Parametri non ancora compilati in Parametri di Lavorazione',
             }
-            righe_per_materiale.setdefault(materiale, []).append(riga)
+        righe_per_materiale.setdefault(materiale, []).append(riga)
 
     codici_materiale = list(righe_per_materiale.keys())
     giacenze = {g.codice: g.quantita for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici_materiale)).all()} if codici_materiale else {}
