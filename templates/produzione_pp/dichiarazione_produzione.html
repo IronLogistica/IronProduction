@@ -12,6 +12,39 @@
   <div id="reintegro-lista" style="display:none;padding:0 14px 14px"></div>
 </div>
 
+<div class="mon-section" style="border:1.5px solid #2a9d5c">
+  <div style="padding:14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleVerniciaturaInterna()">
+    <div style="font-weight:700;color:#2a9d5c">🎨 Verniciatura Interna — invia pezzi grezzi a verniciare in casa (nessun DDT)</div>
+    <span id="vernint-freccia">▶</span>
+  </div>
+  <div id="vernint-box" style="display:none;padding:0 14px 14px">
+    <p style="font-size:12px;color:var(--text-dim);margin:0 0 10px">
+      Per quando una parte di un lotto grezzo viene verniciata al centro interno invece che spedita a un terzista
+      esterno — sposta la quantità da Grezzo IW a Finiti IW senza passare da nessun DDT.
+    </p>
+    <div style="position:relative;margin-bottom:10px">
+      <input id="vernint-ricerca" type="text" placeholder="Cerca commessa per OP, codice o numero commessa..." autocomplete="off"
+             style="width:100%;padding:10px 12px;border-radius:6px;border:1px solid var(--border);font-size:13px"
+             oninput="ricercaCommesseVernInt(this)" onfocus="ricercaCommesseVernInt(this)">
+      <div id="vernint-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+    </div>
+    <div id="vernint-selezione" style="display:none;padding:12px;border:1px solid var(--border);border-radius:8px;background:rgba(42,157,92,.06)">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <div>
+          <b class="codice" id="vernint-codice" style="font-size:15px"></b> — <span id="vernint-op-commessa" style="color:var(--text-dim)"></span>
+          <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Grezzo IW disponibile: <b id="vernint-grezzo-disp" style="color:#2a9d5c"></b></div>
+        </div>
+        <button class="btn btn-ghost" onclick="annullaSelezioneVernInt()">✕</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <input id="vernint-quantita" type="number" min="1" placeholder="Quantità da verniciare" style="flex:1;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="confermaVerniciaturaInterna()">✅ Conferma</button>
+      </div>
+      <div id="vernint-esito" style="font-size:12px;margin-top:8px"></div>
+    </div>
+  </div>
+</div>
+
 <div class="mon-section">
   <div style="padding:14px">
     <p style="font-size:12px;color:var(--text-dim);margin-bottom:12px">
@@ -226,6 +259,95 @@ function toggleReintegro(){
   const aperto = el.style.display !== 'none';
   el.style.display = aperto ? 'none' : 'block';
   freccia.textContent = aperto ? '▶' : '▼';
+}
+
+// ── Verniciatura Interna ─────────────────────────────────────────────────
+function toggleVerniciaturaInterna(){
+  const el = document.getElementById('vernint-box');
+  const freccia = document.getElementById('vernint-freccia');
+  const aperto = el.style.display !== 'none';
+  el.style.display = aperto ? 'none' : 'block';
+  freccia.textContent = aperto ? '▶' : '▼';
+}
+
+let _vernintRicercaTimer = null;
+let _vernintRisultati = [];
+function posizionaVernintDropdown(input){
+  const dropdown = document.getElementById('vernint-dropdown');
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = rect.width + 'px';
+}
+async function ricercaCommesseVernInt(input){
+  const dropdown = document.getElementById('vernint-dropdown');
+  const q = input.value.trim();
+  clearTimeout(_vernintRicercaTimer);
+  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  _vernintRicercaTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/dichiarazione-produzione/verniciatura-interna/ricerca-commesse?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    _vernintRisultati = risultati || [];
+    if(!_vernintRisultati.length){
+      dropdown.innerHTML = '<div style="padding:12px;color:var(--text-dim);font-size:13px">Nessuna commessa aperta trovata</div>';
+      posizionaVernintDropdown(input);
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = _vernintRisultati.map((r, i) => `
+      <div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border)"
+           onmousedown="sceltaCommessaVernInt(${i})" onmouseover="this.style.background='rgba(42,157,92,.12)'" onmouseout="this.style.background=''">
+        <b class="codice">${r.codice_articolo}</b> — ${r.op_code}
+        <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${r.commessa||'—'} · ${r.cliente||'—'} · Grezzo IW disponibile: <b style="color:#2a9d5c">${r.grezzo_iw_disponibile}</b></div>
+      </div>`).join('');
+    posizionaVernintDropdown(input);
+    dropdown.style.display = 'block';
+  }, 220);
+}
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('vernint-dropdown');
+  if(dropdown && dropdown.style.display !== 'none' && e.target.id !== 'vernint-ricerca') dropdown.style.display = 'none';
+});
+
+let _vernintOpSelezionato = null;
+function sceltaCommessaVernInt(indice){
+  const r = _vernintRisultati[indice];
+  if(!r) return;
+  _vernintOpSelezionato = r;
+  document.getElementById('vernint-dropdown').style.display = 'none';
+  document.getElementById('vernint-ricerca').value = '';
+  document.getElementById('vernint-codice').textContent = r.codice_articolo;
+  document.getElementById('vernint-op-commessa').textContent = `${r.op_code} · ${r.commessa||'—'} · ${r.cliente||'—'}`;
+  document.getElementById('vernint-grezzo-disp').textContent = r.grezzo_iw_disponibile;
+  document.getElementById('vernint-quantita').value = '';
+  document.getElementById('vernint-esito').textContent = '';
+  document.getElementById('vernint-selezione').style.display = 'block';
+}
+function annullaSelezioneVernInt(){
+  _vernintOpSelezionato = null;
+  document.getElementById('vernint-selezione').style.display = 'none';
+}
+async function confermaVerniciaturaInterna(){
+  const esito = document.getElementById('vernint-esito');
+  if(!_vernintOpSelezionato){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Nessuna commessa selezionata.'; return; }
+  const quantita = parseFloat(document.getElementById('vernint-quantita').value);
+  if(!quantita || quantita <= 0){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Inserisci una quantità valida.'; return; }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Invio...';
+  try{
+    const r = await fetch('/api/dichiarazione-produzione/verniciatura-interna', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({op_code: _vernintOpSelezionato.op_code, quantita})
+    });
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '❌ ' + (d.error || 'Errore.'); return; }
+    esito.style.color = '#2a9d5c';
+    esito.textContent = `✅ ${quantita} pezzi di ${d.codice} inviati a verniciatura interna — Grezzo IW residuo: ${d.grezzo_iw_residuo}, Finiti IW: ${d.giacenza_finiti_iw}`;
+    document.getElementById('vernint-grezzo-disp').textContent = d.grezzo_iw_residuo;
+    document.getElementById('vernint-quantita').value = '';
+  }catch(e){ esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.'; }
 }
 
 function vaiAReintegrare(centroId){

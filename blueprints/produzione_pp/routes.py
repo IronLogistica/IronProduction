@@ -14,10 +14,11 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
                     NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
                     FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D,
-                    MatriceWood, ContromatriceWood, MappaCodiceMasterWork)
+                    MatriceWood, ContromatriceWood, MappaCodiceMasterWork, RettificaGrezzoIW)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
+                    _grezzo_iw_per_codici,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
                     _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
                     _contestuale_attivo_per_op)
@@ -2097,6 +2098,102 @@ def api_diagnostica_fasi_op(op_code):
                  'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto,
                  'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M:%S')} for e in eventi],
         centri=[{'id': c.id, 'nome_esatto': c.nome} for c in centri])
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  VERNICIATURA INTERNA — Angelo manda una parte di un lotto grezzo a
+#  verniciare "in casa" (non tramite terzista esterno, niente DDT). Vive
+#  come strumento a sé stante dentro Dichiarazione di Produzione, SENZA
+#  passare dal ciclo di lavoro ufficiale del codice: se Verniciatura
+#  diventasse una fase vera del ciclo (dopo Saldatura), Saldatura smetterebbe
+#  di far avanzare l'OP (avanza_op scatta solo all'ULTIMA fase) — rompendo
+#  il flusso già funzionante dei pezzi che vanno dal terzista esterno, che
+#  non passano MAI da una dichiarazione interna di Verniciatura. Sposta
+#  semplicemente la quantità da Grezzo IW a Finiti IW, stesso effetto del
+#  rientro da un terzista ma senza DDT — "lo faccio dentro".
+# ══════════════════════════════════════════════════════════════════════════════
+@pp_bp.get('/api/dichiarazione-produzione/verniciatura-interna/ricerca-commesse')
+def api_verniciatura_interna_ricerca_commesse():
+    """
+    Widget di ricerca intelligente per trovare la commessa aperta a cui
+    applicare la verniciatura interna — cerca per codice OP, codice
+    articolo o numero commessa. Ritorna anche il Grezzo IW disponibile per
+    ciascun codice, così Angelo vede subito quanto può inviare.
+    """
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    like = f'%{q}%'
+    ordini = (OrdineProduzione.query
+              .filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
+              .filter(db.or_(OrdineProduzione.codice.ilike(like),
+                              OrdineProduzione.codice_articolo.ilike(like),
+                              OrdineProduzione.commessa.ilike(like)))
+              .order_by(OrdineProduzione.codice).limit(20).all())
+    if not ordini:
+        return jsonify([])
+    codici = list({o.codice_articolo for o in ordini})
+    grezzo_per_codice = _grezzo_iw_per_codici(codici)
+    return jsonify([{
+        'op_code': o.codice, 'codice_articolo': o.codice_articolo,
+        'commessa': o.commessa or '', 'cliente': o.cliente or '',
+        'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona,
+        'grezzo_iw_disponibile': round(grezzo_per_codice.get(o.codice_articolo, 0), 3),
+    } for o in ordini])
+
+
+@pp_bp.post('/api/dichiarazione-produzione/verniciatura-interna')
+def api_verniciatura_interna_conferma():
+    """
+    Conferma l'invio di N pezzi a verniciatura interna per una commessa —
+    scarica Grezzo IW e carica Finiti IW (magazzino locale + Kanban) della
+    stessa quantità. Blocca se la quantità richiesta supera il Grezzo IW
+    davvero disponibile per quel codice (a differenza di altri scarichi
+    automatici nel sistema, qui è un'azione manuale diretta di Angelo — un
+    refuso di battitura va segnalato subito, non silenziato).
+    """
+    d = request.get_json(force=True)
+    op_code = (d.get('op_code') or '').strip()
+    try:
+        quantita = float(d.get('quantita'))
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'Quantità non valida'}), 400
+    if quantita <= 0:
+        return jsonify({'ok': False, 'error': 'La quantità deve essere maggiore di zero'}), 400
+
+    o = OrdineProduzione.query.filter_by(codice=op_code).first()
+    if not o:
+        return jsonify({'ok': False, 'error': 'Ordine di produzione non trovato'}), 404
+    codice = o.codice_articolo
+
+    grezzo_disponibile = _grezzo_iw_per_codici([codice]).get(codice, 0)
+    if quantita > grezzo_disponibile:
+        return jsonify({'ok': False, 'error':
+            f'Grezzo IW disponibile per {codice}: {grezzo_disponibile} — richiesti {quantita}. '
+            f'Verifica la quantità o attendi che venga saldata altra produzione.'}), 400
+
+    db.session.add(RettificaGrezzoIW(
+        codice=codice, delta=-quantita,
+        note=f'Verniciatura interna — OP {o.codice}'))
+    _registra_movimento_giacenza(codice, quantita, 'carico_produzione',
+                                  riferimento=o.codice, note='Verniciatura interna (nessun DDT — lavorazione in casa)')
+
+    kanban_verniciati_dopo = None
+    p = (KanbanProdotto.query
+         .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{codice.upper()}%'))
+         .first())
+    if p:
+        p.verniciati = (p.verniciati or 0) + quantita
+        kanban_verniciati_dopo = p.verniciati
+
+    _audit(o, 'VERNICIATURA_INTERNA', f'{quantita} pezzi di {codice} verniciati internamente (nessun DDT)')
+    db.session.commit()
+    nuova_giacenza = GiacenzaWood.query.get(codice)
+    log(f'Verniciatura interna: {codice} -{quantita} da Grezzo IW, +{quantita} a Finiti IW (OP {o.codice})')
+    return jsonify({'ok': True, 'codice': codice,
+                     'grezzo_iw_residuo': _grezzo_iw_per_codici([codice]).get(codice, 0),
+                     'giacenza_finiti_iw': nuova_giacenza.quantita if nuova_giacenza else None,
+                     'kanban_verniciati_residuo': kanban_verniciati_dopo})
 
 
 @pp_bp.get('/api/dichiarazione-produzione/reintegro-scarti')
