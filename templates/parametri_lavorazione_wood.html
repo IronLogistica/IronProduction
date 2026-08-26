@@ -570,22 +570,52 @@ async function _pluRicercaMasterWorkInput(input, indice){
   clearTimeout(_pluRicercaMwTimer);
   if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
   _pluRicercaMwTimer = setTimeout(async () => {
-    let risultati;
+    // Due fonti in parallelo: le corrispondenze GIA' create (riconoscimento
+    // rapido di una convenzione già usata) e il VERO catalogo MasterWork
+    // (anagrafica_articoli, via IronProduction che fa da proxy) — utile per
+    // un codice mai mappato prima, che la prima ricerca da sola non trova
+    // mai ("nessuna corrispondenza" anche quando il codice esiste benissimo
+    // in MasterWork).
+    let giaUsate = [], dalCatalogo = [], erroreCatalogo = null;
     try{
       const r = await fetch('/api/mappa-codici-masterwork/ricerca?q=' + encodeURIComponent(q));
-      risultati = await r.json();
-    }catch(e){ dropdown.style.display = 'none'; return; }
-    if(!risultati || !risultati.length){
-      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessuna corrispondenza già usata</div>';
-      _posizionaPluMwDropdown(input);
-      dropdown.style.display = 'block';
-      return;
+      giaUsate = await r.json() || [];
+    }catch(e){ /* silenzioso: questa fonte è solo un aiuto, l'altra può bastare */ }
+    try{
+      const r2 = await fetch('/api/mappa-codici-masterwork/ricerca-catalogo?q=' + encodeURIComponent(q));
+      const d2 = await r2.json();
+      if(d2 && d2.errore) erroreCatalogo = d2.messaggio;
+      else dalCatalogo = d2 || [];
+    }catch(e){ erroreCatalogo = 'MasterWork non raggiungibile'; }
+
+    const codiciGiaUsati = new Set(giaUsate.map(x => x.codice_masterwork));
+    let html = '';
+    if(giaUsate.length){
+      html += giaUsate.map(x => {
+        const cod = String(x.codice_masterwork).replace(/"/g, '&quot;');
+        return `<div class="wms-item" onmousedown="_pluSceltaMasterWork('${cod}')">` +
+          `<div><b class="codice">${x.codice_masterwork}</b><br><span style="font-size:11px;color:var(--text-dim)">già usato per ${x.codice_ironproduction}</span></div></div>`;
+      }).join('');
     }
-    dropdown.innerHTML = risultati.map(x => {
-      const cod = String(x.codice_masterwork).replace(/"/g, '&quot;');
-      return `<div class="wms-item" onmousedown="_pluSceltaMasterWork('${cod}')">` +
-        `<div><b class="codice">${x.codice_masterwork}</b><br><span style="font-size:11px;color:var(--text-dim)">già usato per ${x.codice_ironproduction}</span></div></div>`;
-    }).join('');
+    // Dal catalogo MasterWork, esclusi quelli già mostrati sopra
+    const nuovi = dalCatalogo.filter(x => !codiciGiaUsati.has(x.codice_interno));
+    if(nuovi.length){
+      html += '<div style="padding:4px 10px;font-size:10px;color:var(--text-dim);text-transform:uppercase;border-top:1px solid var(--border)">Dal catalogo MasterWork</div>';
+      html += nuovi.map(x => {
+        const cod = String(x.codice_interno).replace(/"/g, '&quot;');
+        const fasi = (x.fasi && x.fasi.length) ? x.fasi.join(', ') : '';
+        return `<div class="wms-item" onmousedown="_pluSceltaMasterWork('${cod}')">` +
+          `<div><b class="codice">${x.codice_interno}</b>` +
+          (x.descrizione_prodotto ? ` — ${x.descrizione_prodotto}` : '') +
+          (fasi ? `<br><span style="font-size:11px;color:var(--text-dim)">fasi: ${fasi}</span>` : '') +
+          `</div></div>`;
+      }).join('');
+    }
+    if(!html){
+      html = `<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessun codice trovato` +
+        (erroreCatalogo ? ` <span style="color:#e08a8a">(${erroreCatalogo})</span>` : '') + `</div>`;
+    }
+    dropdown.innerHTML = html;
     _posizionaPluMwDropdown(input);
     dropdown.style.display = 'block';
   }, 220);

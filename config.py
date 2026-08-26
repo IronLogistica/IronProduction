@@ -24,6 +24,14 @@ class Config:
     # Token Bearer obbligatorio per le API PP; lasciare vuoto disabilita le API.
     PP_API_TOKEN = os.environ.get('PP_API_TOKEN', '')
 
+    # URL di MasterWork, per la direzione OPPOSTA rispetto a PP_API_TOKEN qui
+    # sopra (quello autentica le chiamate IN INGRESSO da MasterWork verso
+    # IronProduction — /api/pp/events). Questo serve per chiamare MasterWork
+    # da IronProduction (es. ricerca nel catalogo articoli per il widget di
+    # Corrispondenze Codici MasterWork) — riusa lo STESSO PP_API_TOKEN come
+    # segreto condiviso, nessun token nuovo da configurare.
+    MASTERWORK_URL = os.environ.get('MASTERWORK_URL', '')
+
     # Token Bearer per l'integrazione con MasterLedger (Iron Segnaletica):
     # riceve qui il carico magazzino per i materiali "da officina interna"
     # (ferro, filo di saldatura, DPI...) quando arriva un'Entrata Merci.

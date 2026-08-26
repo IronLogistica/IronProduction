@@ -1,5 +1,6 @@
 import os
 import uuid
+import requests
 from datetime import datetime, date
 from flask import Blueprint, current_app, jsonify, render_template, request, Response
 from sqlalchemy.exc import IntegrityError
@@ -1337,6 +1338,38 @@ def api_evento_correggi():
     except Exception as exc:
         db.session.rollback()
         return jsonify(ok=False, error=f'Errore durante la correzione: {exc}'), 500
+
+
+@pp_bp.get('/api/mappa-codici-masterwork/ricerca-catalogo')
+def api_mappa_codici_masterwork_ricerca_catalogo():
+    """
+    Widget di ricerca intelligente per il campo 'Codice MasterWork'
+    dell'associazione (Parametri di Lavorazione → Corrispondenze Codici
+    MasterWork): cerca nel VERO catalogo articoli di MasterWork
+    (anagrafica_articoli), non solo tra le corrispondenze già create —
+    quella ricerca (vedi api_ricerca_mappa_codici_masterwork in
+    blueprints/magazzino/routes.py) è utile per riconoscere un codice
+    riusato, ma dà 'nessuna corrispondenza' per qualunque codice mai
+    mappato prima, anche se esiste benissimo in MasterWork.
+
+    Ogni risultato include le fasi in cui MasterWork lavora quel codice
+    (mostrate come contesto per riconoscere il pezzo giusto) — il valore
+    da associare resta il solo codice_interno.
+    """
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    url = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
+    token = current_app.config.get('PP_API_TOKEN', '')
+    if not url or not token:
+        return jsonify({'errore': True, 'messaggio': 'Integrazione MasterWork non configurata (MASTERWORK_URL/PP_API_TOKEN mancanti)'}), 503
+    try:
+        r = requests.get(f'{url}/api/anagrafica_articoli/ricerca', params={'q': q},
+                          headers={'Authorization': f'Bearer {token}'}, timeout=8)
+        r.raise_for_status()
+        return jsonify(r.json())
+    except requests.exceptions.RequestException as e:
+        return jsonify({'errore': True, 'messaggio': f'MasterWork irraggiungibile: {e}'}), 502
 
 
 @pp_bp.get('/api/mappa-codici-masterwork')
