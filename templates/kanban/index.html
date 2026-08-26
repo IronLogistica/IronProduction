@@ -70,12 +70,12 @@
       <th style="width:26px;background:rgba(255,255,255,.02)"></th>
       <th colspan="2" style="text-align:left;padding-left:10px;background:rgba(30,111,165,.06);border-right:2px solid var(--border)">Articolo</th>
       <th style="background:rgba(30,111,165,.06);border-right:1px solid var(--border)">WMS</th>
-      <th style="background:rgba(240,112,112,.06);color:#f07070;border-right:1px solid rgba(240,112,112,.2)">Residuo<br>da Prod.</th>
+      <th style="background:rgba(240,112,112,.06);color:#f07070">In<br>Produzione</th>
       <th style="background:rgba(30,111,165,.08);color:var(--steel2)">Grezzi</th>
-      <th style="background:rgba(230,184,0,.08);color:#f0c040;border-right:1px solid rgba(230,184,0,.2)">Vern./<br>Zinc.</th>
+      <th style="background:rgba(230,184,0,.08);color:#f0c040;border-right:1px solid rgba(230,184,0,.2)">In<br>Trattamento</th>
       <th style="background:rgba(26,158,92,.08);color:#5debb0">Finiti<br>IW</th>
       <th style="background:rgba(26,158,92,.12);color:#5debb0;border-right:2px solid rgba(26,158,92,.25)">Finiti<br>IS</th>
-      <th colspan="3" style="background:rgba(255,255,255,.03);color:var(--text-dim);border-right:1px solid var(--border)">Saldi</th>
+      <th colspan="4" style="background:rgba(255,255,255,.03);color:var(--text-dim);border-right:1px solid var(--border)">Saldi</th>
       <th style="background:rgba(30,111,165,.06)">⏱</th>
       <th style="width:32px;background:rgba(255,255,255,.02)">⚙️</th>
     </tr>
@@ -85,14 +85,15 @@
       <th style="text-align:left;padding-left:10px;min-width:80px;max-width:110px">Codice</th>
       <th style="text-align:left;min-width:140px;border-right:2px solid var(--border)">Descrizione</th>
       <th style="border-right:1px solid var(--border)" title="Scheda WMS completa">📊</th>
-      <th style="background:rgba(240,112,112,.05);color:#f07070" title="Residuo da produrre (da WMS)">⚠️ Da Fare</th>
-      <th style="background:rgba(30,111,165,.05);color:var(--steel2)" title="Prodotti grezzi: lavorati ma non ancora trattati">Grezzi</th>
-      <th style="background:rgba(230,184,0,.05);color:#f0c040;border-right:1px solid rgba(230,184,0,.15)" title="In verniciatura / zincatura esterna">In Tratt.</th>
-      <th style="background:rgba(26,158,92,.05);color:#5debb0" title="Prodotti finiti rientrati dal trattamento esterno (IronWarehouse)">IW Stock</th>
-      <th style="background:rgba(26,158,92,.08);color:#5debb0;border-right:2px solid rgba(26,158,92,.2)" title="Prodotti finiti da IronLogistic (spediti/pronti)">IS Stock</th>
-      <th style="font-size:9px;color:var(--text-dim)" title="Saldo Contabile a Lungo Termine (SCLT) = Grezzi + In Tratt. + IW + IS + Residuo da Produrre − Impegni">SC (LT)</th>
-      <th style="font-size:9px;color:#e0eefc" title="Saldo Contabile a Breve Termine (SCBT) = In Tratt. + IW + IS − Impegni (NON include i Grezzi: richiedono ancora l'intero ciclo di produzione, non sono a breve termine)">SC (BT)</th>
-      <th style="font-size:9px;color:var(--text-dim);border-right:1px solid var(--border)" title="Saldo Disponibile = Finiti IW + Finiti IS − Impegni: quello evadibile subito">Disp.</th>
+      <th style="background:rgba(240,112,112,.05);color:#f07070" title="Residuo Commesse — quanto resta ancora da produrre sugli Ordini di Produzione aperti">Residuo Commesse</th>
+      <th style="background:rgba(30,111,165,.05);color:var(--steel2)" title="Da Trattare — prodotti grezzi, lavorati ma non ancora trattati">Da Trattare</th>
+      <th style="background:rgba(230,184,0,.05);color:#f0c040;border-right:1px solid rgba(230,184,0,.15)" title="In lavorazione esterna — presso il verniciatore/zincatore, spedito ma non ancora rientrato">In lav. esterna</th>
+      <th style="background:rgba(26,158,92,.05);color:#5debb0" title="IW Stock — prodotti finiti rientrati dal trattamento esterno o verniciati internamente">IW Stock</th>
+      <th style="background:rgba(26,158,92,.08);color:#5debb0;border-right:2px solid rgba(26,158,92,.2)" title="IS Stock — prodotti finiti da IronLogistic (spediti/pronti, da WMS)">IS Stock</th>
+      <th style="font-size:9px;color:var(--text-dim)" title="SALDO LT (Post-Produzione) = Grezzi + In Trattamento + Finiti IW + Finiti IS + Residuo Commesse − Impegni Clienti (da WMS)">SALDO LT</th>
+      <th style="font-size:9px;color:#4a9fd6" title="SALDO C/SCORTA (Scorta Minima) = SALDO LT − Scorta Minima (da WMS, ultimo valore sincronizzato in locale — non una chiamata live)">SALDO C/SCORTA</th>
+      <th style="font-size:9px;color:#e0eefc" title="SALDO BT (Pronti Breve Termine) = In Trattamento + Finiti IW + Finiti IS − Impegni Clienti (da WMS) — NON include i Grezzi: richiedono ancora l'intero ciclo di produzione, non sono a breve termine">SALDO BT</th>
+      <th style="font-size:9px;color:var(--text-dim);border-right:1px solid var(--border)" title="SALDO DISPONIBILE (Pronti da Impegnare Subito) = Finiti IW + Finiti IS − Impegni Clienti (da WMS): quello evadibile subito">DISPONIBILE</th>
       <th title="Analisi Takt Time">Takt</th>
       <th style="width:32px"></th>
     </tr>
@@ -100,6 +101,12 @@
   <tbody>
   {% for p in prodotti %}
   {% set saldo_sc  = p.grezzi + p.in_vern + p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
+  {# SALDO C/SCORTA = SALDO LT − Scorta Minima WMS già sincronizzata in
+     locale (p.scorta_minima_locale, attributo dinamico impostato dalla
+     route — MAI una chiamata WMS live per riga: una pagina non deve
+     dipendere da chiamate di rete esterna per aprirsi). None se il codice
+     non è ancora mai stato sincronizzato — mostrato '—', mai zero. #}
+  {% set saldo_scorta = (saldo_sc - p.scorta_minima_locale) if p.scorta_minima_locale is not none else none %}
   {# SALDO BT: NON include più i Grezzi (il grezzo richiede ancora l'intero
      ciclo di produzione, non è "a breve termine") — coerente con la formula
      ora usata nella Scheda WMS dello stesso prodotto (KanbanProdotto.
@@ -169,15 +176,19 @@
       {{ p.finiti_is }}
     </td>
 
-    {# Col 9: Saldo Contabile a Lungo Termine SCLT (include il Residuo da Produrre) #}
+    {# Col 9: SALDO LT (include il Residuo Commesse) #}
     <td class="num saldo-td saldo-sc {% if saldo_sc < 0 %}num-neg{% elif saldo_sc > 0 %}num-pos{% endif %}"
         style="font-weight:700">{{ saldo_sc }}</td>
 
-    {# Col 9b: Saldo Contabile a Breve Termine SCBT (sterilizza il Residuo da Produrre) #}
+    {# Col 9a: SALDO C/SCORTA = SALDO LT − Scorta Minima WMS (locale, mai live) #}
+    <td class="num saldo-td saldo-scorta {% if saldo_scorta is none %}{% elif saldo_scorta < 0 %}num-neg{% elif saldo_scorta > 0 %}num-pos{% endif %}"
+        style="font-weight:700;color:#4a9fd6">{{ saldo_scorta if saldo_scorta is not none else '—' }}</td>
+
+    {# Col 9b: SALDO BT (sterilizza Residuo Commesse e Grezzi) #}
     <td class="num saldo-td saldo-scbt {% if saldo_scbt < 0 %}num-neg{% elif saldo_scbt > 0 %}num-pos{% endif %}"
         style="font-weight:700">{{ saldo_scbt }}</td>
 
-    {# Col 10: Saldo Disponibile #}
+    {# Col 10: SALDO DISPONIBILE #}
     <td class="num {% if saldo_disp < 0 %}num-neg{% elif saldo_disp > 0 %}num-pos{% endif %}"
         style="border-right:1px solid var(--border)">{{ saldo_disp }}</td>
 
@@ -225,7 +236,23 @@
       </td>
       {% set tot_sc  = prodotti|sum(attribute='grezzi') + prodotti|sum(attribute='in_vern') + prodotti|sum(attribute='verniciati') + prodotti|sum(attribute='finiti_is') + prodotti|sum(attribute='in_prod') - prodotti|sum(attribute='riservato') %}
       <td class="num {% if tot_sc < 0 %}num-neg{% else %}num-pos{% endif %}" style="font-weight:900">{{ tot_sc }}</td>
-      {% set tot_scbt = prodotti|sum(attribute='grezzi') + prodotti|sum(attribute='in_vern') + prodotti|sum(attribute='verniciati') + prodotti|sum(attribute='finiti_is') - prodotti|sum(attribute='riservato') %}
+      {# Totale SALDO C/SCORTA: somma solo sui prodotti con una scorta minima
+         già sincronizzata (p.scorta_minima_locale non None) — quelli mai
+         sincronizzati non hanno un valore da sottrarre, non contribuiscono
+         né in un senso né nell'altro al totale. #}
+      {% set ns = namespace(tot_scorta=0, almeno_uno=false) %}
+      {% for pp in prodotti %}
+        {% if pp.scorta_minima_locale is not none %}
+          {% set ns.almeno_uno = true %}
+          {% set saldo_pp = pp.grezzi + pp.in_vern + pp.verniciati + pp.finiti_is + pp.in_prod - pp.riservato %}
+          {% set ns.tot_scorta = ns.tot_scorta + (saldo_pp - pp.scorta_minima_locale) %}
+        {% endif %}
+      {% endfor %}
+      <td class="num {% if not ns.almeno_uno %}{% elif ns.tot_scorta < 0 %}num-neg{% else %}num-pos{% endif %}"
+          style="font-weight:900;color:#4a9fd6" title="Somma solo sui codici con scorta minima già sincronizzata da WMS">
+        {{ ns.tot_scorta if ns.almeno_uno else '—' }}
+      </td>
+      {% set tot_scbt = prodotti|sum(attribute='in_vern') + prodotti|sum(attribute='verniciati') + prodotti|sum(attribute='finiti_is') - prodotti|sum(attribute='riservato') %}
       <td class="num {% if tot_scbt < 0 %}num-neg{% else %}num-pos{% endif %}" style="font-weight:900">{{ tot_scbt }}</td>
       <td colspan="1" style="border-right:1px solid var(--border)"></td>
       <td colspan="2"></td>
@@ -739,16 +766,23 @@ function _aggiornaSaldi(row, d) {
   const riserva   = d.riserva   || 0;
 
   const sc  = grezzi + in_vern + verniciati + finiti_is + in_prod - riservato;
-  const scbt= grezzi + in_vern + verniciati + finiti_is - riservato;   // SCLT senza il Residuo da Produrre
+  // SALDO BT: NON include più i Grezzi (coerente con la formula del resto
+  // della board/scheda WMS — il grezzo richiede ancora l'intero ciclo di
+  // produzione, non è "a breve termine").
+  const scbt= in_vern + verniciati + finiti_is - riservato;
   const disp= verniciati + finiti_is - riservato;   // Finiti IW + Finiti IS − Impegni: evadibile subito
 
-  // SC (LT)
+  // SALDO LT
   const scEl = row.querySelector('.saldo-sc');
   if (scEl) { scEl.textContent = sc; scEl.className = 'num saldo-td saldo-sc ' + (sc < 0 ? 'num-neg' : 'num-pos'); }
 
-  // SC (BT)
+  // SALDO BT
   const scbtEl = row.querySelector('.saldo-scbt');
   if (scbtEl) { scbtEl.textContent = scbt; scbtEl.className = 'num saldo-td saldo-scbt ' + (scbt < 0 ? 'num-neg' : 'num-pos'); }
+  // SALDO C/SCORTA non viene ricalcolato qui: la scorta minima WMS
+  // (p.scorta_minima_locale) arriva solo al caricamento pagina, non fa
+  // parte della risposta di questa modifica inline — resta al valore
+  // mostrato all'apertura della board finché non si ricarica la pagina.
 
   // Stato badge — colore riga
   const buf = d.buffer_colore || 'grigio';

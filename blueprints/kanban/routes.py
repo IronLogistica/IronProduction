@@ -34,6 +34,21 @@ def _mappa_giacenza_per_sku():
     return {(g.codice or '').upper(): (g.quantita or 0) for g in GiacenzaWood.query.all()}
 
 
+def _mappa_scorta_minima_per_sku():
+    """
+    Scorta minima WMS già sincronizzata in locale (GiacenzaWood.
+    scorta_minima_wms), come dict {codice_upper: valore o None} — UNA query
+    sola per tutta la board. MAI una chiamata WMS live qui: quel valore si
+    aggiorna solo su azione esplicita (pulsante 'Sincronizza' in Materiali,
+    o la risincronizzazione della singola scheda Kanban) — una pagina non
+    deve mai dipendere da una chiamata di rete esterna per aprirsi, stesso
+    principio già applicato al resto della board. Un codice mai
+    sincronizzato risulta None (mostrato come '—' in tabella, mai zero:
+    zero sarebbe un dato falso, diverso da 'non ancora sincronizzato').
+    """
+    return {(g.codice or '').upper(): g.scorta_minima_wms for g in GiacenzaWood.query.all()}
+
+
 def _mappa_lavorazioni_terzisti_per_sku():
     """Tutte le LavorazioneTerzista con un 'codice' leggibile dal campo
     note, raggruppate per sku — UNA query invece di un LIKE con wildcard
@@ -462,12 +477,18 @@ def index(url_key):
     op_per_sku = _mappa_op_per_sku()
     lav_per_sku = _mappa_lavorazioni_terzisti_per_sku()
     giacenza_per_sku = _mappa_giacenza_per_sku()
+    scorta_minima_per_sku = _mappa_scorta_minima_per_sku()
     skus_board = list({sku_da_nome_prodotto(p.prodotto) for p in prodotti if sku_da_nome_prodotto(p.prodotto)})
     grezzo_iw_per_sku = _grezzo_iw_per_codici(skus_board) if skus_board else {}
     for p in prodotti:
         _aggiorna_residuo_produzione(p, op_per_sku)
         _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku, grezzo_iw_per_sku)
         _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
+        # Attributo dinamico (non un campo del modello — mai salvato): solo
+        # per il rendering di questa pagina, letto dal template come
+        # p.scorta_minima_locale per la colonna SALDO C/SCORTA.
+        sku = sku_da_nome_prodotto(p.prodotto)
+        p.scorta_minima_locale = scorta_minima_per_sku.get(sku.upper()) if sku else None
     db.session.commit()
 
     tot    = len(prodotti)
