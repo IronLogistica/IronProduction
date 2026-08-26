@@ -18,11 +18,19 @@ def _aggiorna_kanban_da_rientro_ddt(codice, qta_rientrata_ora):
     """
     Aggancio automatico: un rientro DDT confermato per un codice che ha una
     scheda Kanban aumenta 'Finiti IW' (verniciati) della stessa quantità —
-    stessa logica (delta + notifica a MasterLogistic-WMS + storico
-    produzione) già usata per la modifica manuale in blueprints/kanban/
-    routes.py::api_aggiorna, qui scatenata dal DDT invece che da un click.
-    Non bloccante: se il codice non ha una scheda Kanban, o la notifica a
-    WMS fallisce, il DDT resta comunque confermato — solo loggato.
+    SOLO in locale (Kanban + Magazzino/GiacenzaWood). Il rientro da
+    terzista NON deve mai toccare MasterLogistic-WMS: il pezzo è appena
+    tornato verniciato, ma resta di proprietà di Iron Wood — non è stato
+    venduto a Iron Segnaletica. 'Finiti IS' legge lo stock WMS in diretta,
+    quindi deve muoversi SOLO quando Iron Segnaletica registra il proprio
+    DDT di acquisto (vedi /api/wms/scarica_finiti_iw, chiamato da
+    MasterLogistic-WMS in quel momento, non da qui).
+    BUG REALE CORRETTO: prima questa funzione notificava ANCHE WMS
+    (carica_produzione), gonfiando Finiti IS per un rientro che non è
+    affatto una vendita — un pezzo risultava così sia "Finiti IW" locale
+    sia "Finiti IS" su WMS, doppiamente presente.
+    Non bloccante: se il codice non ha una scheda Kanban il DDT resta
+    comunque confermato — solo loggato.
     """
     if not codice or qta_rientrata_ora <= 0:
         return
@@ -42,11 +50,7 @@ def _aggiorna_kanban_da_rientro_ddt(codice, qta_rientrata_ora):
     # il campo Kanban p.verniciati. Le due cose vanno tenute allineate.
     _registra_movimento_giacenza(sku, qta_rientrata_ora, 'carico_produzione',
                                   riferimento=codice, note=f'Rientro DDT terzista — {qta_rientrata_ora} pz')
-    try:
-        carica_produzione(sku, qta_rientrata_ora)
-    except MasterLogisticError as e:
-        log(f'WARN: rientro DDT per {codice} NON notificato a MasterLogistic-WMS: {e}')
-    log(f'Kanban: +{qta_rientrata_ora} "Finiti IW" su {p.prodotto} da rientro DDT terzista')
+    log(f'Kanban: +{qta_rientrata_ora} "Finiti IW" su {p.prodotto} da rientro DDT terzista (locale, MAI notificato a WMS)')
 
 
 def _aggiorna_lead_time_esterno_da_rientro(trattamento, data_uscita, data_rientro):
