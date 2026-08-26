@@ -216,6 +216,72 @@ def pagina_ordini_situazione():
     return render_template('produzione_pp/situazione_cards.html', active='situazione_op')
 
 
+def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
+    """
+    Versione LEGGERA e a query BATCH di _lista_lavoro_op, usata SOLO per il
+    riepilogo 'Ordini di Lavoro emessi' nelle card della pagina Situazione
+    OP — serve solo totale_pz/pz_effettuati/residuo_pz per (OP, centro),
+    senza il dettaglio riga-per-riga (parametri macchina, materiale,
+    giacenza) che serve solo quando si apre/stampa la vera Lista di Lavoro
+    (quello resta _lista_lavoro_op, chiamata lì UNA volta per OP+centro).
+
+    BUG REALE TROVATO E CORRETTO: prima si chiamava _lista_lavoro_op() qui
+    dentro un doppio ciclo (per ogni OP aperto, per ogni centro coinvolto)
+    — e _lista_lavoro_op fa internamente una query per OGNI componente
+    (verifica ciclo, distinta base, pezzi fatti...). Con 30 OP aperti e
+    pochi componenti ciascuno si arriva già a ~700 query SQL per un solo
+    caricamento pagina — su Postgres remoto (Railway, non SQLite locale)
+    questo supera facilmente il timeout, e il browser lo vede identico a
+    un errore di rete. Qui sotto le stesse informazioni si ottengono con
+    un pugno di query totali, sempre lo stesso numero indipendentemente da
+    quanti OP sono aperti.
+    """
+    risultato = {}
+    componenti_per_op = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini}
+    tutti_i_codici = {n['codice'] for nodi in componenti_per_op.values() for n in nodi}
+
+    fasi_per_codice = {}
+    if tutti_i_codici:
+        for c in CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_i_codici)).all():
+            fasi_per_codice.setdefault(c.codice, set()).add(c.centro_costo_id)
+    centri_per_id = {c.id: c for c in CentroCostoWood.query.all()}
+
+    fatti_map = {}
+    op_codes = [o.codice for o in ordini]
+    if op_codes:
+        for op_code, fase, componente, tot in (db.session.query(
+                EventoConsuntivoPP.op_code, EventoConsuntivoPP.fase, EventoConsuntivoPP.componente,
+                db.func.sum(EventoConsuntivoPP.pezzi_buoni))
+                .filter(EventoConsuntivoPP.op_code.in_(op_codes))
+                .group_by(EventoConsuntivoPP.op_code, EventoConsuntivoPP.fase, EventoConsuntivoPP.componente).all()):
+            fatti_map[(op_code, fase.strip().lower(), componente)] = tot or 0
+
+    for o in ordini:
+        per_centro = {}
+        for n in componenti_per_op[o.id]:
+            codice_comp = n['codice']
+            centro_ids = fasi_per_codice.get(codice_comp)
+            if not centro_ids:
+                continue
+            nr_pz_da_fare = round((o.qta_pianificata or 0) * n['moltiplicatore'])
+            componente_param = None if codice_comp == o.codice_articolo else codice_comp
+            for centro_id in centro_ids:
+                centro = centri_per_id.get(centro_id)
+                if not centro:
+                    continue
+                pezzi_fatti = fatti_map.get((o.codice, centro.nome.strip().lower(), componente_param), 0)
+                acc = per_centro.setdefault(centro_id, {
+                    'centro_id': centro_id, 'centro_nome': centro.nome,
+                    'totale_pz': 0, 'pz_effettuati': 0,
+                })
+                acc['totale_pz'] += nr_pz_da_fare
+                acc['pz_effettuati'] += pezzi_fatti
+        for v in per_centro.values():
+            v['residuo_pz'] = max(v['totale_pz'] - v['pz_effettuati'], 0)
+        risultato[o.id] = list(per_centro.values())
+    return risultato
+
+
 @pp_bp.route('/api/ordini-produzione/riepilogo_disponibilita')
 def api_ordini_riepilogo_disponibilita():
     """
@@ -319,24 +385,9 @@ def api_ordini_riepilogo_disponibilita():
     # pezzi e link diretto alla stampa, per la card principale. Non assegna
     # mai un numero di lista solo perché la card viene visualizzata: il
     # numero nasce solo quando l'Ordine di Lavoro viene davvero aperto/stampato.
-    mappa_op_by_id = {o.id: o for o in ordini}
+    ordini_lavoro_per_op = _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta)
     for riga in risultato:
-        o = mappa_op_by_id[riga['id']]
-        componenti_op = _esplodi_componenti_op(o, mappa_distinta=mappa_distinta)
-        codici_componenti = {c['codice'] for c in componenti_op}
-        centri_coinvolti = (CentroCostoWood.query
-                            .join(CicloLavoroWood, CicloLavoroWood.centro_costo_id == CentroCostoWood.id)
-                            .filter(CicloLavoroWood.codice.in_(codici_componenti)).distinct().all()
-                            ) if codici_componenti else []
-        ordini_lavoro = []
-        for centro in centri_coinvolti:
-            dati_lista = _lista_lavoro_op(o, centro, assegna_numero=False)
-            ordini_lavoro.append({
-                'centro_id': centro.id, 'centro_nome': centro.nome,
-                'totale_pz': dati_lista['totale_pz'], 'pz_effettuati': dati_lista['pz_effettuati'],
-                'residuo_pz': dati_lista['residuo_pz'],
-            })
-        riga['ordini_lavoro'] = ordini_lavoro
+        riga['ordini_lavoro'] = ordini_lavoro_per_op.get(riga['id'], [])
 
     return jsonify(risultato)
 
