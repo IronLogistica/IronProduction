@@ -1091,21 +1091,56 @@ def api_sincronizza_ordinato_cliente_wms():
 def _grezzo_iw_per_codici(codici):
     """
     Grezzo IW per un elenco di codici — quantità di prodotto finito
-    dichiarata completa (Saldatura, l'ultima fase del ciclo) E approvata
-    dalla Direzione, più le rettifiche manuali cumulative. FUNZIONE
-    CONDIVISA: usata sia da _calcola_campi_giacenza (Magazzino/Alert
-    Scorte) sia dalla Scheda WMS del Kanban Gruppi (card 'Grezzi IW') —
-    stessa fonte, stesso numero ovunque compaia."""
+    dichiarata completa (l'ULTIMA fase del Ciclo di Lavoro di quel
+    codice — QUALUNQUE essa sia, non necessariamente "Saldatura") E
+    approvata dalla Direzione, più le rettifiche manuali cumulative.
+    FUNZIONE CONDIVISA: usata sia da _calcola_campi_giacenza (Magazzino/
+    Alert Scorte) sia dalla Scheda WMS del Kanban Gruppi (card 'Grezzi
+    IW') — stessa fonte, stesso numero ovunque compaia.
+
+    BUG REALE CORRETTO: prima si cercava solo la fase con 'sald' nel
+    nome — funziona per la maggior parte dei codici (Saldatura è
+    l'ultima fase per loro), ma un codice come P60120SA ha Saldatura
+    SEGUITA da Trapano, che è la VERA ultima fase del suo ciclo: i 60
+    pezzi dichiarati completi a Trapano non finivano MAI in Grezzo IW,
+    restando invisibili a tutto quello che dipende da questo numero
+    (Materiali da Trattare, reintegro scarti, terzisti, vendita a Iron
+    Segnaletica...). Ora si usa la STESSA identica regola già in uso
+    per far avanzare l'OP (_e_ultima_fase_del_ciclo/avanza_op, in
+    produzione_pp/routes.py) — qualunque fase sia l'ultima configurata
+    nel Ciclo di Lavoro di quel codice, quella conta, non un nome
+    fisso cercato per sottostringa.
+    """
     grezzo_iw = {}
-    for cod, tot in (db.session.query(OrdineProduzione.codice_articolo,
-                      db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-                      .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
-                      .filter(OrdineProduzione.codice_articolo.in_(codici),
-                              EventoConsuntivoPP.componente.is_(None),
-                              db.func.lower(EventoConsuntivoPP.fase).contains('sald'),
-                              EventoConsuntivoPP.approvato_direzione.is_(True))
-                      .group_by(OrdineProduzione.codice_articolo).all()):
-        grezzo_iw[cod] = tot or 0
+    if codici:
+        # Import ritardato (non in cima al modulo): produzione_pp/routes.py
+        # importa già _grezzo_iw_per_codici da QUESTO modulo — un import in
+        # cima creerebbe un ciclo. A tempo di chiamata i moduli sono già
+        # tutti caricati, quindi qui funziona senza problemi.
+        from blueprints.produzione_pp.routes import _fasi_corrispondono
+
+        ultima_fase_per_codice = {}
+        for c in (CicloLavoroWood.query
+                  .filter(CicloLavoroWood.codice.in_(codici))
+                  .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza.desc()).all()):
+            if c.codice not in ultima_fase_per_codice and c.centro_costo:
+                ultima_fase_per_codice[c.codice] = c.centro_costo.nome
+
+        eventi = (db.session.query(OrdineProduzione.codice_articolo, EventoConsuntivoPP.fase,
+                                    EventoConsuntivoPP.pezzi_buoni)
+                  .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
+                  .filter(OrdineProduzione.codice_articolo.in_(codici),
+                          EventoConsuntivoPP.componente.is_(None),
+                          EventoConsuntivoPP.approvato_direzione.is_(True)).all())
+        for cod, fase, buoni in eventi:
+            ultima_fase = ultima_fase_per_codice.get(cod)
+            # Nessun Ciclo di Lavoro configurato per questo codice: non
+            # possiamo sapere qual è l'ultima fase — stessa filosofia di
+            # _e_ultima_fase_del_ciclo, non blocchiamo, contiamo comunque.
+            e_ultima = _fasi_corrispondono(ultima_fase, fase or '') if ultima_fase else True
+            if e_ultima:
+                grezzo_iw[cod] = grezzo_iw.get(cod, 0) + (buoni or 0)
+
     for cod, delta_tot in (db.session.query(RettificaGrezzoIW.codice, db.func.sum(RettificaGrezzoIW.delta))
                             .filter(RettificaGrezzoIW.codice.in_(codici))
                             .group_by(RettificaGrezzoIW.codice).all()):
