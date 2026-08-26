@@ -91,7 +91,7 @@
       <th style="background:rgba(26,158,92,.05);color:#5debb0" title="Prodotti finiti rientrati dal trattamento esterno (IronWarehouse)">IW Stock</th>
       <th style="background:rgba(26,158,92,.08);color:#5debb0;border-right:2px solid rgba(26,158,92,.2)" title="Prodotti finiti da IronLogistic (spediti/pronti)">IS Stock</th>
       <th style="font-size:9px;color:var(--text-dim)" title="Saldo Contabile a Lungo Termine (SCLT) = Grezzi + In Tratt. + IW + IS + Residuo da Produrre − Impegni">SC (LT)</th>
-      <th style="font-size:9px;color:#e0eefc" title="Saldo Contabile a Breve Termine (SCBT) = Grezzi + In Tratt. + IW + IS − Impegni (sterilizza il Residuo da Produrre: solo quello già fisicamente in magazzino)">SC (BT)</th>
+      <th style="font-size:9px;color:#e0eefc" title="Saldo Contabile a Breve Termine (SCBT) = In Tratt. + IW + IS − Impegni (NON include i Grezzi: richiedono ancora l'intero ciclo di produzione, non sono a breve termine)">SC (BT)</th>
       <th style="font-size:9px;color:var(--text-dim);border-right:1px solid var(--border)" title="Saldo Disponibile = Finiti IW + Finiti IS − Impegni: quello evadibile subito">Disp.</th>
       <th title="Analisi Takt Time">Takt</th>
       <th style="width:32px"></th>
@@ -100,7 +100,11 @@
   <tbody>
   {% for p in prodotti %}
   {% set saldo_sc  = p.grezzi + p.in_vern + p.verniciati + p.finiti_is + p.in_prod - p.riservato %}
-  {% set saldo_scbt = p.grezzi + p.in_vern + p.verniciati + p.finiti_is - p.riservato %}
+  {# SALDO BT: NON include più i Grezzi (il grezzo richiede ancora l'intero
+     ciclo di produzione, non è "a breve termine") — coerente con la formula
+     ora usata nella Scheda WMS dello stesso prodotto (KanbanProdotto.
+     saldo_contabile_breve_termine). #}
+  {% set saldo_scbt = p.in_vern + p.verniciati + p.finiti_is - p.riservato %}
   {% set saldo_disp = p.verniciati + p.finiti_is - p.riservato %}
   {% set buf = p.buffer_colore %}
   {% set nc  = p.n_cicli_chiusi %}
@@ -281,86 +285,97 @@
 
   <div id="wmsContent" style="display:none">
 
-    {# ── RIGA 1: 5 saldi + stock fianco a fianco ── #}
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr 1fr 1fr;gap:8px;margin-bottom:14px;margin-top:38px">
+    {# ── RIGA 1: i 4 "ingredienti" grezzi — Grezzi IW, In Trattamento, Finiti IW, Finiti IS ── #}
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:10px;margin-top:38px">
 
-      {# Saldo Contabile a Lungo Termine (SCLT) #}
-      <div class="wms-saldo-box" style="border-top-color:var(--accent)">
-        <div class="wms-saldo-lbl">SALDO CONTABILE (LT)</div>
-        <div class="wms-saldo-val" id="wsSaldo1">—</div>
-        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Grezzi+Tratt.+IW+IS+Resid.−Imp.</div>
-      </div>
-
-      {# Saldo Contabile a Breve Termine (SCBT) — sterilizza il Residuo da
-         Produrre: solo quello già fisicamente in magazzino/trattamento. #}
-      <div class="wms-saldo-box" style="border-top-color:#8a6fd6">
-        <div class="wms-saldo-lbl">SALDO CONTABILE (BT)</div>
-        <div class="wms-saldo-val" id="wsSaldoBT">—</div>
-        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Grezzi+Tratt.+IW+IS−Imp. (no Residuo)</div>
-      </div>
-
-      {# Saldo Disponibile — freccia lampeggiante sopra: è QUESTO il numero
-         per rispondere a un cliente su una consegna urgente, non i Saldi
-         Contabili (che includono grezzi/in trattamento/residuo, non
-         spedibili subito). Vedi setSaldo() più sotto per l'avviso extra
-         quando Contabile LT è positivo ma Disponibile è negativo. #}
-      <div class="wms-saldo-box" id="boxSaldoDisp" style="border-top-color:var(--steel2);position:relative;overflow:visible">
-        <div class="freccia-urgenti">
-          <div class="freccia-testo">DISPONIBILE PER<br>RICHIESTE URGENTI /<br>PRONTA CONSEGNA</div>
-          <div class="freccia-arrow">⬇</div>
-        </div>
-        <div class="wms-saldo-lbl">SALDO DISPONIBILE</div>
-        <div class="wms-saldo-val" id="wsSaldo2">—</div>
-        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">SALDO PRONTO IMMEDIATAMENTE DISPONIBILE</div>
-        <div id="avvisoContraddizione" style="display:none;font-size:9px;font-weight:800;color:#ff3b3b;margin-top:5px;padding:3px 5px;background:rgba(255,59,59,.12);border-radius:4px">
-          ⚠️ Il Saldo Contabile è positivo ma NON è pronto alla consegna
-        </div>
-      </div>
-
-      {# Grezzi IW — vicino a Finiti IW: stessa fonte di Magazzino
-         (dichiarazioni Saldatura approvate dalla Direzione + rettifiche),
-         distinta dal box 'Grezzi' più sotto (quello è una stima locale
-         da Dichiarazioni+DDT). #}
+      {# Grezzi IW — stessa fonte di Magazzino (dichiarazioni Saldatura
+         approvate dalla Direzione + rettifiche). Il vecchio box 'Grezzi'
+         (KanbanProdotto.grezzi, stima locale da Dichiarazioni+DDT) è stato
+         RIMOSSO: duplicava questo con una formula diversa e i due potevano
+         divergere mostrando due valori diversi per lo stesso concetto. #}
       <div class="wms-saldo-box" style="border-top-color:#c9a227">
         <div class="wms-saldo-lbl">🔧 GREZZI IW</div>
         <div class="wms-saldo-val" style="color:#e0c14a" id="wsGrezziIW">—</div>
         <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Da Magazzino (Saldatura approvata)</div>
       </div>
 
-      {# Finiti IW — vicino a IS #}
+      {# In Trattamento — presso il terzista, spedito ma non ancora rientrato #}
+      <div class="wms-saldo-box" style="border-top-color:#f0c040">
+        <div class="wms-saldo-lbl">🚚 IN TRATTAMENTO</div>
+        <div class="wms-saldo-val" style="color:#f0c040" id="wsInVern">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Presso verniciatore/zincatore esterno</div>
+      </div>
+
+      {# Finiti IW #}
       <div class="wms-saldo-box" style="border-top-color:#e6b800">
-        <div class="wms-saldo-lbl">🎨 FINITI IW (Post-Vern.)</div>
+        <div class="wms-saldo-lbl">🎨 FINITI IW</div>
         <div class="wms-saldo-val" style="color:#f0c040" id="wsStockVern">—</div>
         <div style="font-size:9px;color:var(--text-dim);margin-top:4px">A magazzino verniciati</div>
       </div>
 
-      {# Finiti IS — vicino a IW #}
+      {# Finiti IS #}
       <div class="wms-saldo-box" style="border-top-color:var(--green)">
-        <div class="wms-saldo-lbl">📦 FINITI IS (IronLogistic)</div>
+        <div class="wms-saldo-lbl">📦 FINITI IS</div>
         <div class="wms-saldo-val" style="color:#5debb0" id="wsStockIS">—</div>
-        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Da IronLogistic</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Da IronLogistic (WMS)</div>
       </div>
     </div>
 
-    {# ── RIGA 2: In Trattamento ── #}
-    {# Il box 'Grezzi' (campo KanbanProdotto.grezzi, stima locale da
-       Dichiarazioni+DDT) è stato RIMOSSO: duplicava 'GREZZI IW' sopra con
-       una formula diversa (non filtra per fase Saldatura, non richiede
-       approvazione Direzione, non sa nulla della Verniciatura interna) e i
-       due numeri potevano divergere mostrando due valori diversi per lo
-       stesso concetto. 'GREZZI IW' resta l'unica fonte, collegata a tutto
-       il resto (Materiali da Trattare, reintegro scarti, contestuale,
-       terzisti, vendita a Iron Segnaletica). Il campo p.grezzi in sé NON è
-       stato toccato (resta nel modello/DB, calcolato ma non più mostrato
-       qui) — le formule di Saldo Contabile (LT/BT) in cima continuano a
-       usarlo, non ancora aggiornate per usare Grezzo IW al suo posto. #}
-    <div style="display:grid;grid-template-columns:1fr;gap:8px;margin-bottom:16px">
-      <div style="background:rgba(230,184,0,.05);border:1px solid rgba(230,184,0,.2);border-radius:8px;padding:8px 14px;display:flex;align-items:center;gap:14px">
-        <div style="text-align:center;min-width:60px">
-          <div style="font-size:9px;text-transform:uppercase;color:#f0c040;margin-bottom:2px">In Trattamento</div>
-          <div style="font-size:24px;font-weight:900;color:#f0c040" id="wsInVern">—</div>
+    {# ── RIGA 2: i 4 saldi, nell'ordine SALDO LT → SALDO C/SCORTA → SALDO BT → SALDO DISPONIBILE ── #}
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+
+      {# SALDO LT (Post-Produzione) = Saldo commesse produzione residuo +
+         Grezzi IW + In Trattamento + Finiti IW + Finiti IS (WMS) − Impegni
+         Clienti (WMS). Formula INVARIATA rispetto a "Saldo Contabile (LT)"
+         di prima — solo rinominata. #}
+      <div class="wms-saldo-box" style="border-top-color:var(--accent)">
+        <div class="wms-saldo-lbl">SALDO LT</div>
+        <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;margin-top:-2px;margin-bottom:2px">Post-Produzione</div>
+        <div class="wms-saldo-val" id="wsSaldo1">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px" title="+ Saldo commesse produzione residuo&#10;+ Grezzi IW&#10;+ In Trattamento&#10;+ Finiti IW&#10;+ Finiti IS (da WMS)&#10;− Impegni Clienti (da WMS)">Resid.+Grezzi+Tratt.+IW+IS−Imp.</div>
+      </div>
+
+      {# SALDO C/SCORTA (Scorta Minima) = SALDO LT − Scorta Minima (WMS) —
+         NUOVO: quanto si può davvero impegnare oltre il buffer di sicurezza
+         configurato su MasterLogistic-WMS (colonna "SCORTA MIN." della
+         scheda Articolo). None se WMS non risponde o non ha ancora un
+         valore di scorta minima per questo SKU — mostra "—", MAI zero
+         (zero sarebbe un dato falso, non "nessuna scorta configurata"). #}
+      <div class="wms-saldo-box" style="border-top-color:#4a9fd6">
+        <div class="wms-saldo-lbl">SALDO C/SCORTA</div>
+        <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;margin-top:-2px;margin-bottom:2px">Scorta Minima</div>
+        <div class="wms-saldo-val" id="wsSaldoScorta">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px" title="+ SALDO LT&#10;− Scorta Minima (da WMS)">SALDO LT − Scorta Min. (WMS)</div>
+      </div>
+
+      {# SALDO BT (Pronti Breve Termine) = Finiti IS (WMS) + Finiti IW +
+         In Trattamento − Impegni Clienti (WMS). CAMBIATA rispetto a prima:
+         NON include più i Grezzi IW (il grezzo richiede ancora l'intero
+         ciclo di produzione, non è "a breve termine"). #}
+      <div class="wms-saldo-box" style="border-top-color:#8a6fd6">
+        <div class="wms-saldo-lbl">SALDO BT</div>
+        <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;margin-top:-2px;margin-bottom:2px">Pronti Breve Termine</div>
+        <div class="wms-saldo-val" id="wsSaldoBT">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px" title="+ Finiti IS (da WMS)&#10;+ Finiti IW&#10;+ In Trattamento&#10;− Impegni Clienti (da WMS)">IS+IW+Tratt.−Imp. (no Grezzi)</div>
+      </div>
+
+      {# SALDO DISPONIBILE (Pronti da Impegnare Subito) = Finiti IS (WMS) +
+         Finiti IW − Impegni Clienti (WMS). Formula INVARIATA — solo
+         rinominata. Freccia lampeggiante: è QUESTO il numero per rispondere
+         a un cliente su una consegna urgente, non i Saldi LT/BT (che
+         includono grezzo/in trattamento, non spedibili subito). #}
+      <div class="wms-saldo-box" id="boxSaldoDisp" style="border-top-color:var(--steel2);position:relative;overflow:visible">
+        <div class="freccia-urgenti">
+          <div class="freccia-testo">DISPONIBILE PER<br>RICHIESTE URGENTI /<br>PRONTA CONSEGNA</div>
+          <div class="freccia-arrow">⬇</div>
         </div>
-        <div style="font-size:10px;color:var(--text-dim);line-height:1.4">Presso verniciatore<br>/ zincatore esterno</div>
+        <div class="wms-saldo-lbl">SALDO DISPONIBILE</div>
+        <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;margin-top:-2px;margin-bottom:2px">Pronti da Impegnare Subito</div>
+        <div class="wms-saldo-val" id="wsSaldo2">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px" title="+ Finiti IS (da WMS)&#10;+ Finiti IW&#10;− Impegni Clienti (da WMS)">IS+IW−Imp.</div>
+        <div id="avvisoContraddizione" style="display:none;font-size:9px;font-weight:800;color:#ff3b3b;margin-top:5px;padding:3px 5px;background:rgba(255,59,59,.12);border-radius:4px">
+          ⚠️ Il Saldo LT è positivo ma NON è pronto alla consegna
+        </div>
       </div>
     </div>
 
@@ -948,6 +963,7 @@ function _caricaSchedaWms(pid) {
         if (val != null) el.className = 'wms-saldo-val' + (val < 0 ? ' neg' : '');
       };
       setSaldo('wsSaldo1', d.saldo_contabile);
+      setSaldo('wsSaldoScorta', d.saldo_scorta);
       setSaldo('wsSaldoBT', d.saldo_contabile_breve_termine);
       setSaldo('wsSaldo2', d.saldo_disponibile);
       // Avviso extra "idiot-proof": se il Saldo Contabile sembra a posto

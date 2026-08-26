@@ -539,7 +539,7 @@ def api_kanban_scheda(pid):
         'sku': sku,
         'stock_verniciati': p.verniciati, 'stock_grezzi': p.grezzi, 'in_vern': p.in_vern,
         'stock_is': p.finiti_is, 'grezzi_iw': grezzi_iw,
-        'riservato_clienti': p.riservato,
+        'riservato_clienti': p.riservato, 'scorta_minima': None,
         'ordini_clienti': [], 'ultimi_evasi': [],
         'saldo_contabile': p.saldo_contabile,
         'saldo_contabile_breve_termine': p.saldo_contabile_breve_termine,
@@ -548,6 +548,13 @@ def api_kanban_scheda(pid):
         # contabile (che include anche grezzi/in trattamento, non ancora
         # pronti alla vendita).
         'saldo_disponibile': p.verniciati + p.finiti_is - p.riservato,
+        # Saldo C/Scorta = Saldo LT meno la scorta minima configurata su
+        # MasterLogistic-WMS (colonna "SCORTA MIN." della sua scheda
+        # Articolo) — quanto REALMENTE si può impegnare oltre il buffer di
+        # sicurezza. None finché non si riesce a leggere la scorta minima
+        # da WMS (nessun valore locale di fallback: è un dato che vive solo
+        # là, mai stato un campo modificabile qui).
+        'saldo_scorta': None,
         'wms_errore': None,
     }
     if sku:
@@ -559,9 +566,14 @@ def api_kanban_scheda(pid):
             risultato['riservato_clienti'] = wms['riservato_clienti']
             risultato['ordini_clienti'] = wms['ordini_clienti']
             risultato['ultimi_evasi'] = wms['ultimi_evasi']
+            risultato['scorta_minima'] = wms.get('scorta_minima')
+            risultato['saldo_contabile'] = (
+                p.grezzi + p.in_vern + p.verniciati + risultato['stock_is'] + p.in_prod - wms['riservato_clienti'])
             risultato['saldo_contabile_breve_termine'] = (
-                p.grezzi + p.in_vern + p.verniciati + risultato['stock_is'] - wms['riservato_clienti'])
+                p.in_vern + p.verniciati + risultato['stock_is'] - wms['riservato_clienti'])
             risultato['saldo_disponibile'] = p.verniciati + risultato['stock_is'] - wms['riservato_clienti']
+            if wms.get('scorta_minima') is not None:
+                risultato['saldo_scorta'] = risultato['saldo_contabile'] - wms['scorta_minima']
         except MasterLogisticError as e:
             risultato['wms_errore'] = str(e)
 

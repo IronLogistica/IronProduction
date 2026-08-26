@@ -1376,21 +1376,22 @@ class KanbanProdotto(db.Model):
 
     @property
     def saldo_contabile(self):
-        # SCLT — Saldo Contabile a Lungo Termine: Grezzi + In Trattamento +
-        # Finiti IW + Finiti IS + Residuo da Produrre − Riservato clienti.
-        # Stessa formula già usata nella riga del tabellone principale
+        # SALDO LT (Post-Produzione) — Grezzi IW + In Trattamento + Finiti IW
+        # + Finiti IS + Saldo commesse produzione residuo − Impegni Clienti
+        # (WMS). Stessa formula già usata nella riga del tabellone principale
         # (templates/kanban/index.html, saldo_sc): deve dare lo stesso
-        # numero ovunque compaia "Saldo Contabile", board o Scheda WMS.
+        # numero ovunque compaia "Saldo LT", board o Scheda WMS.
         return (self.grezzi + self.in_vern + self.verniciati + self.finiti_is + self.in_prod) - self.riservato
 
     @property
     def saldo_contabile_breve_termine(self):
-        # SCBT — Saldo Contabile a Breve Termine: come saldo_contabile
-        # (SCLT) ma SENZA il Residuo da Produrre — sterilizza le commesse
-        # di produzione ancora aperte, guarda solo cosa c'è già fisicamente
-        # (grezzo, in trattamento, o finito) in magazzino, non quello che
-        # deve ancora essere fabbricato da zero.
-        return (self.grezzi + self.in_vern + self.verniciati + self.finiti_is) - self.riservato
+        # SALDO BT (Pronti Breve Termine) — Finiti IS + Finiti IW +
+        # In Trattamento − Impegni Clienti (WMS). Guarda solo cosa sta per
+        # diventare pronto alla vendita a breve (già in lavorazione/rientro
+        # da trattamento) — MAI il Grezzo (che richiede ancora l'intero ciclo
+        # di produzione, non è "a breve termine") né il Residuo da Produrre
+        # (le commesse ancora da avviare da zero, quello è SOLO nel Saldo LT).
+        return (self.in_vern + self.verniciati + self.finiti_is) - self.riservato
 
     @property
     def stato(self):
