@@ -345,6 +345,7 @@
         <div class="wms-saldo-lbl">SALDO C/SCORTA</div>
         <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;margin-top:-2px;margin-bottom:2px">Scorta Minima</div>
         <div class="wms-saldo-val" id="wsSaldoScorta">—</div>
+        <div style="font-size:10px;color:#4a9fd6;margin-top:2px">Scorta min. WMS: <b id="wsScortaMinimaValore">—</b></div>
         <div style="font-size:9px;color:var(--text-dim);margin-top:4px" title="+ SALDO LT&#10;− Scorta Minima (da WMS)">SALDO LT − Scorta Min. (WMS)</div>
       </div>
 
@@ -964,6 +965,8 @@ function _caricaSchedaWms(pid) {
       };
       setSaldo('wsSaldo1', d.saldo_contabile);
       setSaldo('wsSaldoScorta', d.saldo_scorta);
+      const wsScortaMinima = document.getElementById('wsScortaMinimaValore');
+      if (wsScortaMinima) wsScortaMinima.textContent = (d.scorta_minima != null) ? d.scorta_minima : '—';
       setSaldo('wsSaldoBT', d.saldo_contabile_breve_termine);
       setSaldo('wsSaldo2', d.saldo_disponibile);
       // Avviso extra "idiot-proof": se il Saldo Contabile sembra a posto
