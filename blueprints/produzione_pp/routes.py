@@ -1250,6 +1250,95 @@ def api_evento():
         db.session.rollback(); return jsonify(ok=True, deduplicated=True), 200
 
 
+@pp_bp.post('/api/pp/events/correggi')
+def api_evento_correggi():
+    """
+    Correzione di una dichiarazione GIA' inviata da MasterWork — es. Angelo
+    corregge in Anomalie Settimanali una riga di lavoro le cui ore/pezzi
+    erano sbagliati (l'operaio andava in pausa senza segnare, poi
+    dichiarava tutto alla fine). La correzione locale in MasterWork
+    (api_correggi_lavoro) NON arriva mai qui da sola: questo endpoint è il
+    pulsante esplicito che Angelo preme per sincronizzarla.
+
+    ANNULLA per intero l'evento originale (stesso storno usato dall'Area
+    Capo di IronProduction — quantità OP, giacenza, tempo, varianza, tutto
+    ripristinato come se non fosse mai stato dichiarato), poi REGISTRA da
+    zero la versione corretta con gli STESSI passaggi di /api/pp/events
+    (stessa tolleranza fase, stessa traduzione codice via
+    MappaCodiceMasterWork) — mai un aggiustamento differenziale: più
+    sicuro rifare la dichiarazione da capo con i numeri giusti che provare
+    a calcolare la sola differenza.
+
+    Se l'evento originale non viene trovato (già stornato, mai arrivato,
+    o l'event_id è sbagliato), l'operazione si FERMA con un errore
+    esplicito — un pulsante di correzione non deve mai "silenziosamente"
+    limitarsi a registrare comunque una dichiarazione nuova quando
+    l'obiettivo dichiarato è sostituirne una esistente: se l'originale non
+    c'è, MasterWork/Angelo devono saperlo per decidere loro come procedere,
+    non scoprirlo dopo da un doppio conteggio.
+    """
+    auth = _api_auth()
+    if auth: return auth
+    d = request.get_json(silent=True) or {}
+    required = ('event_id_originale', 'nuovo_event_id', 'op_code', 'fase', 'timestamp')
+    if any(not str(d.get(k, '')).strip() for k in required):
+        return jsonify(ok=False, error='Campi obbligatori: ' + ', '.join(required)), 400
+    try:
+        ts = datetime.fromisoformat(str(d['timestamp']).replace('Z', '+00:00')).replace(tzinfo=None)
+        good = _integer(d.get('pezzi_buoni', 0), 'Pezzi buoni'); scrap = _integer(d.get('pezzi_scarto', 0), 'Scarto')
+        tempo = _integer(d.get('tempo_minuti', d.get('tempo', 0)), 'Tempo')
+        o = OrdineProduzione.query.filter_by(codice=str(d['op_code']).strip()).with_for_update().first()
+        if not o:
+            return jsonify(ok=False, error='OP non trovato'), 404
+
+        event_id_orig = str(d['event_id_originale']).strip()
+        e_originale = EventoConsuntivoPP.query.filter_by(event_id=event_id_orig).first()
+        if not e_originale:
+            return jsonify(ok=False, error=(
+                f"Evento originale '{event_id_orig}' non trovato — potrebbe essere già stato "
+                f"stornato, o non essere mai arrivato a IronProduction. Nessuna correzione "
+                f"applicata: verifica prima di riprovare, per evitare un doppio conteggio."
+            )), 404
+        if e_originale.op_code != o.codice:
+            return jsonify(ok=False, error=(
+                f"L'evento originale appartiene all'OP {e_originale.op_code}, non a {o.codice} — "
+                f"correzione rifiutata per sicurezza."
+            )), 409
+
+        _storna_evento_consuntivo(e_originale, o)
+        db.session.flush()   # l'event_id originale si libera PRIMA di registrare il nuovo, in caso combaci
+
+        componente_raw = str(d['componente']).strip() if d.get('componente') else None
+        componente = componente_raw
+        if componente_raw:
+            mappa = MappaCodiceMasterWork.query.filter_by(codice_masterwork=componente_raw).first()
+            if mappa:
+                componente = mappa.codice_ironproduction
+
+        nuovo_event_id = str(d['nuovo_event_id']).strip()
+        avviso_magazzino = _registra_evento_consuntivo(
+            o, str(d['fase']).strip(), ts, good, scrap, tempo, nuovo_event_id,
+            componente=componente,
+            operatore=(str(d['operatore']).strip() if d.get('operatore') else None))
+        db.session.commit()
+        log(f"Correzione da MasterWork applicata: OP {o.codice}, evento originale {event_id_orig} "
+            f"stornato e sostituito da {nuovo_event_id} ({good} buoni, {scrap} scarto, {tempo} min)")
+        return jsonify(ok=True, evento_originale_stornato=event_id_orig, nuovo_event_id=nuovo_event_id,
+                        avviso_magazzino=avviso_magazzino, ordine=_ordine(o)), 200
+    except ValueError as exc:
+        db.session.rollback()
+        return jsonify(ok=False, error=str(exc)), 400
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(ok=False, error=(
+            "Il nuovo event_id risulta già registrato — probabile doppio invio. "
+            "Nessuna correzione applicata."
+        )), 409
+    except Exception as exc:
+        db.session.rollback()
+        return jsonify(ok=False, error=f'Errore durante la correzione: {exc}'), 500
+
+
 @pp_bp.get('/api/mappa-codici-masterwork')
 def api_mappa_codici_masterwork_lista():
     righe = MappaCodiceMasterWork.query.order_by(MappaCodiceMasterWork.codice_ironproduction).all()
