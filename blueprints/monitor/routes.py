@@ -50,7 +50,18 @@ def _materiale_disponibile(o, giacenza_residua=None, mappa_distinta=None):
         giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id, mappa=mappa_distinta)
     else:
         giacenza_residua = dict(giacenza_residua)  # copia: la netting consuma in-place
-    _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe, mappa=mappa_distinta)
+    # BUG REALE CORRETTO: mancava escludi_fabbisogno_per=o.codice_articolo —
+    # senza quello, il primo nodo esplorato (il prodotto che l'OP stesso sta
+    # producendo, es. A48512ST-ZG) veniva trattato come un componente
+    # qualunque da nettare contro il magazzino. Non essendo un materiale
+    # tenuto a scorta, risultava SEMPRE "mancante" per l'intera quantità —
+    # facendo sparire dalla coda del Monitor Macchina QUALUNQUE OP,
+    # indipendentemente dalla vera disponibilità dei materiali reali
+    # (es. il tubo grezzo), su TUTTI i centri di costo. Stessa identica
+    # correzione già fatta altrove (vedi docstring di _netta_e_esplodi_wood)
+    # ma mai propagata qui.
+    _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe, mappa=mappa_distinta,
+                          escludi_fabbisogno_per=o.codice_articolo)
     return all(r['mancante'] <= 0 for r in righe.values())
 
 

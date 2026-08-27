@@ -1995,7 +1995,7 @@ def api_fabbisogno_disponibilita():
 
     righe = {}
     if qta > 0 and codice:
-        _netta_e_esplodi_wood(codice, qta, giacenza_residua, righe)
+        _netta_e_esplodi_wood(codice, qta, giacenza_residua, righe, escludi_fabbisogno_per=codice)
 
     risultato = []
     for cod, r in righe.items():

@@ -131,7 +131,8 @@ def _calcola_controllo_scorta(codice_articolo, qta, escludi_op_id=None):
         giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=escludi_op_id)
         disponibile_prima = dict(giacenza_residua)
         righe_netting = {}
-        _netta_e_esplodi_wood(codice_articolo, qta, giacenza_residua, righe_netting)
+        _netta_e_esplodi_wood(codice_articolo, qta, giacenza_residua, righe_netting,
+                              escludi_fabbisogno_per=codice_articolo)
         controllo_scorta = []
         for cod, r in righe_netting.items():
             giacenza_tot = giacenza_iniziale.get(cod, 0.0)
@@ -312,7 +313,8 @@ def api_ordini_riepilogo_disponibilita():
         righe = {}
         if saldo > 0:
             giacenza_residua = dict(residuo_per_op.get(o.id, residuo_finale))
-            _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe, mappa=mappa_distinta)
+            _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe, mappa=mappa_distinta,
+                                  escludi_fabbisogno_per=o.codice_articolo)
         mancanti = [codice for codice, r in righe.items() if r['mancante'] > 0]
         mancanti_per_ordine.append(mancanti)
         tutti_codici_mancanti.update(mancanti)
@@ -410,7 +412,8 @@ def api_ordine_situazione_completa(codice):
     righe_disponibilita = {}
     if saldo > 0:
         giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
-        _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe_disponibilita)
+        _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe_disponibilita,
+                              escludi_fabbisogno_per=o.codice_articolo)
 
     albero = _esplodi_bom_wood(o.codice_articolo, qta=saldo if saldo > 0 else 1.0)
 
@@ -515,7 +518,8 @@ def api_ordine_dettaglio_per_categoria(codice):
         giacenza_iniziale = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
         giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
         disponibile_prima = dict(giacenza_residua)
-        _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe_disponibilita)
+        _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe_disponibilita,
+                              escludi_fabbisogno_per=o.codice_articolo)
     else:
         giacenza_iniziale, disponibile_prima = {}, {}
 
