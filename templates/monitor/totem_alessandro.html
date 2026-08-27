@@ -218,12 +218,36 @@ function mostraPannello(nome){
   document.querySelectorAll('.totem-tab').forEach(t => t.classList.remove('attiva'));
   document.getElementById('panel-' + nome).classList.add('attivo');
   document.getElementById('tab-' + nome).classList.add('attiva');
+  sessionStorage.setItem('totemAlessandroTabAttivo', nome);
 }
+// Ripristina il tab su cui si era rimasti dopo un refresh automatico —
+// altrimenti l'operaio verrebbe sempre riportato a "Dichiarazione
+// Produzione" ogni 60 secondi, anche se stava guardando "Ordini di Lavoro".
+(function ripristinaTabAttivo(){
+  const tabSalvato = sessionStorage.getItem('totemAlessandroTabAttivo');
+  if (tabSalvato && document.getElementById('panel-' + tabSalvato)) mostraPannello(tabSalvato);
+})();
 
 function aggiornaOrologio(){
   document.getElementById('clock').textContent = new Date().toLocaleString('it-IT', {hour:'2-digit', minute:'2-digit', day:'2-digit', month:'2-digit'});
 }
 aggiornaOrologio(); setInterval(aggiornaOrologio, 30000);
+
+// Refresh automatico dei dati — altrimenti un ordine inserito da Angelo
+// dall'ufficio non compare finché qualcuno non ricarica manualmente la
+// pagina (stesso problema, stessa soluzione già in uso in MasterWork).
+// Salta il giro se un modale è aperto o se si sta scrivendo in un campo di
+// ricerca: un refresh a metà di un'azione dell'operaio sarebbe peggio del
+// problema che deve risolvere.
+setInterval(() => {
+  const modaleAperto = document.querySelector('.modal-overlay.open');
+  const dropdownRicercaAperto = ['doc-dropdown'].some(id => {
+    const el = document.getElementById(id);
+    return el && el.style.display !== 'none' && el.style.display !== '';
+  });
+  const inputAttivo = document.activeElement && ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName);
+  if (!modaleAperto && !dropdownRicercaAperto && !inputAttivo) window.location.reload();
+}, 60000);
 
 function showToast(msg, err){
   const t = document.getElementById('toast');
