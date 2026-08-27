@@ -2207,6 +2207,11 @@ def api_liste_lavoro(cid):
         voce = next((v for v in riepilogo_per_op.get(o.id, []) if v['centro_id'] == cid), None)
         if not voce:
             continue
+        # Commessa già evasa su QUESTO centro (saldo/residuo a zero) — non
+        # deve più comparire tra quelle da fare: l'operaio deve vedere solo
+        # cosa resta ancora da lavorare, non anche quello già finito.
+        if voce['residuo_pz'] <= 0:
+            continue
         risultato.append({
             'op_codice': o.codice, 'codice_articolo': o.codice_articolo,
             'descrizione': o.descrizione or '', 'commessa': o.commessa or '', 'stato': o.stato,

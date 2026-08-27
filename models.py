@@ -807,6 +807,16 @@ class ParametriLavorazioneWood(db.Model):
     impostazione_satinatrice  = db.Column(db.String(100), default='')
     note                      = db.Column(db.String(300), default='')
     aggiornato_il             = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    # BUG REALE CORRETTO (crash in produzione): il modello aveva solo le
+    # colonne FK grezze (matrice_id/rullo_id/contromatrice_id), senza le
+    # relationship SQLAlchemy che tutto il resto del codice (_lista_lavoro_op,
+    # totem_macchina, ecc.) presuppone esistano — par.matrice/.rullo/
+    # .contromatrice andavano in AttributeError ('has no attribute matrice').
+    # Le vecchie relationship equivalenti erano definite solo sul modello
+    # precedente (SchedaLavorazioneWood), mai riportate qui alla migrazione.
+    matrice       = db.relationship('MatriceWood')
+    rullo         = db.relationship('RulloWood')
+    contromatrice = db.relationship('ContromatriceWood')
 
 
 def migra_parametri_lavorazione_flat():
