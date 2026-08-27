@@ -372,13 +372,12 @@ def totem_macchina(cid):
     righe_tabella.sort(key=lambda r: (r['posizione_manuale'] if r['posizione_manuale'] is not None else 999, r['priorita'], r['op_id']))
 
     gruppi = _raggruppa_per_op(righe_tabella)
-    # Il Totem Live mostra SOLO le commesse pronte per essere lavorate ORA
-    # (materiale disponibile — il bordo giallo lampeggiante) — quelle che
-    # aspettano ancora materiale mancante ("non autorizzate" a partire)
-    # restano fuori: l'operaio davanti alla macchina deve vedere solo cosa
-    # può davvero prendere in mano adesso, non l'intera coda con anche i
-    # lavori bloccati.
-    gruppi = [g for g in gruppi if g['materiale_disponibile']]
+    # L'ordine di lavoro va SEMPRE mostrato in coda, anche quando manca
+    # materiale — non deve mai sparire dalla vista dell'operaio, altrimenti
+    # sembra che il lavoro non esista proprio. 'materiale_disponibile' resta
+    # nel gruppo per pilotare SOLO l'effetto visivo nel template (bordo
+    # lampeggiante quando è pronto per essere lavorato ORA) — non più per
+    # nascondere la riga.
     # Un gruppo (OP) completato al 100% — TUTTI i suoi componenti finiti,
     # non solo uno — non serve più qui: si toglie del tutto. Diverso dal
     # caso di completamento PARZIALE (un componente finito, altri ancora
