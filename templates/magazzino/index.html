@@ -290,9 +290,9 @@ async function caricaMagazzinoWood(){
             </button>
           </div>` : ''}
         </td>
-        <td class="${g.grezzo_iw>0?'mt-val-stock':'mt-val-zero'}">
+        <td class="${g.grezzo_iw<0?'':(g.grezzo_iw>0?'mt-val-stock':'mt-val-zero')}" ${g.grezzo_iw<0?'style="background:rgba(255,59,59,.08)"':''}>
           <div style="display:flex;align-items:center;gap:4px">
-            <span>${g.grezzo_iw>0?g.grezzo_iw:0}</span>
+            <span ${g.grezzo_iw<0?'style="color:#ff3b3b;font-weight:800"':''} title="${g.grezzo_iw<0?'⚠️ Spedito al terzista più di quanto risulti prodotto — NON è uno stock fisico, è un contatore di sbilancio':''}">${g.grezzo_iw}${g.grezzo_iw<0?' ⚠️':''}</span>
             <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="apriRettificaGrezzoIW('${esc(g.codice)}')" title="Rettifica manuale (scarti, rotture in trasporto, ecc.)">✏️</button>
           </div>
         </td>

@@ -152,10 +152,16 @@
       {{ p.in_prod }}
     </td>
 
-    {# Col 5: Grezzi — automatico (produzione da Dichiarazioni meno spedito a terzista) #}
-    <td class="num" title="Calcolato in automatico: prodotto da Dichiarazioni di Produzione meno spedito a terzista (DDT uscita) — non modificabile a mano"
+    {# Col 5: Grezzi (= Grezzo IW) — stessa fonte di Magazzino: Saldatura
+       approvata dalla Direzione + rettifiche cumulative (spedizioni
+       terzista, vendite, verniciatura interna). Può andare NEGATIVO se si
+       è spedito al terzista più di quanto risulti prodotto — segnale
+       voluto, non un errore: avviso visivo quando succede, per non
+       confonderlo mai con uno stock fisico (non lo è). #}
+    <td class="num {% if p.grezzi < 0 %}grezzi-negativo{% endif %}"
+        title="{% if p.grezzi < 0 %}⚠️ Spedito al terzista più di quanto risulti prodotto — NON è uno stock fisico, è un contatore di sbilancio{% else %}Calcolato in automatico: Saldatura approvata dalla Direzione + rettifiche (spedizioni terzista, vendite, verniciatura interna) — non modificabile a mano{% endif %}"
         style="background:rgba(30,111,165,.04);color:var(--steel2)">
-      {{ p.grezzi }}
+      {{ p.grezzi }}{% if p.grezzi < 0 %} ⚠️{% endif %}
     </td>
 
     {# Col 6: In Verniciatura/Zincatura — automatico (residuo spedito non ancora rientrato via DDT) #}
@@ -263,6 +269,13 @@
 </div>
 
 <style>
+/* ── Grezzi/Grezzo IW negativo: avviso visivo, MAI da confondere con uno
+   stock fisico — segnala che si è spedito al terzista più di quanto
+   risulti prodotto ── */
+.grezzi-negativo {
+  color:#ff3b3b !important; font-weight:800;
+  background:rgba(255,59,59,.08) !important;
+}
 /* ── Intestazioni tabella ── */
 .thead-group th {
   font-size:10px;text-transform:uppercase;letter-spacing:.5px;
@@ -320,10 +333,13 @@
          (KanbanProdotto.grezzi, stima locale da Dichiarazioni+DDT) è stato
          RIMOSSO: duplicava questo con una formula diversa e i due potevano
          divergere mostrando due valori diversi per lo stesso concetto. #}
-      <div class="wms-saldo-box" style="border-top-color:#c9a227">
+      <div class="wms-saldo-box" id="boxGrezziIW" style="border-top-color:#c9a227">
         <div class="wms-saldo-lbl">🔧 GREZZI IW</div>
         <div class="wms-saldo-val" style="color:#e0c14a" id="wsGrezziIW">—</div>
         <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Da Magazzino (Saldatura approvata)</div>
+        <div id="avvisoGrezziNegativo" style="display:none;font-size:9px;font-weight:800;color:#ff3b3b;margin-top:5px;padding:3px 5px;background:rgba(255,59,59,.12);border-radius:4px">
+          ⚠️ Spedito al terzista più di quanto risulti prodotto
+        </div>
       </div>
 
       {# In Trattamento — presso il terzista, spedito ma non ancora rientrato #}
@@ -984,7 +1000,16 @@ function _caricaSchedaWms(pid) {
     // Grezzi IW: sempre dal Magazzino locale IronProduction, mai da WMS —
     // va mostrato anche se WMS è irraggiungibile (d.wms_errore).
     const wsGrezziIW = document.getElementById('wsGrezziIW');
-    if (wsGrezziIW) wsGrezziIW.textContent = (d && d.grezzi_iw != null) ? d.grezzi_iw : '—';
+    if (wsGrezziIW) {
+      const valGrezzi = (d && d.grezzi_iw != null) ? d.grezzi_iw : null;
+      wsGrezziIW.textContent = (valGrezzi != null) ? valGrezzi : '—';
+      const boxGrezzi = document.getElementById('boxGrezziIW');
+      const avvisoGrezzi = document.getElementById('avvisoGrezziNegativo');
+      const negativo = valGrezzi != null && valGrezzi < 0;
+      if (boxGrezzi) boxGrezzi.style.borderTopColor = negativo ? '#ff3b3b' : '#c9a227';
+      wsGrezziIW.style.color = negativo ? '#ff3b3b' : '#e0c14a';
+      if (avvisoGrezzi) avvisoGrezzi.style.display = negativo ? 'block' : 'none';
+    }
 
     // ── WMS dati (opzionali — se non connesso mostra comunque il resto) ──
     if (d && !d.wms_errore) {

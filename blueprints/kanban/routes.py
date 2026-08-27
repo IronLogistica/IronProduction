@@ -108,7 +108,10 @@ def _aggiorna_grezzi_e_trattamento(p, op_per_sku=None, lav_per_sku=None, grezzo_
       usava una formula SUA (qta_buona di TUTTI gli OP a qualunque fase,
       senza richiedere approvazione Direzione) che poteva mostrare un
       numero diverso da 'GREZZI IW' per lo stesso prodotto — corretto per
-      avere un'unica fonte di verità in tutta l'app.
+      avere un'unica fonte di verità in tutta l'app. Può risultare
+      NEGATIVO (spedito al terzista più di quanto risulti prodotto) —
+      voluto, MAI clampato a 0: nasconderlo travestirebbe un segnale di
+      sbilancio reale da controllare come se tutto fosse a posto.
     - In Trattamento = quanto è stato spedito a un terzista e NON ancora
       rientrato (qta − qta_rientrata sulle lavorazioni non RIENTRATA),
       dagli stessi DDT (blueprints/terzisti — vedi
@@ -126,9 +129,9 @@ def _aggiorna_grezzi_e_trattamento(p, op_per_sku=None, lav_per_sku=None, grezzo_
     sku_upper = sku.upper()
 
     if grezzo_iw_per_sku is not None:
-        p.grezzi = max(grezzo_iw_per_sku.get(sku, 0), 0)
+        p.grezzi = grezzo_iw_per_sku.get(sku, 0)
     else:
-        p.grezzi = max(_grezzo_iw_per_codici([sku]).get(sku, 0), 0)
+        p.grezzi = _grezzo_iw_per_codici([sku]).get(sku, 0)
 
     if lav_per_sku is not None:
         lavorazioni_con_note = lav_per_sku.get(sku_upper, [])
