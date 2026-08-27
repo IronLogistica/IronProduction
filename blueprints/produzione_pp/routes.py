@@ -2178,20 +2178,40 @@ def pagina_liste_lavoro(cid):
 
 @pp_bp.get('/api/liste-lavoro/<int:cid>')
 def api_liste_lavoro(cid):
-    """Riepilogo per commessa su QUESTO centro: totale / effettuati / saldo — solo per gli OP con almeno una riga in questo centro."""
+    """
+    Riepilogo per commessa su QUESTO centro: totale / effettuati / saldo —
+    solo per gli OP con almeno una riga in questo centro.
+
+    BUG REALE CORRETTO — 'Errore di rete durante il caricamento': prima si
+    chiamava _lista_lavoro_op() (query per componente) per OGNI OP ancora
+    aperto, anche quelli senza nessuna relazione con questo centro — con
+    molti OP e distinte complesse (visto in produzione: T200 da solo tocca
+    una decina di componenti diversi) si arriva a centinaia di query SQL
+    per un solo caricamento pagina, che su Postgres remoto (Railway) supera
+    facilmente qualunque timeout — un timeout e un errore di rete sono
+    indistinguibili per il browser. Stessa causa, stessa soluzione già
+    usata per le card di Situazione OP
+    (_riepilogo_ordini_lavoro_per_op — poche query BATCH totali,
+    indipendenti da quanti OP sono aperti) — qui il dettaglio completo
+    riga-per-riga (parametri macchina, materiale) non serve comunque: la
+    pagina Liste di Lavoro mostra solo il totale per commessa, il
+    dettaglio arriva solo aprendo/stampando il singolo Ordine di Lavoro.
+    """
     centro = CentroCostoWood.query.get_or_404(cid)
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato != 'Chiuso CO')
               .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+    mappa_distinta = _carica_mappa_distinta_base_wood()
+    riepilogo_per_op = _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta)
     risultato = []
     for o in ordini:
-        dati = _lista_lavoro_op(o, centro)
-        if not dati['gruppi']:
+        voce = next((v for v in riepilogo_per_op.get(o.id, []) if v['centro_id'] == cid), None)
+        if not voce:
             continue
         risultato.append({
-            'op_codice': dati['op_codice'], 'codice_articolo': dati['codice_articolo'],
-            'descrizione': dati['descrizione'], 'commessa': dati['commessa'], 'stato': dati['stato'],
-            'qta_pianificata': dati['qta_pianificata'],
-            'totale_pz': dati['totale_pz'], 'pz_effettuati': dati['pz_effettuati'], 'residuo_pz': dati['residuo_pz'],
+            'op_codice': o.codice, 'codice_articolo': o.codice_articolo,
+            'descrizione': o.descrizione or '', 'commessa': o.commessa or '', 'stato': o.stato,
+            'qta_pianificata': o.qta_pianificata,
+            'totale_pz': voce['totale_pz'], 'pz_effettuati': voce['pz_effettuati'], 'residuo_pz': voce['residuo_pz'],
         })
     return jsonify(risultato)
 
