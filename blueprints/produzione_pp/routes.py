@@ -2328,22 +2328,42 @@ def api_verniciatura_interna_ricerca_commesse():
     if len(q) < 2:
         return jsonify([])
     like = f'%{q}%'
+    # SOLO ordini davvero aperti — 'Tecnicamente completato' (produzione
+    # già finita, anche se ancora "impegna" materiale per altri conteggi)
+    # non ha senso qui: non ha più senso spedire a verniciare qualcosa il
+    # cui ordine è già chiuso.
     ordini = (OrdineProduzione.query
-              .filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
+              .filter(OrdineProduzione.stato.in_(('Rilasciato', 'In esecuzione')))
               .filter(db.or_(OrdineProduzione.codice.ilike(like),
                               OrdineProduzione.codice_articolo.ilike(like),
                               OrdineProduzione.commessa.ilike(like)))
-              .order_by(OrdineProduzione.codice).limit(20).all())
+              .order_by(OrdineProduzione.priorita, OrdineProduzione.codice).limit(80).all())
     if not ordini:
         return jsonify([])
     codici = list({o.codice_articolo for o in ordini})
     grezzo_per_codice = _grezzo_iw_per_codici(codici)
-    return jsonify([{
+
+    # Il Grezzo IW è materiale generico in magazzino condiviso da TUTTI gli
+    # OP aperti dello stesso codice (non appartiene a un OP specifico) —
+    # mostrare una riga per OGNI OP con lo stesso codice ripeteva lo stesso
+    # numero più volte (es. PINX110: sia OP-16 sia OP-25 mostravano '15
+    # disponibile', lo stesso grezzo condiviso, non 15+15), confondendo
+    # quale selezionare. Una sola riga per codice, con l'OP aperto più
+    # prioritario come destinatario suggerito.
+    migliore_op_per_codice = {}
+    for o in ordini:
+        attuale = migliore_op_per_codice.get(o.codice_articolo)
+        if attuale is None or (o.priorita or 999) < (attuale.priorita or 999):
+            migliore_op_per_codice[o.codice_articolo] = o
+
+    risultati = [{
         'op_code': o.codice, 'codice_articolo': o.codice_articolo,
         'commessa': o.commessa or '', 'cliente': o.cliente or '',
         'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona,
         'grezzo_iw_disponibile': round(grezzo_per_codice.get(o.codice_articolo, 0), 3),
-    } for o in ordini])
+    } for o in migliore_op_per_codice.values() if grezzo_per_codice.get(o.codice_articolo, 0) > 0]
+    risultati.sort(key=lambda r: r['codice_articolo'])
+    return jsonify(risultati[:20])
 
 
 @pp_bp.post('/api/dichiarazione-produzione/verniciatura-interna')
