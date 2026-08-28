@@ -198,6 +198,26 @@ def modifica(oid):
         return jsonify(ok=True, ordine=_ordine(o), controllo_scorta=controllo_scorta)
     except ValueError as exc: db.session.rollback(); return jsonify(ok=False, error=str(exc)), 400
 
+
+@pp_bp.put('/api/ordini-produzione/codice/<codice>/bandiera-stato')
+def api_bandiera_stato_op(codice):
+    """
+    Etichetta di stato manuale (Nuova Commessa/Urgente/Sospesa/In
+    Lavorazione) sul Cruscotto KPI — modificabile SOLO da qui (la pagina
+    principale /kpi di Angelo), mai dalla copia dello stesso Cruscotto
+    mostrata nei monitor/totem dell'officina (kpi/embed.html), che la
+    mostra ma non la può cambiare.
+    """
+    o = OrdineProduzione.query.filter_by(codice=codice.strip()).first_or_404()
+    d = request.get_json(force=True)
+    valore = d.get('bandiera_stato')
+    if valore is not None and valore not in OrdineProduzione.BANDIERE_STATO_OP:
+        return jsonify(ok=False, error=f'Valore non valido: {valore}'), 400
+    o.bandiera_stato = valore or None
+    _audit(o, 'BANDIERA_STATO', f'Impostata a: {valore or "(nessuna)"}')
+    db.session.commit()
+    return jsonify(ok=True, bandiera_stato=o.bandiera_stato)
+
 @pp_bp.delete('/api/ordini-produzione/<int:oid>')
 def elimina(oid):
     o = OrdineProduzione.query.get_or_404(oid)

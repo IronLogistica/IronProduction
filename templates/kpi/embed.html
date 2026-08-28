@@ -112,11 +112,26 @@ caricaGanttCommesse();
 
 function acCellaZona(pct){
   if(pct === null || pct === undefined){
-    return `<td style="background:#fff;text-align:center;padding:6px;border:1px solid #ddd;color:#333;font-weight:700">✕</td>`;
+    return `<td style="background:#fff;text-align:center;padding:5px;border:1px solid #ddd;color:#333;font-weight:700">✕</td>`;
   }
   const bg = pct >= 100 ? '#22c55e' : (pct > 0 ? '#eab308' : '#f97316');
   const colore = pct > 0 && pct < 100 ? '#3a2f00' : '#fff';
-  return `<td style="background:${bg};text-align:center;padding:6px;border:1px solid #fff;color:${colore};font-weight:800">${pct}%</td>`;
+  return `<td style="background:${bg};text-align:center;padding:5px;border:1px solid #fff;color:${colore};font-weight:800">${pct}%</td>`;
+}
+
+// Badge colorato per la bandiera di stato manuale — SOLO VISUALIZZAZIONE
+// qui (nei monitor/totem dell'officina): la modifica si fa unicamente
+// dalla pagina principale /kpi di Angelo, mai da questa copia.
+const BANDIERE_STATO = {
+  'NUOVA_COMMESSA': {label: '🆕 Nuova', bg: '#1e6fa5', fg: '#fff'},
+  'URGENTE':        {label: '🔴 Urgente', bg: '#c0392b', fg: '#fff'},
+  'SOSPESA':        {label: '⏸️ Sospesa', bg: '#666', fg: '#fff'},
+  'IN_LAVORAZIONE': {label: '🔧 In Lavorazione', bg: '#1a9e5c', fg: '#fff'},
+};
+function acCellaBandieraStatoSolaLettura(valore){
+  if(!valore || !BANDIERE_STATO[valore]) return `<span style="color:#999;font-size:11px">—</span>`;
+  const b = BANDIERE_STATO[valore];
+  return `<span style="background:${b.bg};color:${b.fg};border-radius:5px;padding:3px 6px;font-size:10px;font-weight:700;white-space:nowrap">${b.label}</span>`;
 }
 
 async function caricaAvanzamentoCommesse(){
@@ -127,19 +142,20 @@ async function caricaAvanzamentoCommesse(){
     const righe = await r.json();
     if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di produzione aperto.</p>'; return; }
 
-    const thFasi = AC_ZONE.map(z => `<th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:6%">${z[1]}</th>`).join('');
+    const thFasi = AC_ZONE.map(z => `<th style="background:${AC_CIANO};color:#0a3d3f;padding:6px;font-size:11px;width:6%">${z[1]}</th>`).join('');
 
-    box.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;min-width:1100px;table-layout:fixed"><thead><tr>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:6%">N° Comm</th>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;text-align:left;width:19%">Codice e Descrizione</th>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 10px;font-size:11px;width:7%">Saldo da<br>produrre</th>
+    box.innerHTML = `<table style="border-collapse:collapse;font-size:12px;width:100%;min-width:1150px;table-layout:fixed"><thead><tr>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:6px;font-size:11px;width:6%">N° Comm</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:6px;font-size:11px;width:8%">Stato</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:6px;font-size:11px;text-align:left;width:16%">Codice e Descrizione</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:6px 8px;font-size:11px;width:6%">Saldo da<br>produrre</th>
       ${thFasi}
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:7%">Materiale</th>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:8%">Fine produzione<br>interna</th>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:8%">Lavorazione<br>esterna</th>
-      <th style="background:${AC_CIANO};color:#0a3d3f;padding:8px 6px;font-size:11px;width:8%">Consegna<br>stimata</th>
-      <th style="background:#e6e6e6;color:#333;padding:8px 6px;font-size:11px;width:4%">%</th>
-      <th style="background:#e6e6e6;color:#333;padding:8px 6px;font-size:11px;width:5%">Avvisi</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:6px;font-size:11px;width:6%">Materiale</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:6px;font-size:11px;width:7%">Fine produzione<br>interna</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:6px;font-size:11px;width:7%">Lavorazione<br>esterna</th>
+      <th style="background:${AC_CIANO};color:#0a3d3f;padding:6px;font-size:11px;width:7%">Consegna<br>stimata</th>
+      <th style="background:#e6e6e6;color:#333;padding:6px;font-size:11px;width:4%">%</th>
+      <th style="background:#e6e6e6;color:#333;padding:6px;font-size:11px;width:5%">Avvisi</th>
       </tr></thead><tbody>` +
       righe.map(o => {
         const materiale = o.materiale_completo
@@ -152,23 +168,24 @@ async function caricaAvanzamentoCommesse(){
           ? `<span title="${o.avvisi.join(' | ').replace(/"/g,'&quot;')}" style="color:#e67e22;cursor:help">⚠️ ${o.avvisi.length}</span>`
           : '';
         const foto = o.foto_id
-          ? `<img src="/api/foto_articolo/file/${o.foto_id}" style="width:72px;height:72px;object-fit:contain;border:1px solid #ddd;border-radius:4px;vertical-align:middle;margin-right:10px">`
-          : `<span style="display:inline-block;width:72px;height:72px;vertical-align:middle;margin-right:10px"></span>`;
+          ? `<img src="/api/foto_articolo/file/${o.foto_id}" style="width:44px;height:44px;object-fit:contain;border:1px solid #ddd;border-radius:4px;vertical-align:middle;margin-right:8px">`
+          : `<span style="display:inline-block;width:44px;height:44px;vertical-align:middle;margin-right:8px"></span>`;
         const fasiRow = AC_ZONE.map(z => acCellaZona(o.zone ? o.zone[z[0]] : null)).join('');
-        return `<tr style="border-bottom:3px solid #1a1a1a">
-          <td style="text-align:center;padding:10px 6px;background:#f7fdfd"><i>${o.commessa || o.priorita}</i></td>
-          <td style="padding:10px 6px;background:#f7fdfd">
-            ${foto}<b style="font-size:19px;color:#111;vertical-align:middle">${o.codice_articolo}</b>
-            <div style="font-size:10px;color:#666;margin-left:82px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.descrizione || ''} — ${o.op_codice}</div>
+        return `<tr style="border-bottom:2px solid #1a1a1a">
+          <td style="text-align:center;padding:5px;background:#f7fdfd"><i>${o.commessa || o.priorita}</i></td>
+          <td style="text-align:center;padding:5px;background:#f7fdfd">${acCellaBandieraStatoSolaLettura(o.bandiera_stato)}</td>
+          <td style="padding:5px;background:#f7fdfd">
+            ${foto}<b style="font-size:14px;color:#111;vertical-align:middle">${o.codice_articolo}</b>
+            <div style="font-size:9px;color:#666;margin-left:52px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${o.descrizione || ''} — ${o.op_codice}</div>
           </td>
-          <td style="text-align:center;font-weight:800;font-size:24px;color:#111;background:#f7fdfd">${o.saldo}</td>
+          <td style="text-align:center;font-weight:800;font-size:17px;color:#111;background:#f7fdfd">${o.saldo}</td>
           ${fasiRow}
-          <td style="text-align:center;padding:6px">${materiale}</td>
-          <td style="text-align:center;padding:6px;font-weight:700">${o.data_fine_produzione_stimata}</td>
-          <td style="text-align:center;padding:6px;font-size:11px">${esterno}</td>
-          <td style="text-align:center;padding:6px;font-weight:800;color:#1e6fa5">${o.data_consegna_stimata}</td>
-          <td style="text-align:center;padding:6px;background:#f0f0f0;font-weight:700">${o.pct}%</td>
-          <td style="text-align:center;padding:6px;background:#f0f0f0">${avvisi}</td>
+          <td style="text-align:center;padding:5px">${materiale}</td>
+          <td style="text-align:center;padding:5px;font-weight:700">${o.data_fine_produzione_stimata}</td>
+          <td style="text-align:center;padding:5px;font-size:11px">${esterno}</td>
+          <td style="text-align:center;padding:5px;font-weight:800;color:#1e6fa5">${o.data_consegna_stimata}</td>
+          <td style="text-align:center;padding:5px;background:#f0f0f0;font-weight:700">${o.pct}%</td>
+          <td style="text-align:center;padding:5px;background:#f0f0f0">${avvisi}</td>
         </tr>`;
       }).join('') + '</tbody></table>';
   }catch(e){

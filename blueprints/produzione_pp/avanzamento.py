@@ -196,12 +196,23 @@ def calcola_avanzamento_commesse():
                 if not centro or centro.esterno:
                     continue  # l'ultima fase esterna (verniciatura) si gestisce a parte, dopo
 
-                pezzi_fatti = int((db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-                                  .filter(EventoConsuntivoPP.op_code == o.codice,
-                                          db.func.lower(EventoConsuntivoPP.fase) == centro.nome.strip().lower(),
-                                          EventoConsuntivoPP.componente == componente_param if componente_param
-                                          else EventoConsuntivoPP.componente.is_(None))
-                                  .scalar()) or 0)
+                # Confronto TOLLERANTE, non un'uguaglianza esatta — stesso
+                # bug reale già trovato e corretto altrove (_e_prima_fase_
+                # del_ciclo/_e_ultima_fase_del_ciclo): MasterWork manda in
+                # 'fase' un testo libero configurato per articolo (es.
+                # "Saldatura Frontale c/Assemblaggio"), non necessariamente
+                # identico al nome del Centro di Costo qui ("Saldatura").
+                # Un confronto esatto qui faceva risultare pezzi_fatti=0
+                # anche quando in realtà erano stati dichiarati, facendo
+                # apparire una zona ferma allo 0% invece del suo vero
+                # avanzamento.
+                from blueprints.produzione_pp.routes import _fasi_corrispondono
+                eventi_riga = EventoConsuntivoPP.query.filter(
+                    EventoConsuntivoPP.op_code == o.codice,
+                    EventoConsuntivoPP.componente == componente_param if componente_param
+                    else EventoConsuntivoPP.componente.is_(None)
+                ).all()
+                pezzi_fatti = sum(e.pezzi_buoni or 0 for e in eventi_riga if _fasi_corrispondono(centro.nome, e.fase))
 
                 # Avanzamento per ZONA (tabella Avanzamento Commesse): conta
                 # SEMPRE, anche per una fase già completata al 100% (che qui
@@ -273,7 +284,7 @@ def calcola_avanzamento_commesse():
         risultati.append({
             'op_codice': o.codice, 'commessa': o.commessa or '', 'codice_articolo': o.codice_articolo,
             'descrizione': o.descrizione or '', 'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona or 0,
-            'saldo': saldo_op, 'pct': pct, 'priorita': o.priorita,
+            'saldo': saldo_op, 'pct': pct, 'priorita': o.priorita, 'bandiera_stato': o.bandiera_stato,
             'materiale_completo': not materiali_mancanti,
             'centri_in_coda': sorted(centri_con_saldo),
             'zone': zone_pct, 'foto_id': foto,

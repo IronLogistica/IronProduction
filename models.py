@@ -1287,6 +1287,26 @@ def assicura_event_id_varianza_produzione():
             db.session.commit()
 
 
+def assicura_bandiera_stato_op():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    ordini_produzione_pp.bandiera_stato (Nuova Commessa/Urgente/Sospesa/
+    In Lavorazione) — etichetta manuale mostrata sul Cruscotto KPI. NULL
+    per gli OP esistenti (nessuna etichetta finché Angelo non ne assegna
+    una)."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN IF NOT EXISTS bandiera_stato VARCHAR(30)"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('ordini_produzione_pp')}
+        if 'bandiera_stato' not in colonne:
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN bandiera_stato VARCHAR(30)"))
+            db.session.commit()
+
+
 def assicura_contestuale_distinta_base():
     """Migrazione compatibile con DB già esistenti: aggiunge
     distinta_base_wood.contestuale e distinta_base_wood.data_flag_contestuale
@@ -2173,6 +2193,13 @@ class OrdineProduzione(db.Model):
     # questa autorizzazione: usa il nuovo comportamento da subito.
     contestuale_autorizzato_da_angelo = db.Column(db.Boolean, nullable=False, default=False)
     data_autorizzazione_contestuale = db.Column(db.DateTime, nullable=True)
+    # Etichetta di stato manuale (Nuova Commessa / Urgente / Sospesa / In
+    # Lavorazione) mostrata sul Cruscotto KPI, PRIMA della colonna del
+    # disegno — modificabile SOLO dalla schermata principale KPI di
+    # Angelo, di sola visualizzazione (mai editabile) nella copia dello
+    # stesso Cruscotto mostrata nei monitor/totem dell'officina.
+    BANDIERE_STATO_OP = ('NUOVA_COMMESSA', 'URGENTE', 'SOSPESA', 'IN_LAVORAZIONE')
+    bandiera_stato = db.Column(db.String(30), nullable=True)
 
 class EventoConsuntivoPP(db.Model):
     __tablename__ = "pp_eventi_consuntivi"
