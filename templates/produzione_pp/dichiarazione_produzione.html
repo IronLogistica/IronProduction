@@ -335,6 +335,14 @@ async function confermaVerniciaturaInterna(){
   if(!_vernintOpSelezionato){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Nessuna commessa selezionata.'; return; }
   const quantita = parseFloat(document.getElementById('vernint-quantita').value);
   if(!quantita || quantita <= 0){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Inserisci una quantità valida.'; return; }
+  const conferma = confirm(
+    `Confermi l'invio a verniciatura interna?\n\n` +
+    `Codice: ${_vernintOpSelezionato.codice_articolo}\n` +
+    `Commessa: ${_vernintOpSelezionato.op_code} — ${_vernintOpSelezionato.commessa || '—'}\n` +
+    `Quantità: ${quantita} pezzi\n\n` +
+    `Sposta ${quantita} pezzi da Grezzo IW a Finiti IW — nessun DDT, operazione immediata.`
+  );
+  if(!conferma) return;
   esito.style.color = 'var(--text-dim)'; esito.textContent = 'Invio...';
   try{
     const r = await fetch('/api/dichiarazione-produzione/verniciatura-interna', {
