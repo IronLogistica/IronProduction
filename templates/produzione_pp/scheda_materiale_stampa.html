@@ -4,87 +4,129 @@
 <meta charset="UTF-8">
 <title>Scheda Identificazione Materiale in Produzione — {{ codice }}</title>
 <style>
-  @page { size: A5; margin: 10mm; }
+  @page { size: A4 portrait; margin: 10mm; }
   * { box-sizing: border-box; }
   body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 12px; color: #000; }
-  .titolo { font-size: 20px; font-weight: 800; text-align: center; border: 2px solid #000; padding: 8px; margin-bottom: 10px; }
-  .campo { border: 2px solid #000; padding: 8px; margin-bottom: 10px; }
+  .titolo { font-size: 22px; font-weight: 800; text-align: center; border: 2px solid #000; padding: 10px; margin-bottom: 10px; }
+  .codici-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .campo { border: 2px solid #000; padding: 9px; margin-bottom: 10px; }
   .campo-label { font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
-  .campo-valore { font-size: 22px; font-weight: 700; min-height: 28px; }
-  .quantita-row { display: flex; justify-content: space-between; align-items: center; }
-  .logo { font-size: 26px; font-weight: 900; letter-spacing: 1px; }
+  .campo-valore { font-size: 22px; font-weight: 700; min-height: 28px; overflow-wrap: anywhere; }
+  .campo-nero { background: #000; color: #fff; }
+  .campo-nero .campo-label, .campo-nero .campo-valore { color: #fff; font-weight: 900; }
+  .descrizione-prodotto { font-size: 25px; font-weight: 800; line-height: 1.2; min-height: 38px; }
+  .quantita-campo { min-height: 100px; display: flex; align-items: center; }
+  .quantita-row { display: flex; width: 100%; justify-content: space-between; align-items: center; }
+  .quantita-valore { font-size: 34px; font-weight: 900; min-height: 40px; }
+  .logo { font-size: 28px; font-weight: 900; letter-spacing: 1px; }
   .logo-rev { font-size: 9px; color: #555; text-align: right; }
-  .sezione-hdr { border: 2px solid #000; border-radius: 20px; padding: 6px 14px; font-weight: 700; margin: 12px 0 6px; }
-  .griglia { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 8px; }
-  .casella { border: 2px solid #000; display: flex; align-items: center; gap: 8px; padding: 8px; font-weight: 700; font-size: 14px; }
-  .box { width: 22px; height: 22px; border: 2px solid #000; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 18px; }
-  .footer-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 14px; }
-  .footer-campo { border: 2px solid #000; padding: 8px; min-height: 50px; }
+  .sezione-hdr { border: 2px solid #000; border-radius: 20px; padding: 7px 14px; font-weight: 800; margin: 13px 0 7px; display: flex; align-items: center; gap: 9px; }
+  .check-spunta { width: 25px; height: 25px; border: 2px solid #000; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 21px; line-height: 1; font-weight: 900; }
+  .lavorazione-valore { border: 2px solid #000; padding: 14px; min-height: 64px; display: flex; align-items: center; font-size: 25px; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
+  .lavorazione-prossima { background: #000; color: #fff; font-weight: 900; }
+  .passaggio-padre { display: block; width: 100%; }
+  .passaggio-padre-codice { font-size: 18px; margin-bottom: 7px; }
+  .passaggio-padre-fase { font-size: 25px; }
+  .avviso { font-size: 11px; margin: 5px 0; color: #555; }
+  .avviso.errore { color: #a00; }
+  .footer-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
+  .footer-campo { border: 2px solid #000; padding: 9px; min-height: 58px; }
   .footer-label { font-size: 11px; font-weight: 700; text-transform: uppercase; }
-  .btn-stampa { display: block; width: 100%; margin: 14px 0; padding: 12px; font-size: 16px; font-weight: 700;
-                background: #1e6fa5; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+  .footer-valore { margin-top: 6px; font-size: 20px; font-weight: 800; }
+  .btn-stampa { display: block; width: 100%; margin: 14px 0; padding: 12px; font-size: 16px; font-weight: 700; background: #1e6fa5; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
   @media print { .btn-stampa { display: none; } body { padding: 0; } }
 </style>
 </head>
 <body>
 
-<button class="btn-stampa" onclick="window.print()">🖨️ Stampa</button>
+<button class="btn-stampa" onclick="aggiornaDataStampa(); window.print()">🖨️ Stampa</button>
 
 <div class="titolo">SCHEDA IDENTIFICAZIONE MATERIALE IN PRODUZIONE</div>
 
-<div class="campo">
-  <div class="campo-label">Codice</div>
-  <div class="campo-valore">{{ codice or '—' }}</div>
+<div class="codici-row">
+  <div class="campo">
+    <div class="campo-label">Codice</div>
+    <div class="campo-valore">{{ codice or '—' }}</div>
+  </div>
+  <div class="campo campo-nero">
+    <div class="campo-label">Codice padre</div>
+    <div class="campo-valore">{{ codice_padre or '—' }}</div>
+  </div>
 </div>
 
 <div class="campo">
   <div class="campo-label">Descrizione</div>
-  <div class="campo-valore" style="font-size:16px">{{ descrizione or '—' }}</div>
+  <div class="campo-valore descrizione-prodotto">{{ descrizione or '—' }}</div>
 </div>
 
-<div class="campo">
+<div class="campo quantita-campo">
   <div class="quantita-row">
     <div>
       <div class="campo-label">Quantità</div>
-      <div class="campo-valore">{{ quantita or '—' }}</div>
+      <div class="quantita-valore">{{ quantita or '' }}</div>
     </div>
     <div style="text-align:right">
       <div class="logo">IRON</div>
-      <div class="logo-rev">Rev.1 - 03/2026</div>
+      <div class="logo-rev">Rev.3 - 08/2026</div>
     </div>
   </div>
 </div>
 
-<div class="sezione-hdr">➡️ Lavorazione Eseguita</div>
-<div class="griglia">
-  {% for c in centri %}
-  <div class="casella"><span class="box">{{ '✕' if c.id == centro_eseguito_id else '' }}</span>{{ c.nome }}</div>
-  {% else %}
-  <p style="font-size:11px;color:#a00;margin:4px 0">⚠️ Nessun Ciclo di Lavoro configurato per questo codice — impossibile mostrare i centri di costo.</p>
-  {% endfor %}
+<div class="sezione-hdr">
+  <span class="check-spunta">✓</span>
+  <span>Lavorazione Eseguita</span>
 </div>
+{% if fase_eseguita %}
+<div class="lavorazione-valore">{{ fase_eseguita.centro_costo.nome if fase_eseguita.centro_costo else 'Centro non disponibile' }}</div>
+{% elif fasi_ciclo %}
+<div class="lavorazione-valore">CENTRO NON RICONOSCIUTO</div>
+<p class="avviso errore">⚠️ Il centro corrente non appartiene al Ciclo di Lavoro di questo codice: verificare la configurazione.</p>
+{% else %}
+<div class="lavorazione-valore">CICLO DI LAVORO NON CONFIGURATO</div>
+<p class="avviso errore">⚠️ Nessun Ciclo di Lavoro configurato per questo codice.</p>
+{% endif %}
 
 <div class="sezione-hdr">➡️ Prossima Lavorazione</div>
-<div class="griglia">
-  {% for c in centri %}
-  <div class="casella"><span class="box">{{ '✕' if c.id == centro_prossimo_id else '' }}</span>{{ c.nome }}</div>
-  {% endfor %}
+{% if fase_prossima %}
+<div class="lavorazione-valore lavorazione-prossima">{{ fase_prossima.centro_costo.nome if fase_prossima.centro_costo else 'Centro non disponibile' }}</div>
+{% elif fase_eseguita and codice_padre and prima_fase_padre %}
+<div class="lavorazione-valore lavorazione-prossima">
+  <div class="passaggio-padre">
+    <div class="passaggio-padre-codice">CODICE PADRE: {{ codice_padre }}</div>
+    <div class="passaggio-padre-fase">{{ prima_fase_padre.centro_costo.nome if prima_fase_padre.centro_costo else 'Centro non disponibile' }}</div>
+  </div>
 </div>
-{% if centri and centro_eseguito_id is none %}
-<p style="font-size:11px;color:#a00;margin:4px 0">⚠️ Fase eseguita non riconosciuta automaticamente — verificare a mano prima di spuntare.</p>
-{% endif %}
-{% if centri and centro_prossimo_id is none %}
-<p style="font-size:11px;color:#555;margin:4px 0">ℹ️ Nessuna fase successiva nel ciclo di lavoro di questo codice — verificare se è l'ultima lavorazione.</p>
+<p class="avviso">ℹ️ Ultima fase del codice corrente: proseguire con la prima lavorazione del codice padre.</p>
+{% elif fase_eseguita and codice_padre %}
+<div class="lavorazione-valore lavorazione-prossima">
+  <div class="passaggio-padre">
+    <div class="passaggio-padre-codice">CODICE PADRE: {{ codice_padre }}</div>
+    <div class="passaggio-padre-fase">CICLO PADRE NON CONFIGURATO</div>
+  </div>
+</div>
+<p class="avviso errore">⚠️ Configurare il Ciclo di Lavoro del codice padre per conoscere la prossima lavorazione.</p>
+{% elif fase_eseguita %}
+<div class="lavorazione-valore lavorazione-prossima">FINE CICLO</div>
+<p class="avviso">ℹ️ Il codice corrente non ha un padre nella distinta dell'Ordine di Produzione.</p>
+{% else %}
+<div class="lavorazione-valore lavorazione-prossima">NON DISPONIBILE</div>
 {% endif %}
 
 <div class="footer-row">
+  <div class="footer-campo"><div class="footer-label">Operatore</div></div>
   <div class="footer-campo">
-    <div class="footer-label">Operatore</div>
-  </div>
-  <div class="footer-campo">
-    <div class="footer-label">Data</div>
+    <div class="footer-label">Data di stampa</div>
+    <div class="footer-valore" id="data-stampa"></div>
   </div>
 </div>
+
+<script>
+  function aggiornaDataStampa() {
+    document.getElementById('data-stampa').textContent = new Date().toLocaleDateString('it-IT');
+  }
+  aggiornaDataStampa();
+  window.addEventListener('beforeprint', aggiornaDataStampa);
+</script>
 
 </body>
 </html>

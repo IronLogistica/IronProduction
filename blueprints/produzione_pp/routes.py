@@ -2892,53 +2892,109 @@ def api_non_conformita_8d_decidi(mid):
     return jsonify(ok=True, stato=m.stato)
 
 
+
+def _trova_codice_padre_per_op(codice, ordine):
+    """Trova il padre immediato non ambiguo del codice nel ramo BOM dell'OP."""
+    if not codice:
+        return ''
+
+    # Se conosciamo l'OP, percorriamo solo la sua distinta attiva: così un
+    # componente riutilizzato in più prodotti non viene associato al padre
+    # sbagliato. La radice dell'OP, per definizione, non ha un padre in questo
+    # contesto anche se compare come figlio in un'altra distinta.
+    if ordine and ordine.codice_articolo:
+        if codice == ordine.codice_articolo:
+            return ''
+        mappa = _carica_mappa_distinta_base_wood()
+        trovati = set()
+
+        def visita(padre, percorso, profondita=0):
+            if padre in percorso or profondita > 15:
+                return
+            percorso = percorso | {padre}
+            for riga in _righe_bom_attive_wood(padre, mappa=mappa):
+                if riga.codice_figlio == codice:
+                    trovati.add(padre)
+                else:
+                    visita(riga.codice_figlio, percorso, profondita + 1)
+
+        visita(ordine.codice_articolo, set())
+        # Se lo stesso codice compare sotto più padri nello stesso OP, non
+        # scegliamo silenziosamente: un'etichetta ambigua sarebbe pericolosa.
+        return next(iter(trovati)) if len(trovati) == 1 else ''
+
+    # Senza OP possiamo usare la distinta globale solo quando individua un
+    # unico padre. In caso di riuso del componente, il padre non è deducibile.
+    candidati = (DistintaBaseWood.query.filter_by(codice_figlio=codice)
+                 .order_by(DistintaBaseWood.id).all())
+    padri = {r.codice_padre for r in candidati}
+    return next(iter(padri)) if len(padri) == 1 else ''
+
+
 @pp_bp.get('/scheda-materiale-stampa')
 def pagina_scheda_materiale_stampa():
     """
-    Scheda Identificazione Materiale in Produzione, formato A5, pronta da
-    stampare — stesso modulo cartaceo già in uso (IRON, rev.1 - 03/2026):
-    Codice, Descrizione, Quantità, casella spuntata su Lavorazione Eseguita
-    (il centro di costo su cui si sta dichiarando ORA) e su Prossima
-    Lavorazione (il centro successivo nel Ciclo di Lavoro di questo
-    codice, se c'è) — compilati dal programma, Alessandro controlla solo
-    che siano quelli giusti prima di stampare. Operatore e Data restano
-    da scrivere a mano, come sul modulo cartaceo.
+    Scheda Identificazione Materiale in Produzione, formato A4.
 
-    BUG REALE CORRETTO: prima le caselle erano 5 categorie FISSE e
-    inventate (Taglio/Piegatura/Svasatura/Foratura/Saldatura), riconosciute
-    per parola chiave nel nome del centro — non i VERI centri di costo del
-    Ciclo di Lavoro configurato per QUESTO codice specifico (che possono
-    essere chiamati in modo diverso, essere di più o di meno, o non
-    corrispondere affatto a nessuna delle 5 parole cercate). Ora le
-    caselle sono generate in automatico dal Ciclo di Lavoro REALE del
-    codice — tante quante sono le sue fasi effettive, con il nome esatto
-    del Centro di Costo così com'è configurato nel programma.
+    Per i codici multi-fase l'operatore sceglie esplicitamente quale fase
+    stampare. Ogni scheda mostra la fase selezionata e quella successiva; se
+    la selezionata è l'ultima, mostra invece il padre immediato e la prima
+    lavorazione prevista dal ciclo del padre.
     """
     codice = (request.args.get('codice') or '').strip()
     descrizione = (request.args.get('descrizione') or '').strip()
     quantita = (request.args.get('quantita') or '').strip()
     centro_id = request.args.get('centro_id', type=int)
+    fase_sequenza = request.args.get('fase_sequenza', type=int)
+    op_code = (request.args.get('op_code') or '').strip()
 
-    cicli = (CicloLavoroWood.query.filter_by(codice=codice)
-             .order_by(CicloLavoroWood.sequenza).all()) if codice else []
-    # Etichetta della casella: il nome REALE del Centro di Costo di questo
-    # codice, così com'è nel programma — non una categoria fissa indovinata.
-    centri_ciclo = [c.centro_costo for c in cicli if c.centro_costo]
+    ordine = OrdineProduzione.query.filter_by(codice=op_code).first() if op_code else None
+    codice_padre = _trova_codice_padre_per_op(codice, ordine)
 
-    centro_eseguito = next((c for c in centri_ciclo if c.id == centro_id), None) if centro_id else None
-    centro_prossimo = None
-    if codice and centro_id:
-        riga_corrente = next((c for c in cicli if c.centro_costo_id == centro_id), None)
-        if riga_corrente:
-            prossima = next((c for c in cicli if c.sequenza > riga_corrente.sequenza), None)
-            if prossima:
-                centro_prossimo = prossima.centro_costo
+    fasi_ciclo = []
+    fase_eseguita = None
+    fase_prossima = None
+    prima_fase_padre = None
+    if codice:
+        fasi_ciclo = (CicloLavoroWood.query.filter_by(codice=codice)
+                      .order_by(CicloLavoroWood.sequenza).all())
+
+        # Con più fasi non scegliamo implicitamente il centro da cui è stata
+        # aperta la stampa: l'operatore deve indicare l'etichetta desiderata.
+        if len(fasi_ciclo) > 1 and fase_sequenza is None:
+            return render_template('produzione_pp/scheda_materiale_selezione_fase.html',
+                codice=codice, descrizione=descrizione, quantita=quantita,
+                centro_id=centro_id, op_code=op_code, fasi_ciclo=fasi_ciclo)
+
+        if fase_sequenza is not None:
+            fase_eseguita = next(
+                (fase for fase in fasi_ciclo if fase.sequenza == fase_sequenza), None)
+            if fase_eseguita is None and fasi_ciclo:
+                return render_template(
+                    'produzione_pp/scheda_materiale_selezione_fase.html',
+                    codice=codice, descrizione=descrizione, quantita=quantita,
+                    centro_id=centro_id, op_code=op_code, fasi_ciclo=fasi_ciclo,
+                    errore_selezione='La fase richiesta non esiste: selezionare una fase valida.'), 400
+        elif len(fasi_ciclo) == 1:
+            fase_eseguita = fasi_ciclo[0]
+        else:
+            # Retrocompatibilità per codici senza selezione esplicita.
+            fase_eseguita = next(
+                (fase for fase in fasi_ciclo if fase.centro_costo_id == centro_id), None)
+
+        if fase_eseguita:
+            fase_prossima = next(
+                (fase for fase in fasi_ciclo
+                 if fase.sequenza > fase_eseguita.sequenza), None)
+            if fase_prossima is None and codice_padre:
+                prima_fase_padre = (CicloLavoroWood.query.filter_by(codice=codice_padre)
+                                    .order_by(CicloLavoroWood.sequenza).first())
 
     return render_template('produzione_pp/scheda_materiale_stampa.html',
-        codice=codice, descrizione=descrizione, quantita=quantita,
-        centri=centri_ciclo,
-        centro_eseguito_id=centro_eseguito.id if centro_eseguito else None,
-        centro_prossimo_id=centro_prossimo.id if centro_prossimo else None)
+        codice=codice, codice_padre=codice_padre,
+        descrizione=descrizione, quantita=quantita,
+        fasi_ciclo=fasi_ciclo, fase_eseguita=fase_eseguita,
+        fase_prossima=fase_prossima, prima_fase_padre=prima_fase_padre)
 
 
 @pp_bp.get('/api/dichiarazione-produzione/anteprima')
