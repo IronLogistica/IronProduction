@@ -198,6 +198,20 @@ def calcola_avanzamento_commesse():
                 continue
             tutti_cicli_op.append(cicli)
             qta_codice = round(saldo_op * moltiplicatore)
+            # Denominatore SEPARATO per la percentuale di zona: deve essere
+            # la quantità TOTALE pianificata per questo componente, non il
+            # residuo attuale (qta_codice sopra, che si restringe mano a
+            # mano che l'OP avanza). BUG REALE CORRETTO: usando qta_codice
+            # (il residuo) anche per la percentuale di zona, una fase che
+            # aveva già lavorato PIÙ del residuo ATTUALE (perché è una fase
+            # precoce nel ciclo, già passata avanti rispetto al collo di
+            # bottiglia più a valle) risultava SEMPRE bloccata al 100% —
+            # anche quando in realtà non aveva ancora lavorato l'intera
+            # quantità originale dell'ordine. Con questo fisso, la
+            # percentuale di zona è coerente con 'Saldo da produrre': non
+            # può mai segnare 100% verde se l'ordine ha ancora un residuo
+            # complessivo diverso da zero PER QUELLA fase.
+            qta_codice_pianificata = round((o.qta_pianificata or 0) * moltiplicatore)
             componente_param = None if codice == o.codice_articolo else codice
             cursore_componente = data_materiale_pronto
 
@@ -231,8 +245,8 @@ def calcola_avanzamento_commesse():
                 # sparire il suo contributo dalla percentuale della zona.
                 zona = _zona_di_centro(centro)
                 if zona:
-                    zona_totale[zona] += qta_codice
-                    zona_fatti[zona] += min(pezzi_fatti, qta_codice)
+                    zona_totale[zona] += qta_codice_pianificata
+                    zona_fatti[zona] += min(pezzi_fatti, qta_codice_pianificata)
 
                 saldo_fase = max(qta_codice - pezzi_fatti, 0)
                 if saldo_fase <= 0:

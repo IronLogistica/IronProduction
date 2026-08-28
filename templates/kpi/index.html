@@ -187,9 +187,8 @@ async function caricaAvanzamentoCommesse(){
           ? `<img src="/api/foto_articolo/file/${o.foto_id}" style="width:44px;height:44px;object-fit:contain;border:1px solid #ddd;border-radius:4px;vertical-align:middle;margin-right:8px">`
           : `<span style="display:inline-block;width:44px;height:44px;vertical-align:middle;margin-right:8px"></span>`;
         const fasiRow = AC_ZONE.map(z => acCellaZona(o.zone ? o.zone[z[0]] : null)).join('');
-        return `<tr draggable="true" data-op-codice="${o.op_codice}" style="border-bottom:2px solid #1a1a1a"
-                    ondragstart="acDragStart(event)" ondragover="acDragOver(event)" ondragend="acDragEnd(event)">
-          <td style="text-align:center;padding:5px;background:#f7fdfd;cursor:grab;color:#999;font-size:16px;user-select:none" title="Trascina per riordinare">⠿</td>
+        return `<tr data-op-codice="${o.op_codice}" style="border-bottom:2px solid #1a1a1a">
+          <td class="ac-drag-handle" style="text-align:center;padding:5px;background:#f7fdfd;cursor:grab;color:#999;font-size:16px;user-select:none;touch-action:none" title="Trascina per riordinare" onpointerdown="acIniziaDrag(event, this)">⠿</td>
           <td style="text-align:center;padding:5px;background:#f7fdfd"><i>${o.commessa || o.priorita}</i></td>
           <td style="padding:5px;background:#f7fdfd">${acCellaBandieraStato(o.op_codice, o.bandiera_stato)}</td>
           <td style="padding:5px;background:#f7fdfd">
@@ -215,25 +214,41 @@ caricaAvanzamentoCommesse();
 // Trascina/rilascia per riordinare le commesse a mano — SOLO qui (pagina
 // principale di Angelo): la copia in kpi/embed.html mostrata nei monitor
 // dell'officina non ha questo codice, resta di sola lettura.
-let _acRigaTrascinata = null;
-function acDragStart(ev){
-  _acRigaTrascinata = ev.currentTarget;
-  ev.currentTarget.style.opacity = '0.4';
-  ev.dataTransfer.effectAllowed = 'move';
+// Basato su Pointer Events (NON sull'API HTML5 drag-and-drop nativa — si è
+// già rivelata inaffidabile su righe di tabella tra browser diversi, vedi
+// lo stesso identico fix già fatto per il riordino righe Kanban) —
+// pointerdown/pointermove/pointerup funzionano identici con mouse e touch.
+let _acDragEl = null;
+function acIniziaDrag(e, handle){
+  e.preventDefault();
+  const tr = handle.closest('tr[data-op-codice]');
+  if(!tr) return;
+  _acDragEl = tr;
+  tr.style.opacity = '0.4';
+  handle.setPointerCapture(e.pointerId);
+  document.addEventListener('pointermove', acDragMove);
+  document.addEventListener('pointerup', acDragFine, {once: true});
+  document.addEventListener('pointercancel', acDragFine, {once: true});
 }
-function acDragOver(ev){
-  ev.preventDefault();
-  const rigaSopra = ev.currentTarget;
-  if(!_acRigaTrascinata || rigaSopra === _acRigaTrascinata) return;
-  const tbody = document.getElementById('ac-tbody');
-  const rect = rigaSopra.getBoundingClientRect();
-  const dopo = (ev.clientY - rect.top) / rect.height > 0.5;
-  tbody.insertBefore(_acRigaTrascinata, dopo ? rigaSopra.nextSibling : rigaSopra);
+function acDragMove(e){
+  if(!_acDragEl) return;
+  const y = e.clientY;
+  const righe = Array.from(document.querySelectorAll('#ac-tbody tr[data-op-codice]'));
+  for(const riga of righe){
+    if(riga === _acDragEl) continue;
+    const rect = riga.getBoundingClientRect();
+    if(y >= rect.top && y <= rect.bottom){
+      const prima = y < rect.top + rect.height / 2;
+      riga.parentNode.insertBefore(_acDragEl, prima ? riga : riga.nextSibling);
+      break;
+    }
+  }
 }
-async function acDragEnd(ev){
-  ev.currentTarget.style.opacity = '';
-  if(!_acRigaTrascinata) return;
-  _acRigaTrascinata = null;
+async function acDragFine(){
+  document.removeEventListener('pointermove', acDragMove);
+  if(!_acDragEl) return;
+  _acDragEl.style.opacity = '';
+  _acDragEl = null;
   const tbody = document.getElementById('ac-tbody');
   const nuovoOrdine = [...tbody.querySelectorAll('tr')].map(tr => tr.dataset.opCodice);
   try{
