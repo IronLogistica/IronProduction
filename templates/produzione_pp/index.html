@@ -2,9 +2,9 @@
 {% block content %}
 <div class="page-toolbar"><div class="page-title">🏭 Ordini di Produzione</div><a class="btn btn-ghost" href="/ordini-produzione/avanzamento">📊 Avanzamento</a></div>
 <div class="card" style="padding:18px;margin-bottom:16px"><form id="opForm" class="op-grid">
-<div style="position:relative"><input id="opCodiceArticolo" name="codice_articolo" required maxlength="100" placeholder="Codice articolo *" autocomplete="off" oninput="suggerisciCodiciOP()" onfocus="suggerisciCodiciOP()">
+<div style="position:relative"><input id="opCodiceArticolo" name="codice_articolo" required maxlength="100" placeholder="Codice articolo *" autocomplete="off" oninput="suggerisciCodiciOP()" onfocus="suggerisciCodiciOP()" onblur="autocompilaDescrizioneOP()">
 <div id="opCodiceSuggerimenti" style="display:none;position:absolute;top:100%;left:0;z-index:20;background:#fff;border:1px solid #ccd5df;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;width:100%"></div></div>
-<input name="descrizione" maxlength="300" placeholder="Descrizione">
+<input id="opDescrizione" name="descrizione" maxlength="300" placeholder="Descrizione">
 <input name="cliente" maxlength="200" placeholder="Cliente"><input readonly value="La commessa viene generata automaticamente (es. 26070001)" style="color:var(--text-dim);font-style:italic;background:#f4f6f8">
 <input name="qta_pianificata" required type="number" min="0" placeholder="Quantità pianificata *"><input name="asa" required maxlength="100" value="Carpenteria Propria" placeholder="ASA *">
 <label>Inizio <input name="data_inizio" type="date"></label><label>Consegna <input name="data_prevista" type="date"></label>
@@ -59,10 +59,20 @@ async function suggerisciCodiciOP(){
   const match=val?codiciPadreCache.filter(x=>x.codice.toLowerCase().includes(val)).slice(0,30):codiciPadreCache.slice(0,30);
   if(!match.length){box.style.display='none';box.innerHTML='';return;}
   box.innerHTML=match.map(x=>`<div style="padding:7px 10px;cursor:pointer;border-bottom:1px solid #eee"
-    onmousedown="document.getElementById('opCodiceArticolo').value='${esc(x.codice)}';document.getElementById('opCodiceSuggerimenti').style.display='none';"
+    onmousedown="document.getElementById('opCodiceArticolo').value='${esc(x.codice)}';document.getElementById('opDescrizione').value='${esc(x.descrizione||'')}';document.getElementById('opCodiceSuggerimenti').style.display='none';"
     onmouseover="this.style.background='#f2f6fa'" onmouseout="this.style.background='#fff'">
     <b>${esc(x.codice)}</b>${x.descrizione?`<br><span style="font-size:11px;color:#999">${esc(x.descrizione)}</span>`:''}</div>`).join('');
   box.style.display='block';
+}
+function autocompilaDescrizioneOP(){
+  // Se il codice digitato corrisponde esattamente a uno noto e la
+  // descrizione è ancora vuota, la prende da sola dal database — senza
+  // sovrascrivere quello che l'utente ha già scritto a mano.
+  const codice = document.getElementById('opCodiceArticolo').value.trim();
+  const descrizioneInput = document.getElementById('opDescrizione');
+  if(!codice || descrizioneInput.value.trim()) return;
+  const trovato = codiciPadreCache.find(x => x.codice.toLowerCase() === codice.toLowerCase());
+  if(trovato && trovato.descrizione) descrizioneInput.value = trovato.descrizione;
 }
 document.addEventListener('click',e=>{
   const box=document.getElementById('opCodiceSuggerimenti');

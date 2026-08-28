@@ -2022,10 +2022,26 @@ def api_fabbisogno_disponibilita():
 # ══════════════════════════════════════════════════════════════════════════════
 @magazzino_bp.route('/api/codici_padre_wood')
 def api_codici_padre_wood():
-    """Solo codici PADRE della distinta Iron Wood — presi da IronProduction, nessuna dipendenza da MasterLogistic."""
+    """Solo codici PADRE della distinta Iron Wood — presi da IronProduction, nessuna dipendenza da MasterLogistic.
+    Include la descrizione (ArticoloML, con fallback su DescrizioneCodiceWood — stesso pattern già usato altrove
+    per i codici Iron Wood) così il form Nuovo Ordine di Produzione può auto-compilarla appena si sceglie il codice,
+    senza doverla scrivere a mano."""
     codici = [row[0] for row in db.session.query(DistintaBaseWood.codice_padre).distinct()
               .order_by(DistintaBaseWood.codice_padre).all()]
-    return jsonify([{'codice': c} for c in codici])
+    descr_map = {}
+    if codici:
+        try:
+            for a in ArticoloML.query.filter(ArticoloML.sku.in_(codici)).all():
+                if a.descrizione:
+                    descr_map[a.sku] = a.descrizione
+        except Exception:
+            db.session.rollback()
+        codici_senza = [c for c in codici if c not in descr_map]
+        if codici_senza:
+            for d in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici_senza)).all():
+                if d.descrizione:
+                    descr_map[d.codice] = d.descrizione
+    return jsonify([{'codice': c, 'descrizione': descr_map.get(c, '')} for c in codici])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
