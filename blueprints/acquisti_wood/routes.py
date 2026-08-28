@@ -9,7 +9,8 @@ from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
                     OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento, ScortaMinimaWood)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
-                    _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op)
+                    _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
+                    _calcola_campi_giacenza)
 
 acquisti_wood_bp = Blueprint('acquisti_wood', __name__)
 
@@ -596,25 +597,38 @@ def pagina_acquisti_da_fabbisogno():
 
 @acquisti_wood_bp.route('/api/fabbisogno_acquisti_globale')
 def api_fabbisogno_acquisti_globale():
-    ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
-              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
-    giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
-    mappa = _carica_mappa_distinta_base_wood()
-    out_globale = {}
-    for o in ordini:
-        saldo = _saldo_materiale_op(o)
-        if saldo > 0:
-            _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, out_globale, mappa=mappa)
+    """
+    Fabbisogno per Materia Prima e Componente d'Acquisto — riusa la STESSA
+    identica formula già usata in Magazzino/Materiali
+    (_calcola_campi_giacenza: Fabbisogno = MAX(Scorta Minima + Ordinato
+    Cliente WMS − Disponibile Contabile Allargata, 0)), che incorpora GIA'
+    sia il fabbisogno generato dagli Ordini di Produzione aperti (via
+    Impegnato, dentro Disponibile Allargata) SIA la scorta minima di
+    sicurezza — comprese le quantità già ordinate ai fornitori (dentro
+    Disponibile Allargata anche quelle).
+
+    BUG REALE CORRETTO: prima questa pagina calcolava il fabbisogno SOLO
+    esplodendo la distinta base degli Ordini di Produzione aperti —
+    ignorando completamente la scorta minima. Alzare la scorta minima di
+    un codice (es. T1515, 2389 metri) senza nessun OP aperto che lo
+    richiedesse non lo faceva MAI comparire qui, anche se in Magazzino/
+    Materiali il Fabbisogno lo mostrava già correttamente — due calcoli
+    diversi per lo stesso identico concetto, che potevano disallinearsi.
+    """
+    codici_rilevanti = {a.codice: a.tipo_approvvigionamento for a in ArticoloApprovvigionamento.query
+                         .filter(ArticoloApprovvigionamento.tipo_approvvigionamento.in_(
+                             ('MATERIA_PRIMA_FORNITORE', 'COMPONENTE_ACQUISTO'))).all()}
+    if not codici_rilevanti:
+        return jsonify([])
+    presenti = {g.codice: g for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici_rilevanti)).all()}
+    righe_giacenza = [presenti.get(cod) or GiacenzaWood(codice=cod, quantita=0) for cod in codici_rilevanti]
+    calcolate = _calcola_campi_giacenza(righe_giacenza)
 
     righe = []
-    for cod, r in out_globale.items():
-        if r['mancante'] <= 0:
+    for r in calcolate:
+        if r['fabbisogno'] <= 0:
             continue
-        approvv = ArticoloApprovvigionamento.query.filter_by(codice=cod).first()
-        tipo = approvv.tipo_approvvigionamento if approvv else 'DA_CLASSIFICARE'
-        if tipo not in ('COMPONENTE_ACQUISTO', 'MATERIA_PRIMA_FORNITORE'):
-            continue
-
+        cod = r['codice']
         ultima_riga_oa = (RigaOrdineAcquistoWood.query.filter_by(codice=cod)
                           .join(OrdineAcquistoWood).order_by(OrdineAcquistoWood.caricato_il.desc()).first())
         righe_oa_aperte = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
@@ -623,14 +637,20 @@ def api_fabbisogno_acquisti_globale():
         gia_ordinato = sum(max((ro.qta_originale or 0) - (ro.qta_ricevuta or 0), 0) for ro in righe_oa_aperte)
 
         righe.append({
-            'codice': cod, 'tipo': tipo,
-            'descrizione': ultima_riga_oa.descrizione if ultima_riga_oa else '',
-            'unita_misura': ultima_riga_oa.unita_misura if ultima_riga_oa else '',
+            'codice': cod, 'tipo': codici_rilevanti[cod],
+            'descrizione': r['descrizione'] or (ultima_riga_oa.descrizione if ultima_riga_oa else ''),
+            'unita_misura': r['unita_misura'] or (ultima_riga_oa.unita_misura if ultima_riga_oa else ''),
             'ultimo_fornitore': ultima_riga_oa.ordine.fornitore if ultima_riga_oa else '',
             'ultimo_prezzo': ultima_riga_oa.prezzo_unitario if ultima_riga_oa else None,
-            'mancante': round(r['mancante'], 3),
+            # 'mancante' qui è già il fabbisogno UNIFICATO (produzione +
+            # scorta minima, quanto già ordinato è già netto dentro
+            # Disponibile Allargata) — 'gia_ordinato' resta mostrato SOLO
+            # come informazione, NON va più sottratto una seconda volta
+            # da 'da_ordinare_suggerito' (altrimenti si toglierebbe due
+            # volte la stessa quantità).
+            'mancante': round(r['fabbisogno'], 3),
             'gia_ordinato': round(gia_ordinato, 3),
-            'da_ordinare_suggerito': round(max(r['mancante'] - gia_ordinato, 0), 3),
+            'da_ordinare_suggerito': round(r['fabbisogno'], 3),
         })
     righe.sort(key=lambda x: (-x['da_ordinare_suggerito'], x['codice']))
     return jsonify(righe)
