@@ -298,7 +298,18 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
             fasi_per_codice.setdefault(c.codice, set()).add(c.centro_costo_id)
     centri_per_id = {c.id: c for c in CentroCostoWood.query.all()}
 
-    fatti_map = {}
+    # BUG REALE TROVATO E CORRETTO: fatti_map raggruppava per fase ESATTA
+    # (fase.strip().lower()), poi la si cercava con centro.nome.strip().lower()
+    # — un'uguaglianza esatta, non il confronto TOLLERANTE
+    # (_fasi_corrispondono) già usato per far avanzare qta_buona dell'OP.
+    # MasterWork manda in 'fase' un testo discorsivo per articolo (es.
+    # 'Saldatura Frontale c/Assemblaggio'), non il nome esatto del Centro
+    # di Costo qui ('Saldatura') — quella dichiarazione avanzava
+    # CORRETTAMENTE qta_buona, ma qui veniva ignorata dal conteggio
+    # 'pz_effettuati': le card di Situazione OP e la pagina Liste di
+    # Lavoro mostravano un residuo più alto del vero (i pezzi dichiarati
+    # via MasterWork con una fase discorsiva sparivano dal conteggio).
+    eventi_grezzi = {}   # (op_code, componente) -> [(fase, pezzi_buoni), ...]
     op_codes = [o.codice for o in ordini]
     if op_codes:
         for op_code, fase, componente, tot in (db.session.query(
@@ -306,7 +317,11 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
                 db.func.sum(EventoConsuntivoPP.pezzi_buoni))
                 .filter(EventoConsuntivoPP.op_code.in_(op_codes))
                 .group_by(EventoConsuntivoPP.op_code, EventoConsuntivoPP.fase, EventoConsuntivoPP.componente).all()):
-            fatti_map[(op_code, fase.strip().lower(), componente)] = tot or 0
+            eventi_grezzi.setdefault((op_code, componente), []).append((fase, tot or 0))
+
+    def _pezzi_fatti_tolleranti(op_code, componente, nome_centro):
+        return sum(tot for fase, tot in eventi_grezzi.get((op_code, componente), [])
+                   if _fasi_corrispondono(nome_centro, fase))
 
     for o in ordini:
         per_centro = {}
@@ -321,7 +336,7 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
                 centro = centri_per_id.get(centro_id)
                 if not centro:
                     continue
-                pezzi_fatti = fatti_map.get((o.codice, centro.nome.strip().lower(), componente_param), 0)
+                pezzi_fatti = _pezzi_fatti_tolleranti(o.codice, componente_param, centro.nome)
                 acc = per_centro.setdefault(centro_id, {
                     'centro_id': centro_id, 'centro_nome': centro.nome,
                     'totale_pz': 0, 'pz_effettuati': 0,
@@ -2072,12 +2087,25 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         # appena Segatrice aveva dichiarato la SUA parte — anche se Trapani
         # non aveva ancora lavorato nulla. Ogni centro deve vedere SOLO
         # quello che è stato dichiarato su di lui, indipendente dagli altri.
-        pezzi_fatti = int((db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-                          .filter(EventoConsuntivoPP.op_code == o.codice,
-                                  db.func.lower(EventoConsuntivoPP.fase) == centro.nome.strip().lower(),
-                                  EventoConsuntivoPP.componente == componente_param if componente_param
-                                  else EventoConsuntivoPP.componente.is_(None))
-                          .scalar()) or 0)
+        # BUG REALE TROVATO E CORRETTO: il confronto fase↔centro era
+        # un'uguaglianza ESATTA (fase.lower() == centro.nome.lower()),
+        # non il confronto TOLLERANTE (_fasi_corrispondono) già usato per
+        # far avanzare qta_buona dell'OP. MasterWork manda in 'fase' un
+        # testo discorsivo per articolo (es. 'Saldatura Frontale
+        # c/Assemblaggio'), non il nome esatto del Centro di Costo qui
+        # ('Saldatura') — quella dichiarazione avanzava CORRETTAMENTE
+        # qta_buona (avanza_op usa già il matcher tollerante), ma qui
+        # veniva IGNORATA dal conteggio 'Fatti' stampato sull'Ordine di
+        # Lavoro: l'OP mostrava 76 pezzi evasi (corretto) ma la stampa
+        # Saldatura ne mostrava solo 29 (i soli con fase scritta identica
+        # a 'Saldatura') — stesso numero, due calcoli diversi che
+        # potevano disallinearsi.
+        eventi_componente = (EventoConsuntivoPP.query
+                             .filter(EventoConsuntivoPP.op_code == o.codice,
+                                     EventoConsuntivoPP.componente == componente_param if componente_param
+                                     else EventoConsuntivoPP.componente.is_(None)).all())
+        pezzi_fatti = sum(e.pezzi_buoni or 0 for e in eventi_componente
+                          if _fasi_corrispondono(centro.nome, e.fase))
         saldo = max(nr_pz_da_fare - pezzi_fatti, 0)
 
         # 'Materiale' mostrato in tabella è SEMPRE il primo figlio diretto in
