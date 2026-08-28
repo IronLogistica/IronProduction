@@ -1253,6 +1253,62 @@ def api_wms_scarica_finiti_iw():
                      'kanban_verniciati_residuo': kanban_verniciati_dopo})
 
 
+def _tipologia_codice(codice):
+    """Versione a singolo codice di _tipologie_per_codici — comodo per un
+    endpoint che opera su un codice alla volta (es. impostare la scorta
+    minima locale)."""
+    return _tipologie_per_codici([codice]).get(codice, 'Da classificare')
+
+
+LABEL_TIPO_APPROVVIGIONAMENTO = {
+    'MATERIA_PRIMA_FORNITORE': 'Materia Prima (fornitore)',
+    'COMPONENTE_ACQUISTO': "Componente d'Acquisto",
+    'LASERATO': 'Laserato',
+}
+
+
+def _tipologie_per_codici(codici):
+    """
+    Tipologia per un elenco di codici, come dict {codice: tipologia} — UNA
+    query per categoria invece di una per codice. FUNZIONE CONDIVISA: usata
+    sia da _calcola_campi_giacenza (Magazzino/Alert Scorte) sia dal filtro
+    per tipologia dell'endpoint /api/giacenza_wood, applicato PRIMA del
+    limite di 200 righe — senza questo, filtrare per tipologia solo tra le
+    200 righe già estratte avrebbe fatto sparire codici del tipo cercato
+    rimasti fuori dal limite.
+
+    Codice Padre = ha almeno un Ordine di Produzione proprio, OPPURE è
+    stato marcato manualmente come tale (CodicePadreManuale, per i codici
+    venduti ma non ancora messi in produzione dentro IronProduction — senza
+    un OP, la regola normale non li vede). Se non è nessuno dei due, guarda
+    tipo_approvvigionamento (Parametri di Lavorazione). Se manca anche
+    quello ma ha un Ciclo di Lavoro proprio, è un semilavorato realizzato
+    internamente. Altrimenti non ancora classificato.
+    """
+    if not codici:
+        return {}
+    codici_padre_da_op = {r[0] for r in db.session.query(OrdineProduzione.codice_articolo)
+                           .filter(OrdineProduzione.codice_articolo.in_(codici)).distinct().all()}
+    codici_padre_manuali = {r[0] for r in db.session.query(CodicePadreManuale.codice)
+                             .filter(CodicePadreManuale.codice.in_(codici)).distinct().all()}
+    codici_padre = codici_padre_da_op | codici_padre_manuali
+    codici_con_ciclo = {r[0] for r in db.session.query(CicloLavoroWood.codice)
+                         .filter(CicloLavoroWood.codice.in_(codici)).distinct().all()}
+    approvvigionamenti = {a.codice: a for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()}
+
+    risultato = {}
+    for codice in codici:
+        if codice in codici_padre:
+            risultato[codice] = 'Codice Padre'
+            continue
+        art = approvvigionamenti.get(codice)
+        if art and art.tipo_approvvigionamento in LABEL_TIPO_APPROVVIGIONAMENTO:
+            risultato[codice] = LABEL_TIPO_APPROVVIGIONAMENTO[art.tipo_approvvigionamento]
+            continue
+        risultato[codice] = 'Semilavorato (centri di costo)' if codice in codici_con_ciclo else 'Da classificare'
+    return risultato
+
+
 def _calcola_campi_giacenza(righe):
     """
     Funzione CONDIVISA che calcola Impegnato/Ordinato/Grezzo IW/Ordinato in
@@ -1327,24 +1383,8 @@ def _calcola_campi_giacenza(righe):
                            .filter(OrdineProduzione.codice_articolo.in_(codici)).distinct().all()}
     codici_padre_manuali = {r[0] for r in db.session.query(CodicePadreManuale.codice)
                              .filter(CodicePadreManuale.codice.in_(codici)).distinct().all()}
-    codici_padre = codici_padre_da_op | codici_padre_manuali
-    codici_con_ciclo = {r[0] for r in db.session.query(CicloLavoroWood.codice)
-                         .filter(CicloLavoroWood.codice.in_(codici)).distinct().all()}
-    LABEL_TIPO_APPROVVIGIONAMENTO = {
-        'MATERIA_PRIMA_FORNITORE': 'Materia Prima (fornitore)',
-        'COMPONENTE_ACQUISTO': "Componente d'Acquisto",
-        'LASERATO': 'Laserato',
-    }
-
-    def _tipologia(codice):
-        if codice in codici_padre:
-            return 'Codice Padre'
-        art = approvvigionamenti.get(codice)
-        if art and art.tipo_approvvigionamento in LABEL_TIPO_APPROVVIGIONAMENTO:
-            return LABEL_TIPO_APPROVVIGIONAMENTO[art.tipo_approvvigionamento]
-        if codice in codici_con_ciclo:
-            return 'Semilavorato (centri di costo)'
-        return 'Da classificare'
+    tipologie = _tipologie_per_codici(codici)
+    scorte_minime_locali = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.filter(ScortaMinimaWood.codice.in_(codici)).all()}
 
     righe_out = []
     for g in righe:
@@ -1353,25 +1393,35 @@ def _calcola_campi_giacenza(righe):
         grz = grezzo_iw.get(g.codice, 0)
         in_tratt = in_trattamento.get(g.codice, 0)
         ord_prod = ordinato_produzione.get(g.codice, 0)
-        scorta_min = getattr(g, 'scorta_minima_wms', None) or 0
+        tipologia_codice = tipologie.get(g.codice, 'Da classificare')
+        # Scorta minima: fonte diversa a seconda del tipo. Codice Padre =
+        # prodotto finito, la sua scorta minima la decide MasterLogistic-WMS
+        # (già gestita là, IronProduction la legge soltanto — inibita da
+        # qualunque modifica qui, per non avere due fonti in conflitto sullo
+        # stesso codice). Materia prima/componente d'acquisto/semilavorato =
+        # WMS non li conosce affatto: la scorta minima la gestisce solo
+        # IronProduction (ScortaMinimaWood, locale).
+        e_codice_padre = tipologia_codice == 'Codice Padre'
+        scorta_min = (getattr(g, 'scorta_minima_wms', None) or 0) if e_codice_padre else (scorte_minime_locali.get(g.codice) or 0)
         ord_cliente_wms = getattr(g, 'ordinato_cliente_wms', None) or 0
         disp_contabile = round((g.quantita or 0) - imp + ord_, 4)
         disp_allargata = round((g.quantita or 0) + grz - imp + ord_ + ord_prod, 4)
-        # Fabbisogno = MAX(Scorta Minima (da WMS) + Ordinato da Cliente
-        # (WMS) − Disp. Contabile Allargata, 0): un ordine cliente reale
-        # letto da WMS pesa di più della sola scorta di sicurezza — non la
+        # Fabbisogno = MAX(Scorta Minima + Ordinato da Cliente (WMS) −
+        # Disp. Contabile Allargata, 0): un ordine cliente reale letto da
+        # WMS pesa di più della sola scorta di sicurezza — non la
         # sostituisce, si somma. Se un campo WMS non è mai stato
         # aggiornato (None), conta 0, non blocca il calcolo.
         fabbisogno = round(max(scorta_min + ord_cliente_wms - disp_allargata, 0), 4)
         righe_out.append({
             'codice': g.codice, 'descrizione': descrizioni.get(g.codice, ''), 'quantita': g.quantita,
             'unita_misura': approvvigionamenti.get(g.codice).unita_misura if approvvigionamenti.get(g.codice) else '',
-            'tipologia': _tipologia(g.codice),
+            'tipologia': tipologia_codice,
             'ha_op_proprio': g.codice in codici_padre_da_op,
             'codice_padre_manuale': g.codice in codici_padre_manuali,
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
             'grezzo_iw': grz, 'in_trattamento': in_tratt, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
-            'scorta_minima': getattr(g, 'scorta_minima_wms', None),
+            'scorta_minima': scorta_min,
+            'scorta_minima_fonte': 'WMS' if e_codice_padre else 'locale',
             'scorta_minima_wms_aggiornato_il': (g.scorta_minima_wms_aggiornato_il.strftime('%d/%m/%Y %H:%M')
                 if getattr(g, 'scorta_minima_wms_aggiornato_il', None) else None),
             'ordinato_cliente_wms': getattr(g, 'ordinato_cliente_wms', None),
@@ -1435,11 +1485,24 @@ def api_giacenza_lista():
     LIMITE_DEFAULT = 200
     q = (request.args.get('q') or '').strip()
     solo_bom = request.args.get('solo_bom') == '1'
+    tipo_filtro = (request.args.get('tipo') or '').strip()
     query = GiacenzaWood.query
     if solo_bom:
         codici_bom = {r[0] for r in db.session.query(DistintaBaseWood.codice_padre).distinct().all()} | \
                      {r[0] for r in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
         query = query.filter(GiacenzaWood.codice.in_(codici_bom))
+    # Filtro per tipologia (Codice Padre / Materia Prima / Materiale in
+    # Acquisto / Semilavorato / ecc.) — applicato QUI, PRIMA del limite di
+    # 200 righe: la tipologia non è un campo salvato su GiacenzaWood, va
+    # calcolata sull'insieme di codici rilevante (codici_bom se solo_bom,
+    # altrimenti quelli già a magazzino) e usata per restringere la query
+    # via IN(...) — applicarla DOPO il limite avrebbe fatto sparire codici
+    # del tipo cercato rimasti fuori dalle 200 righe più recenti.
+    if tipo_filtro:
+        pool_codici = list(codici_bom) if solo_bom else [c for c, in db.session.query(GiacenzaWood.codice).all()]
+        tipologie_pool = _tipologie_per_codici(pool_codici)
+        codici_del_tipo = {c for c, t in tipologie_pool.items() if t == tipo_filtro}
+        query = query.filter(GiacenzaWood.codice.in_(codici_del_tipo))
     totale = query.count()
     codici_bom_ricerca = set()
     if q:
@@ -1447,22 +1510,25 @@ def api_giacenza_lista():
                                    .filter(RigaOrdineAcquistoWood.descrizione.ilike(f'%{q}%')).distinct().all()}
         query = query.filter(db.or_(GiacenzaWood.codice.ilike(f'%{q}%'),
                                      GiacenzaWood.codice.in_(codici_per_descrizione)))
+        totale = query.count()
         # Un codice della Distinta Base senza NESSUNA giacenza registrata non
         # esiste come riga GiacenzaWood: senza questo, cercandolo per nome non
         # lo si troverebbe MAI, impedendo di inserirne il primo carico.
         if solo_bom:
             ql = q.lower()
-            codici_bom_ricerca = {c for c in codici_bom if ql in c.lower()}
+            pool_per_mancanti = (codici_del_tipo if tipo_filtro else codici_bom)
+            codici_bom_ricerca = {c for c in pool_per_mancanti if ql in c.lower()}
     righe = query.order_by(GiacenzaWood.aggiornato_il.desc()).limit(LIMITE_DEFAULT).all()
     # Giacenza Iron Wood è guidata dalla distinta impostata in Parametri: anche
     # un componente senza movimento/stock registrato deve comparire a zero, per
     # rendere visibile il fabbisogno invece di nasconderlo.
     if solo_bom and not q:
+        pool_mancanti = (codici_del_tipo if tipo_filtro else codici_bom)
         presenti = {g.codice for g in righe}
-        mancanti = sorted(codici_bom - presenti)
+        mancanti = sorted(pool_mancanti - presenti)
         spazio = max(LIMITE_DEFAULT - len(righe), 0)
         righe.extend(GiacenzaWood(codice=codice, quantita=0) for codice in mancanti[:spazio])
-        totale = len(codici_bom)
+        totale = len(pool_mancanti)
     elif solo_bom and q and codici_bom_ricerca:
         presenti = {g.codice for g in righe}
         mancanti = sorted(codici_bom_ricerca - presenti)
@@ -1474,7 +1540,7 @@ def api_giacenza_lista():
 
     return jsonify({
         'righe': righe_out,
-        'totale': totale, 'mostrate': len(righe), 'filtrato': bool(q), 'limite': LIMITE_DEFAULT,
+        'totale': totale, 'mostrate': len(righe), 'filtrato': bool(q) or bool(tipo_filtro), 'limite': LIMITE_DEFAULT,
     })
 
 
@@ -1699,6 +1765,41 @@ def api_lista_rettifiche_grezzo_iw(codice):
         'delta': r.delta, 'note': r.note,
         'creato_il': r.creato_il.strftime('%d/%m/%Y %H:%M') if r.creato_il else '',
     } for r in righe])
+
+
+@magazzino_bp.route('/api/giacenza_wood/<codice>/scorta-minima-locale', methods=['POST'])
+def api_imposta_scorta_minima_locale(codice):
+    """
+    Imposta la scorta minima LOCALE (ScortaMinimaWood) per un codice —
+    SOLO per materia prima, componente d'acquisto, laserato o semilavorato:
+    per un Codice Padre (prodotto finito) la scorta minima la decide
+    MasterLogistic-WMS, non IronProduction — questo endpoint rifiuta la
+    richiesta in quel caso, per non creare due fonti in conflitto sullo
+    stesso codice (una qui, una là, senza sapere quale vince davvero).
+    Sovrascrive il valore precedente (non cumulativo come Grezzo IW: qui
+    è una soglia configurata, non un movimento storico da sommare).
+    """
+    codice = codice.strip()
+    tipologia_codice = _tipologia_codice(codice)
+    if tipologia_codice == 'Codice Padre':
+        return jsonify({'errore': True, 'messaggio':
+            "La scorta minima di un Codice Padre è gestita da MasterLogistic-WMS, "
+            "non modificabile qui — usa il pulsante 🔄 per aggiornarla da WMS."}), 400
+    d = request.get_json(force=True)
+    try:
+        valore = float(d.get('scorta_minima'))
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Il valore deve essere un numero'}), 400
+    if valore < 0:
+        return jsonify({'errore': True, 'messaggio': 'La scorta minima non può essere negativa'}), 400
+    riga = ScortaMinimaWood.query.get(codice)
+    if riga:
+        riga.scorta_minima = valore
+    else:
+        db.session.add(ScortaMinimaWood(codice=codice, scorta_minima=valore))
+    db.session.commit()
+    log(f'Scorta minima locale impostata: {codice} -> {valore}')
+    return jsonify({'ok': True, 'codice': codice, 'scorta_minima': valore})
 
 
 @magazzino_bp.route('/api/giacenza_wood/<codice>/movimenti')
