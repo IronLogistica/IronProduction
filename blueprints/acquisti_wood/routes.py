@@ -9,7 +9,7 @@ from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
                     OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
-                    _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO)
+                    _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op)
 
 acquisti_wood_bp = Blueprint('acquisti_wood', __name__)
 
@@ -602,7 +602,7 @@ def api_fabbisogno_acquisti_globale():
     mappa = _carica_mappa_distinta_base_wood()
     out_globale = {}
     for o in ordini:
-        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        saldo = _saldo_materiale_op(o)
         if saldo > 0:
             _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, out_globale, mappa=mappa)
 

@@ -23,7 +23,7 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _grezzo_iw_per_codici,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
                     _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
-                    _contestuale_attivo_per_op)
+                    _contestuale_attivo_per_op, _saldo_materiale_op)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 
@@ -193,7 +193,7 @@ def modifica(oid):
             o.stato = 'Tecnicamente completato' if (o.qta_buona or 0) >= o.qta_pianificata else 'In esecuzione'
 
         _audit(o, 'MODIFICATO', 'Aggiornamento OP' + (' (a produzione avviata)' if gia_avviato else '')); db.session.commit()
-        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        saldo = _saldo_materiale_op(o)
         controllo_scorta = _calcola_controllo_scorta(o.codice_articolo, saldo, escludi_op_id=o.id) if saldo > 0 else []
         return jsonify(ok=True, ordine=_ordine(o), controllo_scorta=controllo_scorta)
     except ValueError as exc: db.session.rollback(); return jsonify(ok=False, error=str(exc)), 400
@@ -359,7 +359,7 @@ def api_ordini_riepilogo_disponibilita():
     mappa_distinta = _carica_mappa_distinta_base_wood()
     residuo_per_op, residuo_finale = _residuo_giacenza_progressivo(mappa=mappa_distinta)
     for o in ordini:
-        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        saldo = _saldo_materiale_op(o)
         righe = {}
         if saldo > 0:
             giacenza_residua = dict(residuo_per_op.get(o.id, residuo_finale))
@@ -458,7 +458,7 @@ def api_ordine_situazione_completa(codice):
     if not o:
         return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
 
-    saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+    saldo = _saldo_materiale_op(o)
     righe_disponibilita = {}
     if saldo > 0:
         giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
@@ -562,7 +562,7 @@ def api_ordine_dettaglio_per_categoria(codice):
     if not o:
         return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
 
-    saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+    saldo = _saldo_materiale_op(o)
     righe_disponibilita = {}
     if saldo > 0:
         giacenza_iniziale = {g.codice: g.quantita for g in GiacenzaWood.query.all()}

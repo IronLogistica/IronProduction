@@ -9,7 +9,7 @@ from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     ParametriLavorazioneWood)
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
                     _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo,
-                    _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO)
+                    _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op)
 from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria
 
 monitor_bp = Blueprint('monitor', __name__)
@@ -42,7 +42,7 @@ def _materiale_disponibile(o, giacenza_residua=None, mappa_distinta=None):
     'mappa_distinta' opzionale: vedi _carica_mappa_distinta_base_wood, evita
     una query per nodo dell'albero.
     """
-    saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+    saldo = _saldo_materiale_op(o)
     if saldo <= 0:
         return True
     righe = {}

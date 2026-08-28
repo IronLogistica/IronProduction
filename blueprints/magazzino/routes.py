@@ -958,7 +958,7 @@ def api_fabbisogno_produzione():
 
     ordini = OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO)).all()
     for o in ordini:
-        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        saldo = _saldo_materiale_op(o)
         if saldo <= 0:
             continue
         componenti = _esplodi_bom_wood(o.codice_articolo, qta=saldo)
@@ -1566,7 +1566,7 @@ def api_giacenza_impegni_op(codice):
     mappa = _carica_mappa_distinta_base_wood()
     righe = []
     for op in op_aperti:
-        saldo = (op.qta_pianificata or 0) - (op.qta_buona or 0)
+        saldo = _saldo_materiale_op(op)
         if saldo <= 0:
             continue
         out = {}
@@ -1602,7 +1602,7 @@ def api_diagnostica_esplosione_op(op_code):
     o = OrdineProduzione.query.filter_by(codice=op_code.strip()).first()
     if not o:
         return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
-    saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+    saldo = _saldo_materiale_op(o)
     giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
     out = {}
     if saldo > 0:
@@ -1985,6 +1985,41 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
         _netta_e_esplodi_wood(r.codice_figlio, qta_figlio, giacenza_residua, out, _visitati, _profondita + 1, _max_profondita, mappa=mappa, escludi_fabbisogno_per=escludi_fabbisogno_per)
 
 
+def _saldo_materiale_op(o):
+    """
+    Quanto materiale GREZZO/materia prima serve ANCORA per completare
+    questo OP — DIVERSO da "saldo da produrre" (qta_pianificata −
+    qta_buona, che riflette solo l'ULTIMA fase del ciclo, quella che rende
+    il prodotto davvero finito). La materia prima invece si scarica alla
+    PRIMA fase del ciclo (_e_prima_fase_del_ciclo, in produzione_pp/
+    routes.py) — un codice con più fasi (es. Taglio poi Satinatura) ha già
+    consumato tutta la materia prima quando Taglio è stato dichiarato
+    completo, anche se Satinatura (l'ultima fase) non si è ancora mosso e
+    qta_buona resta a zero.
+
+    BUG REALE CORRETTO: la simulazione "Impegnato"/disponibilità materiale
+    usava SEMPRE qta_pianificata − qta_buona per decidere quanta materia
+    prima serve ancora — per un codice a più fasi, questo continuava a
+    prevedere l'INTERA quantità come 'ancora da comprare' anche quando la
+    prima fase aveva già scaricato tutto il necessario, perché qta_buona
+    (legato all'ultima fase) non si era ancora mosso.
+
+    Per un codice a fase singola, prima fase e ultima fase coincidono:
+    stesso risultato di qta_pianificata − qta_buona, nessuna differenza —
+    questa funzione è un no-op per la stragrande maggioranza dei codici,
+    cambia solo quelli con più fasi e progresso parziale.
+    """
+    pianificata = o.qta_pianificata or 0
+    prima = (CicloLavoroWood.query.filter_by(codice=o.codice_articolo)
+             .order_by(CicloLavoroWood.sequenza).first())
+    if not prima or not prima.centro_costo:
+        return max(pianificata - (o.qta_buona or 0), 0)
+    from blueprints.produzione_pp.routes import _fasi_corrispondono
+    eventi = EventoConsuntivoPP.query.filter_by(op_code=o.codice, componente=None).all()
+    dichiarato_prima_fase = sum(e.pezzi_buoni or 0 for e in eventi if _fasi_corrispondono(prima.centro_costo.nome, e.fase))
+    return max(pianificata - dichiarato_prima_fase, 0)
+
+
 def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None, fabbisogno_lordo_out=None):
     """
     Parte dalla giacenza fisica attuale e simula il consumo di TUTTI gli OP
@@ -2016,7 +2051,7 @@ def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None, fabbisogno_lo
     for op in op_aperti:
         if escludi_op_id and op.id == escludi_op_id:
             continue
-        saldo = (op.qta_pianificata or 0) - (op.qta_buona or 0)
+        saldo = _saldo_materiale_op(op)
         if saldo > 0:
             _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua,
                                    out_condiviso if out_condiviso is not None else {}, mappa=mappa,
@@ -2058,7 +2093,7 @@ def _residuo_giacenza_progressivo(op_aperti=None, mappa=None):
     residuo_per_op = {}
     for op in op_aperti:
         residuo_per_op[op.id] = dict(giacenza)  # snapshot prima di servire QUESTO OP
-        saldo = (op.qta_pianificata or 0) - (op.qta_buona or 0)
+        saldo = _saldo_materiale_op(op)
         if saldo > 0:
             _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza, {}, mappa=mappa)
     return residuo_per_op, giacenza
@@ -2081,7 +2116,7 @@ def api_fabbisogno_disponibilita():
     if op_id:
         op = OrdineProduzione.query.get_or_404(op_id)
         codice = op.codice_articolo
-        qta = (op.qta_pianificata or 0) - (op.qta_buona or 0)
+        qta = _saldo_materiale_op(op)
     else:
         if not codice:
             return jsonify({'errore': True, 'messaggio': 'Specificare "codice" e "qta", oppure "op_id"'}), 400
