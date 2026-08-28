@@ -2940,6 +2940,18 @@ def pagina_scheda_materiale_stampa():
     stampare. Ogni scheda mostra la fase selezionata e quella successiva; se
     la selezionata è l'ultima, mostra invece il padre immediato e la prima
     lavorazione prevista dal ciclo del padre.
+
+    Il campo "Codice padre" in cima mostra invece SEMPRE la radice finale
+    della distinta — il prodotto finito che verrà venduto (il "padre dei
+    padri", su richiesta esplicita) — semplicemente codice_articolo dell'OP:
+    quello è per definizione la radice della distinta di QUESTO OP, senza
+    bisogno di risalire livello per livello (e senza l'ambiguità possibile
+    di un componente riusato in più punti della stessa distinta, che
+    _trova_codice_padre_per_op deve invece gestire per il genitore
+    IMMEDIATO). Sono due concetti diversi usati in punti diversi della
+    scheda: il genitore immediato resta quello giusto per dire fisicamente
+    "a quale assemblaggio successivo portare questo pezzo", la radice
+    finale è quella giusta per l'etichetta "Codice padre" in cima.
     """
     codice = (request.args.get('codice') or '').strip()
     descrizione = (request.args.get('descrizione') or '').strip()
@@ -2950,6 +2962,9 @@ def pagina_scheda_materiale_stampa():
 
     ordine = OrdineProduzione.query.filter_by(codice=op_code).first() if op_code else None
     codice_padre = _trova_codice_padre_per_op(codice, ordine)
+    codice_padre_finale = (ordine.codice_articolo
+                            if ordine and ordine.codice_articolo and ordine.codice_articolo != codice
+                            else '')
 
     fasi_ciclo = []
     fase_eseguita = None
@@ -2991,7 +3006,7 @@ def pagina_scheda_materiale_stampa():
                                     .order_by(CicloLavoroWood.sequenza).first())
 
     return render_template('produzione_pp/scheda_materiale_stampa.html',
-        codice=codice, codice_padre=codice_padre,
+        codice=codice, codice_padre=codice_padre, codice_padre_finale=codice_padre_finale,
         descrizione=descrizione, quantita=quantita,
         fasi_ciclo=fasi_ciclo, fase_eseguita=fase_eseguita,
         fase_prossima=fase_prossima, prima_fase_padre=prima_fase_padre)

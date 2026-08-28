@@ -47,6 +47,11 @@
     body{background:#fff;padding:0}
     .toolbar{display:none}
     .card{border-width:2px}
+    /* Senza questo, i browser di default NON stampano gli sfondi colorati
+       (per risparmiare inchiostro) — l'header nero (.hdr-logo) sparirebbe
+       in stampa, lasciando il testo bianco illeggibile su sfondo ormai
+       bianco. Vedi lo stesso fix su scheda_materiale_stampa.html. */
+    *{ -webkit-print-color-adjust:exact !important; print-color-adjust:exact !important; color-adjust:exact !important; }
   }
 </style>
 </head>

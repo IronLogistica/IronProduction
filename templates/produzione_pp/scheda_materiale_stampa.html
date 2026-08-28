@@ -34,7 +34,18 @@
   .footer-label { font-size: 11px; font-weight: 700; text-transform: uppercase; }
   .footer-valore { margin-top: 6px; font-size: 20px; font-weight: 800; }
   .btn-stampa { display: block; width: 100%; margin: 14px 0; padding: 12px; font-size: 16px; font-weight: 700; background: #1e6fa5; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
-  @media print { .btn-stampa { display: none; } body { padding: 0; } }
+  @media print {
+    .btn-stampa { display: none; }
+    body { padding: 0; }
+    /* Senza questo, i browser di default NON stampano gli sfondi colorati
+       (per risparmiare inchiostro) — lo sfondo nero (.campo-nero,
+       .lavorazione-prossima) sparisce in stampa e diventa bianco, mentre
+       il testo bianco sopra resta bianco/grigio chiaro su sfondo ormai
+       bianco: illeggibile. Questa regola forza il browser a stampare
+       davvero i colori impostati, non un'approssimazione a risparmio
+       d'inchiostro. */
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+  }
 </style>
 </head>
 <body>
@@ -50,7 +61,7 @@
   </div>
   <div class="campo campo-nero">
     <div class="campo-label">Codice padre</div>
-    <div class="campo-valore">{{ codice_padre or '—' }}</div>
+    <div class="campo-valore">{{ codice_padre_finale or '—' }}</div>
   </div>
 </div>
 
