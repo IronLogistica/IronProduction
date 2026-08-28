@@ -21,19 +21,6 @@
 </head>
 <body>
 
-<div style="background:#0f1e35;border-radius:10px;border:1px solid rgba(30,111,165,.25);padding:16px">
-  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
-    <div style="font-weight:500;font-size:14px;color:#e0eefc">🗓️ Gantt commesse</div>
-    <button class="btn" onclick="caricaGanttCommesse()">🔄 Aggiorna</button>
-  </div>
-  <div style="font-size:11px;color:#6b8aaa;margin:6px 0 14px;display:flex;gap:16px">
-    <span><span style="display:inline-block;width:10px;height:10px;background:#2589c7;border-radius:2px;margin-right:5px;vertical-align:-1px"></span>produzione interna</span>
-    <span><span style="display:inline-block;width:10px;height:10px;background:#eb9f27;border-radius:2px;margin-right:5px;vertical-align:-1px"></span>lavorazione esterna</span>
-    <span><span style="display:inline-block;width:2px;height:12px;background:#f09595;margin-right:6px;vertical-align:-2px"></span>oggi</span>
-  </div>
-  <div id="gantt-commesse-box" style="overflow-x:auto;color:#c8ddf0">Caricamento...</div>
-</div>
-
 <div style="background:#fff;border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-top:20px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
     <div style="font-weight:800;font-size:14px;color:var(--dark)">🗓️ Avanzamento Commesse — stima fine produzione e consegna</div>
@@ -55,6 +42,22 @@
     Ordini di Produzione già inseriti ma non ancora rilasciati — promemoria trasversale a tutti i centri di costo.
   </p>
   <div id="in-attesa-rilascio-box" style="overflow-x:auto">Caricamento...</div>
+</div>
+
+<!-- Gantt commesse spostato in fondo (su richiesta): nella vista monitor/totem
+     l'attenzione va prima ad Avanzamento Commesse e In Attesa di Rilascio,
+     il Gantt resta disponibile ma non è più la prima cosa che si vede. -->
+<div style="background:#0f1e35;border-radius:10px;border:1px solid rgba(30,111,165,.25);padding:16px;margin-top:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-weight:500;font-size:14px;color:#e0eefc">🗓️ Gantt commesse</div>
+    <button class="btn" onclick="caricaGanttCommesse()">🔄 Aggiorna</button>
+  </div>
+  <div style="font-size:11px;color:#6b8aaa;margin:6px 0 14px;display:flex;gap:16px">
+    <span><span style="display:inline-block;width:10px;height:10px;background:#2589c7;border-radius:2px;margin-right:5px;vertical-align:-1px"></span>produzione interna</span>
+    <span><span style="display:inline-block;width:10px;height:10px;background:#eb9f27;border-radius:2px;margin-right:5px;vertical-align:-1px"></span>lavorazione esterna</span>
+    <span><span style="display:inline-block;width:2px;height:12px;background:#f09595;margin-right:6px;vertical-align:-2px"></span>oggi</span>
+  </div>
+  <div id="gantt-commesse-box" style="overflow-x:auto;color:#c8ddf0">Caricamento...</div>
 </div>
 
 <script>
