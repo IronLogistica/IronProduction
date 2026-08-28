@@ -341,7 +341,7 @@ async function caricaOpAperti(){
                  style="width:52px;padding:8px;font-size:15px;border-radius:6px;border:1px solid #e6b800;background:var(--dark3);color:#e6b800">
         </td>
         <td><button class="btn btn-primary" style="padding:8px 12px;font-size:13px" onclick='dichiaraInline(${JSON.stringify(g)}, ${JSON.stringify(c)}, "${idInput}")'>✅</button></td>
-        <td><button class="btn btn-ghost" style="padding:8px 10px;font-size:13px" onclick='stampaSchedaMateriale(${JSON.stringify(codicePulito)}, ${JSON.stringify(c.descrizione||'')}, "${idInput}", ${_centroCorrente})' title="Stampa Scheda Identificazione Materiale (A5)">🖨️</button></td>
+        <td><button class="btn btn-ghost" style="padding:8px 10px;font-size:13px" onclick='stampaSchedaMateriale(${JSON.stringify(codicePulito)}, ${JSON.stringify(c.descrizione||'')}, "${idInput}", ${_centroCorrente}, ${JSON.stringify(g.codice)})' title="Stampa Scheda Identificazione Materiale in Produzione (A4)">🖨️</button></td>
       </tr>`;
     }).join('');
     return `<div class="mon-section" style="margin-bottom:10px">` +
@@ -353,10 +353,10 @@ async function caricaOpAperti(){
   }).join('');
 }
 
-function stampaSchedaMateriale(codice, descrizione, idInput, centroId){
+function stampaSchedaMateriale(codice, descrizione, idInput, centroId, opCode){
   const inputBuoni = document.getElementById(idInput);
   const quantita = (inputBuoni && inputBuoni.value) ? inputBuoni.value : '';
-  const params = new URLSearchParams({codice, descrizione, quantita, centro_id: centroId || ''});
+  const params = new URLSearchParams({codice, descrizione, quantita, centro_id: centroId || '', op_code: opCode || ''});
   window.open('/scheda-materiale-stampa?' + params.toString(), '_blank');
 }
 
