@@ -1264,6 +1264,8 @@ LABEL_TIPO_APPROVVIGIONAMENTO = {
     'MATERIA_PRIMA_FORNITORE': 'Materia Prima (fornitore)',
     'COMPONENTE_ACQUISTO': "Componente d'Acquisto",
     'LASERATO': 'Laserato',
+    'MATERIALE_CONSUMO': 'Materiale di Consumo',
+    'MATERIALE_SICUREZZA': 'Materiale di Sicurezza',
 }
 
 
@@ -1403,7 +1405,7 @@ def _calcola_campi_giacenza(righe):
         # scorta minima: un semilavorato lavorato internamente non si
         # "riordina" a un fornitore con una soglia di sicurezza — il suo
         # fabbisogno lo genera la produzione a monte, non un acquisto.
-        TIPI_CON_SCORTA_LOCALE = ("Materia Prima (fornitore)", "Componente d'Acquisto", 'Laserato')
+        TIPI_CON_SCORTA_LOCALE = ("Materia Prima (fornitore)", "Componente d'Acquisto", 'Laserato', 'Materiale di Consumo', 'Materiale di Sicurezza')
         e_codice_padre = tipologia_codice == 'Codice Padre'
         ammette_scorta_locale = tipologia_codice in TIPI_CON_SCORTA_LOCALE
         if e_codice_padre:
@@ -1801,7 +1803,7 @@ def api_imposta_scorta_minima_locale(codice):
     """
     codice = codice.strip()
     tipologia_codice = _tipologia_codice(codice)
-    TIPI_CON_SCORTA_LOCALE = ("Materia Prima (fornitore)", "Componente d'Acquisto", 'Laserato')
+    TIPI_CON_SCORTA_LOCALE = ("Materia Prima (fornitore)", "Componente d'Acquisto", 'Laserato', 'Materiale di Consumo', 'Materiale di Sicurezza')
     if tipologia_codice == 'Codice Padre':
         return jsonify({'errore': True, 'messaggio':
             "La scorta minima di un Codice Padre è gestita da MasterLogistic-WMS, "

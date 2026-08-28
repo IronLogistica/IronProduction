@@ -7,7 +7,7 @@ from flask import Blueprint, render_template, jsonify, request, Response
 
 from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
-                    OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento)
+                    OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento, ScortaMinimaWood)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
                     _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op)
 
@@ -634,6 +634,85 @@ def api_fabbisogno_acquisti_globale():
         })
     righe.sort(key=lambda x: (-x['da_ordinare_suggerito'], x['codice']))
     return jsonify(righe)
+
+
+def _fabbisogno_acquisti_semplice(tipo_approvvigionamento):
+    """
+    Fabbisogno per materiali NON legati alla Distinta Base di NESSUN
+    prodotto — Materiale di Consumo (filo/gas di saldatura, ricambi
+    torce e molette, reggetta per imballare) e Materiale di Sicurezza
+    (scarpe antinfortunistiche, tappi, ecc.). A differenza di Materia
+    Prima/Componente Acquisto/Laserato (dove il fabbisogno nasce
+    dall'esplosione degli Ordini di Produzione aperti — vedi
+    api_fabbisogno_acquisti_globale), questi materiali non compaiono MAI
+    in nessuna distinta base: si consumano genericamente dal processo
+    (es. il filo di saldatura non è "componente" di nessun Cavalletto),
+    quindi il fabbisogno si calcola con la classica soglia di riordino,
+    indipendente da quali OP sono aperti in questo momento:
+      Fabbisogno = MAX(Scorta Minima locale − Giacenza attuale, 0)
+    Mostra solo i codici con una scorta minima configurata (> 0): senza
+    soglia non si può decidere se manca qualcosa.
+    """
+    articoli = ArticoloApprovvigionamento.query.filter_by(tipo_approvvigionamento=tipo_approvvigionamento).all()
+    scorte_minime = {s.codice: s.scorta_minima for s in ScortaMinimaWood.query.all()}
+    giacenze = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
+    righe = []
+    for a in articoli:
+        scorta_min = scorte_minime.get(a.codice) or 0
+        if scorta_min <= 0:
+            continue
+        giacenza = giacenze.get(a.codice) or 0
+        mancante = max(scorta_min - giacenza, 0)
+        if mancante <= 0:
+            continue
+
+        ultima_riga_oa = (RigaOrdineAcquistoWood.query.filter_by(codice=a.codice)
+                          .join(OrdineAcquistoWood).order_by(OrdineAcquistoWood.caricato_il.desc()).first())
+        righe_oa_aperte = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
+                          .filter(RigaOrdineAcquistoWood.codice == a.codice,
+                                  OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all())
+        gia_ordinato = sum(max((ro.qta_originale or 0) - (ro.qta_ricevuta or 0), 0) for ro in righe_oa_aperte)
+
+        righe.append({
+            'codice': a.codice,
+            'descrizione': ultima_riga_oa.descrizione if ultima_riga_oa else '',
+            'unita_misura': a.unita_misura or (ultima_riga_oa.unita_misura if ultima_riga_oa else ''),
+            'ultimo_fornitore': ultima_riga_oa.ordine.fornitore if ultima_riga_oa else '',
+            'ultimo_prezzo': ultima_riga_oa.prezzo_unitario if ultima_riga_oa else None,
+            'giacenza': round(giacenza, 3),
+            'scorta_minima': round(scorta_min, 3),
+            'mancante': round(mancante, 3),
+            'gia_ordinato': round(gia_ordinato, 3),
+            'da_ordinare_suggerito': round(max(mancante - gia_ordinato, 0), 3),
+        })
+    righe.sort(key=lambda x: (-x['da_ordinare_suggerito'], x['codice']))
+    return righe
+
+
+@acquisti_wood_bp.route('/acquisti-consumabili')
+def pagina_acquisti_consumabili():
+    return render_template('acquisti_wood/acquisti_consumabili.html', active='acquisti_wood',
+                            titolo='🧰 Acquisti — Materiale di Consumo',
+                            sottotitolo='Filo/gas di saldatura, ricambi torce e molette, reggetta per imballare — soglia di riordino indipendente dagli Ordini di Produzione aperti.',
+                            api_url='/api/fabbisogno_consumabili')
+
+
+@acquisti_wood_bp.route('/api/fabbisogno_consumabili')
+def api_fabbisogno_consumabili():
+    return jsonify(_fabbisogno_acquisti_semplice('MATERIALE_CONSUMO'))
+
+
+@acquisti_wood_bp.route('/acquisti-sicurezza')
+def pagina_acquisti_sicurezza():
+    return render_template('acquisti_wood/acquisti_consumabili.html', active='acquisti_wood',
+                            titolo='🦺 Acquisti — Materiale di Sicurezza',
+                            sottotitolo='Scarpe antinfortunistiche, tappi per orecchie, dispositivi di protezione — soglia di riordino indipendente dagli Ordini di Produzione aperti.',
+                            api_url='/api/fabbisogno_sicurezza')
+
+
+@acquisti_wood_bp.route('/api/fabbisogno_sicurezza')
+def api_fabbisogno_sicurezza():
+    return jsonify(_fabbisogno_acquisti_semplice('MATERIALE_SICUREZZA'))
 
 
 @acquisti_wood_bp.route('/api/ordini_acquisto_wood/manuale', methods=['POST'])

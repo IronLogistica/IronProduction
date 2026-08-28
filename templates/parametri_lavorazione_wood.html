@@ -149,6 +149,8 @@
             <option value="MATERIA_PRIMA_FORNITORE">Materia prima da fornitore</option>
             <option value="COMPONENTE_ACQUISTO">Componente d'acquisto</option>
             <option value="LASERATO">Laserato</option>
+            <option value="MATERIALE_CONSUMO">Materiale di consumo</option>
+            <option value="MATERIALE_SICUREZZA">Materiale di sicurezza</option>
           </select>
         </div>
         <div style="width:90px"><label style="font-size:11px;color:var(--text-dim);display:block;margin-bottom:4px">Unità di misura</label><input id="cl-unita-misura" type="text" maxlength="20" placeholder="PZ, KG…" style="width:100%;padding:8px;border-radius:6px;border:1px solid var(--border)"></div>
@@ -392,7 +394,9 @@ function renderApprovvigionamentoInline(approvvigionamento){
   const etichette = {
     MATERIA_PRIMA_FORNITORE: 'Materia prima da fornitore',
     COMPONENTE_ACQUISTO: "Componente d'acquisto",
-    LASERATO: 'Laserato'
+    LASERATO: 'Laserato',
+    MATERIALE_CONSUMO: 'Materiale di consumo',
+    MATERIALE_SICUREZZA: 'Materiale di sicurezza'
   };
   const testo = etichette[a.tipo_approvvigionamento];
   if(!testo) return '';
@@ -504,7 +508,7 @@ function renderTabellaAlbero(righe){
       ? `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#2a9d5c" onclick="selezionaCodiceCicloTabella('${x.codice}')">✅ ${nFasi} fasi</button>`
       : `<button class="btn btn-ghost" style="padding:3px 8px;font-size:10px;color:#c0392b" onclick="selezionaCodiceCicloTabella('${x.codice}')">⚠️ Nessuno</button>`;
     const a = x.approvvigionamento || {};
-    const tipoInline = `<select style="width:150px;font-size:10px" onchange="salvaApprovvigionamentoRiga('${x.codice}',this.value,null)"><option value="DA_CLASSIFICARE" ${a.tipo_approvvigionamento==='DA_CLASSIFICARE'?'selected':''}>Da classificare</option><option value="MATERIA_PRIMA_FORNITORE" ${a.tipo_approvvigionamento==='MATERIA_PRIMA_FORNITORE'?'selected':''}>Materia prima</option><option value="COMPONENTE_ACQUISTO" ${a.tipo_approvvigionamento==='COMPONENTE_ACQUISTO'?'selected':''}>Componente acquisto</option><option value="LASERATO" ${a.tipo_approvvigionamento==='LASERATO'?'selected':''}>Laserato</option></select><input style="width:55px;margin-top:3px" placeholder="U.M." value="${a.unita_misura||''}" onchange="salvaApprovvigionamentoRiga('${x.codice}',null,this.value)">`; 
+    const tipoInline = `<select style="width:150px;font-size:10px" onchange="salvaApprovvigionamentoRiga('${x.codice}',this.value,null)"><option value="DA_CLASSIFICARE" ${a.tipo_approvvigionamento==='DA_CLASSIFICARE'?'selected':''}>Da classificare</option><option value="MATERIA_PRIMA_FORNITORE" ${a.tipo_approvvigionamento==='MATERIA_PRIMA_FORNITORE'?'selected':''}>Materia prima</option><option value="COMPONENTE_ACQUISTO" ${a.tipo_approvvigionamento==='COMPONENTE_ACQUISTO'?'selected':''}>Componente acquisto</option><option value="LASERATO" ${a.tipo_approvvigionamento==='LASERATO'?'selected':''}>Laserato</option><option value="MATERIALE_CONSUMO" ${a.tipo_approvvigionamento==='MATERIALE_CONSUMO'?'selected':''}>Materiale di consumo</option><option value="MATERIALE_SICUREZZA" ${a.tipo_approvvigionamento==='MATERIALE_SICUREZZA'?'selected':''}>Materiale di sicurezza</option></select><input style="width:55px;margin-top:3px" placeholder="U.M." value="${a.unita_misura||''}" onchange="salvaApprovvigionamentoRiga('${x.codice}',null,this.value)">`; 
     const f = `onfocus="evidenziaRiga(${i},'${x.codice}')"`;
     const dis = inibito ? 'disabled title="Nessun Ciclo di Lavoro associato a questo codice: niente da parametrizzare finché non gliene assegni uno"' : '';
     // Bordo arancione = obbligatorio (ha un ciclo) MA ancora vuoto — si vede a colpo d'occhio cosa manca.
