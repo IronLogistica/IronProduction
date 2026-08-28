@@ -79,7 +79,7 @@ document.addEventListener('click',e=>{
   if(box && !e.target.closest('#opCodiceArticolo') && !e.target.closest('#opCodiceSuggerimenti')) box.style.display='none';
 });
 async function load(){try{const list=await api('/api/ordini-produzione'); rows.innerHTML=list.map(x=>{
-  const puoModificare = x.stato==='Creato' || x.stato==='Rilasciato';
+  const puoModificare = x.stato==='Creato' || x.stato==='Rilasciato' || x.stato==='In esecuzione' || x.stato==='Tecnicamente completato';
   const puoEliminare = x.stato==='Creato' || (x.stato==='Rilasciato' && x.qta_buona===0);
   const priorita = (x.stato==='Creato'||x.stato==='Rilasciato')?`<select style="width:52px;font-size:11px;padding:1px" onchange="cambiaPriorita(${x.id},this.value)">${Array.from({length:9},(_,i)=>i+1).map(n=>`<option value="${n}" ${n===x.priorita?'selected':''}>P${n}</option>`).join('')}</select>`:`<small>P${x.priorita}</small>`;
   let azioni = '';
@@ -97,12 +97,18 @@ async function load(){try{const list=await api('/api/ordini-produzione'); rows.i
 let _opInModifica = null;
 function apriModificaOp(x){
   _opInModifica = x.id;
-  document.getElementById('mod-codice-articolo').value = x.codice_articolo;
+  const gia_avviato = x.stato === 'In esecuzione' || x.stato === 'Tecnicamente completato';
+  const campoCodice = document.getElementById('mod-codice-articolo');
+  campoCodice.value = x.codice_articolo;
+  campoCodice.disabled = gia_avviato;
+  campoCodice.title = gia_avviato ? 'Non modificabile: produzione già avviata su questo codice' : '';
   document.getElementById('mod-descrizione').value = x.descrizione || '';
   document.getElementById('mod-cliente').value = x.cliente || '';
   document.getElementById('mod-qta').value = x.qta_pianificata;
   document.getElementById('mod-priorita').value = x.priorita;
-  document.getElementById('mod-esito').textContent = '';
+  document.getElementById('mod-esito').textContent = gia_avviato
+    ? `ℹ️ Produzione già avviata (${x.qta_buona} pezzi fatti) — solo quantità pianificata, cliente, descrizione e priorità restano modificabili.`
+    : '';
   document.getElementById('mod-scorta').innerHTML = '';
   openModal('modal-modifica-op');
 }

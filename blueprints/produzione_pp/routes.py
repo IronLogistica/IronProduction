@@ -153,16 +153,46 @@ def _calcola_controllo_scorta(codice_articolo, qta, escludi_op_id=None):
 @pp_bp.put('/api/ordini-produzione/<int:oid>')
 def modifica(oid):
     o = OrdineProduzione.query.get_or_404(oid); d = request.get_json(silent=True) or {}
-    if o.stato not in ('Creato', 'Rilasciato'): return jsonify(ok=False, error='OP non modificabile nello stato corrente'), 409
+    if o.stato not in ('Creato', 'Rilasciato', 'In esecuzione', 'Tecnicamente completato'):
+        return jsonify(ok=False, error='OP non modificabile nello stato corrente'), 409
+    gia_avviato = o.stato in ('In esecuzione', 'Tecnicamente completato')
     try:
-        for k in ('codice_articolo','descrizione','cliente','asa'):
-            if k in d: setattr(o, k, str(d[k]).strip())
-        if 'qta_pianificata' in d: o.qta_pianificata = _integer(d['qta_pianificata'], 'Quantità pianificata')
+        # Il PRODOTTO (codice_articolo/asa) non si può più cambiare una
+        # volta che la produzione è partita: materiale già scaricato,
+        # consuntivi già registrati, tutto legato a QUEL codice — cambiarlo
+        # ora corromperebbe la tracciabilità di cosa è stato davvero fatto.
+        # La QUANTITÀ pianificata resta invece modificabile anche a
+        # produzione avviata o già chiusa: un caso reale concreto — più
+        # scarti del previsto ripareggiati producendo qualche pezzo in più
+        # per non sprecare un residuo di barra (es. 240→241) — e va
+        # riflesso sul pianificato originale, non lasciato come "241 su
+        # 240" per sempre. Tutto il resto del programma (Necessari nella
+        # Dichiarazione Produzione, Reintegro Scarti, saldi sul Totem Live,
+        # avanzamento %, Analisi Costo) calcola SEMPRE dal vivo a partire
+        # da questo numero — nessun valore duplicato o cache da
+        # aggiornare a parte, cambia qui e cambia ovunque all'istante.
+        campi_bloccati_se_avviato = {'codice_articolo', 'asa'}
+        for k in ('codice_articolo', 'descrizione', 'cliente', 'asa'):
+            if k in d:
+                if gia_avviato and k in campi_bloccati_se_avviato:
+                    continue  # ignorato silenziosamente, non un errore: il resto della modifica procede comunque
+                setattr(o, k, str(d[k]).strip())
+        if 'qta_pianificata' in d:
+            o.qta_pianificata = _integer(d['qta_pianificata'], 'Quantità pianificata')
         if 'priorita' in d: o.priorita = _integer(d['priorita'], 'Priorità', 1)
         for k in ('data_inizio','data_prevista'):
             if k in d: setattr(o, k, _date(d[k]))
         o.cliente_commessa_esterna = ' / '.join(x for x in (o.cliente, o.commessa) if x)
-        _audit(o, 'MODIFICATO', 'Aggiornamento OP'); db.session.commit()
+
+        # Se il pianificato cambia con la produzione già avviata, lo stato
+        # va ricalcolato da capo — stessa logica già usata per la
+        # riapertura/storno: 'Tecnicamente completato' se il buono
+        # raggiunge (di nuovo) il pianificato, altrimenti torna
+        # 'In esecuzione' (es. pianificato alzato oltre quanto già fatto).
+        if gia_avviato and 'qta_pianificata' in d:
+            o.stato = 'Tecnicamente completato' if (o.qta_buona or 0) >= o.qta_pianificata else 'In esecuzione'
+
+        _audit(o, 'MODIFICATO', 'Aggiornamento OP' + (' (a produzione avviata)' if gia_avviato else '')); db.session.commit()
         saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
         controllo_scorta = _calcola_controllo_scorta(o.codice_articolo, saldo, escludi_op_id=o.id) if saldo > 0 else []
         return jsonify(ok=True, ordine=_ordine(o), controllo_scorta=controllo_scorta)
