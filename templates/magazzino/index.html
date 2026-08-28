@@ -285,7 +285,7 @@ async function caricaMagazzinoWood(){
       <th class="mt-th-ordinato">+ Ordinato in Produzione<div class="mt-formula">Residuo (da fare − fatto) sugli Ordini di Produzione ancora aperti per questo codice — l'alternativa a produrlo in casa invece che comprarlo</div></th>
       <th class="mt-th-disp">(=) Disp. Contabile<div class="mt-formula">Stock − Impegnato OP + Ordinato Fornitori</div></th>
       <th class="mt-th-disp">(=) Disp. Contabile Allargata*<div class="mt-formula">*Diversa dalla Disp. Contabile qui a fianco e dal concetto usato nei Kanban: Stock + Grezzo IW − Impegnato OP + Ordinato Fornitori + Ordinato in Produzione</div></th>
-      <th class="mt-th-scorta">− Scorta Min.<div class="mt-formula">Codice Padre: letta da MasterLogistic-WMS, non modificabile qui. Tutti gli altri tipi (materia prima, materiale in acquisto, semilavorato): gestita qui in locale</div></th>
+      <th class="mt-th-scorta">− Scorta Min.<div class="mt-formula">Codice Padre: letta da MasterLogistic-WMS, non modificabile qui. Materia Prima/Componente d'Acquisto/Laserato: gestita qui in locale. Semilavorato/Da classificare: non prevista</div></th>
       <th class="mt-th-scorta">− Ordinato da Cliente (WMS)<div class="mt-formula">Impegnato Clienti letto dalla scheda MasterLogistic-WMS di quel codice — si somma alla Scorta Minima nel Fabbisogno, non la sostituisce</div></th>
       <th class="mt-th-fabb">(=) Fabbisogno<div class="mt-formula">MAX(Scorta Minima (WMS) + Ordinato da Cliente (WMS) − Disp. Contabile Allargata*, 0)</div></th></tr></thead><tbody>`;
     righe.forEach(g=>{
@@ -329,11 +329,13 @@ async function caricaMagazzinoWood(){
         <td class="mt-val-disp">${g.disponibile_allargata}*</td>
         <td class="${(g.scorta_minima||0)>0?'mt-val-zero':'mt-val-zero'}" style="color:#ffd54f;font-weight:800">
           <div style="display:flex;align-items:center;gap:4px">
-            <span>${g.scorta_minima===null||g.scorta_minima===undefined?'—':g.scorta_minima}</span>
+            <span>${g.scorta_minima_fonte==='non_prevista' ? '—' : (g.scorta_minima===null||g.scorta_minima===undefined?'—':g.scorta_minima)}</span>
             ${g.scorta_minima_fonte==='WMS' ? `
               <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="sincronizzaOrdinatoClienteWMS('${esc(g.codice)}')" title="Aggiorna da MasterLogistic-WMS${g.scorta_minima_wms_aggiornato_il ? ' (ultimo agg. ' + g.scorta_minima_wms_aggiornato_il + ')' : ''} — non modificabile qui, Codice Padre: la gestisce MasterLogistic-WMS">🔄</button>
+            ` : g.scorta_minima_fonte==='locale' ? `
+              <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="apriImpostaScortaMinima('${esc(g.codice)}', ${g.scorta_minima||0})" title="Imposta scorta minima locale (gestita qui in IronProduction)">✏️</button>
             ` : `
-              <button class="btn btn-ghost" style="padding:3px 7px;font-size:11px" onclick="apriImpostaScortaMinima('${esc(g.codice)}', ${g.scorta_minima||0})" title="Imposta scorta minima locale (gestita qui in IronProduction, questo codice non è un Codice Padre)">✏️</button>
+              <span style="font-size:10px;color:var(--text-dim)" title="Scorta minima non prevista per questa tipologia (${esc(g.tipologia)}) — solo Materia Prima, Componente d'Acquisto e Laserato possono averla">🚫</span>
             `}
           </div>
         </td>

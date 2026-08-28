@@ -1394,15 +1394,27 @@ def _calcola_campi_giacenza(righe):
         in_tratt = in_trattamento.get(g.codice, 0)
         ord_prod = ordinato_produzione.get(g.codice, 0)
         tipologia_codice = tipologie.get(g.codice, 'Da classificare')
-        # Scorta minima: fonte diversa a seconda del tipo. Codice Padre =
-        # prodotto finito, la sua scorta minima la decide MasterLogistic-WMS
-        # (già gestita là, IronProduction la legge soltanto — inibita da
-        # qualunque modifica qui, per non avere due fonti in conflitto sullo
-        # stesso codice). Materia prima/componente d'acquisto/semilavorato =
-        # WMS non li conosce affatto: la scorta minima la gestisce solo
-        # IronProduction (ScortaMinimaWood, locale).
+        # Scorta minima: fonte/ammissibilità diversa a seconda del tipo —
+        # su richiesta esplicita, prevista SOLO per Materia Prima,
+        # Componente d'Acquisto e Laserato (i tipi che si comprano davvero
+        # da un fornitore). Codice Padre = prodotto finito, la sua scorta
+        # minima la decide MasterLogistic-WMS (già gestita là, IronProduction
+        # la legge soltanto). Semilavorato e Da classificare = NESSUNA
+        # scorta minima: un semilavorato lavorato internamente non si
+        # "riordina" a un fornitore con una soglia di sicurezza — il suo
+        # fabbisogno lo genera la produzione a monte, non un acquisto.
+        TIPI_CON_SCORTA_LOCALE = ("Materia Prima (fornitore)", "Componente d'Acquisto", 'Laserato')
         e_codice_padre = tipologia_codice == 'Codice Padre'
-        scorta_min = (getattr(g, 'scorta_minima_wms', None) or 0) if e_codice_padre else (scorte_minime_locali.get(g.codice) or 0)
+        ammette_scorta_locale = tipologia_codice in TIPI_CON_SCORTA_LOCALE
+        if e_codice_padre:
+            scorta_min = getattr(g, 'scorta_minima_wms', None) or 0
+            scorta_fonte = 'WMS'
+        elif ammette_scorta_locale:
+            scorta_min = scorte_minime_locali.get(g.codice) or 0
+            scorta_fonte = 'locale'
+        else:
+            scorta_min = 0
+            scorta_fonte = 'non_prevista'
         ord_cliente_wms = getattr(g, 'ordinato_cliente_wms', None) or 0
         disp_contabile = round((g.quantita or 0) - imp + ord_, 4)
         disp_allargata = round((g.quantita or 0) + grz - imp + ord_ + ord_prod, 4)
@@ -1421,7 +1433,7 @@ def _calcola_campi_giacenza(righe):
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
             'grezzo_iw': grz, 'in_trattamento': in_tratt, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
             'scorta_minima': scorta_min,
-            'scorta_minima_fonte': 'WMS' if e_codice_padre else 'locale',
+            'scorta_minima_fonte': scorta_fonte,
             'scorta_minima_wms_aggiornato_il': (g.scorta_minima_wms_aggiornato_il.strftime('%d/%m/%Y %H:%M')
                 if getattr(g, 'scorta_minima_wms_aggiornato_il', None) else None),
             'ordinato_cliente_wms': getattr(g, 'ordinato_cliente_wms', None),
@@ -1771,20 +1783,33 @@ def api_lista_rettifiche_grezzo_iw(codice):
 def api_imposta_scorta_minima_locale(codice):
     """
     Imposta la scorta minima LOCALE (ScortaMinimaWood) per un codice —
-    SOLO per materia prima, componente d'acquisto, laserato o semilavorato:
-    per un Codice Padre (prodotto finito) la scorta minima la decide
-    MasterLogistic-WMS, non IronProduction — questo endpoint rifiuta la
-    richiesta in quel caso, per non creare due fonti in conflitto sullo
-    stesso codice (una qui, una là, senza sapere quale vince davvero).
+    prevista SOLO per Materia Prima, Componente d'Acquisto e Laserato (i
+    tipi che si comprano davvero da un fornitore, quindi ha senso una
+    soglia di sicurezza). Rifiutata per:
+    - Codice Padre: la scorta minima la decide MasterLogistic-WMS, non
+      IronProduction — due fonti in conflitto sullo stesso codice
+      sarebbero pericolose (quale vince davvero?)
+    - Semilavorato: lavorato internamente, non si "riordina" a un
+      fornitore — il suo fabbisogno lo genera la produzione a monte, non
+      un acquisto con soglia di sicurezza
+    - Da classificare: prima va classificato (Parametri di Lavorazione →
+      tipo di approvvigionamento), altrimenti non si sa nemmeno se la
+      scorta minima ha senso per quel codice
+
     Sovrascrive il valore precedente (non cumulativo come Grezzo IW: qui
     è una soglia configurata, non un movimento storico da sommare).
     """
     codice = codice.strip()
     tipologia_codice = _tipologia_codice(codice)
+    TIPI_CON_SCORTA_LOCALE = ("Materia Prima (fornitore)", "Componente d'Acquisto", 'Laserato')
     if tipologia_codice == 'Codice Padre':
         return jsonify({'errore': True, 'messaggio':
             "La scorta minima di un Codice Padre è gestita da MasterLogistic-WMS, "
             "non modificabile qui — usa il pulsante 🔄 per aggiornarla da WMS."}), 400
+    if tipologia_codice not in TIPI_CON_SCORTA_LOCALE:
+        return jsonify({'errore': True, 'messaggio':
+            f"La scorta minima è prevista solo per Materia Prima, Componente d'Acquisto e Laserato — "
+            f"questo codice è classificato come '{tipologia_codice}', non modificabile."}), 400
     d = request.get_json(force=True)
     try:
         valore = float(d.get('scorta_minima'))
