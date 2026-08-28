@@ -24,6 +24,9 @@
   .check-spunta { width: 25px; height: 25px; border: 2px solid #000; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 21px; line-height: 1; font-weight: 900; }
   .lavorazione-valore { border: 2px solid #000; padding: 14px; min-height: 64px; display: flex; align-items: center; font-size: 25px; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
   .lavorazione-prossima { background: #000; color: #fff; font-weight: 900; }
+  .passaggio-padre { display: block; width: 100%; }
+  .passaggio-padre-codice { font-size: 18px; margin-bottom: 7px; }
+  .passaggio-padre-fase { font-size: 25px; }
   .avviso { font-size: 11px; margin: 5px 0; color: #555; }
   .avviso.errore { color: #a00; }
   .footer-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
@@ -86,9 +89,25 @@
 <div class="sezione-hdr">➡️ Prossima Lavorazione</div>
 {% if fase_prossima %}
 <div class="lavorazione-valore lavorazione-prossima">{{ fase_prossima.centro_costo.nome if fase_prossima.centro_costo else 'Centro non disponibile' }}</div>
+{% elif fase_eseguita and codice_padre and prima_fase_padre %}
+<div class="lavorazione-valore lavorazione-prossima">
+  <div class="passaggio-padre">
+    <div class="passaggio-padre-codice">CODICE PADRE: {{ codice_padre }}</div>
+    <div class="passaggio-padre-fase">{{ prima_fase_padre.centro_costo.nome if prima_fase_padre.centro_costo else 'Centro non disponibile' }}</div>
+  </div>
+</div>
+<p class="avviso">ℹ️ Ultima fase del codice corrente: proseguire con la prima lavorazione del codice padre.</p>
+{% elif fase_eseguita and codice_padre %}
+<div class="lavorazione-valore lavorazione-prossima">
+  <div class="passaggio-padre">
+    <div class="passaggio-padre-codice">CODICE PADRE: {{ codice_padre }}</div>
+    <div class="passaggio-padre-fase">CICLO PADRE NON CONFIGURATO</div>
+  </div>
+</div>
+<p class="avviso errore">⚠️ Configurare il Ciclo di Lavoro del codice padre per conoscere la prossima lavorazione.</p>
 {% elif fase_eseguita %}
 <div class="lavorazione-valore lavorazione-prossima">FINE CICLO</div>
-<p class="avviso">ℹ️ Il centro eseguito è l'ultima fase del Ciclo di Lavoro.</p>
+<p class="avviso">ℹ️ Il codice corrente non ha un padre nella distinta dell'Ordine di Produzione.</p>
 {% else %}
 <div class="lavorazione-valore lavorazione-prossima">NON DISPONIBILE</div>
 {% endif %}

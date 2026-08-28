@@ -1,0 +1,41 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seleziona etichetta — {{ codice }}</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; margin: 0; background: #f1f3f5; color: #111; }
+  .contenitore { max-width: 720px; margin: 48px auto; padding: 28px; background: #fff; border: 2px solid #111; border-radius: 12px; }
+  h1 { margin: 0 0 8px; font-size: 25px; }
+  .sottotitolo { margin: 0 0 24px; color: #555; }
+  .codice { font-size: 28px; font-weight: 900; margin-bottom: 4px; }
+  .descrizione { margin-bottom: 24px; color: #333; }
+  .errore { margin-bottom: 18px; padding: 12px; border: 2px solid #a00; color: #a00; font-weight: 700; }
+  .fasi { display: grid; gap: 12px; }
+  .fase { display: flex; align-items: center; gap: 14px; padding: 18px; border: 2px solid #111; border-radius: 9px; color: #111; text-decoration: none; font-weight: 800; font-size: 21px; }
+  .fase:hover, .fase:focus { background: #111; color: #fff; }
+  .numero { width: 38px; height: 38px; border: 2px solid currentColor; border-radius: 50%; display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .nota { margin-top: 22px; font-size: 13px; color: #666; }
+</style>
+</head>
+<body>
+<div class="contenitore">
+  <h1>Quale etichetta vuoi stampare?</h1>
+  <p class="sottotitolo">Il codice ha {{ fasi_ciclo|length }} fasi di lavorazione.</p>
+  <div class="codice">{{ codice }}</div>
+  <div class="descrizione">{{ descrizione or '—' }}</div>
+  {% if errore_selezione %}<div class="errore">⚠️ {{ errore_selezione }}</div>{% endif %}
+  <div class="fasi">
+    {% for fase in fasi_ciclo %}
+    <a class="fase" href="{{ url_for('produzione_pp.pagina_scheda_materiale_stampa', codice=codice, descrizione=descrizione, quantita=quantita, centro_id=centro_id, op_code=op_code, fase_sequenza=fase.sequenza) }}">
+      <span class="numero">{{ fase.sequenza }}</span>
+      <span>{{ fase.centro_costo.nome if fase.centro_costo else 'Centro non disponibile' }}</span>
+    </a>
+    {% endfor %}
+  </div>
+  <p class="nota">Dopo la selezione si aprirà la scheda pronta per la stampa.</p>
+</div>
+</body>
+</html>
