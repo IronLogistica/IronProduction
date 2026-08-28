@@ -2,7 +2,7 @@
 <html lang="it">
 <head>
 <meta charset="UTF-8">
-<title>Scheda Identificazione Materiale — {{ codice }}</title>
+<title>Scheda Identificazione Materiale in Produzione — {{ codice }}</title>
 <style>
   @page { size: A5; margin: 10mm; }
   * { box-sizing: border-box; }
@@ -30,7 +30,7 @@
 
 <button class="btn-stampa" onclick="window.print()">🖨️ Stampa</button>
 
-<div class="titolo">SCHEDA IDENTIFICAZIONE MATERIALE</div>
+<div class="titolo">SCHEDA IDENTIFICAZIONE MATERIALE IN PRODUZIONE</div>
 
 <div class="campo">
   <div class="campo-label">Codice</div>
@@ -57,22 +57,24 @@
 
 <div class="sezione-hdr">➡️ Lavorazione Eseguita</div>
 <div class="griglia">
-  {% for cat, _ in categorie %}
-  <div class="casella"><span class="box">{{ '✕' if cat == categoria_eseguita else '' }}</span>{{ cat.title() }}</div>
+  {% for c in centri %}
+  <div class="casella"><span class="box">{{ '✕' if c.id == centro_eseguito_id else '' }}</span>{{ c.nome }}</div>
+  {% else %}
+  <p style="font-size:11px;color:#a00;margin:4px 0">⚠️ Nessun Ciclo di Lavoro configurato per questo codice — impossibile mostrare i centri di costo.</p>
   {% endfor %}
 </div>
 
 <div class="sezione-hdr">➡️ Prossima Lavorazione</div>
 <div class="griglia">
-  {% for cat, _ in categorie %}
-  <div class="casella"><span class="box">{{ '✕' if cat == categoria_prossima else '' }}</span>{{ cat.title() }}</div>
+  {% for c in centri %}
+  <div class="casella"><span class="box">{{ '✕' if c.id == centro_prossimo_id else '' }}</span>{{ c.nome }}</div>
   {% endfor %}
 </div>
-{% if categoria_eseguita is none %}
+{% if centri and centro_eseguito_id is none %}
 <p style="font-size:11px;color:#a00;margin:4px 0">⚠️ Fase eseguita non riconosciuta automaticamente — verificare a mano prima di spuntare.</p>
 {% endif %}
-{% if categoria_prossima is none %}
-<p style="font-size:11px;color:#555;margin:4px 0">ℹ️ Nessuna fase successiva nel ciclo di lavoro di questo codice (o non riconosciuta) — verificare se è l'ultima lavorazione.</p>
+{% if centri and centro_prossimo_id is none %}
+<p style="font-size:11px;color:#555;margin:4px 0">ℹ️ Nessuna fase successiva nel ciclo di lavoro di questo codice — verificare se è l'ultima lavorazione.</p>
 {% endif %}
 
 <div class="footer-row">
