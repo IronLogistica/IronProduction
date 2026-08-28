@@ -1705,6 +1705,24 @@ class SequenzaMonitorMacchina(db.Model):
     __table_args__ = (db.UniqueConstraint('ordine_produzione_id', 'centro_costo_id', name='_op_centro_seq_uc'),)
 
 
+class SequenzaAvanzamentoKPI(db.Model):
+    """
+    Posizione scelta A MANO da Angelo per un Ordine di Produzione nella
+    tabella 'Avanzamento Commesse' del Cruscotto KPI (trascina/rilascia) —
+    stesso identico principio di SequenzaMonitorMacchina, ma qui è UNA
+    lista sola (non per singola macchina): l'ordine di visualizzazione
+    complessivo di tutte le commesse aperte in quella tabella. Se un OP
+    non ha una riga qui, va in coda con l'ordine di default (priorità OP,
+    poi data di consegna stimata) — stesso comportamento della coda
+    macchina quando non c'è un riordino manuale.
+    """
+    __tablename__ = 'sequenza_avanzamento_kpi'
+    id                    = db.Column(db.Integer, primary_key=True)
+    ordine_produzione_id  = db.Column(db.Integer, db.ForeignKey('ordini_produzione_pp.id'), nullable=False, unique=True)
+    posizione             = db.Column(db.Integer, default=0)   # più basso = più in alto in tabella
+    aggiornato_il         = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 def get_macchine_monitor():
     """
     Macchine (centri di costo) da mostrare nel Monitor: solo quelle REALMENTE

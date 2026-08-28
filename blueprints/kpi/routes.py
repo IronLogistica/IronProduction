@@ -1,5 +1,5 @@
-from flask import Blueprint, render_template, jsonify
-from models import db, Commessa, KanbanProdotto, RigaMonitor, calcola_kpi
+from flask import Blueprint, render_template, jsonify, request
+from models import db, Commessa, KanbanProdotto, RigaMonitor, calcola_kpi, OrdineProduzione, SequenzaAvanzamentoKPI
 from datetime import datetime, date
 from blueprints.produzione_pp.avanzamento import calcola_avanzamento_commesse
 
@@ -60,6 +60,30 @@ def api_kpi():
 @kpi_bp.route('/api/kpi/avanzamento-commesse')
 def api_avanzamento_commesse():
     return jsonify(calcola_avanzamento_commesse())
+
+@kpi_bp.route('/api/kpi/avanzamento-commesse/riordina', methods=['POST'])
+def api_riordina_avanzamento_commesse():
+    """
+    Salva l'ordine scelto A MANO da Angelo (trascina/rilascia) nella
+    tabella 'Avanzamento Commesse' — un reset completo a ogni chiamata:
+    riceve la lista COMPLETA dei codici OP nel nuovo ordine desiderato e
+    la sostituisce tutta, non un aggiustamento parziale. Editabile solo
+    da qui (pagina principale /kpi di Angelo) — la copia mostrata nei
+    monitor/totem dell'officina (/kpi/embed) non ha nessun pulsante o
+    funzione che chiami questa route.
+    """
+    d = request.get_json(force=True)
+    codici_ordine = d.get('op_codici') or []
+    if not codici_ordine:
+        return jsonify(ok=False, error='Elenco vuoto'), 400
+    ordini = {o.codice: o.id for o in OrdineProduzione.query.filter(OrdineProduzione.codice.in_(codici_ordine)).all()}
+    SequenzaAvanzamentoKPI.query.delete()
+    for posizione, codice in enumerate(codici_ordine):
+        oid = ordini.get(codice)
+        if oid is not None:
+            db.session.add(SequenzaAvanzamentoKPI(ordine_produzione_id=oid, posizione=posizione))
+    db.session.commit()
+    return jsonify(ok=True)
 
 @kpi_bp.route('/api/kpi/in-attesa-rilascio')
 def api_in_attesa_rilascio():

@@ -110,16 +110,26 @@ def calcola_avanzamento_commesse():
     consegna stimata sarebbe fuorviante: qui l'ordine riflette chi viene
     servito per primo sui centri condivisi)."""
     from models import (db, OrdineProduzione, CicloLavoroWood, CentroCostoWood,
-                         EventoConsuntivoPP, ArticoloApprovvigionamento, FotoArticolo)
+                         EventoConsuntivoPP, ArticoloApprovvigionamento, FotoArticolo,
+                         SequenzaAvanzamentoKPI)
     from blueprints.magazzino.routes import (_esplodi_componenti_op, _carica_mappa_distinta_base_wood,
                          _residuo_giacenza_progressivo, _netta_e_esplodi_wood, STATI_CHE_IMPEGNANO)
 
     oggi = datetime.now()
 
-    ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
-              .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+    ordini = OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO)).all()
     if not ordini:
         return []
+
+    # Ordine di visualizzazione — e di SIMULAZIONE (chi viene servito prima
+    # sui centri condivisi, quindi anche le date stimate ne dipendono): se
+    # Angelo ha trascinato una commessa in una posizione precisa, quella
+    # vince; altrimenti si usa l'ordine di default (priorità OP, poi data
+    # di consegna) — stesso identico principio già in uso per il riordino
+    # manuale di una coda macchina nel Monitor (SequenzaMonitorMacchina).
+    posizioni_manuali = {s.ordine_produzione_id: s.posizione for s in SequenzaAvanzamentoKPI.query.all()}
+    ordini.sort(key=lambda o: (0, posizioni_manuali[o.id]) if o.id in posizioni_manuali
+                else (1, o.priorita, o.data_prevista or oggi.date(), o.id))
 
     mappa_distinta = _carica_mappa_distinta_base_wood()
     residuo_per_op, _ = _residuo_giacenza_progressivo(op_aperti=ordini, mappa=mappa_distinta)
