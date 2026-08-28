@@ -12,26 +12,31 @@
   .campo { border: 2px solid #000; padding: 9px; margin-bottom: 10px; }
   .campo-label { font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
   .campo-valore { font-size: 22px; font-weight: 700; min-height: 28px; overflow-wrap: anywhere; }
-  .quantita-row { display: flex; justify-content: space-between; align-items: center; }
+  .campo-nero { background: #000; color: #fff; }
+  .campo-nero .campo-label, .campo-nero .campo-valore { color: #fff; font-weight: 900; }
+  .descrizione-prodotto { font-size: 25px; font-weight: 800; line-height: 1.2; min-height: 38px; }
+  .quantita-campo { min-height: 100px; display: flex; align-items: center; }
+  .quantita-row { display: flex; width: 100%; justify-content: space-between; align-items: center; }
+  .quantita-valore { font-size: 34px; font-weight: 900; min-height: 40px; }
   .logo { font-size: 28px; font-weight: 900; letter-spacing: 1px; }
   .logo-rev { font-size: 9px; color: #555; text-align: right; }
-  .sezione-hdr { border: 2px solid #000; border-radius: 20px; padding: 7px 14px; font-weight: 700; margin: 13px 0 7px; }
-  .griglia { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
-  .casella { border: 2px solid #000; display: flex; align-items: center; gap: 8px; padding: 9px; min-height: 44px; font-weight: 700; font-size: 14px; overflow-wrap: anywhere; }
-  .box { width: 23px; height: 23px; border: 2px solid #000; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-weight: 900; font-size: 18px; }
-  .avviso { font-size: 11px; margin: 4px 0; color: #555; }
+  .sezione-hdr { border: 2px solid #000; border-radius: 20px; padding: 7px 14px; font-weight: 800; margin: 13px 0 7px; display: flex; align-items: center; gap: 9px; }
+  .check-spunta { width: 25px; height: 25px; border: 2px solid #000; flex-shrink: 0; display: flex; align-items: center; justify-content: center; font-size: 21px; line-height: 1; font-weight: 900; }
+  .lavorazione-valore { border: 2px solid #000; padding: 14px; min-height: 64px; display: flex; align-items: center; font-size: 25px; font-weight: 800; line-height: 1.15; overflow-wrap: anywhere; }
+  .lavorazione-prossima { background: #000; color: #fff; font-weight: 900; }
+  .avviso { font-size: 11px; margin: 5px 0; color: #555; }
   .avviso.errore { color: #a00; }
   .footer-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 16px; }
   .footer-campo { border: 2px solid #000; padding: 9px; min-height: 58px; }
   .footer-label { font-size: 11px; font-weight: 700; text-transform: uppercase; }
-  .btn-stampa { display: block; width: 100%; margin: 14px 0; padding: 12px; font-size: 16px; font-weight: 700;
-                background: #1e6fa5; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+  .footer-valore { margin-top: 6px; font-size: 20px; font-weight: 800; }
+  .btn-stampa { display: block; width: 100%; margin: 14px 0; padding: 12px; font-size: 16px; font-weight: 700; background: #1e6fa5; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
   @media print { .btn-stampa { display: none; } body { padding: 0; } }
 </style>
 </head>
 <body>
 
-<button class="btn-stampa" onclick="window.print()">🖨️ Stampa</button>
+<button class="btn-stampa" onclick="aggiornaDataStampa(); window.print()">🖨️ Stampa</button>
 
 <div class="titolo">SCHEDA IDENTIFICAZIONE MATERIALE IN PRODUZIONE</div>
 
@@ -40,7 +45,7 @@
     <div class="campo-label">Codice</div>
     <div class="campo-valore">{{ codice or '—' }}</div>
   </div>
-  <div class="campo">
+  <div class="campo campo-nero">
     <div class="campo-label">Codice padre</div>
     <div class="campo-valore">{{ codice_padre or '—' }}</div>
   </div>
@@ -48,58 +53,61 @@
 
 <div class="campo">
   <div class="campo-label">Descrizione</div>
-  <div class="campo-valore" style="font-size:16px">{{ descrizione or '—' }}</div>
+  <div class="campo-valore descrizione-prodotto">{{ descrizione or '—' }}</div>
 </div>
 
-<div class="campo">
+<div class="campo quantita-campo">
   <div class="quantita-row">
     <div>
       <div class="campo-label">Quantità</div>
-      <div class="campo-valore">{{ quantita or '—' }}</div>
+      <div class="quantita-valore">{{ quantita or '' }}</div>
     </div>
     <div style="text-align:right">
       <div class="logo">IRON</div>
-      <div class="logo-rev">Rev.2 - 08/2026</div>
+      <div class="logo-rev">Rev.3 - 08/2026</div>
     </div>
   </div>
 </div>
 
-<div class="sezione-hdr">➡️ Lavorazione Eseguita</div>
-{% if fasi_ciclo %}
-<div class="griglia">
-  {% for fase in fasi_ciclo %}
-  <div class="casella">
-    <span class="box">{{ '✕' if fase_eseguita and fase.id == fase_eseguita.id else '' }}</span>
-    {{ fase.centro_costo.nome if fase.centro_costo else 'Centro non disponibile' }}
-  </div>
-  {% endfor %}
+<div class="sezione-hdr">
+  <span class="check-spunta">✓</span>
+  <span>Lavorazione Eseguita</span>
 </div>
-{% else %}
-<p class="avviso errore">⚠️ Nessun Ciclo di Lavoro configurato per questo codice.</p>
-{% endif %}
-{% if fasi_ciclo and fase_eseguita is none %}
+{% if fase_eseguita %}
+<div class="lavorazione-valore">{{ fase_eseguita.centro_costo.nome if fase_eseguita.centro_costo else 'Centro non disponibile' }}</div>
+{% elif fasi_ciclo %}
+<div class="lavorazione-valore">CENTRO NON RICONOSCIUTO</div>
 <p class="avviso errore">⚠️ Il centro corrente non appartiene al Ciclo di Lavoro di questo codice: verificare la configurazione.</p>
+{% else %}
+<div class="lavorazione-valore">CICLO DI LAVORO NON CONFIGURATO</div>
+<p class="avviso errore">⚠️ Nessun Ciclo di Lavoro configurato per questo codice.</p>
 {% endif %}
 
 <div class="sezione-hdr">➡️ Prossima Lavorazione</div>
-{% if fasi_ciclo %}
-<div class="griglia">
-  {% for fase in fasi_ciclo %}
-  <div class="casella">
-    <span class="box">{{ '✕' if fase_prossima and fase.id == fase_prossima.id else '' }}</span>
-    {{ fase.centro_costo.nome if fase.centro_costo else 'Centro non disponibile' }}
-  </div>
-  {% endfor %}
-</div>
-{% endif %}
-{% if fase_eseguita and fase_prossima is none %}
+{% if fase_prossima %}
+<div class="lavorazione-valore lavorazione-prossima">{{ fase_prossima.centro_costo.nome if fase_prossima.centro_costo else 'Centro non disponibile' }}</div>
+{% elif fase_eseguita %}
+<div class="lavorazione-valore lavorazione-prossima">FINE CICLO</div>
 <p class="avviso">ℹ️ Il centro eseguito è l'ultima fase del Ciclo di Lavoro.</p>
+{% else %}
+<div class="lavorazione-valore lavorazione-prossima">NON DISPONIBILE</div>
 {% endif %}
 
 <div class="footer-row">
   <div class="footer-campo"><div class="footer-label">Operatore</div></div>
-  <div class="footer-campo"><div class="footer-label">Data</div></div>
+  <div class="footer-campo">
+    <div class="footer-label">Data di stampa</div>
+    <div class="footer-valore" id="data-stampa"></div>
+  </div>
 </div>
+
+<script>
+  function aggiornaDataStampa() {
+    document.getElementById('data-stampa').textContent = new Date().toLocaleDateString('it-IT');
+  }
+  aggiornaDataStampa();
+  window.addEventListener('beforeprint', aggiornaDataStampa);
+</script>
 
 </body>
 </html>
