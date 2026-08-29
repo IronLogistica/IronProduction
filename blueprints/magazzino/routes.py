@@ -13,7 +13,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
                     EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log,
-                    KanbanProdotto, MappaCodiceMasterWork, ParametriLavorazioneWood)
+                    KanbanProdotto, MappaCodiceMasterWork, ParametriLavorazioneWood, CategoriaAcquistoConfig)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -1285,6 +1285,8 @@ LABEL_TIPO_APPROVVIGIONAMENTO = {
     'LASERATO': 'Laserato',
     'MATERIALE_CONSUMO': 'Materiale di Consumo',
     'MATERIALE_SICUREZZA': 'Materiale di Sicurezza',
+    'PRODOTTI_UFFICIO': 'Prodotti per Ufficio',
+    'PRODOTTI_COMMERCIALE': 'Prodotti per Commerciale',
 }
 
 
@@ -3213,6 +3215,115 @@ def api_upsert_parametri_lavorazione():
         db.session.add(ParametriLavorazioneWood(codice=codice, **valori))
     db.session.commit()
     return jsonify({'ok': True})
+
+
+@magazzino_bp.route('/inventario')
+def pagina_inventario():
+    """
+    Inventario Magazzino — conteggio fisico delle scorte, organizzato per
+    gruppo (le stesse categorie di TIPI_APPROVVIGIONAMENTO). Pensata per
+    funzionare identica su PC (Angelo) e tablet (magazziniere): un solo
+    file HTML responsive, niente versione separata per il tablet — meno
+    codice da tenere allineato, stesso comportamento ovunque.
+    """
+    return render_template('magazzino/inventario.html', active='inventario')
+
+
+@magazzino_bp.route('/api/inventario/gruppi')
+def api_inventario_gruppi():
+    """Un gruppo per ogni categoria configurata (LABEL_TIPO_APPROVVIGIONAMENTO),
+    col conteggio di quanti codici ci sono dentro — per non aprire un gruppo vuoto."""
+    conteggi = dict(db.session.query(ArticoloApprovvigionamento.tipo_approvvigionamento,
+                                      db.func.count(ArticoloApprovvigionamento.id))
+                     .group_by(ArticoloApprovvigionamento.tipo_approvvigionamento).all())
+    return jsonify([{'tipo': tipo, 'etichetta': label, 'n_codici': conteggi.get(tipo, 0)}
+                     for tipo, label in LABEL_TIPO_APPROVVIGIONAMENTO.items()])
+
+
+@magazzino_bp.route('/api/inventario/<tipo>')
+def api_inventario_articoli(tipo):
+    """Tutti i codici di questo gruppo, con la giacenza ATTUALE registrata
+    (0 se non è mai stata toccata — es. appena importato, mai contato)."""
+    if tipo not in LABEL_TIPO_APPROVVIGIONAMENTO:
+        return jsonify(ok=False, error='Categoria non valida'), 404
+    articoli = ArticoloApprovvigionamento.query.filter_by(tipo_approvvigionamento=tipo).order_by(ArticoloApprovvigionamento.codice).all()
+    codici = [a.codice for a in articoli]
+    descrizioni = {d.codice: d.descrizione for d in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici)).all()} if codici else {}
+    giacenze = {g.codice: g for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici)).all()} if codici else {}
+    righe = []
+    for a in articoli:
+        g = giacenze.get(a.codice)
+        righe.append({
+            'codice': a.codice, 'descrizione': descrizioni.get(a.codice, ''),
+            'unita_misura': a.unita_misura or '',
+            'giacenza_attuale': (g.quantita if g else 0) or 0,
+            'mai_contato': g is None,
+            'ultimo_aggiornamento': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if g and g.aggiornato_il else None,
+        })
+    return jsonify(righe)
+
+
+@magazzino_bp.route('/api/inventario/salva', methods=['POST'])
+def api_inventario_salva():
+    """
+    Salva un giro di conteggio: per ogni codice ricevuto, calcola la
+    differenza tra il contato ORA e quanto risultava prima, e la registra
+    come movimento di rettifica — stesso meccanismo (_registra_movimento_
+    giacenza) usato per ogni altro carico/scarico, quindi tracciato allo
+    stesso modo nello storico. Un codice mai toccato prima (nessuna riga
+    GiacenzaWood) parte da 0: il primo conteggio lo crea.
+    """
+    d = request.get_json(force=True)
+    conteggi = d.get('conteggi') or {}
+    if not conteggi:
+        return jsonify(ok=False, error='Nessun conteggio da salvare'), 400
+    aggiornati = 0
+    for codice, valore in conteggi.items():
+        try:
+            qta_contata = float(valore)
+        except (TypeError, ValueError):
+            continue
+        g = GiacenzaWood.query.get(codice)
+        qta_precedente = (g.quantita if g else 0) or 0
+        delta = qta_contata - qta_precedente
+        if delta == 0:
+            continue
+        _registra_movimento_giacenza(codice, delta, 'rettifica_inventario',
+                                      note=f'Inventario fisico — da {qta_precedente} a {qta_contata}')
+        aggiornati += 1
+    db.session.commit()
+    return jsonify(ok=True, aggiornati=aggiornati)
+
+
+@magazzino_bp.route('/api/categorie-acquisto')
+def api_categorie_acquisto():
+    """Elenco delle categorie di acquisto con il loro centro di costo
+    assegnato (se c'è) — per la mappatura categoria → centro di costo."""
+    config = {c.tipo_approvvigionamento: c for c in CategoriaAcquistoConfig.query.all()}
+    return jsonify([{
+        'tipo': tipo, 'etichetta': label,
+        'centro_costo_id': config[tipo].centro_costo_id if tipo in config else None,
+        'centro_costo_nome': config[tipo].centro_costo.nome if tipo in config and config[tipo].centro_costo else None,
+    } for tipo, label in LABEL_TIPO_APPROVVIGIONAMENTO.items()])
+
+
+@magazzino_bp.route('/api/categorie-acquisto/<tipo>', methods=['PUT'])
+def api_categoria_acquisto_aggiorna(tipo):
+    """Assegna (o toglie, se centro_costo_id è null) il centro di costo di
+    riferimento per questa categoria di acquisto."""
+    if tipo not in LABEL_TIPO_APPROVVIGIONAMENTO:
+        return jsonify(ok=False, error='Categoria non valida'), 404
+    d = request.get_json(force=True)
+    centro_id = d.get('centro_costo_id')
+    if centro_id is not None and not CentroCostoWood.query.get(centro_id):
+        return jsonify(ok=False, error='Centro di costo non trovato'), 404
+    riga = CategoriaAcquistoConfig.query.get(tipo)
+    if not riga:
+        riga = CategoriaAcquistoConfig(tipo_approvvigionamento=tipo)
+        db.session.add(riga)
+    riga.centro_costo_id = centro_id
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 @magazzino_bp.route('/api/schede_lavorazione_wood/radici')

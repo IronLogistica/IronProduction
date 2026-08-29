@@ -1,0 +1,184 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">📦 Inventario Magazzino</div>
+</div>
+
+<div class="mon-section" id="box-gruppi">
+  <div style="padding:16px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px">
+      Conteggio fisico delle scorte, per gruppo. Scegli il gruppo da contare — funziona uguale su PC e su tablet.
+    </p>
+    <div id="gruppi-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px">Caricamento...</div>
+  </div>
+</div>
+
+<div class="mon-section" id="box-conteggio" style="display:none">
+  <div style="padding:16px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="tornaAiGruppi()" style="padding:12px 18px;font-size:15px">← Gruppi</button>
+      <div class="page-title" style="margin:0;font-size:20px" id="titolo-gruppo"></div>
+    </div>
+
+    <input id="filtro-ricerca" type="text" placeholder="Filtra per codice o descrizione..." autocomplete="off"
+           style="width:100%;padding:14px 16px;font-size:16px;border-radius:8px;border:1px solid var(--border);margin-bottom:16px"
+           oninput="filtraArticoli()">
+
+    <div id="articoli-lista" style="display:flex;flex-direction:column;gap:10px">Caricamento...</div>
+
+    <div style="position:sticky;bottom:0;background:var(--dark2,#0f1e35);padding:14px 0;margin-top:16px;border-top:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap">
+      <span id="conteggio-modificati" style="font-size:13px;color:var(--text-dim)">Nessuna modifica</span>
+      <button class="btn btn-primary" style="padding:16px 32px;font-size:17px" onclick="salvaInventario()">💾 Salva Inventario</button>
+    </div>
+    <div id="esito-salvataggio" style="font-size:13px;margin-top:10px;text-align:center"></div>
+  </div>
+</div>
+
+<style>
+  .gruppo-card{
+    background:var(--surface);border:1px solid var(--border);border-radius:10px;
+    padding:22px 16px;text-align:center;cursor:pointer;transition:background .15s;
+  }
+  .gruppo-card:hover, .gruppo-card:active{background:rgba(30,111,165,.15)}
+  .gruppo-card .n{font-size:30px;font-weight:800;color:#fff;margin-bottom:4px}
+  .gruppo-card .lbl{font-size:14px;color:var(--text-dim)}
+  .gruppo-card.vuoto{opacity:0.4;cursor:default}
+  .gruppo-card.vuoto:hover{background:var(--surface)}
+
+  .articolo-riga{
+    display:flex;align-items:center;gap:14px;padding:14px;border:1px solid var(--border);
+    border-radius:8px;background:var(--surface);
+  }
+  .articolo-riga.modificata{border-color:var(--accent2);background:rgba(30,111,165,.08)}
+  .articolo-info{flex:1;min-width:0}
+  .articolo-codice{font-weight:800;font-size:16px;color:#eaf4ff}
+  .articolo-desc{font-size:13px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .articolo-mai-contato{font-size:11px;color:#e6b800;font-weight:700}
+  .articolo-input{
+    width:110px;padding:14px 10px;font-size:20px;font-weight:700;text-align:center;
+    border-radius:8px;border:1.5px solid var(--border);flex-shrink:0;
+  }
+  .articolo-um{font-size:12px;color:var(--text-dim);width:36px;flex-shrink:0}
+</style>
+{% endblock %}
+{% block scripts %}
+let GRUPPI = [];
+let ARTICOLI = [];
+let GRUPPO_ATTIVO = null;
+const CONTEGGI = {};  // codice -> valore inserito (solo quelli toccati)
+
+async function caricaGruppi(){
+  const box = document.getElementById('gruppi-grid');
+  try{
+    const r = await fetch('/api/inventario/gruppi');
+    GRUPPI = await r.json();
+    box.innerHTML = GRUPPI.map(g => {
+      const vuoto = g.n_codici === 0;
+      return `<div class="gruppo-card ${vuoto ? 'vuoto' : ''}" ${vuoto ? '' : `onclick="apriGruppo('${g.tipo}')"`}>
+        <div class="n">${g.n_codici}</div>
+        <div class="lbl">${g.etichetta}</div>
+      </div>`;
+    }).join('');
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+async function apriGruppo(tipo){
+  GRUPPO_ATTIVO = tipo;
+  const gruppo = GRUPPI.find(g => g.tipo === tipo);
+  document.getElementById('titolo-gruppo').textContent = gruppo ? gruppo.etichetta : tipo;
+  document.getElementById('box-gruppi').style.display = 'none';
+  document.getElementById('box-conteggio').style.display = 'block';
+  document.getElementById('filtro-ricerca').value = '';
+  document.getElementById('esito-salvataggio').textContent = '';
+  Object.keys(CONTEGGI).forEach(k => delete CONTEGGI[k]);
+  const lista = document.getElementById('articoli-lista');
+  lista.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/inventario/' + encodeURIComponent(tipo));
+    ARTICOLI = await r.json();
+    renderArticoli();
+  }catch(e){
+    lista.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function tornaAiGruppi(){
+  document.getElementById('box-conteggio').style.display = 'none';
+  document.getElementById('box-gruppi').style.display = 'block';
+  caricaGruppi();  // ricarica i conteggi, potrebbero essere cambiati altrove
+}
+
+function renderArticoli(){
+  const lista = document.getElementById('articoli-lista');
+  const filtro = (document.getElementById('filtro-ricerca').value || '').trim().toLowerCase();
+  const visibili = filtro
+    ? ARTICOLI.filter(a => a.codice.toLowerCase().includes(filtro) || (a.descrizione||'').toLowerCase().includes(filtro))
+    : ARTICOLI;
+  if(!visibili.length){
+    lista.innerHTML = '<p class="muted" style="font-style:italic">Nessun codice trovato.</p>';
+    return;
+  }
+  lista.innerHTML = visibili.map(a => {
+    const valore = CONTEGGI.hasOwnProperty(a.codice) ? CONTEGGI[a.codice] : a.giacenza_attuale;
+    const modificata = CONTEGGI.hasOwnProperty(a.codice);
+    return `<div class="articolo-riga ${modificata ? 'modificata' : ''}" id="riga-${cssId(a.codice)}">
+      <div class="articolo-info">
+        <div class="articolo-codice">${a.codice}</div>
+        <div class="articolo-desc">${a.descrizione || '—'}</div>
+        ${a.mai_contato ? '<div class="articolo-mai-contato">⚠️ Mai contato prima</div>' : ''}
+      </div>
+      <span class="articolo-um">${a.unita_misura || ''}</span>
+      <input type="number" min="0" step="1" class="articolo-input" value="${valore}"
+             oninput="aggiornaConteggio('${a.codice}', this.value)">
+    </div>`;
+  }).join('');
+}
+
+function cssId(codice){ return codice.replace(/[^a-zA-Z0-9]/g, '_'); }
+
+function filtraArticoli(){ renderArticoli(); }
+
+function aggiornaConteggio(codice, valore){
+  const articolo = ARTICOLI.find(a => a.codice === codice);
+  const num = parseFloat(valore);
+  if(!articolo || isNaN(num) || num === articolo.giacenza_attuale){
+    delete CONTEGGI[codice];
+  } else {
+    CONTEGGI[codice] = num;
+  }
+  const riga = document.getElementById('riga-' + cssId(codice));
+  if(riga) riga.classList.toggle('modificata', CONTEGGI.hasOwnProperty(codice));
+  aggiornaContatore();
+}
+
+function aggiornaContatore(){
+  const n = Object.keys(CONTEGGI).length;
+  document.getElementById('conteggio-modificati').textContent =
+    n === 0 ? 'Nessuna modifica' : `${n} codice/i modificati rispetto alla giacenza attuale`;
+}
+
+async function salvaInventario(){
+  const esito = document.getElementById('esito-salvataggio');
+  const n = Object.keys(CONTEGGI).length;
+  if(n === 0){ esito.style.color = '#e6b800'; esito.textContent = 'Nessuna modifica da salvare.'; return; }
+  if(!confirm(`Confermi di salvare l'inventario? ${n} codice/i verranno aggiornati alla nuova giacenza contata.`)) return;
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Salvataggio...';
+  try{
+    const r = await fetch('/api/inventario/salva', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({conteggi: CONTEGGI})
+    });
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '❌ ' + (d.error || 'Errore.'); return; }
+    esito.style.color = '#1a9e5c';
+    esito.textContent = `✅ Inventario salvato — ${d.aggiornati} codice/i aggiornati.`;
+    await apriGruppo(GRUPPO_ATTIVO);  // ricarica con le nuove giacenze come base
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
+caricaGruppi();
+{% endblock %}

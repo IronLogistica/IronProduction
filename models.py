@@ -232,6 +232,19 @@ class ScortaMinimaWood(db.Model):
     scorta_minima  = db.Column(db.Float, default=0)
 
 
+class CategoriaAcquistoConfig(db.Model):
+    """
+    Un centro di costo di riferimento per ogni categoria di acquisto
+    (TIPI_APPROVVIGIONAMENTO) — a cosa imputare la spesa quando si acquista
+    un consumabile, un materiale di sicurezza, ecc. Riga assente per una
+    categoria = nessun centro di costo ancora assegnato.
+    """
+    __tablename__ = 'categoria_acquisto_config'
+    tipo_approvvigionamento = db.Column(db.String(40), primary_key=True)
+    centro_costo_id = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id', ondelete='SET NULL'), nullable=True)
+    centro_costo = db.relationship('CentroCostoWood')
+
+
 class RettificaGrezzoIW(db.Model):
     """
     Rettifica manuale al 'Grezzo IW' (fine saldatura giornaliera dichiarata
@@ -724,6 +737,84 @@ def assicura_lunghezze_barra_default():
         db.session.rollback()  # vedi nota in migra_schede_lavorazione_unificate()
 
 
+# Import una tantum del file magazzino_iw.xlsx (export Zucchetti, colonna
+# CATEGORIA) — SOLO codice/descrizione/unità di misura, MAI la quantità:
+# le giacenze di Zucchetti sono un dato storico ormai vecchio, la quantità
+# vera si stabilisce con un inventario fisico fatto da qui in poi (vedi
+# Inventario Magazzino) — importare anche quella avrebbe dato un falso
+# senso di certezza su numeri che nessuno ha più controllato.
+IMPORT_CONSUMABILI_SICUREZZA = [
+    # (codice, descrizione, unita_misura, tipo_approvvigionamento)
+    ('10331', 'AVVITATORE ELETTRICO MAKITA TW0200', 'n.', 'MATERIALE_CONSUMO'),
+    ('10350', 'SMERIGLIATRICE ANGOLARE 125mm', 'n.', 'MATERIALE_CONSUMO'),
+    ('10501', 'OCCHIALE PROTETTIVO AVANZATO mod.Nylon', 'n.', 'MATERIALE_SICUREZZA'),
+    ('10700', 'CINGHIA A-2LL 1.160x50 A.C. (CUOIO)', 'n.', 'MATERIALE_SICUREZZA'),
+    ('10710', 'SPAZZOLE MAKITA CB-411', 'n.', 'MATERIALE_CONSUMO'),
+    ('10780', 'PATTINO CENTRALE IN GOMMA VULKON (SATIN)', 'n.', 'MATERIALE_CONSUMO'),
+    ('10781', 'COPPIA DI PATTINI USCITA TUBO L.170', 'n.', 'MATERIALE_CONSUMO'),
+    ('10782', 'COPPIA DI PATTINI ENTRATA TUBO L.140', 'n.', 'MATERIALE_CONSUMO'),
+    ('10840', 'LAMA SEGA 2.825 h.27 sp.0,9 DENTE 8/11', 'n.', 'MATERIALE_CONSUMO'),
+    ('10841', 'LAMA SEGA 2.825 h.27 sp.0,9 DENTE 5/7', 'n.', 'MATERIALE_CONSUMO'),
+    ('10845', 'OLIO EMULSIONABILE PER SEGA A NASTRO', 'n.', 'MATERIALE_CONSUMO'),
+    ('10860', 'SILICONE GRIGIO', 'n.', 'MATERIALE_CONSUMO'),
+    ('10870', 'DISCO LAMELLARE 115 x GR.40', 'n.', 'MATERIALE_CONSUMO'),
+    ('10871', 'DISCO DA TAGLIO d.125 sp.1,6', 'n.', 'MATERIALE_CONSUMO'),
+    ('10872', 'DISCO DA SGROSSO d.125 sp.6,0', 'n.', 'MATERIALE_CONSUMO'),
+    ('10873', 'DISCO DA TAGLIO d.230 sp.2,0', 'n.', 'MATERIALE_CONSUMO'),
+    ('10874', 'DISCO DA SGROSSO d.230 sp.6,0', 'n.', 'MATERIALE_CONSUMO'),
+    ('11930', 'NASTRO SCOTCH BRITE 75x2.000 GR.MEDIA', 'n.', 'MATERIALE_CONSUMO'),
+    ('11932', 'NASTRO NORTON R830 75x2.000 GR.30', 'n.', 'MATERIALE_CONSUMO'),
+    ('90120', 'GIUBBINO IGNIFUGO SALDATORE', 'n.', 'MATERIALE_SICUREZZA'),
+    ('90130', 'PANTALONE IGNIFUGO SALDATORE', 'n.', 'MATERIALE_SICUREZZA'),
+    ('90150', 'T-SHIRT V-TEX', 'n.', 'MATERIALE_SICUREZZA'),
+    ('90502', 'OCCHIALE PROTETTIVO mod.Neon', 'n.', 'MATERIALE_SICUREZZA'),
+    ('90802', 'SCARPA ANTINF. SALDATORE', 'n.', 'MATERIALE_SICUREZZA'),
+]
+
+
+def assicura_import_consumabili_sicurezza():
+    """UNA TANTUM: importa IMPORT_CONSUMABILI_SICUREZZA in
+    ArticoloApprovvigionamento (classificazione) + DescrizioneCodiceWood
+    (descrizione, stesso posto da cui la leggono già tutte le altre
+    pagine) — mai in GiacenzaWood: nessuna quantità viene creata qui, la
+    riga di giacenza nasce solo al primo inventario fisico registrato.
+    Non sovrascrive un codice già classificato (es. da un import
+    precedente o inserito a mano)."""
+    codici_gia_presenti = {a.codice for a in ArticoloApprovvigionamento.query
+                            .filter(ArticoloApprovvigionamento.codice.in_([r[0] for r in IMPORT_CONSUMABILI_SICUREZZA])).all()}
+    nuovi = False
+    for codice, descrizione, um, tipo in IMPORT_CONSUMABILI_SICUREZZA:
+        if codice not in codici_gia_presenti:
+            db.session.add(ArticoloApprovvigionamento(codice=codice, tipo_approvvigionamento=tipo, unita_misura=um))
+            nuovi = True
+        if not DescrizioneCodiceWood.query.get(codice):
+            db.session.add(DescrizioneCodiceWood(codice=codice, descrizione=descrizione))
+    if nuovi:
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        db.session.rollback()
+
+
+def assicura_categoria_acquisto_config():
+    """UNA TANTUM: precrea una riga (senza centro di costo assegnato,
+    Angelo lo sceglie dopo) per ogni categoria di TIPI_APPROVVIGIONAMENTO
+    che non ne ha ancora una — non sovrascrive mai una configurazione già
+    fatta a mano."""
+    esistenti = {c.tipo_approvvigionamento for c in CategoriaAcquistoConfig.query.all()}
+    mancanti = TIPI_APPROVVIGIONAMENTO - esistenti - {'DA_CLASSIFICARE'}
+    if not mancanti:
+        return
+    for tipo in mancanti:
+        db.session.add(CategoriaAcquistoConfig(tipo_approvvigionamento=tipo, centro_costo_id=None))
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+
 def migra_schede_lavorazione_unificate():
     """
     UNA TANTUM: se schede_lavorazione_wood è ancora vuota, importa (unendo per
@@ -1066,6 +1157,8 @@ TIPI_APPROVVIGIONAMENTO = {
     'LASERATO',
     'MATERIALE_CONSUMO',
     'MATERIALE_SICUREZZA',
+    'PRODOTTI_UFFICIO',
+    'PRODOTTI_COMMERCIALE',
     'DA_CLASSIFICARE',
 }
 
