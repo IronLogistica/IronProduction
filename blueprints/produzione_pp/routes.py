@@ -2776,17 +2776,6 @@ def api_dichiarazione_op_aperti(cid):
                 chiave = (op_code, componente)
                 fatti_per_componente[chiave] = fatti_per_componente.get(chiave, 0) + (buoni or 0)
 
-    # Giacenza già disponibile a magazzino per ogni codice — es. un
-    # semilavorato tagliato in una Dichiarazione Libera, PRIMA che esistesse
-    # una commessa che lo richiedesse: quando la commessa arriva, quello
-    # già fatto non deve sparire nel nulla, deve ridurre il saldo ancora da
-    # produrre. Sottrazione solo informativa (mostra meno da fare
-    # all'operatore), non tocca il calcolo dei consumi materiali standard.
-    giacenza_disponibile = {}
-    if tutti_i_codici:
-        for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(tutti_i_codici)).all():
-            giacenza_disponibile[g.codice] = g.quantita or 0
-
     # Descrizione di ogni codice dichiarabile — ArticoloML (magazzino
     # condiviso MasterLogistic) prima, riserva locale (da import
     # Zucchetti/DESCOM) solo per i codici che ArticoloML non conosce.
@@ -2830,21 +2819,22 @@ def api_dichiarazione_op_aperti(cid):
             qta_necessaria_base = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
             qta_necessaria = round(fabbisogno_effettivo.get(codice_comp, qta_necessaria_base), 4)
             fatti = fatti_per_componente.get((o.codice, componente_param), 0)
-            # Solo sui componenti intermedi (non sul prodotto finito, già
-            # tracciato correttamente da qta_buona/o.qta_pianificata): se
-            # una parte è già disponibile a magazzino (es. da una
-            # Dichiarazione Libera fatta prima che questa commessa
-            # esistesse), il saldo mostrato all'operatore si riduce di
-            # conseguenza — non deve rifare da zero qualcosa già pronto.
-            gia_disponibile = giacenza_disponibile.get(codice_comp, 0) if not componente_finale else 0
-            saldo = max(qta_necessaria - fatti - gia_disponibile, 0)
+            # ERRORE CONCETTUALE CORRETTO (rimossa la sottrazione della
+            # 'giacenza già disponibile' dal saldo qui, come già fatto per
+            # Totem Live e Ordine di Lavoro): la Dichiarazione Libera
+            # alimenta comunque il magazzino — da quella dichiarazione in
+            # poi le scorte di materie prime/semilavorati/prodotti finiti
+            # aumentano e restano visibili lì, normalmente. Farle SCONTARE
+            # di nuovo il saldo qui era un doppio conteggio, la stessa
+            # confusione già trovata altrove: un OP che avanza da solo
+            # deve rimanere calcolato solo su pianificato e fatti.
+            saldo = max(qta_necessaria - fatti, 0)
             if saldo <= 0:
                 continue  # già completato su questo centro: non dichiarabile
             gruppo_componenti.append({
                 'componente': componente_param, 'componente_finale': es_ultima_fase,
                 'codice_lavorato': codice_comp, 'descrizione': descrizione_per_codice.get(codice_comp, ''),
                 'qta_necessaria': qta_necessaria, 'fatti': fatti, 'saldo': saldo,
-                'gia_disponibile_a_magazzino': gia_disponibile,
                 'reintegro_da_scarto_a_valle': qta_necessaria > qta_necessaria_base,
             })
         if not gruppo_componenti:
