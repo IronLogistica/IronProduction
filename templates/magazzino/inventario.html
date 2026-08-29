@@ -65,6 +65,7 @@
 let GRUPPI = [];
 let ARTICOLI = [];
 let GRUPPO_ATTIVO = null;
+let GRUPPO_KANBAN_ID = null;  // valorizzato solo quando si conta un gruppo Kanban di Angelo (?kanban=<id>), non una categoria fissa
 const CONTEGGI = {};  // codice -> valore inserito (solo quelli toccati)
 
 async function caricaGruppi(){
@@ -86,6 +87,7 @@ async function caricaGruppi(){
 
 async function apriGruppo(tipo){
   GRUPPO_ATTIVO = tipo;
+  GRUPPO_KANBAN_ID = null;
   const gruppo = GRUPPI.find(g => g.tipo === tipo);
   document.getElementById('titolo-gruppo').textContent = gruppo ? gruppo.etichetta : tipo;
   document.getElementById('box-gruppi').style.display = 'none';
@@ -104,7 +106,35 @@ async function apriGruppo(tipo){
   }
 }
 
+// Conteggio di un gruppo Kanban arbitrario (di Angelo) invece che di una
+// categoria fissa — stessa identica schermata di conteggio/salvataggio,
+// cambia solo da dove arrivano i codici.
+async function apriGruppoKanban(gruppoId){
+  GRUPPO_ATTIVO = null;
+  GRUPPO_KANBAN_ID = gruppoId;
+  document.getElementById('box-gruppi').style.display = 'none';
+  document.getElementById('box-conteggio').style.display = 'block';
+  document.getElementById('filtro-ricerca').value = '';
+  document.getElementById('esito-salvataggio').textContent = '';
+  Object.keys(CONTEGGI).forEach(k => delete CONTEGGI[k]);
+  const lista = document.getElementById('articoli-lista');
+  lista.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/inventario/kanban-conteggio/' + gruppoId);
+    const d = await r.json();
+    document.getElementById('titolo-gruppo').textContent = d.nome;
+    ARTICOLI = d.righe;
+    renderArticoli();
+  }catch(e){
+    lista.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
 function tornaAiGruppi(){
+  if(GRUPPO_KANBAN_ID !== null){
+    window.location.href = '/inventario/kanban';
+    return;
+  }
   document.getElementById('box-conteggio').style.display = 'none';
   document.getElementById('box-gruppi').style.display = 'block';
   caricaGruppi();  // ricarica i conteggi, potrebbero essere cambiati altrove
@@ -168,17 +198,24 @@ async function salvaInventario(){
   try{
     const r = await fetch('/api/inventario/salva', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({conteggi: CONTEGGI})
+      body: JSON.stringify({conteggi: CONTEGGI, gruppo_kanban_id: GRUPPO_KANBAN_ID})
     });
     const d = await r.json();
     if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '❌ ' + (d.error || 'Errore.'); return; }
     esito.style.color = '#1a9e5c';
     esito.textContent = `✅ Inventario salvato — ${d.aggiornati} codice/i aggiornati.`;
-    await apriGruppo(GRUPPO_ATTIVO);  // ricarica con le nuove giacenze come base
+    if(GRUPPO_KANBAN_ID !== null) await apriGruppoKanban(GRUPPO_KANBAN_ID);
+    else await apriGruppo(GRUPPO_ATTIVO);  // ricarica con le nuove giacenze come base
   }catch(e){
     esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
   }
 }
 
-caricaGruppi();
+const _parametriUrl = new URLSearchParams(window.location.search);
+const _kanbanIdIniziale = _parametriUrl.get('kanban');
+if(_kanbanIdIniziale){
+  apriGruppoKanban(parseInt(_kanbanIdIniziale));
+}else{
+  caricaGruppi();
+}
 {% endblock %}

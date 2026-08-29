@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🗂️ Kanban Inventario — gruppi personalizzati</div>
+</div>
+
+<div class="mon-section" id="box-lista-gruppi">
+  <div style="padding:16px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px">
+      Raggruppa i codici di magazzino come preferisci per contarli insieme — un criterio libero, deciso da te, non legato
+      alla categoria di acquisto (materia prima, consumo, sicurezza...). Ogni gruppo puo' avere una frequenza di
+      conteggio e puo' essere spezzato in sottogruppi.
+    </p>
+    <button class="btn btn-primary" onclick="apriCreazioneGruppo()" style="margin-bottom:16px">➕ Nuovo Gruppo</button>
+    <div id="gruppi-lista" style="display:flex;flex-direction:column;gap:10px">Caricamento...</div>
+  </div>
+</div>
+
+<div class="mon-section" id="box-dettaglio-gruppo" style="display:none">
+  <div style="padding:16px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="tornaAllaLista()">← Gruppi</button>
+      <div class="page-title" style="margin:0;font-size:20px" id="titolo-dettaglio"></div>
+      <a class="btn btn-ghost" id="link-stampa" href="#" target="_blank" style="margin-left:auto">🖨️ Stampa foglio inventario</a>
+      <a class="btn btn-ghost" id="link-conteggio" href="#">🔢 Fai il conteggio</a>
+    </div>
+
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+      <input id="nuovo-sottogruppo-nome" type="text" placeholder="Nome nuovo sottogruppo..."
+             style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)">
+      <button class="btn btn-ghost" onclick="creaSottogruppo()">➕ Aggiungi sottogruppo</button>
+      <div style="position:relative;flex:1;min-width:220px">
+        <input id="ricerca-codice" type="text" placeholder="🔍 Aggiungi codice al gruppo..." autocomplete="off"
+               style="width:100%;padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"
+               oninput="ricercaCodiceInput(this)">
+        <div id="dropdown-ricerca-codice" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:50;background:var(--dark3);border:1px solid var(--border);border-radius:6px;max-height:260px;overflow-y:auto"></div>
+      </div>
+    </div>
+
+    <div id="sottogruppi-board" style="display:flex;flex-direction:column;gap:14px">Caricamento...</div>
+  </div>
+</div>
+
+<div id="overlay-crea-gruppo" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:200;align-items:center;justify-content:center">
+  <div style="background:var(--dark2,#0f1e35);border-radius:10px;padding:22px;width:340px">
+    <div style="font-weight:800;margin-bottom:14px">➕ Nuovo Gruppo Kanban</div>
+    <label style="font-size:12px;color:var(--text-dim)">Nome</label>
+    <input id="crea-gruppo-nome" type="text" style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);margin:4px 0 12px">
+    <label style="font-size:12px;color:var(--text-dim)">Frequenza di conteggio (giorni, facoltativa)</label>
+    <input id="crea-gruppo-frequenza" type="number" min="1" placeholder="es. 30 = mensile"
+           style="width:100%;padding:8px 10px;border-radius:6px;border:1px solid var(--border);margin:4px 0 16px">
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-ghost" onclick="chiudiCreazioneGruppo()">Annulla</button>
+      <button class="btn btn-primary" onclick="confermaCreaGruppo()">Crea</button>
+    </div>
+    <div id="crea-gruppo-esito" style="font-size:12px;color:#c0392b;margin-top:8px"></div>
+  </div>
+</div>
+
+<style>
+  .gruppo-riga{
+    display:flex;align-items:center;gap:14px;padding:14px;border:1px solid var(--border);
+    border-radius:8px;background:var(--surface);cursor:pointer;
+  }
+  .gruppo-riga:hover{background:rgba(30,111,165,.1)}
+  .gruppo-riga.scaduto{border-left:4px solid #c0392b}
+  .gruppo-nome{font-weight:800;font-size:15px;flex:1}
+  .gruppo-badge{font-size:11px;padding:3px 9px;border-radius:999px;background:var(--dark3);color:var(--text-dim)}
+  .gruppo-badge.scaduto{background:rgba(192,57,43,.18);color:#e07a6e;font-weight:700}
+  .btn-elimina-piccolo{background:none;border:none;color:#c0392b;cursor:pointer;font-size:16px;padding:4px 8px}
+
+  .sottogruppo-box{border:1px solid var(--border);border-radius:8px;background:var(--surface)}
+  .sottogruppo-hdr{display:flex;align-items:center;gap:8px;padding:10px 12px;background:var(--dark3);border-radius:8px 8px 0 0;font-weight:700;font-size:13px}
+  .sottogruppo-lista{min-height:44px;padding:8px}
+  .codice-card{
+    display:flex;align-items:center;gap:8px;padding:8px 10px;margin-bottom:6px;border:1px solid var(--border);
+    border-radius:6px;background:var(--dark3);font-size:13px;
+  }
+  .codice-card .drag-handle{cursor:grab;color:#999;touch-action:none;user-select:none}
+  .codice-card .codice-nome{font-weight:800}
+  .codice-card .codice-desc{color:var(--text-dim);font-size:11px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .codice-card .btn-rimuovi{background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px}
+</style>
+{% endblock %}
+{% block scripts %}
+let GRUPPI = [];
+let DETTAGLIO = null;
+let GRUPPO_ATTIVO_ID = null;
+
+async function caricaGruppi(){
+  const box = document.getElementById('gruppi-lista');
+  try{
+    const r = await fetch('/api/inventario/kanban-gruppi');
+    GRUPPI = await r.json();
+    if(!GRUPPI.length){
+      box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun gruppo ancora — creane uno con "➕ Nuovo Gruppo".</p>';
+      return;
+    }
+    box.innerHTML = GRUPPI.map(g => `
+      <div class="gruppo-riga ${g.scaduto ? 'scaduto' : ''}" onclick="apriDettaglioGruppo(${g.id})">
+        <div class="gruppo-nome">${g.nome}</div>
+        <span class="gruppo-badge">${g.n_codici} codici</span>
+        ${g.frequenza_giorni ? `<span class="gruppo-badge ${g.scaduto ? 'scaduto' : ''}">${g.scaduto ? '⚠️ DA CONTARE' : '✅ ok'} — ogni ${g.frequenza_giorni}gg${g.ultimo_inventario_il ? ', ultimo ' + g.ultimo_inventario_il : ''}</span>` : ''}
+        <button class="btn-elimina-piccolo" onclick="event.stopPropagation(); eliminaGruppo(${g.id}, '${g.nome.replace(/'/g,"\\'")}')" title="Elimina gruppo">🗑️</button>
+      </div>`).join('');
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function apriCreazioneGruppo(){
+  document.getElementById('crea-gruppo-nome').value = '';
+  document.getElementById('crea-gruppo-frequenza').value = '';
+  document.getElementById('crea-gruppo-esito').textContent = '';
+  document.getElementById('overlay-crea-gruppo').style.display = 'flex';
+}
+function chiudiCreazioneGruppo(){ document.getElementById('overlay-crea-gruppo').style.display = 'none'; }
+
+async function confermaCreaGruppo(){
+  const nome = document.getElementById('crea-gruppo-nome').value.trim();
+  const frequenza = document.getElementById('crea-gruppo-frequenza').value.trim();
+  const esito = document.getElementById('crea-gruppo-esito');
+  if(!nome){ esito.textContent = 'Il nome e\' obbligatorio.'; return; }
+  try{
+    const r = await fetch('/api/inventario/kanban-gruppi', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({nome, frequenza_giorni: frequenza || null})
+    });
+    const d = await r.json();
+    if(!d.ok){ esito.textContent = d.error || 'Errore.'; return; }
+    chiudiCreazioneGruppo();
+    caricaGruppi();
+  }catch(e){ esito.textContent = 'Errore di rete.'; }
+}
+
+async function eliminaGruppo(id, nome){
+  if(!confirm(`Eliminare il gruppo "${nome}"? I codici assegnati non vengono toccati, smettono solo di far parte di questo gruppo.`)) return;
+  try{
+    await fetch(`/api/inventario/kanban-gruppi/${id}`, {method: 'DELETE'});
+    caricaGruppi();
+  }catch(e){ alert('Errore di rete.'); }
+}
+
+async function apriDettaglioGruppo(id){
+  GRUPPO_ATTIVO_ID = id;
+  document.getElementById('box-lista-gruppi').style.display = 'none';
+  document.getElementById('box-dettaglio-gruppo').style.display = 'block';
+  document.getElementById('link-stampa').href = `/inventario/kanban-gruppi/${id}/stampa`;
+  document.getElementById('link-conteggio').href = `/inventario?kanban=${id}`;
+  await caricaDettaglio();
+}
+
+function tornaAllaLista(){
+  document.getElementById('box-dettaglio-gruppo').style.display = 'none';
+  document.getElementById('box-lista-gruppi').style.display = 'block';
+  caricaGruppi();
+}
+
+async function caricaDettaglio(){
+  const board = document.getElementById('sottogruppi-board');
+  board.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch(`/api/inventario/kanban-gruppi/${GRUPPO_ATTIVO_ID}/dettaglio`);
+    DETTAGLIO = await r.json();
+    document.getElementById('titolo-dettaglio').textContent = DETTAGLIO.nome;
+    renderBoard();
+  }catch(e){
+    board.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function renderBoard(){
+  const board = document.getElementById('sottogruppi-board');
+  const gruppi = [...DETTAGLIO.sottogruppi, {id: null, nome: 'Senza sottogruppo'}];
+  board.innerHTML = gruppi.map(sg => {
+    const codiciDiQuesto = DETTAGLIO.codici.filter(c => c.sottogruppo_id === sg.id);
+    return `<div class="sottogruppo-box" data-sottogruppo-id="${sg.id === null ? '' : sg.id}">
+      <div class="sottogruppo-hdr">
+        <span>${sg.nome}</span>
+        ${sg.id !== null ? `<button class="btn-elimina-piccolo" style="margin-left:auto" onclick="eliminaSottogruppo(${sg.id})" title="Elimina sottogruppo">🗑️</button>` : ''}
+      </div>
+      <div class="sottogruppo-lista" data-sottogruppo-lista="${sg.id === null ? '' : sg.id}">
+        ${codiciDiQuesto.map(c => `
+          <div class="codice-card" data-codice="${c.codice}">
+            <span class="drag-handle" onpointerdown="invIniziaDrag(event, this)">⠿</span>
+            <span class="codice-nome">${c.codice}</span>
+            <span class="codice-desc">${c.descrizione || ''}</span>
+            <button class="btn-rimuovi" onclick="rimuoviCodice('${c.codice}')" title="Togli dal gruppo">✕</button>
+          </div>`).join('') || '<div style="font-size:11px;color:var(--text-dim);padding:4px 8px;font-style:italic">Trascina qui i codici</div>'}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function creaSottogruppo(){
+  const input = document.getElementById('nuovo-sottogruppo-nome');
+  const nome = input.value.trim();
+  if(!nome) return;
+  try{
+    const r = await fetch(`/api/inventario/kanban-gruppi/${GRUPPO_ATTIVO_ID}/sottogruppi`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nome})
+    });
+    const d = await r.json();
+    if(!d.ok){ alert(d.error || 'Errore.'); return; }
+    input.value = '';
+    caricaDettaglio();
+  }catch(e){ alert('Errore di rete.'); }
+}
+
+async function eliminaSottogruppo(id){
+  if(!confirm('Eliminare il sottogruppo? I codici restano nel gruppo, solo senza piu\' un sottogruppo.')) return;
+  try{
+    await fetch(`/api/inventario/kanban-sottogruppi/${id}`, {method: 'DELETE'});
+    caricaDettaglio();
+  }catch(e){ alert('Errore di rete.'); }
+}
+
+async function rimuoviCodice(codice){
+  if(!confirm(`Togliere ${codice} da questo gruppo?`)) return;
+  try{
+    await fetch(`/api/inventario/kanban-rimuovi/${encodeURIComponent(codice)}`, {method: 'DELETE'});
+    caricaDettaglio();
+  }catch(e){ alert('Errore di rete.'); }
+}
+
+// Ricerca intelligente per aggiungere un codice al gruppo
+let _ricercaCodiceTimer = null;
+function ricercaCodiceInput(input){
+  clearTimeout(_ricercaCodiceTimer);
+  const q = input.value.trim();
+  const dropdown = document.getElementById('dropdown-ricerca-codice');
+  if(q.length < 2){ dropdown.style.display = 'none'; return; }
+  _ricercaCodiceTimer = setTimeout(async () => {
+    try{
+      const r = await fetch('/api/inventario/kanban-ricerca-codici?q=' + encodeURIComponent(q));
+      const risultati = await r.json();
+      if(!risultati.length){
+        dropdown.innerHTML = '<div style="padding:8px 12px;color:var(--text-dim);font-size:12px">Nessun codice trovato.</div>';
+      }else{
+        dropdown.innerHTML = risultati.map(x => `
+          <div style="padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border)" onmousedown="aggiungiCodiceAlGruppo('${x.codice.replace(/'/g,"\\'")}')">
+            <b>${x.codice}</b> <span style="color:var(--text-dim);font-size:11px">${x.descrizione || ''}</span>
+            ${x.gia_in_gruppo ? `<div style="font-size:10px;color:#e6b800">⚠️ gia\' in "${x.gia_in_gruppo}" — verra\' spostato qui</div>` : ''}
+          </div>`).join('');
+      }
+      dropdown.style.display = 'block';
+    }catch(e){ dropdown.style.display = 'none'; }
+  }, 220);
+}
+
+async function aggiungiCodiceAlGruppo(codice){
+  document.getElementById('dropdown-ricerca-codice').style.display = 'none';
+  document.getElementById('ricerca-codice').value = '';
+  try{
+    const r = await fetch('/api/inventario/kanban-assegna', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({codice, gruppo_id: GRUPPO_ATTIVO_ID})
+    });
+    const d = await r.json();
+    if(!d.ok){ alert(d.error || 'Errore.'); return; }
+    caricaDettaglio();
+  }catch(e){ alert('Errore di rete.'); }
+}
+
+// Drag & drop tra sottogruppi - Pointer Events, stesso meccanismo gia'
+// collaudato per Kanban Prodotti e Avanzamento Commesse.
+let _invDragEl = null;
+function invIniziaDrag(e, handle){
+  e.preventDefault();
+  const card = handle.closest('.codice-card');
+  if(!card) return;
+  _invDragEl = card;
+  card.style.opacity = '0.4';
+  handle.setPointerCapture(e.pointerId);
+  document.addEventListener('pointermove', invDragMove);
+  document.addEventListener('pointerup', invDragFine, {once: true});
+  document.addEventListener('pointercancel', invDragFine, {once: true});
+}
+function invDragMove(e){
+  if(!_invDragEl) return;
+  const sotto = document.elementFromPoint(e.clientX, e.clientY);
+  const lista = sotto ? sotto.closest('[data-sottogruppo-lista]') : null;
+  if(!lista) return;
+  const cardSopra = sotto.closest('.codice-card');
+  if(cardSopra && cardSopra !== _invDragEl){
+    const rect = cardSopra.getBoundingClientRect();
+    const prima = e.clientY < rect.top + rect.height / 2;
+    lista.insertBefore(_invDragEl, prima ? cardSopra : cardSopra.nextSibling);
+  }else if(!cardSopra){
+    lista.appendChild(_invDragEl);
+  }
+}
+async function invDragFine(){
+  document.removeEventListener('pointermove', invDragMove);
+  if(!_invDragEl) return;
+  _invDragEl.style.opacity = '';
+  _invDragEl = null;
+  const righe = [];
+  document.querySelectorAll('[data-sottogruppo-lista]').forEach(lista => {
+    const sottogruppoId = lista.dataset.sottogruppoLista ? parseInt(lista.dataset.sottogruppoLista) : null;
+    lista.querySelectorAll('.codice-card').forEach(card => {
+      righe.push({codice: card.dataset.codice, sottogruppo_id: sottogruppoId});
+    });
+  });
+  try{
+    await fetch('/api/inventario/kanban-riordina', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({righe})
+    });
+  }catch(e){ }
+}
+
+document.addEventListener('click', (e) => {
+  if(!e.target.closest('#ricerca-codice') && !e.target.closest('#dropdown-ricerca-codice')){
+    document.getElementById('dropdown-ricerca-codice').style.display = 'none';
+  }
+});
+
+caricaGruppi();
+{% endblock %}

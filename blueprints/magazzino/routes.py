@@ -13,7 +13,8 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
                     EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log,
-                    KanbanProdotto, MappaCodiceMasterWork, ParametriLavorazioneWood, CategoriaAcquistoConfig)
+                    KanbanProdotto, MappaCodiceMasterWork, ParametriLavorazioneWood, CategoriaAcquistoConfig,
+                    GruppoInventarioWood, SottogruppoInventarioWood, CodiceInventarioWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -3275,6 +3276,7 @@ def api_inventario_salva():
     """
     d = request.get_json(force=True)
     conteggi = d.get('conteggi') or {}
+    gruppo_kanban_id = d.get('gruppo_kanban_id')
     if not conteggi:
         return jsonify(ok=False, error='Nessun conteggio da salvare'), 400
     aggiornati = 0
@@ -3291,8 +3293,295 @@ def api_inventario_salva():
         _registra_movimento_giacenza(codice, delta, 'rettifica_inventario',
                                       note=f'Inventario fisico — da {qta_precedente} a {qta_contata}')
         aggiornati += 1
+    # Se il conteggio arriva da un gruppo Kanban di Angelo, registra QUI
+    # la data dell'ultimo inventario di quel gruppo — usata per calcolare
+    # se è "scaduto" in base alla frequenza impostata. Anche con 0 codici
+    # aggiornati (tutto già corretto) conta come "controllato oggi".
+    if gruppo_kanban_id:
+        gruppo = GruppoInventarioWood.query.get(gruppo_kanban_id)
+        if gruppo:
+            gruppo.ultimo_inventario_il = datetime.utcnow()
     db.session.commit()
     return jsonify(ok=True, aggiornati=aggiornati)
+
+
+    return jsonify(ok=True, aggiornati=aggiornati)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  KANBAN INVENTARIO — gruppi ARBITRARI decisi liberamente da Angelo, in
+#  aggiunta (non in sostituzione) alle categorie fisse sopra. Un codice
+#  qualunque tipo di approvvigionamento sia può finire nello stesso gruppo
+#  Kanban di un altro con tipo diverso — l'unico criterio è quello che
+#  Angelo decide caso per caso. Ogni gruppo ha una frequenza di conteggio
+#  opzionale (ogni quanti giorni va ricontato) e può essere spezzato in
+#  sottogruppi trascinando i codici dentro.
+# ══════════════════════════════════════════════════════════════════════════════
+@magazzino_bp.route('/inventario/kanban')
+def pagina_inventario_kanban_gruppi():
+    return render_template('magazzino/inventario_kanban_gruppi.html', active='inventario')
+
+
+@magazzino_bp.route('/api/inventario/kanban-gruppi')
+def api_inventario_kanban_gruppi():
+    """Elenco dei gruppi Kanban di Angelo, con conteggio codici e stato
+    scaduto/da fare in base alla frequenza impostata."""
+    gruppi = GruppoInventarioWood.query.order_by(GruppoInventarioWood.sort_order, GruppoInventarioWood.id).all()
+    conteggi = dict(db.session.query(CodiceInventarioWood.gruppo_id, db.func.count(CodiceInventarioWood.id))
+                    .group_by(CodiceInventarioWood.gruppo_id).all())
+    ora = datetime.utcnow()
+    risultato = []
+    for g in gruppi:
+        giorni_da_ultimo = (ora - g.ultimo_inventario_il).days if g.ultimo_inventario_il else None
+        scaduto = bool(g.frequenza_giorni and (giorni_da_ultimo is None or giorni_da_ultimo >= g.frequenza_giorni))
+        risultato.append({
+            'id': g.id, 'nome': g.nome, 'frequenza_giorni': g.frequenza_giorni,
+            'n_codici': conteggi.get(g.id, 0),
+            'ultimo_inventario_il': g.ultimo_inventario_il.strftime('%d/%m/%Y') if g.ultimo_inventario_il else None,
+            'giorni_da_ultimo': giorni_da_ultimo, 'scaduto': scaduto,
+        })
+    return jsonify(risultato)
+
+
+@magazzino_bp.route('/api/inventario/kanban-gruppi', methods=['POST'])
+def api_inventario_kanban_crea_gruppo():
+    d = request.get_json(force=True)
+    nome = (d.get('nome') or '').strip()
+    if not nome:
+        return jsonify(ok=False, error='Il nome del gruppo è obbligatorio'), 400
+    try:
+        frequenza = int(d['frequenza_giorni']) if d.get('frequenza_giorni') not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Frequenza non valida'), 400
+    if frequenza is not None and frequenza <= 0:
+        return jsonify(ok=False, error='La frequenza deve essere maggiore di zero giorni'), 400
+    max_ordine = db.session.query(db.func.max(GruppoInventarioWood.sort_order)).scalar() or 0
+    g = GruppoInventarioWood(nome=nome, frequenza_giorni=frequenza, sort_order=max_ordine + 1)
+    db.session.add(g)
+    db.session.commit()
+    return jsonify(ok=True, id=g.id)
+
+
+@magazzino_bp.route('/api/inventario/kanban-gruppi/<int:gid>', methods=['PUT'])
+def api_inventario_kanban_aggiorna_gruppo(gid):
+    g = GruppoInventarioWood.query.get_or_404(gid)
+    d = request.get_json(force=True)
+    if 'nome' in d:
+        nome = (d.get('nome') or '').strip()
+        if not nome:
+            return jsonify(ok=False, error='Il nome del gruppo è obbligatorio'), 400
+        g.nome = nome
+    if 'frequenza_giorni' in d:
+        try:
+            frequenza = int(d['frequenza_giorni']) if d.get('frequenza_giorni') not in (None, '') else None
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error='Frequenza non valida'), 400
+        if frequenza is not None and frequenza <= 0:
+            return jsonify(ok=False, error='La frequenza deve essere maggiore di zero giorni'), 400
+        g.frequenza_giorni = frequenza
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@magazzino_bp.route('/api/inventario/kanban-gruppi/<int:gid>', methods=['DELETE'])
+def api_inventario_kanban_elimina_gruppo(gid):
+    """Elimina il gruppo (e i suoi sottogruppi/assegnazioni, a cascata) —
+    NON tocca la giacenza o i codici stessi: solo lo smette di raggrupparli."""
+    g = GruppoInventarioWood.query.get_or_404(gid)
+    db.session.delete(g)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@magazzino_bp.route('/api/inventario/kanban-gruppi/<int:gid>/dettaglio')
+def api_inventario_kanban_dettaglio_gruppo(gid):
+    """Sottogruppi + codici assegnati (con descrizione/giacenza) — per la
+    schermata di gestione (trascina i codici nei sottogruppi)."""
+    g = GruppoInventarioWood.query.get_or_404(gid)
+    sottogruppi = SottogruppoInventarioWood.query.filter_by(gruppo_id=gid).order_by(SottogruppoInventarioWood.sort_order).all()
+    assegnazioni = (CodiceInventarioWood.query.filter_by(gruppo_id=gid)
+                    .order_by(CodiceInventarioWood.sort_order).all())
+    codici = [a.codice for a in assegnazioni]
+    descrizioni = {d.codice: d.descrizione for d in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici)).all()} if codici else {}
+    return jsonify({
+        'id': g.id, 'nome': g.nome, 'frequenza_giorni': g.frequenza_giorni,
+        'sottogruppi': [{'id': s.id, 'nome': s.nome} for s in sottogruppi],
+        'codici': [{'codice': a.codice, 'descrizione': descrizioni.get(a.codice, ''),
+                    'sottogruppo_id': a.sottogruppo_id} for a in assegnazioni],
+    })
+
+
+@magazzino_bp.route('/api/inventario/kanban-gruppi/<int:gid>/sottogruppi', methods=['POST'])
+def api_inventario_kanban_crea_sottogruppo(gid):
+    GruppoInventarioWood.query.get_or_404(gid)
+    d = request.get_json(force=True)
+    nome = (d.get('nome') or '').strip()
+    if not nome:
+        return jsonify(ok=False, error='Il nome del sottogruppo è obbligatorio'), 400
+    max_ordine = (db.session.query(db.func.max(SottogruppoInventarioWood.sort_order))
+                  .filter_by(gruppo_id=gid).scalar()) or 0
+    s = SottogruppoInventarioWood(gruppo_id=gid, nome=nome, sort_order=max_ordine + 1)
+    db.session.add(s)
+    db.session.commit()
+    return jsonify(ok=True, id=s.id)
+
+
+@magazzino_bp.route('/api/inventario/kanban-sottogruppi/<int:sid>', methods=['DELETE'])
+def api_inventario_kanban_elimina_sottogruppo(sid):
+    """Elimina il sottogruppo — i codici che c'erano dentro RESTANO nel
+    gruppo padre, solo senza più un sottogruppo (sottogruppo_id -> NULL,
+    già garantito da ondelete='SET NULL')."""
+    s = SottogruppoInventarioWood.query.get_or_404(sid)
+    db.session.delete(s)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@magazzino_bp.route('/api/inventario/kanban-ricerca-codici')
+def api_inventario_kanban_ricerca_codici():
+    """Widget di ricerca intelligente per aggiungere un codice a un gruppo
+    Kanban — cerca in TUTTO il catalogo (Materiali/Parametri di
+    Lavorazione), non solo tra i codici già assegnati a qualche gruppo.
+    Segnala se il codice è già in un altro gruppo Kanban, per evitare di
+    spostarlo per sbaglio credendo di aggiungerlo ex novo."""
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    like = f'%{q}%'
+    righe = (DescrizioneCodiceWood.query
+             .filter(db.or_(DescrizioneCodiceWood.codice.ilike(like), DescrizioneCodiceWood.descrizione.ilike(like)))
+             .order_by(DescrizioneCodiceWood.codice).limit(30).all())
+    codici = [r.codice for r in righe]
+    gia_assegnati = {a.codice: a.gruppo for a in
+                     CodiceInventarioWood.query.filter(CodiceInventarioWood.codice.in_(codici)).all()} if codici else {}
+    return jsonify([{
+        'codice': r.codice, 'descrizione': r.descrizione or '',
+        'gia_in_gruppo': gia_assegnati[r.codice].nome if r.codice in gia_assegnati else None,
+    } for r in righe])
+
+
+@magazzino_bp.route('/api/inventario/kanban-assegna', methods=['POST'])
+def api_inventario_kanban_assegna_codice():
+    """Assegna un codice a un gruppo (e facoltativamente un sottogruppo) —
+    se il codice era già in un ALTRO gruppo Kanban, lo sposta (un codice
+    sta in un gruppo alla volta, non lo duplica)."""
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip()
+    gruppo_id = d.get('gruppo_id')
+    sottogruppo_id = d.get('sottogruppo_id')
+    if not codice or not gruppo_id:
+        return jsonify(ok=False, error='Codice e gruppo sono obbligatori'), 400
+    GruppoInventarioWood.query.get_or_404(gruppo_id)
+    if sottogruppo_id:
+        sg = SottogruppoInventarioWood.query.get_or_404(sottogruppo_id)
+        if sg.gruppo_id != gruppo_id:
+            return jsonify(ok=False, error='Il sottogruppo non appartiene a questo gruppo'), 400
+    riga = CodiceInventarioWood.query.filter_by(codice=codice).first()
+    max_ordine = (db.session.query(db.func.max(CodiceInventarioWood.sort_order))
+                  .filter_by(gruppo_id=gruppo_id).scalar()) or 0
+    if riga:
+        riga.gruppo_id = gruppo_id
+        riga.sottogruppo_id = sottogruppo_id
+        riga.sort_order = max_ordine + 1
+    else:
+        db.session.add(CodiceInventarioWood(codice=codice, gruppo_id=gruppo_id,
+                        sottogruppo_id=sottogruppo_id, sort_order=max_ordine + 1))
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@magazzino_bp.route('/api/inventario/kanban-riordina', methods=['POST'])
+def api_inventario_kanban_riordina():
+    """
+    Salva il trascinamento di uno o più codici in un sottogruppo diverso
+    (o fuori da ogni sottogruppo) dentro lo STESSO gruppo — stesso
+    meccanismo drag & drop (Pointer Events) già usato per il Kanban
+    Prodotti e per Avanzamento Commesse. Riceve la lista COMPLETA dei
+    codici del gruppo, ciascuno col suo sottogruppo_id (None se fuori da
+    ogni sottogruppo) e la posizione — riscrive sort_order in sequenza.
+    """
+    d = request.get_json(force=True)
+    righe = d.get('righe') or []
+    if not righe:
+        return jsonify(ok=False, error='Nessuna riga da salvare'), 400
+    for posizione, riga in enumerate(righe):
+        codice = (riga.get('codice') or '').strip()
+        assegnazione = CodiceInventarioWood.query.filter_by(codice=codice).first()
+        if assegnazione:
+            assegnazione.sottogruppo_id = riga.get('sottogruppo_id')
+            assegnazione.sort_order = posizione
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@magazzino_bp.route('/api/inventario/kanban-rimuovi/<path:codice>', methods=['DELETE'])
+def api_inventario_kanban_rimuovi_codice(codice):
+    """Toglie il codice dal sistema di gruppi Kanban — non tocca la
+    giacenza né il codice stesso, smette solo di raggrupparlo."""
+    riga = CodiceInventarioWood.query.filter_by(codice=codice.strip()).first()
+    if riga:
+        db.session.delete(riga)
+        db.session.commit()
+    return jsonify(ok=True)
+
+
+@magazzino_bp.route('/api/inventario/kanban-conteggio/<int:gid>')
+def api_inventario_kanban_conteggio(gid):
+    """Stesso identico formato di /api/inventario/<tipo> (usata dalla
+    schermata di conteggio), ma per i codici di un gruppo Kanban invece che
+    di una categoria fissa — la stessa pagina di conteggio funziona per
+    entrambi senza saperne la differenza."""
+    g = GruppoInventarioWood.query.get_or_404(gid)
+    assegnazioni = (CodiceInventarioWood.query.filter_by(gruppo_id=gid)
+                    .order_by(CodiceInventarioWood.sort_order).all())
+    codici = [a.codice for a in assegnazioni]
+    descrizioni = {d.codice: d.descrizione for d in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici)).all()} if codici else {}
+    unita = {a.codice: a.unita_misura for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()} if codici else {}
+    giacenze = {gi.codice: gi for gi in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici)).all()} if codici else {}
+    sottogruppi = {s.id: s.nome for s in SottogruppoInventarioWood.query.filter_by(gruppo_id=gid).all()}
+    righe = []
+    for a in assegnazioni:
+        gi = giacenze.get(a.codice)
+        righe.append({
+            'codice': a.codice, 'descrizione': descrizioni.get(a.codice, ''),
+            'unita_misura': unita.get(a.codice, ''),
+            'sottogruppo': sottogruppi.get(a.sottogruppo_id, ''),
+            'giacenza_attuale': (gi.quantita if gi else 0) or 0,
+            'mai_contato': gi is None,
+        })
+    return jsonify({'nome': g.nome, 'righe': righe})
+
+
+@magazzino_bp.route('/inventario/kanban-gruppi/<int:gid>/stampa')
+def pagina_inventario_kanban_stampa(gid):
+    """Foglio di carta per il conteggio fisico — un codice per riga,
+    organizzati per sottogruppo, con una colonna vuota da riempire a mano
+    durante il giro in magazzino."""
+    g = GruppoInventarioWood.query.get_or_404(gid)
+    sottogruppi = SottogruppoInventarioWood.query.filter_by(gruppo_id=gid).order_by(SottogruppoInventarioWood.sort_order).all()
+    assegnazioni = (CodiceInventarioWood.query.filter_by(gruppo_id=gid)
+                    .order_by(CodiceInventarioWood.sort_order).all())
+    codici = [a.codice for a in assegnazioni]
+    descrizioni = {d.codice: d.descrizione for d in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici)).all()} if codici else {}
+    unita = {a.codice: a.unita_misura for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()} if codici else {}
+
+    sezioni = []
+    per_sottogruppo = {}
+    senza_sottogruppo = []
+    for a in assegnazioni:
+        riga = {'codice': a.codice, 'descrizione': descrizioni.get(a.codice, ''), 'unita_misura': unita.get(a.codice, '')}
+        if a.sottogruppo_id:
+            per_sottogruppo.setdefault(a.sottogruppo_id, []).append(riga)
+        else:
+            senza_sottogruppo.append(riga)
+    for s in sottogruppi:
+        if s.id in per_sottogruppo:
+            sezioni.append({'nome': s.nome, 'righe': per_sottogruppo[s.id]})
+    if senza_sottogruppo:
+        sezioni.append({'nome': None, 'righe': senza_sottogruppo})
+
+    return render_template('magazzino/inventario_kanban_stampa.html',
+        gruppo=g, sezioni=sezioni, data_stampa=datetime.utcnow().strftime('%d/%m/%Y'))
 
 
 @magazzino_bp.route('/api/categorie-acquisto')

@@ -245,6 +245,68 @@ class CategoriaAcquistoConfig(db.Model):
     centro_costo = db.relationship('CentroCostoWood')
 
 
+class GruppoInventarioWood(db.Model):
+    """
+    Gruppo di inventario ARBITRARIO, deciso liberamente da Angelo — a
+    differenza delle categorie fisse di TIPI_APPROVVIGIONAMENTO (Materia
+    Prima, Consumo, Sicurezza...), qui il criterio di omogeneità non è
+    imposto dal programma: Angelo raggruppa i codici come preferisce per
+    contarli insieme (es. per zona fisica di magazzino, per reparto che li
+    usa, per come sono fisicamente stoccati) — un codice può stare in
+    QUALUNQUE categoria di approvvigionamento e finire nello stesso gruppo
+    di conteggio di un altro con categoria diversa, se per Angelo ha senso
+    contarli insieme.
+    frequenza_giorni: ogni quanti giorni questo gruppo va ricontato (es.
+    30 = mensile) — None = nessuna cadenza fissata, va contato quando serve.
+    ultimo_inventario_il: aggiornato automaticamente all'ultimo salvataggio
+    di un conteggio su QUESTO gruppo — usato per calcolare se è "scaduto"
+    (giorni trascorsi > frequenza_giorni) senza dover tenere uno storico a
+    parte, la data del movimento di rettifica basta.
+    """
+    __tablename__ = 'gruppi_inventario_wood'
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(100), nullable=False)
+    frequenza_giorni = db.Column(db.Integer, nullable=True)
+    ultimo_inventario_il = db.Column(db.DateTime, nullable=True)
+    sort_order = db.Column(db.Integer, default=0)
+    creato_il = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class SottogruppoInventarioWood(db.Model):
+    """
+    Suddivisione INTERNA a un GruppoInventarioWood — stessa libertà del
+    gruppo padre: Angelo decide come spezzare un gruppo grande in sezioni
+    più maneggevoli per il conteggio fisico (es. scaffale per scaffale),
+    trascinando i codici dentro con lo stesso meccanismo drag & drop già
+    in uso altrove nel programma (Kanban Prodotti, Avanzamento Commesse).
+    """
+    __tablename__ = 'sottogruppi_inventario_wood'
+    id = db.Column(db.Integer, primary_key=True)
+    gruppo_id = db.Column(db.Integer, db.ForeignKey('gruppi_inventario_wood.id', ondelete='CASCADE'), nullable=False)
+    nome = db.Column(db.String(100), nullable=False)
+    sort_order = db.Column(db.Integer, default=0)
+    gruppo = db.relationship('GruppoInventarioWood', backref=db.backref('sottogruppi', cascade='all, delete-orphan'))
+
+
+class CodiceInventarioWood(db.Model):
+    """
+    Assegnazione di un codice magazzino a un GruppoInventarioWood (e,
+    facoltativamente, a un SottogruppoInventarioWood al suo interno) — un
+    codice sta in AL PIU' UN gruppo Kanban di inventario alla volta (si
+    conta in un posto solo): 'codice' è per questo UNIQUE, non una coppia
+    (codice, gruppo). Assegnarlo a un gruppo diverso sposta la riga, non
+    ne crea una seconda.
+    """
+    __tablename__ = 'codici_inventario_wood'
+    id = db.Column(db.Integer, primary_key=True)
+    codice = db.Column(db.String(50), unique=True, nullable=False)
+    gruppo_id = db.Column(db.Integer, db.ForeignKey('gruppi_inventario_wood.id', ondelete='CASCADE'), nullable=False)
+    sottogruppo_id = db.Column(db.Integer, db.ForeignKey('sottogruppi_inventario_wood.id', ondelete='SET NULL'), nullable=True)
+    sort_order = db.Column(db.Integer, default=0)
+    gruppo = db.relationship('GruppoInventarioWood', backref=db.backref('codici_assegnati', cascade='all, delete-orphan'))
+    sottogruppo = db.relationship('SottogruppoInventarioWood')
+
+
 class RettificaGrezzoIW(db.Model):
     """
     Rettifica manuale al 'Grezzo IW' (fine saldatura giornaliera dichiarata
