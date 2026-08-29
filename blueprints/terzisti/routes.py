@@ -32,14 +32,14 @@ def _aggiorna_kanban_da_rientro_ddt(codice, qta_rientrata_ora):
     Non bloccante: se il codice non ha una scheda Kanban il DDT resta
     comunque confermato — solo loggato.
     """
-    if not codice or qta_rientrata_ora <= 0:
+    if not codice or qta_rientrata_ora == 0:
         return
     p = (KanbanProdotto.query
          .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{codice.strip().upper()}%'))
          .first())
     if not p:
         return
-    p.verniciati = (p.verniciati or 0) + qta_rientrata_ora
+    p.verniciati = max(0, (p.verniciati or 0) + qta_rientrata_ora)
     ora_now = datetime.utcnow()
     if ora_now >= datetime(2026, 7, 1):
         storico_aggiungi_auto(p.id, qta_rientrata_ora)
@@ -50,7 +50,7 @@ def _aggiorna_kanban_da_rientro_ddt(codice, qta_rientrata_ora):
     # il campo Kanban p.verniciati. Le due cose vanno tenute allineate.
     _registra_movimento_giacenza(sku, qta_rientrata_ora, 'carico_produzione',
                                   riferimento=codice, note=f'Rientro DDT terzista — {qta_rientrata_ora} pz')
-    log(f'Kanban: +{qta_rientrata_ora} "Finiti IW" su {p.prodotto} da rientro DDT terzista (locale, MAI notificato a WMS)')
+    log(f'Kanban: {qta_rientrata_ora:+d} "Finiti IW" su {p.prodotto} da rientro/rettifica DDT terzista (locale, MAI notificato a WMS)')
 
 
 def _aggiorna_lead_time_esterno_da_rientro(trattamento, data_uscita, data_rientro):
@@ -1004,17 +1004,79 @@ def api_correggi_qta_spedita(lid):
     return jsonify({'ok': True, 'qta_spedita': nuova_qta, 'avviso': avviso})
 
 
+@terzisti_bp.route('/api/lavorazioni/<int:lid>/correggi_qta_rientrata', methods=['POST'])
+def api_correggi_qta_rientrata(lid):
+    """Rettifica manualmente il totale rientrato dopo il confronto fisico/DDT.
+
+    La variazione è applicata anche a Finiti IW e alla giacenza locale, così
+    dashboard, Kanban e magazzino restano coerenti. I riferimenti ai DDT già
+    registrati non vengono cancellati: la rettifica cambia il conteggio, non
+    lo storico documentale.
+    """
+    d = request.get_json(force=True)
+    try:
+        nuova_qta = int(d['nuova_qta'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'nuova_qta mancante o non numerica'}), 400
+
+    lav = LavorazioneTerzista.query.get_or_404(lid)
+    qta_spedita = int(lav.qta or 0)
+    if nuova_qta < 0 or nuova_qta > qta_spedita:
+        return jsonify({
+            'ok': False,
+            'error': f'La quantità rientrata deve essere compresa tra 0 e {qta_spedita}'
+        }), 400
+
+    try:
+        note_j = json.loads(lav.note or '{}')
+    except Exception:
+        note_j = {}
+    vecchia_qta = int(note_j.get('qta_rientrata', 0))
+    if nuova_qta == vecchia_qta:
+        return jsonify({'ok': True, 'invariato': True})
+
+    delta = nuova_qta - vecchia_qta
+    note_j['qta_rientrata'] = nuova_qta
+    note_j.setdefault('rettifiche_rientro', []).append({
+        'da': vecchia_qta,
+        'a': nuova_qta,
+        'data': datetime.utcnow().strftime('%d/%m/%Y %H:%M'),
+    })
+    lav.note = json.dumps(note_j)
+
+    if nuova_qta >= qta_spedita:
+        lav.stato = 'RIENTRATA'
+        if not lav.data_rientro:
+            lav.data_rientro = datetime.utcnow().strftime('%d/%m/%Y')
+    elif nuova_qta > 0:
+        lav.stato = 'PARZIALE'
+        lav.data_rientro = ''
+    else:
+        lav.stato = 'ATTESA_RIENTRO'
+        lav.data_rientro = ''
+
+    _aggiorna_kanban_da_rientro_ddt(note_j.get('codice', ''), delta)
+    db.session.commit()
+    log(f'Rettifica qtà rientrata lavorazione #{lav.id} (DDT {lav.ddt_uscita}): '
+        f'{vecchia_qta} -> {nuova_qta}')
+    return jsonify({
+        'ok': True,
+        'qta_rientrata': nuova_qta,
+        'qta_residua': max(0, qta_spedita - nuova_qta),
+        'stato': lav.stato,
+    })
+
+
 @terzisti_bp.route('/api/terzisti/residuo_per_fornitore')
 def api_residuo_per_fornitore():
-    """
-    Riepilogo per FORNITORE + CODICE del totale ancora residuo presso ogni
-    terzista — un codice può essere finito su più DDT diversi nel tempo
-    (spedizioni successive), questa vista li somma per dare "quanto ho
-    fisicamente in mano da lui in questo momento", con il dettaglio dei
-    singoli DDT che compongono quel totale per il popup di approfondimento.
+    """Materiale ancora in carico, raggruppato per fornitore/codice/lavorazione.
+
+    Questa risposta alimenta le card operative: volutamente non espone il
+    dettaglio dei singoli DDT, perché qui interessa solo ciò che ogni
+    fornitore deve ancora lavorare e riconsegnare.
     """
     lavorazioni = LavorazioneTerzista.query.order_by(LavorazioneTerzista.data_uscita.desc()).all()
-    gruppi = {}   # (terzista, codice) -> {'residua': int, 'dettaglio': [...]}
+    gruppi = {}
     for lav in lavorazioni:
         try:
             note_j = json.loads(lav.note or '{}')
@@ -1024,19 +1086,20 @@ def api_residuo_per_fornitore():
         if not codice:
             continue
         qta_rientrata = int(note_j.get('qta_rientrata', 0))
-        qta_residua = max(0, lav.qta - qta_rientrata)
+        qta_residua = max(0, (lav.qta or 0) - qta_rientrata)
         if qta_residua <= 0:
-            continue  # completamente rientrato: non pesa più sul residuo presso il fornitore
+            continue
         tz = Terzista.query.get(lav.terzista_id)
         nome_terzista = tz.nome if tz else '(fornitore sconosciuto)'
-        chiave = (nome_terzista, codice)
+        trattamento = note_j.get('trattamento') or lav.fase or 'Trattamento esterno'
+        chiave = (nome_terzista, codice, trattamento)
         if chiave not in gruppi:
-            gruppi[chiave] = {'terzista': nome_terzista, 'codice': codice, 'desc': note_j.get('desc', ''),
-                               'residua': 0, 'dettaglio': []}
+            gruppi[chiave] = {
+                'terzista': nome_terzista,
+                'codice': codice,
+                'desc': note_j.get('desc', ''),
+                'trattamento': trattamento,
+                'residua': 0,
+            }
         gruppi[chiave]['residua'] += qta_residua
-        gruppi[chiave]['dettaglio'].append({
-            'lavorazione_id': lav.id, 'ddt_uscita': lav.ddt_uscita, 'data_uscita': lav.data_uscita,
-            'qta_spedita': lav.qta, 'qta_rientrata': qta_rientrata, 'qta_residua': qta_residua,
-        })
-    righe = sorted(gruppi.values(), key=lambda r: (-r['residua']))
-    return jsonify(righe)
+    return jsonify(sorted(gruppi.values(), key=lambda r: (r['terzista'].lower(), r['codice'].lower(), r['trattamento'].lower())))

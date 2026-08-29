@@ -215,6 +215,25 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
          text-decoration:none;border-bottom:1px dashed var(--border)}
 .tz-link:hover{color:var(--steel2);border-bottom-color:var(--steel2)}
 
+/* Card operative: una per fornitore, solo materiale ancora in carico */
+.fornitori-riepilogo{margin-top:8px}
+.fornitori-title{font-size:.68rem;font-weight:900;letter-spacing:1px;text-transform:uppercase;
+                 color:var(--text-dim);padding:8px 2px 6px}
+.fornitori-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:10px}
+.fornitore-card{background:var(--surface);border:1px solid var(--border);border-radius:9px;overflow:hidden}
+.fornitore-card-head{display:flex;align-items:center;justify-content:space-between;gap:8px;
+                     padding:10px 12px;background:var(--dark2);border-bottom:2px solid var(--accent)}
+.fornitore-card-name{font-weight:900;color:var(--text);font-size:.82rem}
+.fornitore-card-total{font-family:monospace;font-weight:900;color:var(--yellow);white-space:nowrap}
+.fornitore-codici{width:100%;border-collapse:collapse;font-size:.7rem}
+.fornitore-codici th{padding:6px 9px;text-align:left;color:var(--text-dim);font-size:.55rem;
+                     text-transform:uppercase;letter-spacing:.5px;background:rgba(255,255,255,.02)}
+.fornitore-codici td{padding:8px 9px;border-top:1px solid var(--border);vertical-align:top}
+.fornitore-codici .lav{color:var(--steel2);font-weight:700}
+.qta-edit{border:0;border-bottom:1px dashed var(--steel2);background:transparent;color:var(--steel2);
+          font:inherit;font-weight:900;cursor:pointer;padding:0}
+.qta-edit:hover{color:#fff;border-color:#fff}
+
 </style>
 
 <div class="page-toolbar">
@@ -283,15 +302,12 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
 
     <!-- Filtri -->
     <div class="filtri">
-      <button class="fb active"    onclick="filt('all',this)">TUTTI</button>
+      <button class="fb active"    onclick="filt('APERTE',this)">APERTE</button>
+      <button class="fb"           onclick="filt('all',this)">TUTTE</button>
       <button class="fb"           onclick="filt('ATTESA_RIENTRO',this)">⏳ Attesa</button>
       <button class="fb fp"        onclick="filt('PARZIALE',this)">🔄 Parziale</button>
       <button class="fb fd"        onclick="filt('IN_RITARDO',this)">🚨 Ritardo</button>
       <button class="fb fc"        onclick="filt('RIENTRATA',this)">✅ Completate</button>
-      <div class="sw-wrap">
-        <span>Solo aperte</span>
-        <div class="sw" id="sw-ap" onclick="toggleSw()"></div>
-      </div>
     </div>
 
     <!-- Tabella -->
@@ -309,36 +325,15 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
       </table>
     </div>
 
+    <!-- Riepilogo operativo immediatamente sotto la tabella principale -->
+    <section class="fornitori-riepilogo">
+      <div class="fornitori-title">🏭 Materiale in carico per fornitore</div>
+      <div class="fornitori-grid" id="fornitori-cards">
+        <div class="fornitore-card"><div class="empty-state"><div class="ei">⏳</div><p>Caricamento…</p></div></div>
+      </div>
+    </section>
+
   </main>
-</div>
-
-<!-- ══ RESIDUO PER FORNITORE (aggregato su più DDT) ══════════════════════════ -->
-<div class="mon-section" style="margin-top:16px">
-  <div class="section-hdr postazione-hdr">📊 Residuo per Fornitore — totale in mano a ciascun terzista, per codice</div>
-  <div class="tz-table-wrap">
-    <table class="tz-t">
-      <thead><tr><th>Fornitore</th><th>Codice</th><th>Descrizione</th><th>Quantità residua</th></tr></thead>
-      <tbody id="residuo-fornitore-tbody">
-        <tr><td colspan="4"><div class="empty-state"><div class="ei">⏳</div><p>Caricamento…</p></div></td></tr>
-      </tbody>
-    </table>
-  </div>
-</div>
-
-<!-- ══ MODALE: dettaglio DDT che compongono il residuo ══════════════════════ -->
-<div class="modal-overlay" id="m-dettaglio-residuo">
-  <div class="modal-box" style="width:560px;max-width:96vw">
-    <h3 id="dr-titolo" style="margin-top:0">Dettaglio</h3>
-    <div class="tz-table-wrap">
-      <table class="tz-t">
-        <thead><tr><th>DDT Uscita</th><th>Data</th><th>Spedita</th><th>Rientrata</th><th>Residua</th><th></th></tr></thead>
-        <tbody id="dr-tbody"></tbody>
-      </table>
-    </div>
-    <div style="display:flex;justify-content:flex-end;gap:8px;margin-top:14px">
-      <button class="btn btn-ghost" onclick="closeModal('m-dettaglio-residuo')">Chiudi</button>
-    </div>
-  </div>
 </div>
 
 <!-- ══ STORICO SCHEDE TRATTAMENTI ESTERNI ═══════════════════════════════════ -->
@@ -480,7 +475,7 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
 
 {% block scripts %}
 // BUGFIX: variabili in var per garantire scope globale (let+block script causa problemi)
-var _dati=[], _filtro='all', _soloAp=false, _pU=null, _pR=null;
+var _dati=[], _filtro='APERTE', _pU=null, _pR=null;
 
 // ── SCHEDE TRATTAMENTI ESTERNI ──────────────────────────────────────────────
 function apriModalScheda(){
@@ -604,42 +599,63 @@ async function correggiQtaSpedita(lavorazioneId, qtaAttuale, ddt){
   }catch(e){ alert('❌ Errore di rete durante la correzione.'); }
 }
 
+
+async function correggiQtaRientrata(lavorazioneId, qtaAttuale, qtaSpedita, ddt){
+  const inserito = prompt(`DDT ${ddt || '?'} — quantità rientrata registrata: ${qtaAttuale}.\nInserisci il conteggio corretto (da 0 a ${qtaSpedita}):`, qtaAttuale);
+  if(inserito === null) return;
+  const nuovaQta = parseInt(inserito, 10);
+  if(isNaN(nuovaQta) || nuovaQta < 0 || nuovaQta > qtaSpedita){
+    alert(`⚠️ Inserisci un numero compreso tra 0 e ${qtaSpedita}.`); return;
+  }
+  if(nuovaQta === qtaAttuale) return;
+  if(!confirm(`Confermi la rettifica della quantità rientrata da ${qtaAttuale} a ${nuovaQta}?\nLa variazione aggiornerà anche Finiti IW e la giacenza locale.`)) return;
+  try{
+    const r = await fetch(`/api/lavorazioni/${lavorazioneId}/correggi_qta_rientrata`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({nuova_qta:nuovaQta})
+    });
+    const d = await r.json();
+    if(!d.ok){ alert('❌ ' + (d.error || 'Errore durante la rettifica.')); return; }
+    carica();
+  }catch(e){ alert('❌ Errore di rete durante la rettifica.'); }
+}
+
 let _residuoFornitore = [];
 async function caricaResiduoPerFornitore(){
-  const tb = document.getElementById('residuo-fornitore-tbody');
+  const contenitore = document.getElementById('fornitori-cards');
   try{
     const r = await fetch('/api/terzisti/residuo_per_fornitore');
     _residuoFornitore = await r.json();
     if(!_residuoFornitore.length){
-      tb.innerHTML = '<tr><td colspan="4"><div class="empty-state"><div class="ei">📭</div><p>Nessun residuo aperto presso i terzisti.</p></div></td></tr>';
+      contenitore.innerHTML = '<div class="fornitore-card"><div class="empty-state"><div class="ei">📭</div><p>Nessun materiale aperto presso i terzisti.</p></div></div>';
       return;
     }
-    tb.innerHTML = _residuoFornitore.map((g, i) => `
-      <tr>
-        <td>🏭 ${g.terzista}</td>
-        <td class="cod">${g.codice}</td>
-        <td class="desc-c" title="${g.desc||''}">${g.desc || '—'}</td>
-        <td><span class="qta q-res" style="cursor:pointer;text-decoration:underline" onclick="apriDettaglioResiduo(${i})" title="Vedi i DDT che compongono questo totale">${g.residua}</span></td>
-      </tr>`).join('');
+    const perFornitore = {};
+    _residuoFornitore.forEach(g => {
+      if(!perFornitore[g.terzista]) perFornitore[g.terzista] = [];
+      perFornitore[g.terzista].push(g);
+    });
+    contenitore.innerHTML = Object.entries(perFornitore).map(([fornitore, righe]) => {
+      const totale = righe.reduce((somma, riga) => somma + riga.residua, 0);
+      const codici = righe.map(g => `
+        <tr>
+          <td class="cod">${g.codice}</td>
+          <td><div>${g.desc || '—'}</div><div class="lav">${g.trattamento || 'Trattamento esterno'}</div></td>
+          <td><span class="qta q-res">${g.residua}</span></td>
+        </tr>`).join('');
+      return `<article class="fornitore-card">
+        <div class="fornitore-card-head">
+          <span class="fornitore-card-name">🏭 ${fornitore}</span>
+          <span class="fornitore-card-total">${totale} pz in carico</span>
+        </div>
+        <table class="fornitore-codici">
+          <thead><tr><th>Codice</th><th>Da fare</th><th>Residuo</th></tr></thead>
+          <tbody>${codici}</tbody>
+        </table>
+      </article>`;
+    }).join('');
   }catch(e){
-    tb.innerHTML = '<tr><td colspan="4"><div class="empty-state"><div class="ei">❌</div><p>Errore caricamento</p></div></td></tr>';
+    contenitore.innerHTML = '<div class="fornitore-card"><div class="empty-state"><div class="ei">❌</div><p>Errore caricamento</p></div></div>';
   }
-}
-
-function apriDettaglioResiduo(indice){
-  const g = _residuoFornitore[indice];
-  if(!g) return;
-  document.getElementById('dr-titolo').textContent = `${g.codice} — ${g.terzista} (totale residuo: ${g.residua})`;
-  document.getElementById('dr-tbody').innerHTML = g.dettaglio.map(x => `
-    <tr>
-      <td><span class="ddt-tag">${x.ddt_uscita || '—'}</span></td>
-      <td style="color:var(--text-dim);white-space:nowrap;font-size:.7rem">${x.data_uscita || '—'}</td>
-      <td><span class="qta q-out">${x.qta_spedita}</span></td>
-      <td><span class="qta q-in">${x.qta_rientrata}</span></td>
-      <td><span class="qta q-res">${x.qta_residua}</span></td>
-      <td><button class="btn btn-ghost btn-sm" onclick="closeModal('m-dettaglio-residuo'); correggiQtaSpedita(${x.lavorazione_id}, ${x.qta_spedita}, '${(x.ddt_uscita||'').replace(/'/g,"\\'")}')" title="Correggi quantità spedita">✏️</button></td>
-    </tr>`).join('');
-  openModal('m-dettaglio-residuo');
 }
 
 function aggKPI(){
@@ -654,15 +670,10 @@ window.filt = function(f,el){
   document.querySelectorAll('.fb').forEach(b=>b.classList.remove('active'));
   el.classList.add('active'); renderTable();
 }
-window.toggleSw = function(){
-  _soloAp=!_soloAp;
-  document.getElementById('sw-ap').classList.toggle('on',_soloAp);
-  renderTable();
-}
-
 function renderTable(){
-  let righe=_filtro==='all'?[..._dati]:_dati.filter(d=>d.stato===_filtro);
-  if(_soloAp) righe=righe.filter(d=>d.stato!=='RIENTRATA');
+  let righe = _filtro === 'all' ? [..._dati]
+             : _filtro === 'APERTE' ? _dati.filter(d=>d.stato!=='RIENTRATA')
+             : _dati.filter(d=>d.stato===_filtro);
   if(!righe.length){
     document.getElementById('tz-tbody').innerHTML=
       `<tr><td colspan="13"><div class="empty-state"><div class="ei">📭</div>
@@ -690,12 +701,12 @@ function renderTable(){
       <td><span class="ddt-tag">${d.ddt_uscita||'—'}</span></td>
       <td style="color:var(--text-dim);white-space:nowrap;font-size:.7rem">${d.data_uscita||'—'}</td>
       <td><span class="qta q-out">${d.qta_spedita}</span></td>
-      <td><span class="qta q-in">${d.qta_rientrata}</span></td>
+      <td><button class="qta qta-edit" onclick="correggiQtaRientrata(${d.id}, ${d.qta_rientrata}, ${d.qta_spedita}, '${(d.ddt_uscita||'').replace(/'/g,"\\'")}')" title="Rettifica quantità rientrata">${d.qta_rientrata} ✎</button></td>
       <td><span class="qta ${rc2}">${d.qta_residua}</span></td>
       <td><span class="prog-w"><span class="prog-f ${bc}" style="width:${pct}%"></span></span>${pct}%</td>
       <td>${ddr}</td>
       <td><span class="badge-s ${sc}">${si} ${d.stato.replace('_',' ')}</span></td>
-      <td><button class="btn btn-ghost btn-sm" onclick="correggiQtaSpedita(${d.id}, ${d.qta_spedita}, '${(d.ddt_uscita||'').replace(/'/g,"\\'")}')" title="Correggi quantità spedita">✏️</button></td>
+      <td><button class="btn btn-ghost btn-sm" onclick="correggiQtaSpedita(${d.id}, ${d.qta_spedita}, '${(d.ddt_uscita||'').replace(/'/g,"\\'")}')" title="Correggi quantità spedita">Usc. ✏️</button></td>
     </tr>`;
   });
   document.getElementById('tz-tbody').innerHTML=html;
