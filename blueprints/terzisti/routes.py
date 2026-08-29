@@ -3,7 +3,7 @@ from models import (
     db, Terzista, LavorazioneTerzista, RigaCommessa, FaseRiga, log,
     SchedaTrattamento, TIPI_TRATTAMENTO_SCHEDA, FORNITORI_SCHEDA_DEFAULT,
     KanbanProdotto, storico_aggiungi_auto, CentroCostoWood, OrdineProduzione,
-    RettificaGrezzoIW,
+    RettificaGrezzoIW, FotoArticolo,
 )
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
 from blueprints.magazzino.routes import _registra_movimento_giacenza, _grezzo_iw_per_codici
@@ -487,6 +487,13 @@ def scheda_stampa(sid):
     s    = SchedaTrattamento.query.get_or_404(sid)
     info = s.info_trattamento
 
+    # Foto di riferimento del prodotto (stessa fonte usata ovunque nel
+    # programma — Documentazione Articolo, Cruscotto KPI: legata solo al
+    # codice_articolo, non a questa scheda o a un OP specifico) — l'ultima
+    # caricata, se ce n'è più di una per lo stesso codice.
+    foto = (FotoArticolo.query.filter_by(codice_articolo=s.codice_articolo)
+            .order_by(FotoArticolo.id.desc()).first())
+
     qr_righe = [
         f"SCHEDA: {s.numero_scheda}",
         f"CODICE: {s.codice_articolo}",
@@ -501,7 +508,7 @@ def scheda_stampa(sid):
 
     return render_template(
         'terzisti/scheda_stampa.html',
-        s=s, info=info, qr_text=qr_text,
+        s=s, info=info, qr_text=qr_text, foto_id=(foto.id if foto else None),
     )
 
 
