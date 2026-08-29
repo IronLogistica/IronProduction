@@ -358,7 +358,11 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
     <h3>🏷️ Nuova Scheda Trattamento Esterno</h3>
 
     <label class="modal-label">Codice articolo</label>
-    <input class="modal-input" id="sch-codice" type="text" placeholder="es. BC60" maxlength="100">
+    <div style="position:relative">
+      <input class="modal-input" id="sch-codice" type="text" placeholder="es. BC60" maxlength="100" autocomplete="off"
+             oninput="_schedaRicercaInput(this)" onfocus="_schedaRicercaInput(this)">
+      <div id="scheda-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+    </div>
 
     <label class="modal-label" style="margin-top:10px">Fornitore</label>
     <select class="modal-input" id="sch-fornitore-sel" onchange="toggleFornitoreLibero()">
@@ -496,8 +500,54 @@ function apriModalScheda(){
   document.getElementById('sch-colore').value='';
   toggleFlagZincatura();
   toggleFlagVerniciatura();
+  document.getElementById('scheda-dropdown').style.display='none';
   openModal('m-scheda');
 }
+
+let _schedaRicercaTimer = null;
+function _posizionaSchedaDropdown(input){
+  const dropdown = document.getElementById('scheda-dropdown');
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = rect.width + 'px';
+}
+async function _schedaRicercaInput(input){
+  const dropdown = document.getElementById('scheda-dropdown');
+  const q = input.value.trim();
+  clearTimeout(_schedaRicercaTimer);
+  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  _schedaRicercaTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/ricerca_materiale_wood?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessun codice trovato</div>';
+      _posizionaSchedaDropdown(input);
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = risultati.map(x => {
+      const cod = String(x.codice).replace(/"/g, '&quot;');
+      return `<div class="wms-item" onmousedown="_schedaSceltaMateriale('${cod}')">` +
+        `<div><b class="codice">${x.codice}</b>${x.descrizione ? `<br><span style="font-size:11px;color:var(--text-dim)">${x.descrizione}</span>` : ''}</div></div>`;
+    }).join('');
+    _posizionaSchedaDropdown(input);
+    dropdown.style.display = 'block';
+  }, 220);
+}
+function _schedaSceltaMateriale(codice){
+  document.getElementById('sch-codice').value = codice;
+  document.getElementById('scheda-dropdown').style.display = 'none';
+}
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('scheda-dropdown');
+  if(dropdown && dropdown.style.display !== 'none' && e.target !== document.getElementById('sch-codice') && !dropdown.contains(e.target)){
+    dropdown.style.display = 'none';
+  }
+});
 function toggleFornitoreLibero(){
   const sel=document.getElementById('sch-fornitore-sel').value;
   document.getElementById('sch-fornitore-libero').style.display = (sel==='__ALTRO__') ? 'block' : 'none';
