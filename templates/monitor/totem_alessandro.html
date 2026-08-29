@@ -94,9 +94,11 @@
   <button class="totem-tab" id="tab-ordini" onclick="mostraPannello('ordini')">
     <span class="ic">📋</span> Ordini<br>di Lavoro
   </button>
+  <button class="totem-tab" id="tab-rietichettatura" onclick="mostraPannello('rietichettatura')">
+    <span class="ic">🏷️</span> Rietichettatura
+  </button>
 </div>
 <div class="clock" id="clock"></div>
-<a href="/rietichettatura" target="_blank" style="position:fixed;top:6px;right:78px;z-index:50;font-size:11px;color:var(--text-dim);background:var(--dark3);border:1px solid var(--border);border-radius:6px;padding:4px 10px;text-decoration:none">🏷️ Rietichettatura</a>
 
 <!-- ══════════════════════ PANNELLO 1 — DICHIARAZIONE PRODUZIONE ══════════════════════ -->
 <div class="totem-panel attivo" id="panel-produzione">
@@ -205,6 +207,33 @@
       Una card per ogni commessa con operazioni su questa macchina. Tocca 🖨️ Stampa per aprire/stampare l'ordine di lavoro.
     </p>
     <div id="ordini-cards" class="ol-cards">Caricamento...</div>
+  </div>
+</div>
+
+<!-- ══════════════════════ PANNELLO 4 — RIETICHETTATURA (autonomo, non rimanda alla plancia di Angelo) ══════════════════════ -->
+<div class="totem-panel" id="panel-rietichettatura">
+  <div class="page-title">🏷️ Rietichettatura</div>
+  <div class="mon-section">
+    <div style="padding:14px">
+      <p class="muted" style="font-size:12px;margin-bottom:16px">
+        Per merce già a magazzino trovata in officina SENZA etichetta (o con l'etichetta persa/illeggibile) — cerca il
+        codice, il programma capisce da solo a che fase è arrivato e quale fase segue. Nessun carico a magazzino qui:
+        quella merce c'è già, serve solo ristampare l'etichetta giusta.
+      </p>
+
+      <label class="modal-label" style="margin-top:0">Codice</label>
+      <div style="position:relative;margin-bottom:14px">
+        <input id="riet-codice" type="text" placeholder="Cerca codice o descrizione..." autocomplete="off" class="big-input"
+               oninput="_rietRicercaInput(this)" onfocus="_rietRicercaInput(this)">
+        <div id="riet-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+      </div>
+
+      <label class="modal-label">Quantità (facoltativa — solo per riferimento sull'etichetta)</label>
+      <input id="riet-quantita" type="number" min="0" placeholder="Quantità" class="big-input" style="margin-bottom:16px">
+
+      <button class="btn btn-primary" onclick="generaEtichettaRietichettatura()">🖨️ Genera Etichetta</button>
+      <div id="riet-esito" style="font-size:12px;margin-top:10px"></div>
+    </div>
   </div>
 </div>
 
@@ -445,6 +474,64 @@ async function confermaLibera(){
     document.getElementById('libera-quantita').value = '';
     caricaReintegroScarti();
   }catch(e){ esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.'; }
+}
+
+// ═══════════════════ PANNELLO 4 — RIETICHETTATURA (autonoma) ═══════════════════
+let _rietRicercaTimer = null;
+let _rietDescrizioneScelta = '';
+function _posizionaRietDropdown(input){
+  const dropdown = document.getElementById('riet-dropdown');
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = rect.width + 'px';
+}
+async function _rietRicercaInput(input){
+  const dropdown = document.getElementById('riet-dropdown');
+  const q = input.value.trim();
+  clearTimeout(_rietRicercaTimer);
+  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  _rietRicercaTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/ricerca_materiale_wood?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessun codice trovato</div>';
+      _posizionaRietDropdown(input);
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = risultati.map(x => {
+      const cod = String(x.codice).replace(/"/g, '&quot;');
+      const desc = String(x.descrizione || '').replace(/"/g, '&quot;');
+      return `<div class="wms-item" onmousedown="_rietSceltaMateriale('${cod}', '${desc}')">` +
+        `<div><b class="codice">${x.codice}</b>${x.descrizione ? `<br><span style="font-size:11px;color:var(--text-dim)">${x.descrizione}</span>` : ''}</div></div>`;
+    }).join('');
+    _posizionaRietDropdown(input);
+    dropdown.style.display = 'block';
+  }, 220);
+}
+function _rietSceltaMateriale(codice, descrizione){
+  document.getElementById('riet-codice').value = codice;
+  _rietDescrizioneScelta = descrizione || '';
+  document.getElementById('riet-dropdown').style.display = 'none';
+}
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('riet-dropdown');
+  if(dropdown && dropdown.style.display !== 'none' && e.target !== document.getElementById('riet-codice') && !dropdown.contains(e.target)){
+    dropdown.style.display = 'none';
+  }
+});
+function generaEtichettaRietichettatura(){
+  const esito = document.getElementById('riet-esito');
+  const codice = document.getElementById('riet-codice').value.trim();
+  const quantita = document.getElementById('riet-quantita').value;
+  if(!codice){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Indica un codice.'; return; }
+  esito.textContent = '';
+  const params = new URLSearchParams({codice, descrizione: _rietDescrizioneScelta, quantita: quantita || ''});
+  window.open('/scheda-materiale-stampa?' + params.toString(), '_blank');
 }
 
 async function caricaOpAperti(){
