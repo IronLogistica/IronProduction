@@ -995,6 +995,118 @@ def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali,
             _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
 
 
+def _descrizioni_per_codici(codici):
+    """Descrizione per un elenco di codici — ArticoloML (MasterLogistic, se
+    raggiungibile) con fallback su DescrizioneCodiceWood locale, stesso
+    pattern già in uso altrove per i codici Iron Wood."""
+    codici = list(set(codici))
+    if not codici:
+        return {}
+    descr = {}
+    try:
+        for a in ArticoloML.query.filter(ArticoloML.sku.in_(codici)).all():
+            if a.descrizione:
+                descr[a.sku] = a.descrizione
+    except Exception:
+        db.session.rollback()
+    mancanti = [c for c in codici if c not in descr]
+    if mancanti:
+        for d in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(mancanti)).all():
+            if d.descrizione:
+                descr[d.codice] = d.descrizione
+    return descr
+
+
+def _esplodi_per_dichiarazione_libera(codice, qta, consumi, _visitati=None):
+    """
+    Come _esplodi_fino_a_semilavorati_dichiarabili, ma per una Dichiarazione
+    Libera SENZA nessun Ordine di Produzione — niente logica 'contestuale'
+    (che esiste solo per proteggere OP già in corso quando cambia una
+    regola di distinta base, un concetto che qui non si applica: non c'è
+    nessun OP da proteggere). Si ferma a un figlio con un proprio ciclo di
+    lavoro (semilavorato dichiarabile da solo, si consuma dal magazzino) o
+    a una foglia vera (materia prima/componente d'acquisto), esplodendo
+    sotto tutto il resto.
+    """
+    _visitati = _visitati if _visitati is not None else set()
+    if codice in _visitati:
+        return  # mai un ciclo infinito su una distinta configurata male per errore
+    _visitati.add(codice)
+    for rb in _righe_bom_attive_wood(codice):
+        qta_figlio = rb.quantita * qta
+        ha_proprio_ciclo = CicloLavoroWood.query.filter_by(codice=rb.codice_figlio).first() is not None
+        figli_del_figlio = _righe_bom_attive_wood(rb.codice_figlio)
+        if ha_proprio_ciclo or not figli_del_figlio:
+            consumi[rb.codice_figlio] = consumi.get(rb.codice_figlio, 0) + qta_figlio
+        else:
+            _esplodi_per_dichiarazione_libera(rb.codice_figlio, qta_figlio, consumi, _visitati)
+
+
+@pp_bp.get('/api/dichiarazione-produzione/libera/anteprima')
+def api_dichiarazione_libera_anteprima():
+    """
+    Anteprima per la Dichiarazione Libera (produzione di un semilavorato
+    SENZA nessun Ordine di Produzione — es. un tondo tagliato usando barre
+    già in magazzino, prima ancora che esista una commessa che lo
+    richieda). Stessa logica di consumo standard della dichiarazione
+    normale, esplosa direttamente dal codice invece che da un OP.
+    """
+    codice = (request.args.get('codice') or '').strip()
+    try:
+        quantita = float(request.args.get('quantita', ''))
+    except ValueError:
+        return jsonify(ok=False, error='Quantità non valida'), 400
+    if not codice or quantita <= 0:
+        return jsonify(ok=False, error='Indica un codice e una quantità maggiore di zero'), 400
+    if not _righe_bom_attive_wood(codice):
+        return jsonify(ok=False, error=f'"{codice}" non ha una distinta base — niente da consumare per produrlo qui'), 404
+
+    consumi = {}
+    _esplodi_per_dichiarazione_libera(codice, quantita, consumi, set())
+    descrizioni = _descrizioni_per_codici(list(consumi.keys()) + [codice])
+    return jsonify(ok=True, codice=codice, descrizione=descrizioni.get(codice, ''), quantita=quantita,
+                   consumi=[{'codice': c, 'descrizione': descrizioni.get(c, ''), 'quantita': round(q, 4)}
+                            for c, q in consumi.items()])
+
+
+@pp_bp.post('/api/dichiarazione-produzione/libera')
+def api_dichiarazione_libera_conferma():
+    """
+    Registra la Dichiarazione Libera: scarica i consumi dalla distinta base
+    del codice e carica il codice prodotto a magazzino — nessun Ordine di
+    Produzione coinvolto. Quando in futuro arriverà davvero una commessa
+    che richiede questo codice, lo troverà già (in tutto o in parte)
+    disponibile a magazzino invece che a saldo zero.
+    """
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip()
+    try:
+        quantita = float(d.get('quantita'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Quantità non valida'), 400
+    if not codice or quantita <= 0:
+        return jsonify(ok=False, error='Indica un codice e una quantità maggiore di zero'), 400
+    consumi_override = d.get('consumi')  # {codice: quantita}, dall'anteprima eventualmente corretta a mano
+
+    consumi = {}
+    if consumi_override:
+        consumi = {k: float(v) for k, v in consumi_override.items() if float(v or 0) > 0}
+    else:
+        _esplodi_per_dichiarazione_libera(codice, quantita, consumi, set())
+
+    note = f"Dichiarazione libera — {quantita} pz di {codice} (nessun OP)"
+    for cod, qta_consumata in consumi.items():
+        if qta_consumata:
+            costo_corrente = _calcola_costo_standard(cod)['costo_totale']
+            _registra_movimento_giacenza(cod, -qta_consumata, 'scarico_produzione', riferimento='', note=note,
+                                          costo_unitario=costo_corrente)
+    costo_prodotto = _calcola_costo_standard(codice)['costo_totale']
+    _registra_movimento_giacenza(codice, quantita, 'carico_produzione', riferimento='', note=note,
+                                  costo_unitario=costo_prodotto)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
 def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None, operatore=None, approvato_direzione=False):
     """
     Nucleo di registrazione di un consuntivo per l'OP o (già lockato con
@@ -2321,6 +2433,18 @@ def pagina_dichiarazione_produzione():
     return render_template('produzione_pp/dichiarazione_produzione.html', active='dichiarazione_produzione')
 
 
+@pp_bp.get('/rietichettatura')
+def pagina_rietichettatura():
+    """
+    Rietichettatura — per merce trovata in officina SENZA etichetta (o con
+    l'etichetta persa/illeggibile), già regolarmente a magazzino: cerca il
+    codice, e la Scheda Identificazione Materiale (fase eseguita/prossima)
+    si genera da sola — nessun carico a magazzino qui, quella merce c'è
+    già, serve solo ristampare l'etichetta giusta.
+    """
+    return render_template('produzione_pp/rietichettatura.html', active='rietichettatura')
+
+
 @pp_bp.get('/dichiarazione-produzione/app')
 def pagina_dichiarazione_produzione_app():
     """
@@ -2628,13 +2752,33 @@ def api_dichiarazione_op_aperti(cid):
     codici_op = [o.codice for o in ordini]
     fatti_per_componente = {}
     if codici_op:
-        for op_code, componente, tot in (db.session.query(
-                EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente,
-                db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-                .filter(EventoConsuntivoPP.op_code.in_(codici_op),
-                        db.func.lower(EventoConsuntivoPP.fase) == centro.nome.lower())
-                .group_by(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente).all()):
-            fatti_per_componente[(op_code, componente)] = tot or 0
+        # Confronto TOLLERANTE (_fasi_corrispondono), non un'uguaglianza
+        # esatta — stesso bug reale già trovato e corretto oggi in più
+        # punti del programma: MasterWork manda in 'fase' un testo libero
+        # per articolo (es. 'Saldatura Frontale c/Assemblaggio'), non
+        # necessariamente identico al nome del Centro di Costo qui
+        # ('Saldatura'). Un confronto esatto qui faceva risultare 'Fatti'
+        # errato proprio sulla schermata principale di dichiarazione — il
+        # capo reparto vedeva un saldo sbagliato per produzione già
+        # dichiarata da MasterWork con un nome fase diverso.
+        for op_code, componente, fase, buoni in (
+                EventoConsuntivoPP.query.filter(EventoConsuntivoPP.op_code.in_(codici_op))
+                .with_entities(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente,
+                               EventoConsuntivoPP.fase, EventoConsuntivoPP.pezzi_buoni).all()):
+            if _fasi_corrispondono(centro.nome, fase):
+                chiave = (op_code, componente)
+                fatti_per_componente[chiave] = fatti_per_componente.get(chiave, 0) + (buoni or 0)
+
+    # Giacenza già disponibile a magazzino per ogni codice — es. un
+    # semilavorato tagliato in una Dichiarazione Libera, PRIMA che esistesse
+    # una commessa che lo richiedesse: quando la commessa arriva, quello
+    # già fatto non deve sparire nel nulla, deve ridurre il saldo ancora da
+    # produrre. Sottrazione solo informativa (mostra meno da fare
+    # all'operatore), non tocca il calcolo dei consumi materiali standard.
+    giacenza_disponibile = {}
+    if tutti_i_codici:
+        for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(tutti_i_codici)).all():
+            giacenza_disponibile[g.codice] = g.quantita or 0
 
     # Descrizione di ogni codice dichiarabile — ArticoloML (magazzino
     # condiviso MasterLogistic) prima, riserva locale (da import
@@ -2679,13 +2823,21 @@ def api_dichiarazione_op_aperti(cid):
             qta_necessaria_base = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
             qta_necessaria = round(fabbisogno_effettivo.get(codice_comp, qta_necessaria_base), 4)
             fatti = fatti_per_componente.get((o.codice, componente_param), 0)
-            saldo = max(qta_necessaria - fatti, 0)
+            # Solo sui componenti intermedi (non sul prodotto finito, già
+            # tracciato correttamente da qta_buona/o.qta_pianificata): se
+            # una parte è già disponibile a magazzino (es. da una
+            # Dichiarazione Libera fatta prima che questa commessa
+            # esistesse), il saldo mostrato all'operatore si riduce di
+            # conseguenza — non deve rifare da zero qualcosa già pronto.
+            gia_disponibile = giacenza_disponibile.get(codice_comp, 0) if not componente_finale else 0
+            saldo = max(qta_necessaria - fatti - gia_disponibile, 0)
             if saldo <= 0:
                 continue  # già completato su questo centro: non dichiarabile
             gruppo_componenti.append({
                 'componente': componente_param, 'componente_finale': es_ultima_fase,
                 'codice_lavorato': codice_comp, 'descrizione': descrizione_per_codice.get(codice_comp, ''),
                 'qta_necessaria': qta_necessaria, 'fatti': fatti, 'saldo': saldo,
+                'gia_disponibile_a_magazzino': gia_disponibile,
                 'reintegro_da_scarto_a_valle': qta_necessaria > qta_necessaria_base,
             })
         if not gruppo_componenti:
