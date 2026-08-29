@@ -285,9 +285,25 @@ def _esplodi_componenti_op(o, _max_profondita=15, mappa_distinta=None):
     — l'articolo stesso (moltiplicatore 1) più TUTTI i suoi componenti a
     qualunque livello, ciascuno con il moltiplicatore di quantità cumulato
     dalla radice — usando solo l'alternativa attiva per gruppo (vedi
-    _righe_bom_attive_wood). Un codice riusato in più punti dell'albero
-    compare una sola volta (al moltiplicatore del primo punto in cui viene
-    incontrato) — protezione anti-ciclo/doppio conteggio.
+    _righe_bom_attive_wood).
+
+    Un codice riusato in PIÙ PUNTI dell'albero (es. TR2006 componente sia
+    di TR2006L sia di TR2005-Z, stesso pezzo di ferro richiesto in due
+    punti distinti e indipendenti) compare una SOLA riga nel risultato, ma
+    con la SOMMA dei moltiplicatori di tutte le volte in cui viene
+    incontrato — BUG REALE CORRETTO QUI: prima veniva tenuto solo il primo
+    punto in cui il codice compariva, ignorando silenziosamente ogni altro
+    punto in cui lo stesso codice serve ancora, sottostimando il vero
+    fabbisogno di materiale (e di conseguenza lo scarico magazzino, i
+    "Necessari" nella Dichiarazione Produzione, il Reintegro Scarti, ecc. —
+    tutti calcolano a partire da qui).
+
+    La protezione anti-ciclo resta, ma guarda solo il PERCORSO CORRENTE
+    della ricorsione (antenati veri, A che contiene B che contiene di nuovo
+    A) — non "ogni codice mai visto in tutto l'albero", che è la
+    distinzione sbagliata: un codice riusato in due rami SIBLING (non uno
+    dentro l'altro) non è affatto un ciclo, è semplicemente materiale
+    condiviso, e va contato per intero in entrambi i punti.
 
     I figli 'contestuali' attivi per questo OP (vedi _contestuale_attivo_per_op
     — isole one-piece-flow, es. FRONTE/RETRO saldati con il padre nello
@@ -304,23 +320,26 @@ def _esplodi_componenti_op(o, _max_profondita=15, mappa_distinta=None):
     fornita, esplode SENZA query aggiuntive — indispensabile quando la si
     chiama per molti OP di seguito nella stessa richiesta.
     """
-    risultato = [{'codice': o.codice_articolo, 'moltiplicatore': 1.0}]
-    visitati = {o.codice_articolo}
+    moltiplicatori = {o.codice_articolo: 1.0}
+    ordine_comparsa = [o.codice_articolo]
 
-    def walk(codice, moltiplicatore, profondita):
+    def walk(codice, moltiplicatore, profondita, antenati):
         if profondita > _max_profondita:
             return
         for r in _righe_bom_attive_wood(codice, mappa=mappa_distinta):
-            if r.codice_figlio in visitati:
-                continue
-            visitati.add(r.codice_figlio)
+            if r.codice_figlio in antenati:
+                continue  # VERO ciclo: questo codice è già un suo stesso antenato nel percorso attuale
             m = moltiplicatore * (r.quantita or 1.0)
-            if not _contestuale_attivo_per_op(r, o):
-                risultato.append({'codice': r.codice_figlio, 'moltiplicatore': m})
-            walk(r.codice_figlio, m, profondita + 1)
+            contestuale = _contestuale_attivo_per_op(r, o)
+            if not contestuale:
+                if r.codice_figlio not in moltiplicatori:
+                    moltiplicatori[r.codice_figlio] = 0.0
+                    ordine_comparsa.append(r.codice_figlio)
+                moltiplicatori[r.codice_figlio] += m
+            walk(r.codice_figlio, m, profondita + 1, antenati | {r.codice_figlio})
 
-    walk(o.codice_articolo, 1.0, 0)
-    return risultato
+    walk(o.codice_articolo, 1.0, 0, {o.codice_articolo})
+    return [{'codice': c, 'moltiplicatore': moltiplicatori[c]} for c in ordine_comparsa]
 
 
 def _esplodi_bom_wood(codice, qta=1.0, _visitati=None, _profondita=0, _max_profondita=12):
