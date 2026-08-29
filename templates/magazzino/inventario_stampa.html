@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Foglio Inventario — {{ titolo }}{{ ' — ' + sottogruppo.nome if sottogruppo else '' }}</title>
+<style>
+  @page { size: A4 portrait; margin: 14mm; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; color: #000; }
+  .titolo { font-size: 22px; font-weight: 800; margin-bottom: 4px; }
+  .sottotitolo { font-size: 14px; color: #444; margin-bottom: 4px; }
+  .meta { font-size: 12px; color: #555; margin-bottom: 16px; }
+  .meta span { display: inline-block; margin-right: 28px; }
+  .meta .compila { border-bottom: 1px solid #000; display: inline-block; min-width: 140px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { background: #eee; border: 1px solid #999; padding: 7px 8px; text-align: left; font-size: 11px; text-transform: uppercase; }
+  td { border: 1px solid #999; padding: 9px 8px; vertical-align: middle; }
+  .col-codice { width: 15%; font-weight: 700; }
+  .col-desc { width: 45%; }
+  .col-um { width: 10%; text-align: center; }
+  .col-conteggio { width: 30%; }
+  .riga-conteggio { border-bottom: 1px solid #000; display: block; height: 20px; }
+  .btn-stampa { display: block; width: 100%; margin: 0 0 16px; padding: 12px; font-size: 16px; font-weight: 700; background: #1e6fa5; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+  @media print { .btn-stampa { display: none; } }
+</style>
+</head>
+<body>
+
+<button class="btn-stampa" onclick="window.print()">🖨️ Stampa</button>
+
+<div class="titolo">Foglio Inventario — {{ titolo }}{{ ' / ' + sottogruppo.nome if sottogruppo else '' }}</div>
+<div class="sottotitolo">{{ righe|length }} codici da contare</div>
+<div class="meta">
+  <span>Data: <span class="compila">&nbsp;</span></span>
+  <span>Operatore: <span class="compila">&nbsp;</span></span>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th class="col-codice">Codice</th>
+      <th class="col-desc">Descrizione</th>
+      <th class="col-um">U.M.</th>
+      <th class="col-conteggio">Quantità contata</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for r in righe %}
+    <tr>
+      <td class="col-codice">{{ r.codice }}</td>
+      <td class="col-desc">{{ r.descrizione or '—' }}</td>
+      <td class="col-um">{{ r.unita_misura or '' }}</td>
+      <td class="col-conteggio"><span class="riga-conteggio"></span></td>
+    </tr>
+    {% endfor %}
+    {% if not righe %}
+    <tr><td colspan="4" style="text-align:center;color:#777;font-style:italic">Nessun codice in questo gruppo.</td></tr>
+    {% endif %}
+  </tbody>
+</table>
+
+</body>
+</html>

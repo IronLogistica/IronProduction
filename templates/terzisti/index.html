@@ -449,6 +449,12 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
       </div>
       <div id="match-list"></div>
     </div>
+    <div id="ambigue-section" style="display:none;margin-bottom:12px">
+      <div class="side-lbl" style="color:var(--yellow);margin-bottom:8px">
+        ⚠️ RIGHE DA ABBINARE A MANO — più spedizioni aperte, non riesco a capire da sola quale
+      </div>
+      <div id="ambigue-list"></div>
+    </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('m-rientro')">Annulla</button>
       <button class="btn btn-primary" onclick="confermaRientro()">✅ CONFERMA RIENTRO</button>
@@ -796,6 +802,27 @@ window.apriRientro = function apriRientro(js){
   }else{
     document.getElementById('match-section').style.display='none';
   }
+  const amb=js.righe_ambigue||[];
+  if(amb.length){
+    document.getElementById('ambigue-section').style.display='block';
+    document.getElementById('ambigue-list').innerHTML=amb.map((r,i)=>{
+      const opzioni=r.candidati.map(c=>
+        `<option value="${c.lav_id}" data-residua="${c.qta_residua}">DDT uscita ${c.ddt_uscita||'—'} — residua ${c.qta_residua}</option>`
+      ).join('');
+      return`<div class="match-row">
+        <div style="flex:1">
+          <div class="mr-cod">${r.codice} — <small style="color:var(--text-dim)">${r.desc}</small></div>
+          <div class="mr-sub">Quantità su questa riga del DDT: <b style="color:var(--yellow)">${r.qta_riga}</b> —
+            ${r.candidati.length} spedizioni aperte per questo codice, scegli quella giusta:</div>
+          <select id="amb-lav-${i}" class="modal-input" style="margin-top:6px;width:100%">
+            <option value="">— nessuna (ignora questa riga) —</option>
+            ${opzioni}
+          </select>
+        </div>
+      </div>`;}).join('');
+  }else{
+    document.getElementById('ambigue-section').style.display='none';
+  }
   openModal('m-rientro');
 }
 window.confermaRientro = async function confermaRientro(){
@@ -806,6 +833,14 @@ window.confermaRientro = async function confermaRientro(){
     .map(m=>({lav_id:m.lav_id,
               qta_confermata:parseInt(document.getElementById(`qta-${m.lav_id}`)?.value||0)}))
     .filter(c=>c.qta_confermata>0);
+  const amb=_pR.righe_ambigue||[];
+  amb.forEach((r,i)=>{
+    const sel=document.getElementById(`amb-lav-${i}`);
+    const lavId=sel?.value;
+    if(lavId){
+      conferme.push({lav_id:parseInt(lavId), qta_confermata:r.qta_riga});
+    }
+  });
   try{
     const r=await fetch('/api/conferma_ddt_rientro',{method:'POST',
       headers:{'Content-Type':'application/json'},

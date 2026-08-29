@@ -171,6 +171,19 @@ def _estrai_numero_ddt(testo):
     return m.group(1) if m else ''
 
 
+def _estrai_ddt_uscita_riferimento(testo):
+    """
+    Numero del DDT di uscita richiamato DENTRO il DDT di rientro (es.
+    'Vs.doc.(DDTCL) 12345 del ...') — quando c'è, è il segnale più forte
+    per capire A QUALE spedizione appartiene un rientro: il terzista lo
+    scrive lui stesso sul documento che ci rimanda indietro. Stringa vuota
+    se non trovato (il documento non lo riporta, o il formato è diverso) —
+    l'abbinamento ricade allora sulla quantità residua esatta.
+    """
+    m = re.search(r'Vs\.?\s*doc\.?\s*\(DDTCL\)\D{0,15}(\d+)', testo)
+    return m.group(1) if m else ''
+
+
 def _estrai_data(testo):
     m = re.search(r'Data documento\s+(\d{2}/\d{2}/\d{4})', testo)
     return m.group(1) if m else ''
@@ -345,6 +358,7 @@ def parse_ddt_terzista(path):
         'terzista':    _estrai_terzista(testo),
         'trattamento': _estrai_trattamento(testo),
         'articoli':    _estrai_articoli(testo),
+        'ddt_uscita_riferimento': _estrai_ddt_uscita_riferimento(testo),
     }
 
 
@@ -729,6 +743,70 @@ def conferma_ddt_uscita():
 #  UPLOAD DDT RIENTRO — gestisce rientri PARZIALI
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _abbina_righe_rientro(dati, lav_aperte):
+    """
+    Abbina OGNI riga del DDT di rientro ad AL PIÙ UNA lavorazione aperta —
+    non più "l'intera quantità della riga proposta identica su TUTTE le
+    lavorazioni con lo stesso codice", che era il bug reale: con due
+    spedizioni aperte per lo stesso codice, il capo vedeva la stessa
+    quantità proposta due volte, rischiando di accreditare il doppio di
+    quanto era fisicamente rientrato.
+
+    Priorità di abbinamento per ogni riga (codice, quantità):
+      1) Il DDT di rientro richiama esplicitamente un numero di DDT uscita
+         (Vs.doc.(DDTCL) NNN) — se c'è una lavorazione aperta con QUEL
+         ddt_uscita e quel codice, è l'abbinamento più certo che esiste:
+         lo scrive il terzista stesso sul documento.
+      2) Altrimenti, tra le lavorazioni aperte con lo stesso codice non
+         ancora assegnate in questo giro, quella con qta_residua ESATTAMENTE
+         uguale alla quantità della riga — chiude perfettamente quella
+         spedizione, difficile sia un caso.
+      3) Se resta comunque ambiguo (0 o più di 1 candidato, nessuno dei
+         criteri sopra decide da solo) — NESSUN abbinamento automatico:
+         la riga resta da scegliere a mano, la scelta manuale come
+         paracadute resta SOLO per questi casi davvero ambigui.
+
+    Ogni lavorazione viene assegnata al più UNA volta in questo giro —
+    così due righe con lo stesso codice non possono mai finire sulla
+    stessa lavorazione.
+    """
+    assegnate_ids = set()
+    auto = []
+    ambigue = []
+
+    for riga in dati['articoli']:
+        codice_riga, qta_riga = riga['codice'], riga['qta']
+        candidati = [lav for lav in lav_aperte
+                     if lav['codice'] == codice_riga and lav['lav_id'] not in assegnate_ids]
+        if not candidati:
+            continue  # nessuna lavorazione aperta per questo codice: riga ignorata (non è un rientro atteso)
+
+        scelta = None
+        # Priorità 1: riferimento esplicito al DDT di uscita nel documento.
+        rif = dati.get('ddt_uscita_riferimento') or ''
+        if rif:
+            per_rif = [c for c in candidati if c['ddt_uscita'] == rif]
+            if len(per_rif) == 1:
+                scelta = per_rif[0]
+
+        # Priorità 2: quantità residua esattamente uguale alla riga.
+        if scelta is None:
+            per_qta = [c for c in candidati if c['qta_residua'] == qta_riga]
+            if len(per_qta) == 1:
+                scelta = per_qta[0]
+
+        if scelta is not None:
+            assegnate_ids.add(scelta['lav_id'])
+            auto.append({**scelta, 'qta_ddt': qta_riga, 'assegnazione': 'automatica'})
+        else:
+            ambigue.append({
+                'codice': codice_riga, 'desc': riga.get('desc', ''), 'qta_riga': qta_riga,
+                'candidati': candidati,
+            })
+
+    return auto, ambigue
+
+
 @terzisti_bp.route('/api/upload_ddt_rientro', methods=['POST'])
 def upload_ddt_rientro():
     f = request.files.get('file')
@@ -756,47 +834,40 @@ def upload_ddt_rientro():
     codici_rientro = {a['codice'] for a in dati['articoli']}
     terzista_nome  = dati.get('terzista', '')
 
-    lav_aperte = LavorazioneTerzista.query.filter(
+    lav_aperte_db = LavorazioneTerzista.query.filter(
         LavorazioneTerzista.stato.in_(['ATTESA_RIENTRO', 'IN_RITARDO', 'PARZIALE'])
     ).all()
 
-    match = []
-    for lav in lav_aperte:
+    lav_aperte = []
+    for lav in lav_aperte_db:
         try:
             note_j = json.loads(lav.note or '{}')
         except Exception:
             note_j = {}
         codice_lav = note_j.get('codice', '')
-        tz = Terzista.query.get(lav.terzista_id)
-        tz_nome = tz.nome if tz else ''
-
         if codice_lav not in codici_rientro:
             continue
-
-        # Calcola saldo residuo
+        tz = Terzista.query.get(lav.terzista_id)
         qta_rientrata = int(note_j.get('qta_rientrata', 0))
-        qta_residua   = lav.qta - qta_rientrata
-
-        # Trova la qta di questo articolo nel DDT rientro
-        qta_ddt = next((a['qta'] for a in dati['articoli'] if a['codice'] == codice_lav), 0)
-
-        match.append({
-            'lav_id':       lav.id,
-            'codice':       codice_lav,
-            'desc':         note_j.get('desc', ''),
-            'terzista':     tz_nome,
-            'ddt_uscita':   lav.ddt_uscita,
-            'qta_spedita':  lav.qta,
-            'qta_rientrata':qta_rientrata,
-            'qta_residua':  qta_residua,
-            'qta_ddt':      qta_ddt,       # quantità proposta dal DDT rientro
+        lav_aperte.append({
+            'lav_id':        lav.id,
+            'codice':        codice_lav,
+            'desc':          note_j.get('desc', ''),
+            'terzista':      tz.nome if tz else '',
+            'ddt_uscita':    lav.ddt_uscita,
+            'qta_spedita':   lav.qta,
+            'qta_rientrata': qta_rientrata,
+            'qta_residua':   lav.qta - qta_rientrata,
         })
+
+    match_auto, righe_ambigue = _abbina_righe_rientro(dati, lav_aperte)
 
     return jsonify({
         'ok': True,
         'anteprima': dati,
         'filename': f.filename,
-        'match_lavorazioni': match,
+        'match_lavorazioni': match_auto,
+        'righe_ambigue': righe_ambigue,
     })
 
 

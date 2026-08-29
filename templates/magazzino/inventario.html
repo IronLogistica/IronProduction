@@ -18,6 +18,43 @@
     <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
       <button class="btn btn-ghost" onclick="tornaAiGruppi()" style="padding:12px 18px;font-size:15px">← Gruppi</button>
       <div class="page-title" style="margin:0;font-size:20px" id="titolo-gruppo"></div>
+      <a id="link-stampa-gruppo" href="#" target="_blank" class="btn btn-ghost" style="padding:12px 18px;font-size:14px">🖨️ Stampa foglio (tutto il gruppo)</a>
+      <button class="btn btn-primary" style="padding:12px 18px;font-size:14px" onclick="toggleFormNuovoCodice()">➕ Nuovo Codice</button>
+    </div>
+
+    <div id="form-nuovo-codice" style="display:none;border:1px solid var(--accent2);border-radius:10px;padding:14px;margin-bottom:16px">
+      <div style="font-weight:700;font-size:14px;margin-bottom:10px">➕ Nuovo Codice</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="nuovo-codice-codice" type="text" placeholder="Codice *" style="width:160px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="nuovo-codice-descrizione" type="text" placeholder="Descrizione" style="flex:1;min-width:200px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="nuovo-codice-um" type="text" placeholder="U.M. (es. n.)" style="width:100px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" style="padding:9px 16px;font-size:13px" onclick="creaNuovoCodice()">Crea</button>
+      </div>
+      <p style="font-size:11px;color:var(--text-dim);margin:8px 0 0">La quantità si imposta con l'inventario, non qui — appena creato il codice comparirà con giacenza 0, "mai contato".</p>
+      <div id="nuovo-codice-esito" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
+    <div style="border:1px solid var(--border);border-radius:10px;padding:14px;margin-bottom:18px">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px">
+        <div style="font-weight:700;font-size:14px">🗂️ Sottogruppi — trascina un codice su un sottogruppo per assegnarlo</div>
+        <button class="btn btn-ghost" style="padding:8px 14px;font-size:12px" onclick="toggleFormSottogruppo()">➕ Nuovo sottogruppo</button>
+      </div>
+      <div id="form-sottogruppo" style="display:none;padding:12px;border:1px dashed var(--border);border-radius:8px;margin-bottom:12px">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+          <input id="nuovo-sottogruppo-nome" type="text" placeholder="Nome del sottogruppo..." style="flex:1;min-width:180px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+          <select id="nuovo-sottogruppo-frequenza" style="padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+            <option value="">Nessuna frequenza</option>
+            <option value="SETTIMANALE">Settimanale</option>
+            <option value="QUINDICINALE">Quindicinale</option>
+            <option value="MENSILE">Mensile</option>
+            <option value="TRIMESTRALE">Trimestrale</option>
+            <option value="SEMESTRALE">Semestrale</option>
+            <option value="ANNUALE">Annuale</option>
+          </select>
+          <button class="btn btn-primary" style="padding:9px 16px;font-size:13px" onclick="creaSottogruppo()">Crea</button>
+        </div>
+      </div>
+      <div id="sottogruppi-grid" style="display:flex;flex-wrap:wrap;gap:10px">Nessun sottogruppo ancora.</div>
     </div>
 
     <input id="filtro-ricerca" type="text" placeholder="Filtra per codice o descrizione..." autocomplete="off"
@@ -45,28 +82,47 @@
   .gruppo-card.vuoto{opacity:0.4;cursor:default}
   .gruppo-card.vuoto:hover{background:var(--surface)}
 
+  .sottogruppo-card{
+    border:1.5px dashed var(--border);border-radius:8px;padding:10px 14px;min-width:150px;
+    transition:border-color .15s, background .15s;
+  }
+  .sottogruppo-card.drag-over{border-color:var(--accent2);background:rgba(30,111,165,.12)}
+  .sottogruppo-card .titolo{font-weight:700;font-size:13px;display:flex;justify-content:space-between;align-items:center;gap:6px}
+  .sottogruppo-card .freq{font-size:10px;color:var(--text-dim);text-transform:uppercase;margin-top:2px}
+  .sottogruppo-card .azioni{font-size:11px;margin-top:6px;display:flex;gap:10px}
+  .sottogruppo-card .azioni a{color:var(--accent2);cursor:pointer;text-decoration:none}
+  .sottogruppo-senza{
+    border:1.5px dashed var(--border);border-radius:8px;padding:10px 14px;min-width:150px;
+    color:var(--text-dim);font-size:12px;transition:border-color .15s, background .15s;
+  }
+  .sottogruppo-senza.drag-over{border-color:#e6b800;background:rgba(230,184,0,.1)}
+
   .articolo-riga{
     display:flex;align-items:center;gap:14px;padding:14px;border:1px solid var(--border);
-    border-radius:8px;background:var(--surface);
+    border-radius:8px;background:var(--surface);cursor:grab;
   }
   .articolo-riga.modificata{border-color:var(--accent2);background:rgba(30,111,165,.08)}
   .articolo-info{flex:1;min-width:0}
   .articolo-codice{font-weight:800;font-size:16px;color:#eaf4ff}
   .articolo-desc{font-size:13px;color:var(--text-dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .articolo-mai-contato{font-size:11px;color:#e6b800;font-weight:700}
+  .articolo-sottogruppo-tag{font-size:10px;color:var(--accent2);font-weight:700;margin-top:2px}
   .articolo-input{
     width:110px;padding:14px 10px;font-size:20px;font-weight:700;text-align:center;
     border-radius:8px;border:1.5px solid var(--border);flex-shrink:0;
   }
   .articolo-um{font-size:12px;color:var(--text-dim);width:36px;flex-shrink:0}
+  .sezione-titolo{font-size:12px;font-weight:700;color:var(--text-dim);text-transform:uppercase;margin:14px 0 6px}
 </style>
 {% endblock %}
 {% block scripts %}
 let GRUPPI = [];
 let ARTICOLI = [];
+let SOTTOGRUPPI = [];
 let GRUPPO_ATTIVO = null;
 let GRUPPO_KANBAN_ID = null;  // valorizzato solo quando si conta un gruppo Kanban di Angelo (?kanban=<id>), non una categoria fissa
 const CONTEGGI = {};  // codice -> valore inserito (solo quelli toccati)
+let _codiceTrascinato = null;
 
 async function caricaGruppi(){
   const box = document.getElementById('gruppi-grid');
@@ -90,16 +146,23 @@ async function apriGruppo(tipo){
   GRUPPO_KANBAN_ID = null;
   const gruppo = GRUPPI.find(g => g.tipo === tipo);
   document.getElementById('titolo-gruppo').textContent = gruppo ? gruppo.etichetta : tipo;
+  document.getElementById('link-stampa-gruppo').href = '/inventario-stampa/' + encodeURIComponent(tipo);
   document.getElementById('box-gruppi').style.display = 'none';
   document.getElementById('box-conteggio').style.display = 'block';
   document.getElementById('filtro-ricerca').value = '';
   document.getElementById('esito-salvataggio').textContent = '';
+  document.getElementById('form-sottogruppo').style.display = 'none';
   Object.keys(CONTEGGI).forEach(k => delete CONTEGGI[k]);
   const lista = document.getElementById('articoli-lista');
   lista.innerHTML = 'Caricamento...';
   try{
-    const r = await fetch('/api/inventario/' + encodeURIComponent(tipo));
-    ARTICOLI = await r.json();
+    const [r1, r2] = await Promise.all([
+      fetch('/api/inventario/' + encodeURIComponent(tipo)),
+      fetch('/api/sottogruppi-inventario/' + encodeURIComponent(tipo)),
+    ]);
+    ARTICOLI = await r1.json();
+    SOTTOGRUPPI = await r2.json();
+    renderSottogruppi();
     renderArticoli();
   }catch(e){
     lista.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
@@ -140,20 +203,117 @@ function tornaAiGruppi(){
   caricaGruppi();  // ricarica i conteggi, potrebbero essere cambiati altrove
 }
 
+const LABEL_FREQUENZA = {
+  SETTIMANALE:'Settimanale', QUINDICINALE:'Quindicinale', MENSILE:'Mensile',
+  TRIMESTRALE:'Trimestrale', SEMESTRALE:'Semestrale', ANNUALE:'Annuale',
+};
+
+function renderSottogruppi(){
+  const box = document.getElementById('sottogruppi-grid');
+  const cardsSottogruppi = SOTTOGRUPPI.map(s => `
+    <div class="sottogruppo-card" data-sottogruppo-id="${s.id}"
+         ondragover="event.preventDefault(); this.classList.add('drag-over')"
+         ondragleave="this.classList.remove('drag-over')"
+         ondrop="dropSuSottogruppo(event, ${s.id})">
+      <div class="titolo">
+        <span>${s.icona || '📦'} ${s.nome} <span style="color:var(--text-dim);font-weight:400">(${s.n_codici})</span></span>
+      </div>
+      ${s.frequenza_inventario ? `<div class="freq">🔁 ${LABEL_FREQUENZA[s.frequenza_inventario] || s.frequenza_inventario}</div>` : ''}
+      <div class="azioni">
+        <a href="/inventario-stampa/${encodeURIComponent(GRUPPO_ATTIVO)}?sottogruppo=${s.id}" target="_blank">🖨️ Stampa</a>
+        <a onclick="rinominaSottogruppo(${s.id}, '${s.nome.replace(/'/g,"\\'")}')">✏️ Modifica</a>
+        <a onclick="eliminaSottogruppo(${s.id})">🗑️ Elimina</a>
+      </div>
+    </div>`).join('');
+  const cardSenza = `
+    <div class="sottogruppo-senza" data-sottogruppo-id=""
+         ondragover="event.preventDefault(); this.classList.add('drag-over')"
+         ondragleave="this.classList.remove('drag-over')"
+         ondrop="dropSuSottogruppo(event, null)">
+      Trascina qui per togliere dal sottogruppo
+    </div>`;
+  box.innerHTML = SOTTOGRUPPI.length ? (cardsSottogruppi + cardSenza) : '<p class="muted" style="font-size:12px;font-style:italic">Nessun sottogruppo ancora — crea il primo con "➕ Nuovo sottogruppo".</p>';
+}
+
+function toggleFormSottogruppo(){
+  const el = document.getElementById('form-sottogruppo');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+}
+
+async function creaSottogruppo(){
+  const nome = document.getElementById('nuovo-sottogruppo-nome').value.trim();
+  const frequenza = document.getElementById('nuovo-sottogruppo-frequenza').value;
+  if(!nome){ alert('⚠️ Indica un nome per il sottogruppo.'); return; }
+  try{
+    const r = await fetch('/api/sottogruppi-inventario', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({tipo_approvvigionamento: GRUPPO_ATTIVO, nome, frequenza_inventario: frequenza || null})
+    });
+    const d = await r.json();
+    if(!d.ok){ alert('⚠️ ' + d.error); return; }
+    document.getElementById('nuovo-sottogruppo-nome').value = '';
+    document.getElementById('form-sottogruppo').style.display = 'none';
+    const r2 = await fetch('/api/sottogruppi-inventario/' + encodeURIComponent(GRUPPO_ATTIVO));
+    SOTTOGRUPPI = await r2.json();
+    renderSottogruppi();
+  }catch(e){ alert('❌ Errore di rete.'); }
+}
+
+async function rinominaSottogruppo(id, nomeAttuale){
+  const nuovoNome = prompt('Nuovo nome del sottogruppo:', nomeAttuale);
+  if(nuovoNome === null || !nuovoNome.trim()) return;
+  try{
+    await fetch('/api/sottogruppi-inventario/' + id, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nome: nuovoNome.trim()})
+    });
+    const r2 = await fetch('/api/sottogruppi-inventario/' + encodeURIComponent(GRUPPO_ATTIVO));
+    SOTTOGRUPPI = await r2.json();
+    renderSottogruppi();
+  }catch(e){ alert('❌ Errore di rete.'); }
+}
+
+async function eliminaSottogruppo(id){
+  if(!confirm('Eliminare questo sottogruppo? I codici che c\'erano dentro restano, tornano solo senza sottogruppo.')) return;
+  try{
+    await fetch('/api/sottogruppi-inventario/' + id, {method: 'DELETE'});
+    await apriGruppo(GRUPPO_ATTIVO);
+  }catch(e){ alert('❌ Errore di rete.'); }
+}
+
+function dragStartArticolo(ev, codice){
+  _codiceTrascinato = codice;
+  ev.dataTransfer.effectAllowed = 'move';
+}
+
+async function dropSuSottogruppo(ev, sottogruppoId){
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('drag-over');
+  if(!_codiceTrascinato) return;
+  try{
+    await fetch('/api/inventario/assegna-sottogruppo', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({codice: _codiceTrascinato, sottogruppo_id: sottogruppoId})
+    });
+  }catch(e){ /* ignora, si vedra' al prossimo caricamento */ }
+  _codiceTrascinato = null;
+  await apriGruppo(GRUPPO_ATTIVO);
+}
+
 function renderArticoli(){
   const lista = document.getElementById('articoli-lista');
   const filtro = (document.getElementById('filtro-ricerca').value || '').trim().toLowerCase();
-  const visibili = filtro
-    ? ARTICOLI.filter(a => a.codice.toLowerCase().includes(filtro) || (a.descrizione||'').toLowerCase().includes(filtro))
-    : ARTICOLI;
+  const passaFiltro = a => !filtro || a.codice.toLowerCase().includes(filtro) || (a.descrizione||'').toLowerCase().includes(filtro);
+  const visibili = ARTICOLI.filter(passaFiltro);
   if(!visibili.length){
     lista.innerHTML = '<p class="muted" style="font-style:italic">Nessun codice trovato.</p>';
     return;
   }
-  lista.innerHTML = visibili.map(a => {
+
+  const rigaHtml = a => {
     const valore = CONTEGGI.hasOwnProperty(a.codice) ? CONTEGGI[a.codice] : a.giacenza_attuale;
     const modificata = CONTEGGI.hasOwnProperty(a.codice);
-    return `<div class="articolo-riga ${modificata ? 'modificata' : ''}" id="riga-${cssId(a.codice)}">
+    return `<div class="articolo-riga ${modificata ? 'modificata' : ''}" id="riga-${cssId(a.codice)}"
+                draggable="true" ondragstart="dragStartArticolo(event, '${a.codice}')">
       <div class="articolo-info">
         <div class="articolo-codice">${a.codice}</div>
         <div class="articolo-desc">${a.descrizione || '—'}</div>
@@ -162,8 +322,28 @@ function renderArticoli(){
       <span class="articolo-um">${a.unita_misura || ''}</span>
       <input type="number" min="0" step="1" class="articolo-input" value="${valore}"
              oninput="aggiornaConteggio('${a.codice}', this.value)">
+      <button class="btn btn-ghost" style="padding:8px 10px;font-size:16px;flex-shrink:0" title="Elimina codice"
+              onclick="event.stopPropagation(); richiediEliminaCodice('${a.codice}')">🗑️</button>
     </div>`;
-  }).join('');
+  };
+
+  if(!SOTTOGRUPPI.length){
+    lista.innerHTML = visibili.map(rigaHtml).join('');
+    return;
+  }
+
+  let html = '';
+  const senzaSottogruppo = visibili.filter(a => !a.sottogruppo_id);
+  if(senzaSottogruppo.length){
+    html += `<div class="sezione-titolo">Senza sottogruppo</div>` + senzaSottogruppo.map(rigaHtml).join('');
+  }
+  SOTTOGRUPPI.forEach(s => {
+    const righeSottogruppo = visibili.filter(a => a.sottogruppo_id === s.id);
+    if(righeSottogruppo.length){
+      html += `<div class="sezione-titolo">${s.icona || '📦'} ${s.nome}</div>` + righeSottogruppo.map(rigaHtml).join('');
+    }
+  });
+  lista.innerHTML = html || '<p class="muted" style="font-style:italic">Nessun codice trovato.</p>';
 }
 
 function cssId(codice){ return codice.replace(/[^a-zA-Z0-9]/g, '_'); }
@@ -218,4 +398,55 @@ if(_kanbanIdIniziale){
 }else{
   caricaGruppi();
 }
+
+function toggleFormNuovoCodice(){
+  const el = document.getElementById('form-nuovo-codice');
+  el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  document.getElementById('nuovo-codice-esito').textContent = '';
+}
+
+async function creaNuovoCodice(){
+  const esito = document.getElementById('nuovo-codice-esito');
+  const codice = document.getElementById('nuovo-codice-codice').value.trim();
+  const descrizione = document.getElementById('nuovo-codice-descrizione').value.trim();
+  const um = document.getElementById('nuovo-codice-um').value.trim();
+  if(!codice){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Il codice è obbligatorio.'; return; }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Salvataggio...';
+  try{
+    const r = await fetch(`/api/inventario/${encodeURIComponent(GRUPPO_ATTIVO)}/nuovo-codice`, {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({codice, descrizione, unita_misura: um})
+    });
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ ' + d.error; return; }
+    esito.style.color = '#1a9e5c'; esito.textContent = `✅ Codice "${codice}" creato.`;
+    document.getElementById('nuovo-codice-codice').value = '';
+    document.getElementById('nuovo-codice-descrizione').value = '';
+    document.getElementById('nuovo-codice-um').value = '';
+    await apriGruppo(GRUPPO_ATTIVO);
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
+function richiediEliminaCodice(codice){
+  const pin = prompt(`Elimina il codice "${codice}" — questa azione richiede il PIN di Direzione:`);
+  if(pin === null) return;  // annullato
+  eliminaCodice(codice, pin);
+}
+
+async function eliminaCodice(codice, pin){
+  try{
+    const r = await fetch('/api/inventario/elimina-codice', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({codice, pin})
+    });
+    const d = await r.json();
+    if(!d.ok){ alert('⚠️ ' + d.error); return; }
+    await apriGruppo(GRUPPO_ATTIVO);
+  }catch(e){
+    alert('❌ Errore di rete.');
+  }
+}
 {% endblock %}
+

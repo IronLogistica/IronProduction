@@ -1,6 +1,7 @@
 from flask import Blueprint, render_template, jsonify, request, redirect, current_app
 from datetime import datetime, date
 import json
+import os
 from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
@@ -3260,6 +3261,7 @@ def api_inventario_articoli(tipo):
             'giacenza_attuale': (g.quantita if g else 0) or 0,
             'mai_contato': g is None,
             'ultimo_aggiornamento': g.aggiornato_il.strftime('%d/%m/%Y %H:%M') if g and g.aggiornato_il else None,
+            'sottogruppo_id': a.sottogruppo_id,
         })
     return jsonify(righe)
 
@@ -3295,16 +3297,7 @@ def api_inventario_salva():
         aggiornati += 1
     # Se il conteggio arriva da un gruppo Kanban di Angelo, registra QUI
     # la data dell'ultimo inventario di quel gruppo — usata per calcolare
-    # se è "scaduto" in base alla frequenza impostata. Anche con 0 codici
-    # aggiornati (tutto già corretto) conta come "controllato oggi".
-    if gruppo_kanban_id:
-        gruppo = GruppoInventarioWood.query.get(gruppo_kanban_id)
-        if gruppo:
-            gruppo.ultimo_inventario_il = datetime.utcnow()
     db.session.commit()
-    return jsonify(ok=True, aggiornati=aggiornati)
-
-
     return jsonify(ok=True, aggiornati=aggiornati)
 
 
@@ -3490,6 +3483,35 @@ def api_inventario_kanban_assegna_codice():
     return jsonify(ok=True)
 
 
+PIN_DIREZIONE_MAGAZZINO = os.environ.get('PIN_DIREZIONE', '1234')  # stesso PIN, stessa env var di Dichiarazione Produzione
+
+
+@magazzino_bp.route('/api/inventario/<tipo>/nuovo-codice', methods=['POST'])
+def api_inventario_nuovo_codice(tipo):
+    """
+    Aggiunge un codice nuovo a un gruppo — SOLO codice, descrizione e
+    unità di misura: la quantità si stabilisce con l'inventario, non qui
+    (stessa filosofia dell'import iniziale dal file Excel — mai un numero
+    inserito 'a occhio' che poi nessuno controlla più davvero).
+    """
+    if tipo not in LABEL_TIPO_APPROVVIGIONAMENTO:
+        return jsonify(ok=False, error='Categoria non valida'), 404
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip()
+    descrizione = (d.get('descrizione') or '').strip()
+    unita_misura = (d.get('unita_misura') or '').strip()
+    if not codice:
+        return jsonify(ok=False, error='Il codice è obbligatorio'), 400
+    if ArticoloApprovvigionamento.query.filter_by(codice=codice).first():
+        return jsonify(ok=False, error=f'Il codice "{codice}" esiste già'), 409
+    db.session.add(ArticoloApprovvigionamento(codice=codice, tipo_approvvigionamento=tipo, unita_misura=unita_misura))
+    if descrizione and not DescrizioneCodiceWood.query.get(codice):
+        db.session.add(DescrizioneCodiceWood(codice=codice, descrizione=descrizione))
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+
 @magazzino_bp.route('/api/inventario/kanban-riordina', methods=['POST'])
 def api_inventario_kanban_riordina():
     """
@@ -3510,6 +3532,29 @@ def api_inventario_kanban_riordina():
         if assegnazione:
             assegnazione.sottogruppo_id = riga.get('sottogruppo_id')
             assegnazione.sort_order = posizione
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@magazzino_bp.route('/api/inventario/elimina-codice', methods=['POST'])
+def api_inventario_elimina_codice():
+    """
+    Elimina un codice dal magazzino — richiede il PIN di Direzione (stesso
+    usato in Dichiarazione Produzione), un'eliminazione non è mai
+    reversibile con un semplice annulla. Toglie la classificazione
+    (ArticoloApprovvigionamento) — GiacenzaWood e lo storico movimenti
+    restano intatti per traccia, semplicemente il codice non compare più
+    in nessun gruppo dell'Inventario.
+    """
+    d = request.get_json(force=True)
+    pin = str(d.get('pin') or '').strip()
+    if pin != PIN_DIREZIONE_MAGAZZINO:
+        return jsonify(ok=False, error='PIN errato'), 403
+    codice = (d.get('codice') or '').strip()
+    a = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
+    if not a:
+        return jsonify(ok=False, error='Codice non trovato'), 404
+    db.session.delete(a)
     db.session.commit()
     return jsonify(ok=True)
 
@@ -3613,6 +3658,119 @@ def api_categoria_acquisto_aggiorna(tipo):
     riga.centro_costo_id = centro_id
     db.session.commit()
     return jsonify(ok=True)
+
+
+@magazzino_bp.route('/api/sottogruppi-inventario/<tipo>')
+def api_sottogruppi_lista(tipo):
+    """Sottogruppi ARBITRARI (definiti da Angelo) dentro questa categoria,
+    con quanti codici ci sono in ognuno."""
+    if tipo not in LABEL_TIPO_APPROVVIGIONAMENTO:
+        return jsonify(ok=False, error='Categoria non valida'), 404
+    sottogruppi = SottogruppoInventario.query.filter_by(tipo_approvvigionamento=tipo).order_by(SottogruppoInventario.nome).all()
+    conteggi = dict(db.session.query(ArticoloApprovvigionamento.sottogruppo_id, db.func.count(ArticoloApprovvigionamento.id))
+                     .filter(ArticoloApprovvigionamento.tipo_approvvigionamento == tipo,
+                             ArticoloApprovvigionamento.sottogruppo_id.isnot(None))
+                     .group_by(ArticoloApprovvigionamento.sottogruppo_id).all())
+    return jsonify([{
+        'id': s.id, 'nome': s.nome, 'icona': s.icona, 'frequenza_inventario': s.frequenza_inventario,
+        'n_codici': conteggi.get(s.id, 0),
+    } for s in sottogruppi])
+
+
+@magazzino_bp.route('/api/sottogruppi-inventario', methods=['POST'])
+def api_sottogruppo_crea():
+    """Crea un nuovo sottogruppo arbitrario dentro una categoria — il
+    criterio di omogeneità (che cosa ci va dentro) lo decide Angelo,
+    niente di fisso qui."""
+    d = request.get_json(force=True)
+    tipo = (d.get('tipo_approvvigionamento') or '').strip()
+    nome = (d.get('nome') or '').strip()
+    if tipo not in LABEL_TIPO_APPROVVIGIONAMENTO:
+        return jsonify(ok=False, error='Categoria non valida'), 400
+    if not nome:
+        return jsonify(ok=False, error='Serve un nome per il sottogruppo'), 400
+    frequenza = d.get('frequenza_inventario') or None
+    if frequenza and frequenza not in FREQUENZE_INVENTARIO:
+        return jsonify(ok=False, error='Frequenza non valida'), 400
+    s = SottogruppoInventario(tipo_approvvigionamento=tipo, nome=nome, icona=(d.get('icona') or '📦'),
+                               frequenza_inventario=frequenza)
+    db.session.add(s)
+    db.session.commit()
+    return jsonify(ok=True, id=s.id)
+
+
+@magazzino_bp.route('/api/sottogruppi-inventario/<int:sid>', methods=['PUT'])
+def api_sottogruppo_aggiorna(sid):
+    """Rinomina il sottogruppo o cambia la sua frequenza di inventario."""
+    s = SottogruppoInventario.query.get_or_404(sid)
+    d = request.get_json(force=True)
+    if 'nome' in d:
+        nome = (d['nome'] or '').strip()
+        if not nome:
+            return jsonify(ok=False, error='Il nome non può essere vuoto'), 400
+        s.nome = nome
+    if 'icona' in d:
+        s.icona = d['icona'] or '📦'
+    if 'frequenza_inventario' in d:
+        frequenza = d['frequenza_inventario'] or None
+        if frequenza and frequenza not in FREQUENZE_INVENTARIO:
+            return jsonify(ok=False, error='Frequenza non valida'), 400
+        s.frequenza_inventario = frequenza
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@magazzino_bp.route('/api/sottogruppi-inventario/<int:sid>', methods=['DELETE'])
+def api_sottogruppo_elimina(sid):
+    """Elimina il sottogruppo — i codici che c'erano dentro tornano
+    semplicemente nell'elenco piatto del gruppo principale (sottogruppo_id
+    torna NULL da solo, ON DELETE SET NULL), non vengono toccati."""
+    s = SottogruppoInventario.query.get_or_404(sid)
+    db.session.delete(s)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@magazzino_bp.route('/api/inventario/assegna-sottogruppo', methods=['POST'])
+def api_assegna_sottogruppo():
+    """Sposta un codice in un sottogruppo (o lo toglie da tutti, se
+    sottogruppo_id è null) — usato dal trascina/rilascia dell'Inventario."""
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip()
+    sottogruppo_id = d.get('sottogruppo_id')
+    a = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
+    if not a:
+        return jsonify(ok=False, error='Codice non trovato'), 404
+    if sottogruppo_id is not None and not SottogruppoInventario.query.get(sottogruppo_id):
+        return jsonify(ok=False, error='Sottogruppo non trovato'), 404
+    a.sottogruppo_id = sottogruppo_id
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@magazzino_bp.route('/inventario-stampa/<tipo>')
+def pagina_inventario_stampa(tipo):
+    """
+    Foglio stampabile per fare l'inventario a mano — un gruppo (o un solo
+    sottogruppo, con ?sottogruppo=<id>) per foglio: codice, descrizione,
+    unità di misura, e una colonna vuota dove scrivere il conteggio reale
+    trovato in magazzino/officina.
+    """
+    if tipo not in LABEL_TIPO_APPROVVIGIONAMENTO:
+        return 'Categoria non valida', 404
+    sottogruppo_id = request.args.get('sottogruppo', type=int)
+    query = ArticoloApprovvigionamento.query.filter_by(tipo_approvvigionamento=tipo)
+    sottogruppo = None
+    if sottogruppo_id:
+        sottogruppo = SottogruppoInventario.query.get_or_404(sottogruppo_id)
+        query = query.filter_by(sottogruppo_id=sottogruppo_id)
+    articoli = query.order_by(ArticoloApprovvigionamento.codice).all()
+    codici = [a.codice for a in articoli]
+    descrizioni = {d.codice: d.descrizione for d in DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici)).all()} if codici else {}
+    righe = [{'codice': a.codice, 'descrizione': descrizioni.get(a.codice, ''), 'unita_misura': a.unita_misura or ''}
+             for a in articoli]
+    return render_template('magazzino/inventario_stampa.html',
+        titolo=LABEL_TIPO_APPROVVIGIONAMENTO[tipo], sottogruppo=sottogruppo, righe=righe)
 
 
 @magazzino_bp.route('/api/schede_lavorazione_wood/radici')
