@@ -2187,14 +2187,12 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         for p in ParametriLavorazioneWood.query.filter(ParametriLavorazioneWood.codice.in_(componenti_di_centro)).all():
             parametri_per_codice[p.codice] = p
 
-    # Giacenza già disponibile a magazzino per ogni componente — es. da una
-    # Dichiarazione Libera fatta prima che questa commessa esistesse. Senza
-    # questo, un operaio che vede 'Saldo: 2' su 482 pianificati pensa sia un
-    # errore di conteggio, non capendo che 480 sono già pronti a magazzino.
-    giacenza_per_codice = {}
-    if componenti_di_centro:
-        for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(componenti_di_centro)).all():
-            giacenza_per_codice[g.codice] = g.quantita or 0
+    # ERRORE CONCETTUALE CORRETTO (rimossa la sottrazione della 'giacenza già
+    # disponibile' dal saldo qui): l'emissione di un Ordine di Lavoro parte
+    # GIÀ dopo aver interrogato quanta merce c'è a magazzino — il
+    # pianificato dell'OP tiene già conto di questo. Sottrarla di nuovo qui
+    # era un doppio conteggio, non un aiuto: confondeva l'operaio con un
+    # saldo troppo basso rispetto alla realtà del lavoro da fare.
 
     righe_per_materiale = {}
     for codice_comp in componenti_di_centro:
@@ -2227,11 +2225,7 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                                      else EventoConsuntivoPP.componente.is_(None)).all())
         pezzi_fatti = sum(e.pezzi_buoni or 0 for e in eventi_componente
                           if _fasi_corrispondono(centro.nome, e.fase))
-        # Solo sui componenti intermedi (non sul prodotto finito, già
-        # tracciato da qta_buona) — stessa regola già in uso in
-        # Dichiarazione Produzione (api_op_aperti).
-        gia_disponibile = giacenza_per_codice.get(codice_comp, 0) if componente_param else 0
-        saldo = max(nr_pz_da_fare - pezzi_fatti - gia_disponibile, 0)
+        saldo = max(nr_pz_da_fare - pezzi_fatti, 0)
 
         # 'Materiale' mostrato in tabella è SEMPRE il primo figlio diretto in
         # Distinta Base di codice_comp — un dato di distinta, indipendente
@@ -2254,7 +2248,6 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                 'rullo': (par.rullo.codice if par.rullo else '') if mostra_rullo else '',
                 'impostazione_satinatrice': (par.impostazione_satinatrice or '') if mostra_satinatura else '',
                 'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti, 'saldo': saldo,
-                'gia_disponibile': gia_disponibile,
                 'pz_per_barra': pz_per_barra, 'nr_barre': nr_barre, 'nota': '',
             }
         else:
@@ -2264,7 +2257,7 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                 'codice': codice_comp, 'materiale': materiale, 'misura': '', 'lunghezza_barra_mm': None,
                 'matrice': '', 'punto_zero': '', 'indice_assorbimento': '', 'rullo': '',
                 'impostazione_satinatrice': '', 'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti,
-                'saldo': saldo, 'gia_disponibile': gia_disponibile, 'pz_per_barra': None, 'nr_barre': None,
+                'saldo': saldo, 'pz_per_barra': None, 'nr_barre': None,
                 # In Saldatura non si compilano mai (né servono) i parametri di
                 # Parametri di Lavorazione (matrice/punto zero/rullo/satinatura,
                 # tutti per macchine di piega/taglio) — l'avviso lì è sempre

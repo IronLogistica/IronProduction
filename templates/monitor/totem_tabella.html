@@ -91,7 +91,7 @@
 <table class="tabella-totem">
   <thead><tr>
     <th>Priority</th><th>N° Commessa</th><th>N° pz in produzione</th><th>Codice e Immagine</th>
-    <th>Pz da Fare{{ '*' if saldatura_nota else '' }}</th><th>Pz Fatti</th><th>Presenti a Magazzino</th><th>Saldo</th><th>% Avanzamento</th>
+    <th>Pz da Fare{{ '*' if saldatura_nota else '' }}</th><th>Pz Fatti</th><th>Saldo</th><th>% Avanzamento</th>
   </tr></thead>
   <tbody>
     {% for g in gruppi %}
@@ -114,7 +114,6 @@
       </td>
       <td><span class="num-grande">{{ g.totale_totale | round | int }}</span></td>
       <td><span class="num-grande">{{ g.pezzi_fatti_totale | round | int }}</span></td>
-      <td><span class="num-grande">{{ (g.gia_disponibile_totale | round | int) if g.gia_disponibile_totale else '—' }}</span></td>
       <td><span class="num-grande">{{ g.saldo_totale | round | int }}</span></td>
       <td>
         <div class="pct-bar"><div class="pct-fill" style="width:{{ g.pct_aggregato }}%"></div><span class="pct-label">{{ g.pct_aggregato }}%</span></div>
@@ -125,7 +124,7 @@
       <td colspan="8">
         <table class="tabella-dettaglio">
           <thead><tr>
-            <th>Codice lavorato</th><th>Descrizione</th><th>Da fare</th><th>Fatti</th><th>Presenti a Magazzino</th><th>Saldo</th>
+            <th>Codice lavorato</th><th>Descrizione</th><th>Da fare</th><th>Fatti</th><th>Saldo</th>
             {% for col in colonne_parametri %}<th>{{ col.etichetta }}</th>{% endfor %}
           </tr></thead>
           <tbody>
@@ -135,7 +134,6 @@
               <td class="muted">{{ c.descrizione_lavorata or '—' }}</td>
               <td>{{ c.totale | round | int }}</td>
               <td>{{ c.pezzi_fatti | round | int }}</td>
-              <td>{{ (c.gia_disponibile | round | int) if c.gia_disponibile else '—' }}</td>
               <td>{{ c.saldo | round | int }}</td>
               {% for col in colonne_parametri %}<td>{{ c.parametri[col.chiave] or '—' }}</td>{% endfor %}
             </tr>
