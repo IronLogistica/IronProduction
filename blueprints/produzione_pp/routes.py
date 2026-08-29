@@ -2187,6 +2187,15 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         for p in ParametriLavorazioneWood.query.filter(ParametriLavorazioneWood.codice.in_(componenti_di_centro)).all():
             parametri_per_codice[p.codice] = p
 
+    # Giacenza già disponibile a magazzino per ogni componente — es. da una
+    # Dichiarazione Libera fatta prima che questa commessa esistesse. Senza
+    # questo, un operaio che vede 'Saldo: 2' su 482 pianificati pensa sia un
+    # errore di conteggio, non capendo che 480 sono già pronti a magazzino.
+    giacenza_per_codice = {}
+    if componenti_di_centro:
+        for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(componenti_di_centro)).all():
+            giacenza_per_codice[g.codice] = g.quantita or 0
+
     righe_per_materiale = {}
     for codice_comp in componenti_di_centro:
         moltiplicatore = moltiplicatore_per_codice[codice_comp]
@@ -2218,7 +2227,11 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                                      else EventoConsuntivoPP.componente.is_(None)).all())
         pezzi_fatti = sum(e.pezzi_buoni or 0 for e in eventi_componente
                           if _fasi_corrispondono(centro.nome, e.fase))
-        saldo = max(nr_pz_da_fare - pezzi_fatti, 0)
+        # Solo sui componenti intermedi (non sul prodotto finito, già
+        # tracciato da qta_buona) — stessa regola già in uso in
+        # Dichiarazione Produzione (api_op_aperti).
+        gia_disponibile = giacenza_per_codice.get(codice_comp, 0) if componente_param else 0
+        saldo = max(nr_pz_da_fare - pezzi_fatti - gia_disponibile, 0)
 
         # 'Materiale' mostrato in tabella è SEMPRE il primo figlio diretto in
         # Distinta Base di codice_comp — un dato di distinta, indipendente
@@ -2241,6 +2254,7 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                 'rullo': (par.rullo.codice if par.rullo else '') if mostra_rullo else '',
                 'impostazione_satinatrice': (par.impostazione_satinatrice or '') if mostra_satinatura else '',
                 'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti, 'saldo': saldo,
+                'gia_disponibile': gia_disponibile,
                 'pz_per_barra': pz_per_barra, 'nr_barre': nr_barre, 'nota': '',
             }
         else:
@@ -2250,7 +2264,7 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                 'codice': codice_comp, 'materiale': materiale, 'misura': '', 'lunghezza_barra_mm': None,
                 'matrice': '', 'punto_zero': '', 'indice_assorbimento': '', 'rullo': '',
                 'impostazione_satinatrice': '', 'nr_pz_da_fare': nr_pz_da_fare, 'pezzi_fatti': pezzi_fatti,
-                'saldo': saldo, 'pz_per_barra': None, 'nr_barre': None,
+                'saldo': saldo, 'gia_disponibile': gia_disponibile, 'pz_per_barra': None, 'nr_barre': None,
                 # In Saldatura non si compilano mai (né servono) i parametri di
                 # Parametri di Lavorazione (matrice/punto zero/rullo/satinatura,
                 # tutti per macchine di piega/taglio) — l'avviso lì è sempre
@@ -3073,18 +3087,26 @@ def api_non_conformita_8d_decidi(mid):
 
 
 
-def _trova_codice_padre_per_op(codice, ordine):
-    """Trova il padre immediato non ambiguo del codice nel ramo BOM dell'OP."""
+def _trova_codici_padre_immediati(codice, ordine):
+    """
+    Tutti i padri immediati di 'codice' — se lo stesso componente (un
+    semilavorato, o una materia prima/laserato acquistato esternamente) va
+    in PIÙ prodotti diversi, li mostra TUTTI invece di nasconderli per
+    ambiguità: un campo vuoto non aiuta chi deve rietichettare un pezzo
+    trovato in officina senza nessun contesto di commessa — sapere che
+    "va in A, B o C" è comunque un indizio utile, anche se non decisivo.
+    """
     if not codice:
-        return ''
+        return []
 
     # Se conosciamo l'OP, percorriamo solo la sua distinta attiva: così un
-    # componente riutilizzato in più prodotti non viene associato al padre
-    # sbagliato. La radice dell'OP, per definizione, non ha un padre in questo
-    # contesto anche se compare come figlio in un'altra distinta.
+    # componente riutilizzato in più prodotti non viene associato a un padre
+    # che in QUESTO ordine specifico non c'entra. La radice dell'OP, per
+    # definizione, non ha un padre in questo contesto anche se compare come
+    # figlio in un'altra distinta.
     if ordine and ordine.codice_articolo:
         if codice == ordine.codice_articolo:
-            return ''
+            return []
         mappa = _carica_mappa_distinta_base_wood()
         trovati = set()
 
@@ -3099,16 +3121,51 @@ def _trova_codice_padre_per_op(codice, ordine):
                     visita(riga.codice_figlio, percorso, profondita + 1)
 
         visita(ordine.codice_articolo, set())
-        # Se lo stesso codice compare sotto più padri nello stesso OP, non
-        # scegliamo silenziosamente: un'etichetta ambigua sarebbe pericolosa.
-        return next(iter(trovati)) if len(trovati) == 1 else ''
+        return sorted(trovati)
 
-    # Senza OP possiamo usare la distinta globale solo quando individua un
-    # unico padre. In caso di riuso del componente, il padre non è deducibile.
-    candidati = (DistintaBaseWood.query.filter_by(codice_figlio=codice)
-                 .order_by(DistintaBaseWood.id).all())
-    padri = {r.codice_padre for r in candidati}
-    return next(iter(padri)) if len(padri) == 1 else ''
+    # Senza OP (es. Rietichettatura): la distinta base GLOBALE, tutti i
+    # padri diretti trovati, non solo quando è uno solo.
+    candidati = DistintaBaseWood.query.filter_by(codice_figlio=codice).all()
+    return sorted({r.codice_padre for r in candidati})
+
+
+def _trova_tutte_le_radici_finali(codice, ordine):
+    """
+    Tutti i prodotti finiti (radice della distinta, mai a loro volta figli
+    di nessuno) sotto cui compare 'codice' da qualche parte — un
+    semilavorato o una materia prima/laserato acquistato esternamente può
+    finire in più prodotti finiti DIVERSI, non solo uno. Mostrarli TUTTI
+    (invece del solo primo trovato) è quello che serve per la
+    Rietichettatura: un pezzo senza etichetta trovato in officina, senza
+    nessun Ordine di Produzione a fare da contesto.
+    """
+    if not codice:
+        return []
+    if ordine and ordine.codice_articolo:
+        # Con un OP il contesto è già noto e univoco: la radice è quella,
+        # punto — a meno che 'codice' SIA già quella radice.
+        return [] if codice == ordine.codice_articolo else [ordine.codice_articolo]
+
+    mappa_inversa = {}
+    for riga in DistintaBaseWood.query.all():
+        mappa_inversa.setdefault(riga.codice_figlio, set()).add(riga.codice_padre)
+
+    radici = set()
+
+    def risali(c, percorso):
+        if c in percorso or len(percorso) > 15:
+            return
+        percorso = percorso | {c}
+        padri = mappa_inversa.get(c)
+        if not padri:
+            radici.add(c)
+            return
+        for p in padri:
+            risali(p, percorso)
+
+    risali(codice, set())
+    radici.discard(codice)  # 'codice' non è mai padre di se stesso
+    return sorted(radici)
 
 
 @pp_bp.get('/scheda-materiale-stampa')
@@ -3123,15 +3180,15 @@ def pagina_scheda_materiale_stampa():
 
     Il campo "Codice padre" in cima mostra invece SEMPRE la radice finale
     della distinta — il prodotto finito che verrà venduto (il "padre dei
-    padri", su richiesta esplicita) — semplicemente codice_articolo dell'OP:
-    quello è per definizione la radice della distinta di QUESTO OP, senza
-    bisogno di risalire livello per livello (e senza l'ambiguità possibile
-    di un componente riusato in più punti della stessa distinta, che
-    _trova_codice_padre_per_op deve invece gestire per il genitore
-    IMMEDIATO). Sono due concetti diversi usati in punti diversi della
-    scheda: il genitore immediato resta quello giusto per dire fisicamente
-    "a quale assemblaggio successivo portare questo pezzo", la radice
-    finale è quella giusta per l'etichetta "Codice padre" in cima.
+    padri", su richiesta esplicita). Con un OP è semplicemente
+    codice_articolo dell'OP. SENZA un OP (Rietichettatura — un pezzo senza
+    etichetta trovato in officina, nessuna commessa di riferimento), lo
+    stesso componente può risalire a PIÙ prodotti finiti diversi: si
+    mostrano TUTTI, non solo il primo trovato — un campo vuoto non aiuta
+    chi deve rietichettare, sapere "va in A, B o C" è comunque un indizio
+    utile. Stessa cosa per il genitore immediato (usato per dire "porta
+    questo pezzo a quale assemblaggio successivo") e per i laserati
+    acquistati esternamente che finiscono in più codici: si mostrano tutti.
     """
     codice = (request.args.get('codice') or '').strip()
     descrizione = (request.args.get('descrizione') or '').strip()
@@ -3141,10 +3198,8 @@ def pagina_scheda_materiale_stampa():
     op_code = (request.args.get('op_code') or '').strip()
 
     ordine = OrdineProduzione.query.filter_by(codice=op_code).first() if op_code else None
-    codice_padre = _trova_codice_padre_per_op(codice, ordine)
-    codice_padre_finale = (ordine.codice_articolo
-                            if ordine and ordine.codice_articolo and ordine.codice_articolo != codice
-                            else '')
+    codici_padre = _trova_codici_padre_immediati(codice, ordine)
+    codici_padre_finali = _trova_tutte_le_radici_finali(codice, ordine)
 
     fasi_ciclo = []
     fase_eseguita = None
@@ -3181,12 +3236,17 @@ def pagina_scheda_materiale_stampa():
             fase_prossima = next(
                 (fase for fase in fasi_ciclo
                  if fase.sequenza > fase_eseguita.sequenza), None)
-            if fase_prossima is None and codice_padre:
-                prima_fase_padre = (CicloLavoroWood.query.filter_by(codice=codice_padre)
+            # La 'prima fase del padre' si mostra in dettaglio SOLO quando il
+            # padre è univoco (un solo candidato): con più padri diversi
+            # mostrare la prima fase di ognuno affollerebbe l'etichetta senza
+            # aiutare — meglio elencare i codici possibili e lasciare che sia
+            # l'operatore, guardando il pezzo, a riconoscere quello giusto.
+            if fase_prossima is None and len(codici_padre) == 1:
+                prima_fase_padre = (CicloLavoroWood.query.filter_by(codice=codici_padre[0])
                                     .order_by(CicloLavoroWood.sequenza).first())
 
     return render_template('produzione_pp/scheda_materiale_stampa.html',
-        codice=codice, codice_padre=codice_padre, codice_padre_finale=codice_padre_finale,
+        codice=codice, codici_padre=codici_padre, codici_padre_finali=codici_padre_finali,
         descrizione=descrizione, quantita=quantita,
         fasi_ciclo=fasi_ciclo, fase_eseguita=fase_eseguita,
         fase_prossima=fase_prossima, prima_fase_padre=prima_fase_padre)

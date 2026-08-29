@@ -6,7 +6,7 @@ from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo,
                     NumeroListaLavoroWood, SchedaLavorazioneWood, ArticoloML, DescrizioneCodiceWood,
-                    ParametriLavorazioneWood)
+                    ParametriLavorazioneWood, GiacenzaWood)
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
                     _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo,
                     _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op)
@@ -126,6 +126,16 @@ def _righe_macchina(centro):
     # raccoglie tutti i codici coinvolti, per poter leggere il Ciclo di
     # Lavoro di TUTTI in una sola query invece di una per (OP, componente).
     componenti_per_op = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini}
+
+    # Giacenza già disponibile a magazzino per ogni componente — es. da una
+    # Dichiarazione Libera fatta prima che questa commessa esistesse. Senza
+    # questo, un operaio vede un saldo piccolissimo rispetto al pianificato
+    # e pensa sia un errore, non capendo che il resto è già pronto.
+    tutti_i_codici_comp = {c['codice'] for lista in componenti_per_op.values() for c in lista}
+    giacenza_per_codice = {}
+    if tutti_i_codici_comp:
+        for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(tutti_i_codici_comp)).all():
+            giacenza_per_codice[g.codice] = g.quantita or 0
     componenti_per_op_non_rilasciati = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini_non_rilasciati}
     tutti_i_codici = ({c['codice'] for lista in componenti_per_op.values() for c in lista}
                        | {c['codice'] for lista in componenti_per_op_non_rilasciati.values() for c in lista})
@@ -176,7 +186,11 @@ def _righe_macchina(centro):
 
             qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
             pezzi_fase = _pezzi_fase_cached(o.codice, centro.nome, componente=componente_param)
-            saldo_fase = max(qta_necessaria - pezzi_fase, 0)
+            # Solo sui componenti intermedi (non sul prodotto finito, già
+            # tracciato da qta_buona) — stessa regola già in uso in
+            # Dichiarazione Produzione e nell'Ordine di Lavoro stampato.
+            gia_disponibile = giacenza_per_codice.get(codice_comp, 0) if componente_param else 0
+            saldo_fase = max(qta_necessaria - pezzi_fase - gia_disponibile, 0)
             pct_fase = round(pezzi_fase / qta_necessaria * 100) if qta_necessaria else 0
 
             if saldo_fase <= 0:
@@ -227,6 +241,7 @@ def _righe_macchina(centro):
                 'descrizione': o.descrizione or '',
                 'priorita': o.priorita, 'stato_op': o.stato,
                 'totale': qta_necessaria, 'saldo': saldo_fase, 'pct': pct_fase,
+                'pezzi_fatti': pezzi_fase, 'gia_disponibile': gia_disponibile,
                 'posizione_manuale': posizione_manuale,
                 'data_prevista': o.data_prevista.isoformat() if o.data_prevista else None,
                 'tempo_standard_min_pz': round(tempo_standard_min_pz, 2) if tempo_standard_min_pz else None,
@@ -249,16 +264,19 @@ def _righe_macchina(centro):
             if idx is None:
                 continue
             qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
+            componente_param_nr = None if componente_finale else codice_comp
+            gia_disponibile_nr = giacenza_per_codice.get(codice_comp, 0) if componente_param_nr else 0
             fase_ciclo = fasi_ciclo[idx]
             tempo_standard_min_pz = (60 / fase_ciclo.produttivita_oraria) if fase_ciclo.produttivita_oraria else None
             righe['da_iniziare'].append({
                 'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
                 'codice_articolo': o.codice_articolo, 'qta_pianificata': o.qta_pianificata,
                 'materiale_disponibile': None,  # non calcolato: l'OP non è ancora un impegno reale
-                'componente': None if componente_finale else codice_comp, 'componente_finale': componente_finale,
+                'componente': componente_param_nr, 'componente_finale': componente_finale,
                 'codice_lavorato': codice_comp, 'descrizione': o.descrizione or '',
                 'priorita': o.priorita, 'stato_op': o.stato,
-                'totale': qta_necessaria, 'saldo': qta_necessaria, 'pct': 0,
+                'totale': qta_necessaria, 'saldo': max(qta_necessaria - gia_disponibile_nr, 0), 'pct': 0,
+                'pezzi_fatti': 0, 'gia_disponibile': gia_disponibile_nr,
                 'posizione_manuale': None, 'data_prevista': o.data_prevista.isoformat() if o.data_prevista else None,
                 'tempo_standard_min_pz': round(tempo_standard_min_pz, 2) if tempo_standard_min_pz else None,
                 'scarto_max_pct': fase_ciclo.scarto_max_pct, 'scarto_max_pezzi': None,
@@ -313,11 +331,14 @@ def _raggruppa_per_op(righe):
                 'qta_pianificata': r['qta_pianificata'], 'materiale_disponibile': r['materiale_disponibile'],
                 'non_rilasciato': r.get('non_rilasciato', False),
                 'componenti': [], 'saldo_totale': 0, 'totale_totale': 0,
+                'pezzi_fatti_totale': 0, 'gia_disponibile_totale': 0,
             })
         g = gruppi[indice_per_op[r['op_id']]]
         g['componenti'].append(r)
         g['saldo_totale'] += r['saldo']
         g['totale_totale'] += r['totale']
+        g['pezzi_fatti_totale'] += r.get('pezzi_fatti', 0)
+        g['gia_disponibile_totale'] += r.get('gia_disponibile', 0)
         g['materiale_disponibile'] = g['materiale_disponibile'] and r['materiale_disponibile']
     for g in gruppi:
         g['pct_aggregato'] = round(100 * (g['totale_totale'] - g['saldo_totale']) / g['totale_totale']) if g['totale_totale'] else 0

@@ -61,7 +61,7 @@
   </div>
   <div class="campo campo-nero">
     <div class="campo-label">Codice padre</div>
-    <div class="campo-valore">{{ codice_padre_finale or '—' }}</div>
+    <div class="campo-valore">{{ codici_padre_finali|join(' / ') if codici_padre_finali else '—' }}</div>
   </div>
 </div>
 
@@ -100,22 +100,30 @@
 <div class="sezione-hdr">➡️ Prossima Lavorazione</div>
 {% if fase_prossima %}
 <div class="lavorazione-valore lavorazione-prossima">{{ fase_prossima.centro_costo.nome if fase_prossima.centro_costo else 'Centro non disponibile' }}</div>
-{% elif fase_eseguita and codice_padre and prima_fase_padre %}
+{% elif fase_eseguita and codici_padre|length == 1 and prima_fase_padre %}
 <div class="lavorazione-valore lavorazione-prossima">
   <div class="passaggio-padre">
-    <div class="passaggio-padre-codice">CODICE PADRE: {{ codice_padre }}</div>
+    <div class="passaggio-padre-codice">CODICE PADRE: {{ codici_padre[0] }}</div>
     <div class="passaggio-padre-fase">{{ prima_fase_padre.centro_costo.nome if prima_fase_padre.centro_costo else 'Centro non disponibile' }}</div>
   </div>
 </div>
 <p class="avviso">ℹ️ Ultima fase del codice corrente: proseguire con la prima lavorazione del codice padre.</p>
-{% elif fase_eseguita and codice_padre %}
+{% elif fase_eseguita and codici_padre|length == 1 %}
 <div class="lavorazione-valore lavorazione-prossima">
   <div class="passaggio-padre">
-    <div class="passaggio-padre-codice">CODICE PADRE: {{ codice_padre }}</div>
+    <div class="passaggio-padre-codice">CODICE PADRE: {{ codici_padre[0] }}</div>
     <div class="passaggio-padre-fase">CICLO PADRE NON CONFIGURATO</div>
   </div>
 </div>
 <p class="avviso errore">⚠️ Configurare il Ciclo di Lavoro del codice padre per conoscere la prossima lavorazione.</p>
+{% elif fase_eseguita and codici_padre|length > 1 %}
+<div class="lavorazione-valore lavorazione-prossima">
+  <div class="passaggio-padre">
+    <div class="passaggio-padre-codice">QUESTO CODICE VA IN PIÙ PADRI:</div>
+    <div class="passaggio-padre-fase">{{ codici_padre|join(' · ') }}</div>
+  </div>
+</div>
+<p class="avviso">ℹ️ Codice condiviso da più prodotti — verificare a vista quale assemblaggio riguarda questo pezzo tra quelli elencati.</p>
 {% elif fase_eseguita %}
 <div class="lavorazione-valore lavorazione-prossima">FINE CICLO</div>
 <p class="avviso">ℹ️ Il codice corrente non ha un padre nella distinta dell'Ordine di Produzione.</p>

@@ -41,6 +41,9 @@
   .kanban-table th{background:var(--dark2);color:var(--steel2);font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;padding:9px 8px;text-align:center;border-bottom:2px solid var(--border)}
   .kanban-table td{padding:10px 8px;border-bottom:1px solid var(--border);vertical-align:middle;color:var(--text)}
   .codice{font-weight:800;font-size:15px;color:#eaf4ff;letter-spacing:.3px;white-space:nowrap}
+  .wms-item{padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;transition:background .12s}
+  .wms-item:last-child{border-bottom:none}
+  .wms-item:hover{background:rgba(30,111,165,.25)}
   .muted{color:var(--text-dim)}
   .page-title{font-size:19px;font-weight:800;color:#e0eefc;margin-bottom:14px}
   .btn{padding:11px 18px;border-radius:8px;border:none;cursor:pointer;font-size:14px;font-weight:700;
@@ -93,6 +96,7 @@
   </button>
 </div>
 <div class="clock" id="clock"></div>
+<a href="/rietichettatura" target="_blank" style="position:fixed;top:6px;right:78px;z-index:50;font-size:11px;color:var(--text-dim);background:var(--dark3);border:1px solid var(--border);border-radius:6px;padding:4px 10px;text-decoration:none">🏷️ Rietichettatura</a>
 
 <!-- ══════════════════════ PANNELLO 1 — DICHIARAZIONE PRODUZIONE ══════════════════════ -->
 <div class="totem-panel attivo" id="panel-produzione">
@@ -113,6 +117,34 @@
         <option value="">Seleziona un centro di costo...</option>
       </select>
       <div id="op-lista" style="margin-top:16px">Seleziona un centro di costo per vedere gli Ordini di Produzione aperti.</div>
+    </div>
+  </div>
+
+  <div class="mon-section" style="border:1.5px solid #1e6fa5">
+    <div style="padding:14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleDichiarazioneLibera()">
+      <div style="font-weight:700;color:#2589c7">🔧 Dichiarazione Libera — produci un semilavorato senza un Ordine di Produzione</div>
+      <span id="libera-freccia">▶</span>
+    </div>
+    <div id="libera-box" style="display:none;padding:0 14px 14px">
+      <p style="font-size:12px;color:var(--text-dim);margin:0 0 10px">
+        Per quando tagli/produci un semilavorato usando materiale già in magazzino, PRIMA ancora che esista una
+        commessa che lo richieda. Quando arriverà davvero la commessa, troverà il saldo già ridotto.
+      </p>
+      <label class="modal-label" style="margin-top:0">Codice</label>
+      <div style="position:relative;margin-bottom:10px">
+        <input id="libera-codice" type="text" placeholder="Cerca codice o descrizione..." autocomplete="off" class="big-input"
+               oninput="_liberaRicercaInput(this)" onfocus="_liberaRicercaInput(this)">
+        <div id="libera-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+      </div>
+      <label class="modal-label">Quantità prodotta</label>
+      <input id="libera-quantita" type="number" min="1" placeholder="Quantità" class="big-input" style="margin-bottom:10px">
+      <button class="btn btn-primary" onclick="anteprimaLibera()">🔍 Verifica consumi</button>
+      <div id="libera-anteprima" style="display:none;padding:12px;border:1px solid var(--border);border-radius:8px;background:rgba(30,111,165,.06);margin-top:12px">
+        <div style="font-size:12px;color:var(--text-dim);text-transform:uppercase;font-weight:700;margin-bottom:6px">Materiali che verranno scaricati</div>
+        <div id="libera-consumi-lista" style="font-size:13px"></div>
+        <button class="btn btn-primary" style="margin-top:12px" onclick="confermaLibera()">✅ Conferma e registra</button>
+      </div>
+      <div id="libera-esito" style="font-size:12px;margin-top:10px"></div>
     </div>
   </div>
 </div>
@@ -312,6 +344,107 @@ function vaiAReintegrare(centroId){
   document.getElementById('centro-sel').value = centroId;
   caricaOpAperti();
   document.getElementById('centro-sel').scrollIntoView({behavior:'smooth', block:'center'});
+}
+
+function toggleDichiarazioneLibera(){
+  const el = document.getElementById('libera-box');
+  const freccia = document.getElementById('libera-freccia');
+  const aperto = el.style.display !== 'none';
+  el.style.display = aperto ? 'none' : 'block';
+  freccia.textContent = aperto ? '▶' : '▼';
+}
+
+let _liberaRicercaTimer = null;
+function _posizionaLiberaDropdown(input){
+  const dropdown = document.getElementById('libera-dropdown');
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = rect.width + 'px';
+}
+async function _liberaRicercaInput(input){
+  const dropdown = document.getElementById('libera-dropdown');
+  const q = input.value.trim();
+  clearTimeout(_liberaRicercaTimer);
+  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  _liberaRicercaTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/ricerca_materiale_wood?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessun codice trovato</div>';
+      _posizionaLiberaDropdown(input);
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = risultati.map(x => {
+      const cod = String(x.codice).replace(/"/g, '&quot;');
+      return `<div class="wms-item" onmousedown="_liberaSceltaMateriale('${cod}')">` +
+        `<div><b class="codice">${x.codice}</b>${x.descrizione ? `<br><span style="font-size:11px;color:var(--text-dim)">${x.descrizione}</span>` : ''}</div></div>`;
+    }).join('');
+    _posizionaLiberaDropdown(input);
+    dropdown.style.display = 'block';
+  }, 220);
+}
+function _liberaSceltaMateriale(codice){
+  document.getElementById('libera-codice').value = codice;
+  document.getElementById('libera-dropdown').style.display = 'none';
+  document.getElementById('libera-anteprima').style.display = 'none';
+}
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('libera-dropdown');
+  if(dropdown && dropdown.style.display !== 'none' && e.target !== document.getElementById('libera-codice') && !dropdown.contains(e.target)){
+    dropdown.style.display = 'none';
+  }
+});
+
+async function anteprimaLibera(){
+  const esito = document.getElementById('libera-esito');
+  const codice = document.getElementById('libera-codice').value.trim();
+  const quantita = document.getElementById('libera-quantita').value;
+  esito.textContent = '';
+  document.getElementById('libera-anteprima').style.display = 'none';
+  if(!codice || !quantita || parseFloat(quantita) <= 0){
+    esito.style.color = '#c0392b'; esito.textContent = '⚠️ Indica codice e quantità.'; return;
+  }
+  try{
+    const r = await fetch(`/api/dichiarazione-produzione/libera/anteprima?codice=${encodeURIComponent(codice)}&quantita=${encodeURIComponent(quantita)}`);
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ ' + d.error; return; }
+    const box = document.getElementById('libera-anteprima');
+    document.getElementById('libera-consumi-lista').innerHTML = d.consumi.length
+      ? d.consumi.map(c => `<div style="display:flex;justify-content:space-between;padding:4px 0;border-top:1px dashed var(--border)">
+          <span><b class="codice">${c.codice}</b> ${c.descrizione ? '— ' + c.descrizione : ''}</span>
+          <span style="font-weight:700">× ${c.quantita}</span>
+        </div>`).join('')
+      : '<p style="color:var(--text-dim);font-style:italic">Nessuna distinta base sotto — niente da scaricare.</p>';
+    box.style.display = 'block';
+  }catch(e){ esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.'; }
+}
+
+async function confermaLibera(){
+  const esito = document.getElementById('libera-esito');
+  const codice = document.getElementById('libera-codice').value.trim();
+  const quantita = document.getElementById('libera-quantita').value;
+  const conferma = confirm(`Confermi la Dichiarazione Libera?\n\nCodice: ${codice}\nQuantità: ${quantita}\n\nScarica i materiali dalla distinta base e carica ${quantita} pezzi di ${codice} a magazzino — nessun Ordine di Produzione coinvolto.`);
+  if(!conferma) return;
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Registrazione...';
+  try{
+    const r = await fetch('/api/dichiarazione-produzione/libera', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({codice, quantita: parseFloat(quantita)})
+    });
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '❌ ' + (d.error || 'Errore.'); return; }
+    esito.style.color = '#1a9e5c';
+    esito.textContent = `✅ ${quantita} pezzi di ${codice} caricati a magazzino.`;
+    document.getElementById('libera-anteprima').style.display = 'none';
+    document.getElementById('libera-codice').value = '';
+    document.getElementById('libera-quantita').value = '';
+    caricaReintegroScarti();
+  }catch(e){ esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.'; }
 }
 
 async function caricaOpAperti(){
