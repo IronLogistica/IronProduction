@@ -388,16 +388,36 @@ def api_matrice_competenze_operai_da_registrare():
     """
     Nomi di operai già visti lavorare (arrivati da MasterWork, sempre
     ASA Carpenteria Propria — l'unica ASA che l'integrazione gestisce,
-    vedi ASA_MASTERWORK) che non hanno ANCORA nessuna competenza
-    registrata nella Matrice — né come OperatoreWood mai creato, né
-    come OperatoreWood creato ma con zero centri segnati. Usata per il
+    vedi ASA_MASTERWORK) O PIANIFICATI da Angelo per il turno successivo
+    (Ghost Plan) che non hanno ANCORA nessuna competenza registrata
+    nella Matrice — né come OperatoreWood mai creato, né come
+    OperatoreWood creato ma con zero centri segnati. Usata per il
     promemoria automatico che compare ad Angelo finché non sono tutti a
     posto — nessun bisogno di 'pescare' nomi manualmente: arrivano già
-    da soli a ogni dichiarazione MasterWork (EventoConsuntivoPP.operatore).
+    da soli, sia dalle dichiarazioni reali (EventoConsuntivoPP.operatore)
+    sia dal piano che Angelo fa in MasterWork PRIMA ancora che l'operaio
+    dichiari qualcosa.
     """
     nomi_da_masterwork = {r[0].strip() for r in db.session.query(EventoConsuntivoPP.operatore)
                            .filter(EventoConsuntivoPP.operatore.isnot(None),
                                    EventoConsuntivoPP.operatore != '').distinct().all()}
+    # Oltre a chi ha GIA' dichiarato produzione, anche chi Angelo ha
+    # PIANIFICATO in MasterWork (Ghost Plan, il piano delle 11:00/17:00
+    # per il turno successivo) — senza questo, il promemoria arriverebbe
+    # sempre DOPO la prima dichiarazione reale, troppo tardi rispetto a
+    # quando Angelo pianifica davvero i turni. Non bloccante: se
+    # MasterWork non è raggiungibile in questo momento, il promemoria
+    # funziona comunque con i soli nomi già dichiarati (comportamento
+    # precedente), non deve mai far sparire l'intero controllo.
+    url = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
+    token = current_app.config.get('PP_API_TOKEN', '')
+    if url and token:
+        try:
+            r = requests.get(f'{url}/api/operai-attivi', headers={'Authorization': f'Bearer {token}'}, timeout=5)
+            r.raise_for_status()
+            nomi_da_masterwork |= {n.strip() for n in r.json() if n and n.strip()}
+        except requests.exceptions.RequestException:
+            pass
     if not nomi_da_masterwork:
         return jsonify([])
     operatori_esistenti = {o.nome.strip().lower(): o.id for o in OperatoreWood.query.all()}
