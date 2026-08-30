@@ -223,6 +223,13 @@ def calcola_avanzamento_commesse():
             qta_codice_pianificata = round((o.qta_pianificata or 0) * moltiplicatore)
             componente_param = None if codice == o.codice_articolo else codice
             cursore_componente = data_materiale_pronto
+            # Separato da cursore_componente apposta: quest'ultimo può
+            # ora "correre avanti" prima della fine reale (vedi Lotto di
+            # Trasferimento sotto) — ma il completamento VERO di questo
+            # componente (per dire quando l'intero OP è davvero finito,
+            # fine_produzione_op) deve sempre aspettare la fine PIENA
+            # dell'ultima fase, mai il lotto minimo di transito.
+            ultima_fine_fase_vera = data_materiale_pronto
 
             for ciclo in cicli:
                 centro = centri.get(ciclo.centro_costo_id)
@@ -290,8 +297,24 @@ def calcola_avanzamento_commesse():
                 giorni_fase = ore_necessarie / cap if cap else 0
                 fine_fase = _aggiungi_giorni_lavorativi(inizio_fase, giorni_fase)
 
-                cursore_centro[centro.id] = fine_fase
-                cursore_componente = fine_fase
+                cursore_centro[centro.id] = fine_fase          # la MACCHINA si libera solo a fine lotto intero — non lavora due OP insieme
+                ultima_fine_fase_vera = fine_fase               # il completamento VERO di questo componente, mai anticipato
+
+                # LOTTO DI TRASFERIMENTO: se configurato ed è più piccolo
+                # del residuo di questa fase, la fase SUCCESSIVA dello
+                # stesso componente può iniziare non appena il primo
+                # lotto è pronto — non deve aspettare che QUESTA fase
+                # finisca l'intera quantità. Senza questo, il Gantt
+                # sarebbe sempre rigidamente sequenziale (fase per fase,
+                # mai in pipeline), irrealistico per qualunque lavorazione
+                # dove i pezzi passano al reparto successivo mano a mano
+                # che sono pronti, non tutti insieme alla fine.
+                lotto_trasf = ciclo.lotto_trasferimento_minimo
+                if lotto_trasf and produttivita > 0 and lotto_trasf < saldo_fase:
+                    giorni_primo_lotto = (lotto_trasf / produttivita) / cap if cap else 0
+                    cursore_componente = _aggiungi_giorni_lavorativi(inizio_fase, giorni_primo_lotto)
+                else:
+                    cursore_componente = fine_fase
                 segmenti_per_centro.setdefault(centro.id, []).append({
                     'op_codice': o.codice, 'commessa': o.commessa or '', 'cliente': o.cliente or '',
                     'codice': codice, 'codice_articolo': o.codice_articolo,
@@ -301,8 +324,8 @@ def calcola_avanzamento_commesse():
                     'bandiera_stato': o.bandiera_stato, 'priorita': o.priorita,
                 })
 
-            if cursore_componente > fine_produzione_op:
-                fine_produzione_op = cursore_componente
+            if ultima_fine_fase_vera > fine_produzione_op:
+                fine_produzione_op = ultima_fine_fase_vera
 
         # ── Lavorazione esterna (es. verniciatura): primo centro esterno nel ciclo del prodotto padre ──
         centro_esterno_nome = None

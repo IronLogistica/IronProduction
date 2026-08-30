@@ -2543,6 +2543,7 @@ def _ciclo_riga(r):
         'produttivita_oraria': r.produttivita_oraria, 'scarto_max_pct': r.scarto_max_pct, 'note': r.note,
         'produttivita_oraria_manuale': bool(r.produttivita_oraria_manuale),
         'produttivita_pezzi_osservati': r.produttivita_pezzi_osservati or 0,
+        'lotto_trasferimento_minimo': r.lotto_trasferimento_minimo,
     }
 
 
@@ -2584,6 +2585,12 @@ def api_ciclo_lavoro_crea():
         scarto_max_pct = float(d['scarto_max_pct']) if d.get('scarto_max_pct') not in (None, '') else None
     except (TypeError, ValueError):
         return jsonify({'errore': True, 'messaggio': 'Lo scarto massimo deve essere un numero'}), 400
+    try:
+        lotto_trasferimento_minimo = int(d['lotto_trasferimento_minimo']) if d.get('lotto_trasferimento_minimo') not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Il lotto di trasferimento deve essere un numero intero'}), 400
+    if lotto_trasferimento_minimo is not None and lotto_trasferimento_minimo <= 0:
+        return jsonify({'errore': True, 'messaggio': 'Il lotto di trasferimento deve essere maggiore di zero'}), 400
 
     esistente = CicloLavoroWood.query.filter_by(codice=codice, sequenza=sequenza).first()
     manuale = bool(d.get('produttivita_oraria_manuale'))
@@ -2593,13 +2600,15 @@ def api_ciclo_lavoro_crea():
         esistente.produttivita_oraria = produttivita
         esistente.produttivita_oraria_manuale = manuale
         esistente.scarto_max_pct = scarto_max_pct
+        esistente.lotto_trasferimento_minimo = lotto_trasferimento_minimo
         esistente.note = (d.get('note') or '').strip()
         db.session.commit()
         return jsonify({'ok': True, 'id': esistente.id, 'aggiornata': True})
 
     r = CicloLavoroWood(codice=codice, sequenza=sequenza, centro_costo_id=centro_costo_id,
                          produttivita_oraria=produttivita, produttivita_oraria_manuale=manuale,
-                         scarto_max_pct=scarto_max_pct, note=(d.get('note') or '').strip())
+                         scarto_max_pct=scarto_max_pct, lotto_trasferimento_minimo=lotto_trasferimento_minimo,
+                         note=(d.get('note') or '').strip())
     db.session.add(r)
     db.session.commit()
     return jsonify({'ok': True, 'id': r.id, 'aggiornata': False})

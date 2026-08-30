@@ -166,6 +166,15 @@ class CicloLavoroWood(db.Model):
     # reparto (es. 2.0 = 2%) — standard comunicato all'operatore sul totem,
     # non un vincolo bloccante: None = nessuno standard comunicato.
     scarto_max_pct      = db.Column(db.Float, nullable=True)
+    # Lotto di Trasferimento (Lean/Kanban di reparto — chiamato così per
+    # non confonderlo con "Kanban Prodotti"/"Kanban Inventario", concetti
+    # diversi già presenti nel programma): dopo quanti pezzi lavorati QUI
+    # la fase SUCCESSIVA di questo stesso codice può già iniziare, invece
+    # di aspettare che l'intero lotto sia completato in questa fase.
+    # None/0 = nessun overlap, comportamento di sempre (la fase successiva
+    # aspetta la fine completa) — usato dal Gantt/Avanzamento Commesse per
+    # simulare le fasi in pipeline invece che rigidamente in sequenza.
+    lotto_trasferimento_minimo = db.Column(db.Integer, nullable=True)
     note                = db.Column(db.String(300), default='')
     creato_il           = db.Column(db.DateTime, default=datetime.utcnow)
     centro_costo        = db.relationship('CentroCostoWood')

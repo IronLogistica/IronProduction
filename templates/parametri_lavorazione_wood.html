@@ -166,6 +166,11 @@
     </div>
 
     <div id="cl-box-fasi" style="display:none">
+      <p style="font-size:11px;color:var(--text-dim);margin:0 0 10px">
+        <b>Lotto Trasferimento</b>: dopo quanti pezzi lavorati in QUESTA fase quella successiva può già iniziare —
+        invece di aspettare che l'intero ordine sia finito qui. Lascia vuoto per il comportamento tradizionale
+        (nessuna sovrapposizione tra fasi).
+      </p>
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
         <input id="cl-sequenza" type="number" step="1" min="1" value="1" placeholder="Sequenza" style="width:85px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
         <select id="cl-reparto" style="min-width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)"><option value="">Reparto...</option></select>
@@ -174,6 +179,8 @@
           <input id="cl-produttivita-manuale" type="checkbox" style="width:14px;height:14px"> 🔒 blocca
         </label>
         <input id="cl-scarto-max" type="number" step="0.1" min="0" max="100" placeholder="Scarto max %" style="width:110px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="cl-lotto-trasferimento" type="number" step="1" min="1" placeholder="Lotto Trasferim." style="width:120px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)"
+               title="Dopo quanti pezzi lavorati QUI la fase successiva può già iniziare, senza aspettare che l'intero lotto sia finito in questa fase (vuoto = nessun overlap, comportamento tradizionale)">
         <input id="cl-note" type="text" placeholder="Note" style="flex:1;min-width:120px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
         <button class="btn btn-primary" onclick="aggiungiFaseCiclo()">➕ Aggiungi fase</button>
       </div>
@@ -760,10 +767,10 @@ async function caricaFasiCiclo(){
     const r = await fetch('/api/ciclo_lavoro_wood?codice=' + encodeURIComponent(CODICE_CICLO_ATTIVO));
     const righe = await r.json();
     if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna fase inserita ancora per questo codice.</p>'; return; }
-    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Seq.</th><th>Reparto</th><th>Pezzi/ora</th><th>Scarto max %</th><th>Note</th><th></th></tr></thead><tbody>';
+    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Seq.</th><th>Reparto</th><th>Pezzi/ora</th><th>Scarto max %</th><th>Lotto Trasferim.</th><th>Note</th><th></th></tr></thead><tbody>';
     righe.forEach(f=>{
       html += `<tr><td class="num">${f.sequenza}</td><td>${f.centro_costo_nome}${f.centro_costo_esterno?' <span class="badge badge-warn" style="font-size:10px">esterno</span>':''}</td>` +
-        `<td class="num">${f.produttivita_oraria} ${f.produttivita_oraria_manuale?'<span title="Bloccato a mano" style="font-size:11px">🔒</span>':(f.produttivita_pezzi_osservati>0?`<span title="Auto-calcolato da ${f.produttivita_pezzi_osservati} pezzi osservati" style="font-size:11px">🤖</span>`:'')}</td><td class="num">${f.scarto_max_pct??'—'}</td><td class="lav-td">${f.note||'—'}</td>` +
+        `<td class="num">${f.produttivita_oraria} ${f.produttivita_oraria_manuale?'<span title="Bloccato a mano" style="font-size:11px">🔒</span>':(f.produttivita_pezzi_osservati>0?`<span title="Auto-calcolato da ${f.produttivita_pezzi_osservati} pezzi osservati" style="font-size:11px">🤖</span>`:'')}</td><td class="num">${f.scarto_max_pct??'—'}</td><td class="num" title="Dopo quanti pezzi la fase successiva può già iniziare">${f.lotto_trasferimento_minimo??'—'}</td><td class="lav-td">${f.note||'—'}</td>` +
         `<td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaFaseCiclo(${f.id})">🗑️</button></td></tr>`;
     });
     html += '</tbody></table></div>';
@@ -779,6 +786,7 @@ async function aggiungiFaseCiclo(){
     produttivita_oraria: document.getElementById('cl-produttivita').value,
     produttivita_oraria_manuale: document.getElementById('cl-produttivita-manuale').checked,
     scarto_max_pct: document.getElementById('cl-scarto-max').value,
+    lotto_trasferimento_minimo: document.getElementById('cl-lotto-trasferimento').value || null,
     note: document.getElementById('cl-note').value.trim(),
   };
   try{
