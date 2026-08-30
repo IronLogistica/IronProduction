@@ -177,11 +177,13 @@ let _ggDragEl = null;
 let _ggTargetOpCodice = null;
 let _ggPointerStart = null;
 let _ggTrascinamentoIniziato = false;
+let _ggBarraOrigLeft = 0;
 
 function ggIniziaDrag(e, barra){
   e.preventDefault();
   _ggDragEl = barra;
   _ggPointerStart = {x: e.clientX, y: e.clientY};
+  _ggBarraOrigLeft = parseFloat(barra.style.left) || 0;
   _ggTrascinamentoIniziato = false;
   barra.setPointerCapture(e.pointerId);
   document.addEventListener('pointermove', ggDragMove);
@@ -191,26 +193,50 @@ function ggIniziaDrag(e, barra){
 
 function ggDragMove(e){
   if(!_ggDragEl) return;
+  const dx = e.clientX - _ggPointerStart.x, dy = e.clientY - _ggPointerStart.y;
   if(!_ggTrascinamentoIniziato){
-    const dx = e.clientX - _ggPointerStart.x, dy = e.clientY - _ggPointerStart.y;
     if(Math.hypot(dx, dy) < SOGLIA_TRASCINAMENTO_PX) return;  // ancora dentro la soglia: non è ancora un trascinamento
     _ggTrascinamentoIniziato = true;
     _ggDragEl.classList.add('trascinando');
+    _ggDragEl.style.zIndex = '20';
   }
-  const sotto = document.elementFromPoint(e.clientX, e.clientY);
-  const barraSotto = sotto ? sotto.closest('.gg-barra') : null;
+  // La barra SEGUE il puntatore mentre si trascina (solo in orizzontale,
+  // resta sulla sua riga/centro) — senza questo, con un puntatore che si
+  // sposta ma nessun riscontro visivo sulla barra stessa, è impossibile
+  // capire se il trascinamento sta davvero avvenendo.
+  _ggDragEl.style.left = (_ggBarraOrigLeft + dx) + 'px';
+
+  // Bersaglio: non serve più essere esattamente sopra un'altra barra —
+  // basta essere sulla stessa riga (stesso centro): si prende la barra
+  // più vicina orizzontalmente in quella riga. Molto più tollerante di
+  // un rilascio impreciso, che prima falliva in silenzio.
+  const riga = _ggDragEl.closest('.gg-riga');
   document.querySelectorAll('.gg-barra').forEach(b => b.style.outline = '');
-  if(barraSotto && barraSotto !== _ggDragEl){
-    barraSotto.style.outline = '2px dashed #fff';
-    _ggTargetOpCodice = barraSotto.dataset.opCodice;
-  }else{
-    _ggTargetOpCodice = null;
+  _ggTargetOpCodice = null;
+  if(riga){
+    const rigaRect = riga.getBoundingClientRect();
+    const xRelativo = e.clientX - rigaRect.left;
+    let piuVicina = null, distanzaMin = Infinity;
+    riga.querySelectorAll('.gg-barra').forEach(b => {
+      if(b === _ggDragEl) return;
+      const centroBarra = parseFloat(b.style.left) + parseFloat(b.style.width) / 2;
+      const distanza = Math.abs(centroBarra - xRelativo);
+      if(distanza < distanzaMin){ distanzaMin = distanza; piuVicina = b; }
+    });
+    if(piuVicina){
+      piuVicina.style.outline = '3px dashed #ffd54f';
+      _ggTargetOpCodice = piuVicina.dataset.opCodice;
+    }
   }
 }
 
 function ggDragAnnulla(){
   document.removeEventListener('pointermove', ggDragMove);
-  if(_ggDragEl) _ggDragEl.classList.remove('trascinando');
+  if(_ggDragEl){
+    _ggDragEl.classList.remove('trascinando');
+    _ggDragEl.style.left = _ggBarraOrigLeft + 'px';
+    _ggDragEl.style.zIndex = '';
+  }
   document.querySelectorAll('.gg-barra').forEach(b => b.style.outline = '');
   _ggDragEl = null; _ggTargetOpCodice = null;
 }
@@ -222,7 +248,11 @@ async function ggDragFine(){
   if(!_ggDragEl) return;
   const opTrascinato = _ggDragEl.dataset.opCodice;
   const eraUnTrascinamento = _ggTrascinamentoIniziato;
-  if(_ggTrascinamentoIniziato) _ggDragEl.classList.remove('trascinando');
+  const barraEl = _ggDragEl;
+  if(_ggTrascinamentoIniziato){
+    barraEl.classList.remove('trascinando');
+    barraEl.style.zIndex = '';
+  }
   _ggDragEl = null;
 
   if(!eraUnTrascinamento){
@@ -232,7 +262,19 @@ async function ggDragFine(){
     return;
   }
 
-  if(!_ggTargetOpCodice || _ggTargetOpCodice === opTrascinato){ _ggTargetOpCodice = null; return; }
+  if(!_ggTargetOpCodice || _ggTargetOpCodice === opTrascinato){
+    // Rilasciata senza trovare un'altra commessa nella stessa riga —
+    // PRIMA questo caso falliva in silenzio (nessun messaggio, la barra
+    // restava dove l'aveva lasciata il puntatore): riporta la barra al
+    // suo posto e spiega esplicitamente cosa è successo, così non
+    // sembra che "non funzioni", solo che il rilascio non ha trovato
+    // un bersaglio valido su quella riga.
+    barraEl.style.left = _ggBarraOrigLeft + 'px';
+    _ggTargetOpCodice = null;
+    esito.style.color = '#e6b800';
+    esito.textContent = `⚠️ Rilasciata senza un'altra commessa nella stessa riga — nessuno spostamento fatto. Trascina fino a farla sovrapporre a un'altra commessa sulla stessa riga (centro), poi rilascia.`;
+    return;
+  }
   const target = _ggTargetOpCodice;
   _ggTargetOpCodice = null;
 

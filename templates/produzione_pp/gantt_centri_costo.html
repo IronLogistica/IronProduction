@@ -311,11 +311,13 @@ let _ganttDragEl = null;
 let _ganttTargetOpCodice = null;
 let _ganttPointerStart = null;
 let _ganttTrascinamentoIniziato = false;
+let _ganttBarraOrigLeft = 0;
 
 function ganttIniziaDrag(e, barra){
   e.preventDefault();
   _ganttDragEl = barra;
   _ganttPointerStart = {x: e.clientX, y: e.clientY};
+  _ganttBarraOrigLeft = parseFloat(barra.style.left) || 0;
   _ganttTrascinamentoIniziato = false;
   barra.setPointerCapture(e.pointerId);
   document.addEventListener('pointermove', ganttDragMove);
@@ -324,25 +326,50 @@ function ganttIniziaDrag(e, barra){
 }
 function ganttDragMove(e){
   if(!_ganttDragEl) return;
+  const dx = e.clientX - _ganttPointerStart.x;
   if(!_ganttTrascinamentoIniziato){
-    const dx = e.clientX - _ganttPointerStart.x, dy = e.clientY - _ganttPointerStart.y;
+    const dy = e.clientY - _ganttPointerStart.y;
     if(Math.hypot(dx, dy) < SOGLIA_TRASCINAMENTO_PX) return;
     _ganttTrascinamentoIniziato = true;
     _ganttDragEl.classList.add('trascinando');
+    _ganttDragEl.style.zIndex = '20';
   }
-  const sotto = document.elementFromPoint(e.clientX, e.clientY);
-  const barraSotto = sotto ? sotto.closest('.gantt-barra') : null;
+  // La barra SEGUE il puntatore mentre si trascina — senza questo, con
+  // il puntatore che si sposta ma nessun riscontro visivo sulla barra
+  // stessa, è impossibile capire se il trascinamento sta davvero
+  // avvenendo.
+  _ganttDragEl.style.left = (_ganttBarraOrigLeft + dx) + 'px';
+
+  // Bersaglio: non serve più essere esattamente sopra un'altra barra —
+  // qui c'è UNA sola riga per centro, quindi si prende semplicemente la
+  // barra più vicina orizzontalmente su quella riga. Molto più
+  // tollerante di un rilascio impreciso, che prima falliva in silenzio.
+  const riga = _ganttDragEl.closest('.gantt-riga');
   document.querySelectorAll('.gantt-barra').forEach(b => b.style.outline = '');
-  if(barraSotto && barraSotto !== _ganttDragEl){
-    barraSotto.style.outline = '2px dashed #fff';
-    _ganttTargetOpCodice = barraSotto.dataset.opCodice;
-  }else{
-    _ganttTargetOpCodice = null;
+  _ganttTargetOpCodice = null;
+  if(riga){
+    const rigaRect = riga.getBoundingClientRect();
+    const xRelativo = e.clientX - rigaRect.left;
+    let piuVicina = null, distanzaMin = Infinity;
+    riga.querySelectorAll('.gantt-barra').forEach(b => {
+      if(b === _ganttDragEl) return;
+      const centroBarra = parseFloat(b.style.left) + parseFloat(b.style.width) / 2;
+      const distanza = Math.abs(centroBarra - xRelativo);
+      if(distanza < distanzaMin){ distanzaMin = distanza; piuVicina = b; }
+    });
+    if(piuVicina){
+      piuVicina.style.outline = '3px dashed #ffd54f';
+      _ganttTargetOpCodice = piuVicina.dataset.opCodice;
+    }
   }
 }
 function ganttDragAnnulla(){
   document.removeEventListener('pointermove', ganttDragMove);
-  if(_ganttDragEl) _ganttDragEl.classList.remove('trascinando');
+  if(_ganttDragEl){
+    _ganttDragEl.classList.remove('trascinando');
+    _ganttDragEl.style.left = _ganttBarraOrigLeft + 'px';
+    _ganttDragEl.style.zIndex = '';
+  }
   document.querySelectorAll('.gantt-barra').forEach(b => b.style.outline = '');
   _ganttDragEl = null; _ganttTargetOpCodice = null;
 }
@@ -353,7 +380,11 @@ async function ganttDragFine(){
   if(!_ganttDragEl){ return; }
   const opTrascinato = _ganttDragEl.dataset.opCodice;
   const eraUnTrascinamento = _ganttTrascinamentoIniziato;
-  if(_ganttTrascinamentoIniziato) _ganttDragEl.classList.remove('trascinando');
+  const barraEl = _ganttDragEl;
+  if(_ganttTrascinamentoIniziato){
+    barraEl.classList.remove('trascinando');
+    barraEl.style.zIndex = '';
+  }
   _ganttDragEl = null;
 
   if(!eraUnTrascinamento){
@@ -361,7 +392,13 @@ async function ganttDragFine(){
     return;
   }
 
-  if(!_ganttTargetOpCodice || _ganttTargetOpCodice === opTrascinato){ _ganttTargetOpCodice = null; return; }
+  if(!_ganttTargetOpCodice || _ganttTargetOpCodice === opTrascinato){
+    barraEl.style.left = _ganttBarraOrigLeft + 'px';
+    _ganttTargetOpCodice = null;
+    esito.style.color = '#e6b800';
+    esito.textContent = `⚠️ Rilasciata senza un'altra commessa su questa riga — nessuno spostamento fatto. Trascina fino a farla sovrapporre a un'altra commessa, poi rilascia.`;
+    return;
+  }
   const target = _ganttTargetOpCodice;
   _ganttTargetOpCodice = null;
 
