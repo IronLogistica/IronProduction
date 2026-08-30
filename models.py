@@ -1524,6 +1524,32 @@ def assicura_bandiera_stato_op():
             db.session.commit()
 
 
+def assicura_lotto_trasferimento_minimo():
+    """
+    Migrazione compatibile con DB già esistenti: aggiunge
+    ciclo_lavoro_wood.lotto_trasferimento_minimo — BUG REALE IN
+    PRODUZIONE corretto qui: il campo era stato aggiunto al modello
+    Python ma MAI creato sul database Postgres reale (Flask-SQLAlchemy
+    crea tabelle nuove da solo, ma non aggiunge colonne a tabelle già
+    esistenti) — ogni lettura di CicloLavoroWood andava in errore 500
+    (colonna inesistente), portando giù /api/gantt/tutti e ogni altra
+    pagina che tocca il Ciclo di Lavoro. NULL per le fasi esistenti =
+    nessun overlap configurato, comportamento tradizionale invariato.
+    """
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE ciclo_lavoro_wood ADD COLUMN IF NOT EXISTS lotto_trasferimento_minimo INTEGER"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('ciclo_lavoro_wood')}
+        if 'lotto_trasferimento_minimo' not in colonne:
+            db.session.execute(text("ALTER TABLE ciclo_lavoro_wood ADD COLUMN lotto_trasferimento_minimo INTEGER"))
+            db.session.commit()
+
+
 def assicura_contestuale_distinta_base():
     """Migrazione compatibile con DB già esistenti: aggiunge
     distinta_base_wood.contestuale e distinta_base_wood.data_flag_contestuale
