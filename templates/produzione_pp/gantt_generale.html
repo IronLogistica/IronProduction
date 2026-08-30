@@ -236,6 +236,15 @@ async function ggDragFine(){
   const target = _ggTargetOpCodice;
   _ggTargetOpCodice = null;
 
+  // Date PRIMA dello spostamento — per ogni centro dove questa commessa
+  // compare, non solo quello su cui si è trascinato: senza questo
+  // confronto esplicito, con commesse simili è impossibile capire a
+  // occhio se qualcosa si è davvero spostato.
+  const dateInizioPrima = {};
+  CENTRI.forEach(c => c.segmenti.forEach(s => {
+    if(s.op_codice === opTrascinato) dateInizioPrima[c.nome] = s.inizio_iso;
+  }));
+
   esito.style.color = 'var(--text-dim)'; esito.textContent = 'Riprogrammazione di tutti i centri...';
   try{
     const rOrdine = await fetch('/api/kpi/avanzamento-commesse');
@@ -248,12 +257,36 @@ async function ggDragFine(){
     });
     const d = await rSalva.json();
     if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = 'Errore nel salvare l\'ordine.'; return; }
-    esito.style.color = '#1a9e5c'; esito.textContent = `✅ ${opTrascinato} anticipata rispetto a ${target} — tutti i centri riprogrammati.`;
     await carica();
+
+    // Date DOPO — confronta centro per centro e mostra un elenco esplicito
+    // "prima -> dopo", con un avviso chiaro se per qualche centro non è
+    // cambiato nulla (perché quella commessa non condivide quella
+    // macchina con nessun'altra riordinata, quindi nulla doveva cambiare
+    // lì — non è un errore, ma va detto per non lasciare il dubbio).
+    const righeConfronto = [];
+    CENTRI.forEach(c => c.segmenti.forEach(s => {
+      if(s.op_codice !== opTrascinato) return;
+      const prima = dateInizioPrima[c.nome];
+      const dopo = s.inizio_iso;
+      if(prima && prima !== dopo){
+        righeConfronto.push(`${c.nome}: ${formattaData(prima)} → ${formattaData(dopo)} ✅ cambiata`);
+      }else if(prima){
+        righeConfronto.push(`${c.nome}: invariata (${formattaData(prima)}) — non condivide questa macchina con ${target}`);
+      }
+    }));
+    esito.style.color = '#1a9e5c';
+    esito.innerHTML = `✅ <b>${opTrascinato}</b> anticipata rispetto a <b>${target}</b>:<br>` +
+      righeConfronto.map(r => `&nbsp;&nbsp;• ${r}`).join('<br>');
     evidenziaCommessaOvunque(opTrascinato);  // dopo il ricalcolo, resta chiaro quale commessa si è appena spostata
   }catch(e){
     esito.style.color = '#c0392b'; esito.textContent = 'Errore di rete durante il salvataggio.';
   }
+}
+
+function formattaData(iso){
+  const [anno, mese, giorno] = iso.split('-');
+  return `${giorno}/${mese}`;
 }
 
 function evidenziaCommessaOvunque(opCodice){
