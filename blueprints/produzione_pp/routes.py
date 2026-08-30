@@ -235,6 +235,53 @@ def pagina_gantt_centri_costo():
     return render_template('produzione_pp/gantt_centri_costo.html', active='gantt_centri_costo')
 
 
+@pp_bp.route('/api/gantt/diagnostica')
+def api_gantt_diagnostica():
+    """
+    ENDPOINT DIAGNOSTICO TEMPORANEO — il Gantt Centri di Costo risultava
+    vuoto in produzione pur avendo creato i 4 OP di test; questo mostra,
+    passo per passo, dove si ferma la catena (quanti OP aperti, quanti
+    centri totali/esterni, e per ognuno dei TEST-DEMO cosa succede
+    esplodendone la distinta) — da togliere una volta trovata la causa.
+    """
+    ordini = OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO)).all()
+    centri_tutti = CentroCostoWood.query.all()
+    centri = {c.id: c for c in centri_tutti}
+    mappa_distinta = _carica_mappa_distinta_base_wood()
+
+    dettaglio_test_demo = []
+    for o in ordini:
+        if not o.codice_articolo.startswith('TEST-DEMO'):
+            continue
+        saldo = (o.qta_pianificata or 0) - (o.qta_buona or 0)
+        nodi = _esplodi_componenti_op(o, mappa_distinta=mappa_distinta)
+        righe_nodi = []
+        for n in nodi:
+            cicli = CicloLavoroWood.query.filter_by(codice=n['codice']).order_by(CicloLavoroWood.sequenza).all()
+            righe_nodi.append({
+                'codice': n['codice'], 'moltiplicatore': n['moltiplicatore'],
+                'n_cicli': len(cicli),
+                'cicli': [{'centro_id': c.centro_costo_id,
+                           'centro_nome': centri.get(c.centro_costo_id).nome if centri.get(c.centro_costo_id) else 'CENTRO INESISTENTE',
+                           'centro_esterno': centri.get(c.centro_costo_id).esterno if centri.get(c.centro_costo_id) else None,
+                           'produttivita_oraria': c.produttivita_oraria} for c in cicli],
+            })
+        dettaglio_test_demo.append({
+            'op_codice': o.codice, 'codice_articolo': o.codice_articolo, 'stato': o.stato,
+            'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona, 'saldo': saldo,
+            'n_nodi_esplosi': len(nodi), 'nodi': righe_nodi,
+        })
+
+    return jsonify({
+        'n_ordini_aperti_totali': len(ordini),
+        'n_ordini_test_demo_trovati': len(dettaglio_test_demo),
+        'n_centri_totali': len(centri_tutti),
+        'n_centri_esterni': sum(1 for c in centri_tutti if c.esterno),
+        'centri_esterni_nomi': [c.nome for c in centri_tutti if c.esterno],
+        'dettaglio_test_demo': dettaglio_test_demo,
+    })
+
+
 @pp_bp.route('/api/gantt/centri')
 def api_gantt_centri():
     """Elenco dei centri di costo con del carico in coda — giorni totali
