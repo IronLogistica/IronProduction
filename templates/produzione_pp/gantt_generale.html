@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">📊 Pianificazione Generale — tutti i centri</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:12px">
+      Tutti i centri di costo con carico in coda, sulla stessa scala temporale. Trascina una commessa in avanti o
+      indietro su UN centro: l'intero programma si ricalcola da capo e ogni altro centro coinvolto si aggiorna qui
+      sotto in automatico — nessun passaggio manuale in piu'.
+    </p>
+
+    <div style="position:relative;max-width:420px;margin:12px 0 18px">
+      <input id="ricerca-commessa-generale" type="text" placeholder="Trova una commessa (codice OP, cliente, articolo)..." autocomplete="off"
+             style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"
+             oninput="filtraEvidenziaGenerale(this.value)">
+    </div>
+
+    <div style="display:flex;gap:14px;margin-bottom:14px;font-size:11px;color:var(--text-dim);flex-wrap:wrap">
+      <span><span class="legenda-swatch" style="background:#c0392b"></span> Urgente</span>
+      <span><span class="legenda-swatch" style="background:#2589c7"></span> Nuova Commessa</span>
+      <span><span class="legenda-swatch" style="background:#7f8c8d"></span> Sospesa</span>
+      <span><span class="legenda-swatch" style="background:#2a9d5c"></span> In Lavorazione</span>
+      <span><span class="legenda-swatch" style="background:#3d5a80"></span> (nessuna bandiera)</span>
+    </div>
+
+    <div id="gantt-generale-esito" style="font-size:12px;margin-bottom:10px"></div>
+    <div id="gantt-scroll-generale" style="overflow-x:auto;border:1px solid var(--border);border-radius:8px">
+      <div id="testata-giorni-generale" style="display:flex;position:sticky;top:0;background:var(--dark2,#0f1e35);z-index:3;border-bottom:2px solid var(--border)"></div>
+      <div id="corpo-generale">Caricamento...</div>
+    </div>
+  </div>
+</div>
+
+<style>
+  .legenda-swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+  .gg-giorno-col{min-width:34px;flex-shrink:0;text-align:center;font-size:11px;color:#fff;font-weight:800;padding:4px 0;border-right:1px solid rgba(255,255,255,.06)}
+  .gg-giorno-col.oggi{background:rgba(30,111,165,.35)}
+  .gg-centro-nome{
+    position:sticky;left:0;z-index:2;background:var(--dark3);padding:6px 12px;font-weight:800;font-size:13px;
+    border-bottom:1px solid var(--border);border-top:2px solid var(--border);
+  }
+  .gg-riga{display:flex;align-items:center;position:relative;height:48px;border-bottom:1px solid var(--border)}
+  .gg-barra{
+    position:absolute;top:6px;height:28px;border-radius:5px;display:flex;align-items:center;padding:0 8px;
+    font-size:11px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;cursor:grab;
+    touch-action:none;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,.4);
+  }
+  .gg-barra.evidenziata{outline:3px solid #fff;z-index:5}
+  .gg-barra.trascinando{opacity:.55;z-index:10}
+</style>
+{% endblock %}
+{% block scripts %}
+let CENTRI = [];
+const PX_PER_GIORNO = 34;
+let DATA_MIN = null, N_GIORNI = 14;
+
+function coloreBandiera(bandiera){
+  const mappa = {'Urgente': '#c0392b', 'Nuova Commessa': '#2589c7', 'Sospesa': '#7f8c8d', 'In Lavorazione': '#2a9d5c'};
+  return mappa[bandiera] || '#3d5a80';
+}
+
+async function carica(){
+  const corpo = document.getElementById('corpo-generale');
+  corpo.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/gantt/tutti');
+    CENTRI = await r.json();
+    renderTutto();
+  }catch(e){
+    corpo.innerHTML = '<p style="padding:16px;color:#c0392b">Errore di rete.</p>';
+  }
+}
+
+function renderTutto(){
+  const testata = document.getElementById('testata-giorni-generale');
+  const corpo = document.getElementById('corpo-generale');
+  if(!CENTRI.length){
+    testata.innerHTML = '';
+    corpo.innerHTML = '<p style="padding:16px;color:#aaa;font-style:italic">Nessuna commessa in coda su nessun centro al momento.</p>';
+    return;
+  }
+
+  // Scala temporale UNICA condivisa da tutti i centri, calcolata sul range
+  // complessivo di tutti i segmenti — cosi' le barre sono confrontabili a
+  // colpo d'occhio da un centro all'altro.
+  const oggi = new Date(); oggi.setHours(0,0,0,0);
+  let min = oggi, max = oggi;
+  CENTRI.forEach(c => c.segmenti.forEach(s => {
+    const i = new Date(s.inizio_iso), f = new Date(s.fine_iso);
+    if(i < min) min = i;
+    if(f > max) max = f;
+  }));
+  DATA_MIN = min;
+  N_GIORNI = Math.max(Math.round((max - min) / 86400000) + 3, 14);
+
+  let colonne = '';
+  for(let i = 0; i < N_GIORNI; i++){
+    const d = new Date(DATA_MIN); d.setDate(d.getDate() + i);
+    const eOggi = d.getTime() === oggi.getTime();
+    colonne += `<div class="gg-giorno-col ${eOggi ? 'oggi' : ''}" style="width:${PX_PER_GIORNO}px">${d.getDate()}/${d.getMonth()+1}</div>`;
+  }
+  testata.innerHTML = `<div class="gg-centro-nome" style="border-top:none"></div>` + colonne;
+
+  corpo.innerHTML = CENTRI.map(centro => renderCentro(centro)).join('');
+}
+
+function renderCentro(centro){
+  const barre = centro.segmenti.map((s, i) => {
+    const inizio = new Date(s.inizio_iso);
+    const fine = new Date(s.fine_iso);
+    const offsetGiorni = Math.round((inizio - DATA_MIN) / 86400000);
+    const larghezzaGiorni = Math.max(Math.round((fine - inizio) / 86400000), 1);
+    return `<div class="gg-barra" data-op-codice="${s.op_codice}"
+           style="left:${offsetGiorni * PX_PER_GIORNO}px;width:${larghezzaGiorni * PX_PER_GIORNO - 4}px;background:${coloreBandiera(s.bandiera_stato)}"
+           title="${s.op_codice} — ${s.codice_articolo}${s.cliente ? ' — ' + s.cliente : ''} — ${s.pezzi} pz, ${s.ore}h"
+           onpointerdown="ggIniziaDrag(event, this)">
+        ${s.op_codice}${s.commessa ? ' · ' + s.commessa : ''}
+      </div>`;
+  }).join('');
+  return `<div class="gg-centro-nome">${centro.nome} <span style="font-weight:400;color:var(--text-dim);font-size:11px">(${centro.capacita_ore_giorno}h/giorno · ${centro.n_risorse_equivalenti} risorse)</span></div>
+    <div class="gg-riga" data-sottogruppo-lista style="width:${N_GIORNI * PX_PER_GIORNO}px">${barre}</div>`;
+}
+
+function filtraEvidenziaGenerale(testo){
+  const q = testo.trim().toLowerCase();
+  document.querySelectorAll('.gg-barra').forEach(barra => {
+    const match = q.length >= 2 && barra.dataset.opCodice.toLowerCase().includes(q);
+    barra.classList.toggle('evidenziata', match);
+    if(match) barra.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'center'});
+  });
+}
+
+// Trascina una barra per anticiparla/posticiparla — riordino GLOBALE
+// (SequenzaAvanzamentoKPI, stesso identico endpoint gia' in uso), poi
+// ricarica TUTTI i centri: una commessa attraversa piu' macchine, quindi
+// spostarla su UNA riprogramma automaticamente ogni altro centro che
+// tocca — questo e' esattamente il "riprogramma tutto in automatico"
+// richiesto, non serve altro algoritmo: la simulazione e' sempre
+// ricalcolata da zero, mai uno stato salvato a parte.
+let _ggDragEl = null;
+let _ggTargetOpCodice = null;
+function ggIniziaDrag(e, barra){
+  e.preventDefault();
+  _ggDragEl = barra;
+  barra.classList.add('trascinando');
+  barra.setPointerCapture(e.pointerId);
+  document.addEventListener('pointermove', ggDragMove);
+  document.addEventListener('pointerup', ggDragFine, {once: true});
+  document.addEventListener('pointercancel', ggDragFine, {once: true});
+}
+function ggDragMove(e){
+  if(!_ggDragEl) return;
+  const sotto = document.elementFromPoint(e.clientX, e.clientY);
+  const barraSotto = sotto ? sotto.closest('.gg-barra') : null;
+  document.querySelectorAll('.gg-barra').forEach(b => b.style.outline = '');
+  if(barraSotto && barraSotto !== _ggDragEl){
+    barraSotto.style.outline = '2px dashed #fff';
+    _ggTargetOpCodice = barraSotto.dataset.opCodice;
+  }else{
+    _ggTargetOpCodice = null;
+  }
+}
+async function ggDragFine(){
+  document.removeEventListener('pointermove', ggDragMove);
+  document.querySelectorAll('.gg-barra').forEach(b => b.style.outline = '');
+  const esito = document.getElementById('gantt-generale-esito');
+  if(!_ggDragEl) return;
+  const opTrascinato = _ggDragEl.dataset.opCodice;
+  _ggDragEl.classList.remove('trascinando');
+  _ggDragEl = null;
+  if(!_ggTargetOpCodice || _ggTargetOpCodice === opTrascinato){ return; }
+  const target = _ggTargetOpCodice;
+  _ggTargetOpCodice = null;
+
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Riprogrammazione di tutti i centri...';
+  try{
+    const rOrdine = await fetch('/api/kpi/avanzamento-commesse');
+    const globale = (await rOrdine.json()).map(x => x.op_codice);
+    const senzaTrascinato = globale.filter(c => c !== opTrascinato);
+    const posTarget = senzaTrascinato.indexOf(target);
+    senzaTrascinato.splice(posTarget, 0, opTrascinato);
+    const rSalva = await fetch('/api/kpi/avanzamento-commesse/riordina', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({op_codici: senzaTrascinato})
+    });
+    const d = await rSalva.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = 'Errore nel salvare l\'ordine.'; return; }
+    esito.style.color = '#1a9e5c'; esito.textContent = `✅ ${opTrascinato} anticipata rispetto a ${target} — tutti i centri riprogrammati.`;
+    await carica();
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = 'Errore di rete durante il salvataggio.';
+  }
+}
+
+carica();
+{% endblock %}

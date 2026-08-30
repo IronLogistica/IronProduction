@@ -523,6 +523,47 @@ def api_gantt_centri():
     return jsonify(righe)
 
 
+@pp_bp.route('/gantt-generale')
+def pagina_gantt_generale():
+    """
+    Vista UNIFICATA — tutti i Gantt dei centri di costo impilati in
+    un'unica pagina, sulla STESSA scala temporale, per riprogrammare
+    l'intera produzione da un unico posto: trascinando una commessa in
+    avanti su UN centro, l'intero programma (ogni altro centro che quella
+    commessa e le altre attraversano) si ricalcola da capo — nessun passo
+    manuale in più, la simulazione è sempre ricalcolata da zero a ogni
+    richiesta, mai uno stato salvato che potrebbe disallinearsi.
+    """
+    return render_template('produzione_pp/gantt_generale.html', active='gantt_centri_costo')
+
+
+@pp_bp.route('/api/gantt/tutti')
+def api_gantt_tutti():
+    """
+    Tutti i centri con del carico, ciascuno con i propri segmenti — in
+    UNA sola chiamata (la simulazione gira una volta sola, poi si
+    riorganizza per centro) invece di una chiamata per centro dal
+    frontend: per la vista unificata che li mostra tutti insieme, evita
+    N chiamate di rete separate per N centri.
+    """
+    _risultati, segmenti_per_centro = calcola_avanzamento_commesse()
+    centri = {c.id: c for c in CentroCostoWood.query.all()}
+    risultato = []
+    for centro_id, segmenti in segmenti_per_centro.items():
+        centro = centri.get(centro_id)
+        if not centro or not segmenti:
+            continue
+        cap = _capacita_giornaliera_ore(centro) or (DEFAULT_ORE_GIORNO * (centro.n_risorse_equivalenti or 1))
+        risultato.append({
+            'id': centro.id, 'nome': centro.nome,
+            'capacita_ore_giorno': cap,
+            'n_risorse_equivalenti': centro.n_risorse_equivalenti or 1,
+            'segmenti': segmenti,
+        })
+    risultato.sort(key=lambda r: r['nome'])
+    return jsonify(risultato)
+
+
 @pp_bp.route('/api/gantt/centro/<int:centro_id>')
 def api_gantt_centro(centro_id):
     """
