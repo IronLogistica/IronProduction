@@ -318,7 +318,10 @@ def api_gantt_centri():
         if not centro:
             continue
         ore_totali = sum(s['ore'] for s in segmenti)
-        cap = _capacita_giornaliera_ore(centro) or DEFAULT_ORE_GIORNO
+        # Stesso fix di avanzamento.py: senza questo, il fallback ignorava
+        # le risorse assegnate quando la capacità precisa non è
+        # configurata — mettere più persone non cambiava la stima.
+        cap = _capacita_giornaliera_ore(centro) or (DEFAULT_ORE_GIORNO * (centro.n_risorse_equivalenti or 1))
         righe.append({
             'id': centro_id, 'nome': centro.nome,
             'n_commesse': len({s['op_codice'] for s in segmenti}),
@@ -347,7 +350,7 @@ def api_gantt_centro(centro_id):
     return jsonify({
         'centro': {'id': centro.id, 'nome': centro.nome,
                     'n_risorse_equivalenti': centro.n_risorse_equivalenti or 1,
-                    'capacita_ore_giorno': cap or DEFAULT_ORE_GIORNO,
+                    'capacita_ore_giorno': cap or (DEFAULT_ORE_GIORNO * (centro.n_risorse_equivalenti or 1)),
                     'capacita_configurata': cap is not None},
         'segmenti': segmenti,
     })

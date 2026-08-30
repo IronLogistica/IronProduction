@@ -271,8 +271,17 @@ def calcola_avanzamento_commesse():
 
                 cap = _capacita_giornaliera_ore(centro)
                 if not cap:
-                    avvisi.append(f"Capacità non configurata per {centro.nome} — stima {DEFAULT_ORE_GIORNO:.0f}h/giorno")
-                    cap = DEFAULT_ORE_GIORNO
+                    # BUG REALE CORRETTO: senza questo, un centro senza
+                    # 'ore_teoriche_periodo' configurato ignorava del
+                    # tutto n_risorse_equivalenti nel fallback — mettere
+                    # 6 persone invece di 1 non cambiava NULLA la stima,
+                    # sempre bloccata a DEFAULT_ORE_GIORNO fisso. Ora la
+                    # stima di default scala comunque con le risorse
+                    # assegnate, anche prima di configurare la capacità
+                    # precisa (ore_teoriche_periodo/periodo_riferimento).
+                    cap = DEFAULT_ORE_GIORNO * (centro.n_risorse_equivalenti or 1)
+                    avvisi.append(f"Capacità non configurata per {centro.nome} — stima "
+                                  f"{DEFAULT_ORE_GIORNO:.0f}h/giorno × {centro.n_risorse_equivalenti or 1} risorse = {cap:.1f}h/giorno")
 
                 libero_centro = cursore_centro.get(centro.id, oggi)
                 inizio_fase = max(cursore_componente, libero_centro)
