@@ -282,6 +282,29 @@ def api_gantt_diagnostica():
     })
 
 
+@pp_bp.route('/api/gantt/centro/<int:centro_id>/risorse', methods=['PUT'])
+def api_gantt_centro_aggiorna_risorse(centro_id):
+    """
+    Aggiorna direttamente da questa pagina il numero di risorse equivalenti
+    assegnate al centro (CentroCostoWood.n_risorse_equivalenti) — lo
+    stesso identico campo già usato per il calcolo capacità/giorni di
+    carico (raddoppiare le risorse dimezza i giorni): qui è solo esposto
+    dove serve davvero, invece di dover andare su Centri di Costo per
+    cambiarlo e tornare indietro a vedere l'effetto.
+    """
+    centro = CentroCostoWood.query.get_or_404(centro_id)
+    d = request.get_json(force=True)
+    try:
+        n = float(d.get('n_risorse_equivalenti'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Valore non valido'), 400
+    if n <= 0:
+        return jsonify(ok=False, error='Le risorse devono essere maggiori di zero'), 400
+    centro.n_risorse_equivalenti = n
+    db.session.commit()
+    return jsonify(ok=True, n_risorse_equivalenti=n)
+
+
 @pp_bp.route('/api/gantt/centri')
 def api_gantt_centri():
     """Elenco dei centri di costo con del carico in coda — giorni totali

@@ -23,6 +23,15 @@
       <span id="riepilogo-centro" style="font-size:12px;color:var(--text-dim)"></span>
     </div>
 
+    <div style="display:flex;align-items:center;gap:8px;margin:10px 0 16px;padding:10px 14px;background:var(--dark3);border-radius:8px;width:fit-content">
+      <span style="font-size:12px;color:var(--text-dim)">👷 Risorse qualificate assegnate:</span>
+      <button class="btn btn-ghost" style="padding:2px 10px" onclick="cambiaRisorse(-1)">−</button>
+      <input id="input-risorse" type="number" min="0.25" step="0.25" style="width:60px;text-align:center;padding:5px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)"
+             onchange="salvaRisorse(this.value)">
+      <button class="btn btn-ghost" style="padding:2px 10px" onclick="cambiaRisorse(1)">+</button>
+      <span id="esito-risorse" style="font-size:11px;margin-left:6px"></span>
+    </div>
+
     <div style="position:relative;max-width:420px;margin:12px 0 18px">
       <input id="ricerca-commessa" type="text" placeholder="🔍 Trova una commessa (codice OP, cliente, articolo)..." autocomplete="off"
              style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"
@@ -38,7 +47,10 @@
     </div>
 
     <div id="gantt-scroll" style="overflow-x:auto;border:1px solid var(--border);border-radius:8px">
-      <div id="gantt-intestazione-giorni" style="display:flex;position:sticky;top:0;background:var(--dark2,#0f1e35);z-index:2;border-bottom:1px solid var(--border)"></div>
+      <div id="gantt-intestazione-giorni-sopra" class="gantt-intestazione-giorni" style="display:flex;position:sticky;top:0;background:var(--dark2,#0f1e35);z-index:2;border-bottom:1px solid var(--border)"></div>
+      <div id="gantt-righe" data-sottogruppo-lista style="position:relative">Caricamento...</div>
+      <div id="gantt-intestazione-giorni-sotto" class="gantt-intestazione-giorni" style="display:flex;background:var(--dark2,#0f1e35);border-top:1px solid var(--border)"></div>
+
       <div id="gantt-righe" data-sottogruppo-lista style="position:relative">Caricamento...</div>
     </div>
     <div id="gantt-esito" style="font-size:12px;margin-top:10px"></div>
@@ -58,10 +70,10 @@
 
   .legenda-swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
 
-  .gantt-giorno-col{min-width:34px;flex-shrink:0;text-align:center;font-size:9px;color:var(--text-dim);padding:4px 0;border-right:1px solid rgba(255,255,255,.06)}
-  .gantt-giorno-col.oggi{background:rgba(30,111,165,.18);font-weight:800;color:#fff}
+  .gantt-giorno-col{min-width:34px;flex-shrink:0;text-align:center;font-size:11px;color:#fff;font-weight:800;padding:4px 0;border-right:1px solid rgba(255,255,255,.06)}
+  .gantt-giorno-col.oggi{background:rgba(30,111,165,.35)}
 
-  .gantt-riga{display:flex;align-items:center;position:relative;height:40px;border-bottom:1px solid var(--border)}
+  .gantt-riga{display:flex;align-items:center;position:relative;height:52px;border-bottom:1px solid var(--border)}
   .gantt-barra{
     position:absolute;top:6px;height:28px;border-radius:5px;display:flex;align-items:center;padding:0 8px;
     font-size:11px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;cursor:grab;
@@ -129,19 +141,47 @@ async function caricaGantt(){
     SEGMENTI = d.segmenti;
     document.getElementById('titolo-centro').textContent = CENTRO_INFO.nome;
     document.getElementById('riepilogo-centro').textContent =
-      `${CENTRO_INFO.n_risorse_equivalenti} risorse · ${CENTRO_INFO.capacita_ore_giorno}h/giorno` +
+      `${CENTRO_INFO.capacita_ore_giorno}h/giorno` +
       (CENTRO_INFO.capacita_configurata ? '' : ' (capacità stimata di default, non configurata)');
+    document.getElementById('input-risorse').value = CENTRO_INFO.n_risorse_equivalenti;
+    document.getElementById('esito-risorse').textContent = '';
     renderGantt();
   }catch(e){
     righeBox.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
   }
 }
 
+function cambiaRisorse(delta){
+  const input = document.getElementById('input-risorse');
+  const nuovo = Math.max(0.25, (parseFloat(input.value) || 1) + delta);
+  input.value = nuovo;
+  salvaRisorse(nuovo);
+}
+
+async function salvaRisorse(valore){
+  const n = parseFloat(valore);
+  const esito = document.getElementById('esito-risorse');
+  if(isNaN(n) || n <= 0){ esito.style.color = '#c0392b'; esito.textContent = 'Valore non valido.'; return; }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Aggiornamento...';
+  try{
+    const r = await fetch(`/api/gantt/centro/${CENTRO_ATTIVO_ID}/risorse`, {
+      method: 'PUT', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({n_risorse_equivalenti: n})
+    });
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '❌ ' + (d.error || 'Errore.'); return; }
+    esito.style.color = '#1a9e5c'; esito.textContent = '✅ Ricalcolato';
+    await caricaGantt();  // ricarica: con più/meno risorse il carico (giorni) cambia, il Gantt deve rifletterlo subito
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
 function renderGantt(){
-  const intestazione = document.getElementById('gantt-intestazione-giorni');
+  const testataSopra = document.getElementById('gantt-intestazione-giorni-sopra');
+  const testataSotto = document.getElementById('gantt-intestazione-giorni-sotto');
   const righeBox = document.getElementById('gantt-righe');
   if(!SEGMENTI.length){
-    intestazione.innerHTML = '';
+    testataSopra.innerHTML = ''; testataSotto.innerHTML = '';
     righeBox.innerHTML = '<p style="padding:16px;color:#aaa;font-style:italic">Nessuna commessa in coda su questo centro.</p>';
     return;
   }
@@ -156,24 +196,30 @@ function renderGantt(){
     const eOggi = d.getTime() === oggi.getTime();
     colonne += `<div class="gantt-giorno-col ${eOggi ? 'oggi' : ''}" style="width:${PX_PER_GIORNO}px">${d.getDate()}/${d.getMonth()+1}</div>`;
   }
-  intestazione.innerHTML = colonne;
+  testataSopra.innerHTML = colonne;
+  testataSotto.innerHTML = colonne;
 
-  righeBox.innerHTML = SEGMENTI.map((s, i) => {
+  // Un'UNICA riga per il centro: le commesse in coda su una stessa
+  // macchina non lavorano mai in parallelo (il motore di simulazione le
+  // sequenzia una dopo l'altra, "libera" il centro solo a fine
+  // lavorazione) — per costruzione i segmenti non si sovrappongono mai
+  // nel tempo, quindi stanno tutti in fila sulla stessa riga senza
+  // scontrarsi visivamente, esattamente come richiesto.
+  const barre = SEGMENTI.map((s, i) => {
     const inizio = new Date(s.inizio_iso);
     const fine = new Date(s.fine_iso);
     const offsetGiorni = Math.round((inizio - dataMin) / 86400000);
     const larghezzaGiorni = Math.max(Math.round((fine - inizio) / 86400000), 1);
     const left = offsetGiorni * PX_PER_GIORNO;
     const width = larghezzaGiorni * PX_PER_GIORNO - 4;
-    return `<div class="gantt-riga" style="width:${nGiorni * PX_PER_GIORNO}px">
-      <div class="gantt-barra" data-op-codice="${s.op_codice}" data-indice="${i}"
+    return `<div class="gantt-barra" data-op-codice="${s.op_codice}" data-indice="${i}"
            style="left:${left}px;width:${width}px;background:${coloreBandiera(s.bandiera_stato)}"
            title="${s.op_codice} — ${s.codice_articolo}${s.cliente ? ' — ' + s.cliente : ''} — ${s.pezzi} pz, ${s.ore}h"
            onpointerdown="ganttIniziaDrag(event, this)">
         ${s.op_codice}${s.commessa ? ' · ' + s.commessa : ''}
-      </div>
-    </div>`;
+      </div>`;
   }).join('');
+  righeBox.innerHTML = `<div class="gantt-riga" style="width:${nGiorni * PX_PER_GIORNO}px">${barre}</div>`;
 }
 
 function filtraEvidenziaCommessa(testo){
