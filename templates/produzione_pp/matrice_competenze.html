@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🧩 Matrice Competenze — chi sa usare cosa</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px">
+      Segna quali centri di costo ogni operatore e' in grado di coprire. Il Gantt Centri di Costo propone SOLO le
+      persone competenti quando assegni risorse a un centro.
+    </p>
+    <div style="display:flex;gap:10px;margin-bottom:18px;align-items:center">
+      <input id="nuovo-operatore-nome" type="text" placeholder="Nome nuovo operatore..."
+             style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)">
+      <button class="btn btn-primary" onclick="creaOperatore()">➕ Aggiungi Operatore</button>
+    </div>
+    <div id="matrice-box" style="overflow-x:auto">Caricamento...</div>
+  </div>
+</div>
+
+<style>
+  table.matrice{border-collapse:collapse;font-size:13px}
+  table.matrice th, table.matrice td{border:1px solid var(--border);padding:8px 10px;text-align:center}
+  table.matrice th.nome-operatore, table.matrice td.nome-operatore{text-align:left;font-weight:700;white-space:nowrap;position:sticky;left:0;background:var(--dark2,#0f1e35)}
+  table.matrice th.centro-hdr{writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;padding:10px 6px;font-size:11px}
+  .casella-competenza{width:26px;height:26px;border-radius:5px;border:1px solid var(--border);cursor:pointer;background:var(--surface)}
+  .casella-competenza.attiva{background:#2a9d5c;border-color:#2a9d5c;color:#fff;font-weight:900}
+  .btn-elimina-piccolo{background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px;padding:2px 6px}
+</style>
+{% endblock %}
+{% block scripts %}
+let DATI = null;
+
+async function caricaMatrice(){
+  const box = document.getElementById('matrice-box');
+  try{
+    const r = await fetch('/api/matrice-competenze');
+    DATI = await r.json();
+    renderMatrice();
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function renderMatrice(){
+  const box = document.getElementById('matrice-box');
+  if(!DATI.operatori.length){
+    box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun operatore ancora — aggiungine uno qui sopra.</p>';
+    return;
+  }
+  if(!DATI.centri.length){
+    box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun centro di costo configurato.</p>';
+    return;
+  }
+  const competenzeSet = new Set(DATI.competenze.map(c => c[0] + '-' + c[1]));
+  let html = '<table class="matrice"><thead><tr><th class="nome-operatore">Operatore</th>';
+  DATI.centri.forEach(c => { html += `<th class="centro-hdr">${c.nome}</th>`; });
+  html += '<th></th></tr></thead><tbody>';
+  DATI.operatori.forEach(op => {
+    html += `<tr><td class="nome-operatore">${op.nome}</td>`;
+    DATI.centri.forEach(c => {
+      const attiva = competenzeSet.has(op.id + '-' + c.id);
+      html += `<td><div class="casella-competenza ${attiva ? 'attiva' : ''}" onclick="toggleCompetenza(${op.id}, ${c.id}, this)">${attiva ? '✓' : ''}</div></td>`;
+    });
+    html += `<td><button class="btn-elimina-piccolo" onclick="eliminaOperatore(${op.id}, '${op.nome.replace(/'/g,"\\'")}')" title="Elimina operatore">🗑️</button></td></tr>`;
+  });
+  html += '</tbody></table>';
+  box.innerHTML = html;
+}
+
+async function toggleCompetenza(operatoreId, centroId, casella){
+  casella.style.opacity = '0.4';
+  try{
+    const r = await fetch('/api/matrice-competenze/toggle', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({operatore_id: operatoreId, centro_costo_id: centroId})
+    });
+    const d = await r.json();
+    if(!d.ok){ alert(d.error || 'Errore.'); casella.style.opacity = ''; return; }
+    casella.classList.toggle('attiva', d.competente);
+    casella.textContent = d.competente ? '✓' : '';
+    casella.style.opacity = '';
+  }catch(e){
+    alert('Errore di rete.'); casella.style.opacity = '';
+  }
+}
+
+async function creaOperatore(){
+  const input = document.getElementById('nuovo-operatore-nome');
+  const nome = input.value.trim();
+  if(!nome) return;
+  try{
+    const r = await fetch('/api/operatori', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nome})
+    });
+    const d = await r.json();
+    if(!d.ok){ alert(d.error || 'Errore.'); return; }
+    input.value = '';
+    caricaMatrice();
+  }catch(e){ alert('Errore di rete.'); }
+}
+
+async function eliminaOperatore(id, nome){
+  if(!confirm(`Eliminare ${nome}? Verranno tolte anche le sue competenze e assegnazioni correnti.`)) return;
+  try{
+    await fetch(`/api/operatori/${id}`, {method: 'DELETE'});
+    caricaMatrice();
+  }catch(e){ alert('Errore di rete.'); }
+}
+
+caricaMatrice();
+{% endblock %}

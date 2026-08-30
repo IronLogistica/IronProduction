@@ -307,6 +307,57 @@ class CodiceInventarioWood(db.Model):
     sottogruppo = db.relationship('SottogruppoInventarioWood')
 
 
+class OperatoreWood(db.Model):
+    """
+    Anagrafica minima di un operaio/operatore — usata dalla Matrice
+    Competenze e dal Gantt Centri di Costo (assegnare RISORSE SPECIFICHE
+    a un centro, non solo un numero astratto) e dal Gantt personale per
+    operatore.
+    """
+    __tablename__ = 'operatori_wood'
+    id = db.Column(db.Integer, primary_key=True)
+    nome = db.Column(db.String(100), nullable=False)
+    attivo = db.Column(db.Boolean, default=True)
+    creato_il = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class CompetenzaOperatoreWood(db.Model):
+    """
+    Matrice Competenze — quali centri di costo un operatore è IN GRADO DI
+    coprire (sa usare quella macchina). Serve a filtrare, nel Gantt di un
+    centro, SOLO gli operatori assegnabili là — non un elenco generico di
+    tutti gli operai, che porterebbe ad assegnare per sbaglio qualcuno che
+    non sa usare quella macchina.
+    """
+    __tablename__ = 'competenze_operatore_wood'
+    id = db.Column(db.Integer, primary_key=True)
+    operatore_id = db.Column(db.Integer, db.ForeignKey('operatori_wood.id', ondelete='CASCADE'), nullable=False)
+    centro_costo_id = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id', ondelete='CASCADE'), nullable=False)
+    operatore = db.relationship('OperatoreWood', backref=db.backref('competenze', cascade='all, delete-orphan'))
+    centro_costo = db.relationship('CentroCostoWood')
+    __table_args__ = (db.UniqueConstraint('operatore_id', 'centro_costo_id', name='uq_competenza_operatore_centro'),)
+
+
+class AssegnazioneOperatoreCentroWood(db.Model):
+    """
+    Chi è ATTUALMENTE assegnato a un centro di costo (conta ai fini del
+    carico/Gantt di quel centro) — DIVERSO dalla competenza (quella dice
+    solo CHI POTREBBE farlo, questa dice CHI CI STA DAVVERO ORA). Un
+    operatore competente su un centro non è automaticamente assegnato:
+    Angelo lo sceglie esplicitamente dal Gantt. Il numero di assegnazioni
+    per centro sostituisce (deriva) CentroCostoWood.n_risorse_equivalenti,
+    non lo affianca: contare le teste vere è più affidabile di un numero
+    scritto a mano che può disallinearsi da chi è davvero lì.
+    """
+    __tablename__ = 'assegnazioni_operatore_centro_wood'
+    id = db.Column(db.Integer, primary_key=True)
+    operatore_id = db.Column(db.Integer, db.ForeignKey('operatori_wood.id', ondelete='CASCADE'), nullable=False)
+    centro_costo_id = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id', ondelete='CASCADE'), nullable=False)
+    operatore = db.relationship('OperatoreWood')
+    centro_costo = db.relationship('CentroCostoWood')
+    __table_args__ = (db.UniqueConstraint('operatore_id', 'centro_costo_id', name='uq_assegnazione_operatore_centro'),)
+
+
 class RettificaGrezzoIW(db.Model):
     """
     Rettifica manuale al 'Grezzo IW' (fine saldatura giornaliera dichiarata

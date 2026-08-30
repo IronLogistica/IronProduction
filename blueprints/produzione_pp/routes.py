@@ -16,7 +16,8 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
                     FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D,
                     MatriceWood, ContromatriceWood, MappaCodiceMasterWork, RettificaGrezzoIW,
-                    ParametriLavorazioneWood)
+                    ParametriLavorazioneWood, OperatoreWood, CompetenzaOperatoreWood,
+                    AssegnazioneOperatoreCentroWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -303,6 +304,196 @@ def api_gantt_centro_aggiorna_risorse(centro_id):
     centro.n_risorse_equivalenti = n
     db.session.commit()
     return jsonify(ok=True, n_risorse_equivalenti=n)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MATRICE COMPETENZE — quali centri di costo ogni operatore è in grado di
+#  coprire. Usata dal Gantt Centri di Costo per proporre, quando si assegna
+#  gente a un centro, SOLO chi è davvero competente su quella macchina —
+#  non un elenco generico di tutti gli operai.
+# ══════════════════════════════════════════════════════════════════════════════
+@pp_bp.route('/matrice-competenze')
+def pagina_matrice_competenze():
+    return render_template('produzione_pp/matrice_competenze.html', active='matrice_competenze')
+
+
+@pp_bp.route('/api/operatori')
+def api_operatori_lista():
+    operatori = OperatoreWood.query.order_by(OperatoreWood.nome).all()
+    return jsonify([{'id': o.id, 'nome': o.nome, 'attivo': o.attivo} for o in operatori])
+
+
+@pp_bp.route('/api/operatori', methods=['POST'])
+def api_operatori_crea():
+    d = request.get_json(force=True)
+    nome = (d.get('nome') or '').strip()
+    if not nome:
+        return jsonify(ok=False, error='Il nome è obbligatorio'), 400
+    o = OperatoreWood(nome=nome, attivo=True)
+    db.session.add(o)
+    db.session.commit()
+    return jsonify(ok=True, id=o.id)
+
+
+@pp_bp.route('/api/operatori/<int:oid>', methods=['PUT'])
+def api_operatori_aggiorna(oid):
+    o = OperatoreWood.query.get_or_404(oid)
+    d = request.get_json(force=True)
+    if 'nome' in d:
+        nome = (d.get('nome') or '').strip()
+        if not nome:
+            return jsonify(ok=False, error='Il nome è obbligatorio'), 400
+        o.nome = nome
+    if 'attivo' in d:
+        o.attivo = bool(d.get('attivo'))
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@pp_bp.route('/api/operatori/<int:oid>', methods=['DELETE'])
+def api_operatori_elimina(oid):
+    """Elimina l'operatore — a cascata anche le sue competenze e le sue
+    assegnazioni correnti (ondelete='CASCADE' sui due modelli collegati).
+    Se era assegnato a qualche centro, quel centro perde una risorsa
+    contata: se vuoi solo che smetta di lavorare lì SENZA cancellarlo
+    dall'anagrafica, usa 'Rimuovi dal centro' nel Gantt invece di
+    eliminarlo del tutto qui."""
+    o = OperatoreWood.query.get_or_404(oid)
+    centri_da_ricalcolare = {a.centro_costo_id for a in AssegnazioneOperatoreCentroWood.query.filter_by(operatore_id=oid).all()}
+    db.session.delete(o)
+    db.session.flush()
+    for centro_id in centri_da_ricalcolare:
+        _ricalcola_risorse_da_assegnazioni(centro_id)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@pp_bp.route('/api/matrice-competenze')
+def api_matrice_competenze():
+    """Griglia completa: operatori × centri di costo, con quali coppie
+    sono già segnate come competenti — per disegnare la matrice a
+    caselle spuntabili."""
+    operatori = OperatoreWood.query.filter_by(attivo=True).order_by(OperatoreWood.nome).all()
+    centri = CentroCostoWood.query.order_by(CentroCostoWood.nome).all()
+    competenze = {(c.operatore_id, c.centro_costo_id) for c in CompetenzaOperatoreWood.query.all()}
+    return jsonify({
+        'operatori': [{'id': o.id, 'nome': o.nome} for o in operatori],
+        'centri': [{'id': c.id, 'nome': c.nome} for c in centri],
+        'competenze': [[op_id, centro_id] for op_id, centro_id in competenze],
+    })
+
+
+@pp_bp.route('/api/matrice-competenze/toggle', methods=['POST'])
+def api_matrice_competenze_toggle():
+    d = request.get_json(force=True)
+    operatore_id = d.get('operatore_id')
+    centro_costo_id = d.get('centro_costo_id')
+    if not operatore_id or not centro_costo_id:
+        return jsonify(ok=False, error='Operatore e centro sono obbligatori'), 400
+    OperatoreWood.query.get_or_404(operatore_id)
+    CentroCostoWood.query.get_or_404(centro_costo_id)
+    riga = CompetenzaOperatoreWood.query.filter_by(operatore_id=operatore_id, centro_costo_id=centro_costo_id).first()
+    if riga:
+        db.session.delete(riga)
+        attivo_ora = False
+    else:
+        db.session.add(CompetenzaOperatoreWood(operatore_id=operatore_id, centro_costo_id=centro_costo_id))
+        attivo_ora = True
+    db.session.commit()
+    return jsonify(ok=True, competente=attivo_ora)
+
+
+def _ricalcola_risorse_da_assegnazioni(centro_id):
+    """
+    n_risorse_equivalenti di un centro DERIVA dal numero di operatori
+    davvero assegnati là (AssegnazioneOperatoreCentroWood), non più da un
+    numero scritto a mano — contare le teste vere è più affidabile di un
+    numero che può disallinearsi da chi è davvero lì. Se il centro non ha
+    NESSUNA assegnazione tracciata (nessuno ha ancora usato il nuovo
+    sistema per lui), non tocca il valore esistente — resta modificabile
+    a mano come prima, per compatibilità con i centri non ancora
+    migrati a persone nominative.
+    """
+    n_assegnati = AssegnazioneOperatoreCentroWood.query.filter_by(centro_costo_id=centro_id).count()
+    if n_assegnati > 0:
+        centro = CentroCostoWood.query.get(centro_id)
+        if centro:
+            centro.n_risorse_equivalenti = n_assegnati
+
+
+@pp_bp.route('/api/gantt/centro/<int:centro_id>/operatori')
+def api_gantt_centro_operatori(centro_id):
+    """
+    Per il Gantt di questo centro: chi è COMPETENTE (può essere scelto) e
+    chi è ATTUALMENTE assegnato (conta già nel carico) — la selezione
+    proposta è filtrata alla sola Matrice Competenze di questo centro,
+    mai un elenco generico di tutti gli operai.
+    """
+    CentroCostoWood.query.get_or_404(centro_id)
+    competenti_ids = {c.operatore_id for c in CompetenzaOperatoreWood.query.filter_by(centro_costo_id=centro_id).all()}
+    assegnati_ids = {a.operatore_id for a in AssegnazioneOperatoreCentroWood.query.filter_by(centro_costo_id=centro_id).all()}
+    operatori = OperatoreWood.query.filter(OperatoreWood.id.in_(competenti_ids | assegnati_ids)).order_by(OperatoreWood.nome).all()
+    return jsonify([{'id': o.id, 'nome': o.nome, 'competente': o.id in competenti_ids, 'assegnato': o.id in assegnati_ids}
+                     for o in operatori])
+
+
+@pp_bp.route('/api/gantt/centro/<int:centro_id>/operatori/toggle', methods=['POST'])
+def api_gantt_centro_operatori_toggle(centro_id):
+    """
+    Assegna/disassegna un operatore a questo centro — SOLO se è
+    competente (la Matrice Competenze è un cancello, non un suggerimento:
+    non si assegna per sbaglio chi non sa usare quella macchina). Ogni
+    cambiamento ricalcola subito n_risorse_equivalenti del centro dal
+    numero di persone davvero assegnate.
+    """
+    centro = CentroCostoWood.query.get_or_404(centro_id)
+    d = request.get_json(force=True)
+    operatore_id = d.get('operatore_id')
+    if not operatore_id:
+        return jsonify(ok=False, error='Operatore obbligatorio'), 400
+    operatore = OperatoreWood.query.get_or_404(operatore_id)
+    e_competente = CompetenzaOperatoreWood.query.filter_by(operatore_id=operatore_id, centro_costo_id=centro_id).first()
+    if not e_competente:
+        return jsonify(ok=False, error=f'{operatore.nome} non risulta competente su {centro.nome} — '
+                                        f'aggiungilo prima nella Matrice Competenze.'), 400
+    riga = AssegnazioneOperatoreCentroWood.query.filter_by(operatore_id=operatore_id, centro_costo_id=centro_id).first()
+    if riga:
+        db.session.delete(riga)
+        assegnato_ora = False
+    else:
+        db.session.add(AssegnazioneOperatoreCentroWood(operatore_id=operatore_id, centro_costo_id=centro_id))
+        assegnato_ora = True
+    db.session.flush()
+    _ricalcola_risorse_da_assegnazioni(centro_id)
+    db.session.commit()
+    return jsonify(ok=True, assegnato=assegnato_ora, n_risorse_equivalenti=centro.n_risorse_equivalenti)
+
+
+@pp_bp.route('/gantt-operatore/<int:operatore_id>')
+def pagina_gantt_operatore(operatore_id):
+    """Gantt PERSONALE — su quali centri questo operatore è assegnato, e
+    per ciascuno la sua coda di lavoro (stessa fonte del Gantt per
+    centro, solo filtrata sui centri che riguardano lui)."""
+    operatore = OperatoreWood.query.get_or_404(operatore_id)
+    return render_template('produzione_pp/gantt_operatore.html', active='gantt_centri_costo', operatore=operatore)
+
+
+@pp_bp.route('/api/gantt/operatore/<int:operatore_id>')
+def api_gantt_operatore(operatore_id):
+    operatore = OperatoreWood.query.get_or_404(operatore_id)
+    centri_assegnato = (CentroCostoWood.query.join(AssegnazioneOperatoreCentroWood,
+                        AssegnazioneOperatoreCentroWood.centro_costo_id == CentroCostoWood.id)
+                        .filter(AssegnazioneOperatoreCentroWood.operatore_id == operatore_id).all())
+    _risultati, segmenti_per_centro = calcola_avanzamento_commesse()
+    centri_out = []
+    for centro in centri_assegnato:
+        cap = _capacita_giornaliera_ore(centro)
+        centri_out.append({
+            'id': centro.id, 'nome': centro.nome,
+            'capacita_ore_giorno': cap or (DEFAULT_ORE_GIORNO * (centro.n_risorse_equivalenti or 1)),
+            'segmenti': segmenti_per_centro.get(centro.id, []),
+        })
+    return jsonify({'operatore': {'id': operatore.id, 'nome': operatore.nome}, 'centri': centri_out})
 
 
 @pp_bp.route('/api/gantt/centri')

@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">👷 Gantt Personale — {{ operatore.nome }}</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px">
+    <a class="btn btn-ghost" href="/gantt-centri-costo" style="margin-bottom:16px;display:inline-block">← Gantt Centri di Costo</a>
+    <div id="centri-operatore" style="display:flex;flex-direction:column;gap:24px">Caricamento...</div>
+  </div>
+</div>
+
+<style>
+  .gantt-op-giorno-col{min-width:34px;flex-shrink:0;text-align:center;font-size:11px;color:#fff;font-weight:800;padding:4px 0;border-right:1px solid rgba(255,255,255,.06)}
+  .gantt-op-giorno-col.oggi{background:rgba(30,111,165,.35)}
+  .gantt-op-riga{display:flex;align-items:center;position:relative;height:52px;border-bottom:1px solid var(--border)}
+  .gantt-op-barra{
+    position:absolute;top:6px;height:28px;border-radius:5px;display:flex;align-items:center;padding:0 8px;
+    font-size:11px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;background:#2589c7;
+    box-shadow:0 1px 3px rgba(0,0,0,.4);
+  }
+</style>
+{% endblock %}
+{% block scripts %}
+const OPERATORE_ID = {{ operatore.id }};
+const PX_PER_GIORNO = 34;
+
+async function carica(){
+  const box = document.getElementById('centri-operatore');
+  try{
+    const r = await fetch(`/api/gantt/operatore/${OPERATORE_ID}`);
+    const d = await r.json();
+    if(!d.centri.length){
+      box.innerHTML = '<p style="color:#aaa;font-style:italic">Non assegnato a nessun centro al momento — assegnalo da un Gantt di un centro (serve prima segnarlo competente nella Matrice Competenze).</p>';
+      return;
+    }
+    box.innerHTML = d.centri.map(c => renderCentro(c)).join('');
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function renderCentro(centro){
+  if(!centro.segmenti.length){
+    return `<div><div style="font-weight:800;margin-bottom:8px">${centro.nome}</div><p style="color:#aaa;font-style:italic;font-size:12px">Nessuna commessa in coda su questo centro.</p></div>`;
+  }
+  const oggi = new Date(); oggi.setHours(0,0,0,0);
+  const dataMin = centro.segmenti.reduce((min, s) => { const dd = new Date(s.inizio_iso); return dd < min ? dd : min; }, oggi);
+  const dataMax = centro.segmenti.reduce((max, s) => { const dd = new Date(s.fine_iso); return dd > max ? dd : max; }, oggi);
+  const nGiorni = Math.max(Math.round((dataMax - dataMin) / 86400000) + 3, 14);
+
+  let colonne = '';
+  for(let i = 0; i < nGiorni; i++){
+    const dd = new Date(dataMin); dd.setDate(dd.getDate() + i);
+    const eOggi = dd.getTime() === oggi.getTime();
+    colonne += `<div class="gantt-op-giorno-col ${eOggi ? 'oggi' : ''}" style="width:${PX_PER_GIORNO}px">${dd.getDate()}/${dd.getMonth()+1}</div>`;
+  }
+  const barre = centro.segmenti.map(s => {
+    const inizio = new Date(s.inizio_iso);
+    const fine = new Date(s.fine_iso);
+    const offsetGiorni = Math.round((inizio - dataMin) / 86400000);
+    const larghezzaGiorni = Math.max(Math.round((fine - inizio) / 86400000), 1);
+    return `<div class="gantt-op-barra" style="left:${offsetGiorni * PX_PER_GIORNO}px;width:${larghezzaGiorni * PX_PER_GIORNO - 4}px"
+                 title="${s.op_codice} — ${s.codice_articolo} — ${s.pezzi} pz, ${s.ore}h">${s.op_codice}</div>`;
+  }).join('');
+
+  return `<div>
+    <div style="font-weight:800;margin-bottom:8px">${centro.nome} <span style="font-size:11px;color:var(--text-dim);font-weight:400">(${centro.capacita_ore_giorno}h/giorno)</span></div>
+    <div style="overflow-x:auto;border:1px solid var(--border);border-radius:8px">
+      <div style="display:flex;background:var(--dark2,#0f1e35);border-bottom:1px solid var(--border)">${colonne}</div>
+      <div class="gantt-op-riga" style="width:${nGiorni * PX_PER_GIORNO}px">${barre}</div>
+    </div>
+  </div>`;
+}
+
+carica();
+{% endblock %}
