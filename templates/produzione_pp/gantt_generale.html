@@ -48,8 +48,12 @@
     font-size:11px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;cursor:grab;
     touch-action:none;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,.4);
   }
-  .gg-barra.evidenziata{outline:3px solid #fff;z-index:5}
+  .gg-barra.evidenziata{outline:3px solid #fff;z-index:5;box-shadow:0 0 0 2px rgba(255,255,255,.4),0 1px 3px rgba(0,0,0,.4)}
   .gg-barra.trascinando{opacity:.55;z-index:10}
+  .gg-etichetta-esterna{
+    position:absolute;top:6px;height:28px;display:flex;align-items:center;font-size:11px;font-weight:700;
+    color:#e5eefc;white-space:nowrap;pointer-events:none;
+  }
 </style>
 {% endblock %}
 {% block scripts %}
@@ -108,17 +112,29 @@ function renderTutto(){
 }
 
 function renderCentro(centro){
+  const LARGHEZZA_MIN_TESTO = 70;  // sotto questa soglia il testo non ci sta dentro la barra: esce fuori
   const barre = centro.segmenti.map((s, i) => {
     const inizio = new Date(s.inizio_iso);
     const fine = new Date(s.fine_iso);
     const offsetGiorni = Math.round((inizio - DATA_MIN) / 86400000);
     const larghezzaGiorni = Math.max(Math.round((fine - inizio) / 86400000), 1);
-    return `<div class="gg-barra" data-op-codice="${s.op_codice}"
-           style="left:${offsetGiorni * PX_PER_GIORNO}px;width:${larghezzaGiorni * PX_PER_GIORNO - 4}px;background:${coloreBandiera(s.bandiera_stato)}"
+    const left = offsetGiorni * PX_PER_GIORNO;
+    const width = larghezzaGiorni * PX_PER_GIORNO - 4;
+    const etichetta = `${s.op_codice}${s.commessa ? ' · ' + s.commessa : ''}`;
+    const stretta = width < LARGHEZZA_MIN_TESTO;
+    const barra = `<div class="gg-barra" data-op-codice="${s.op_codice}"
+           style="left:${left}px;width:${width}px;background:${coloreBandiera(s.bandiera_stato)}"
            title="${s.op_codice} — ${s.codice_articolo}${s.cliente ? ' — ' + s.cliente : ''} — ${s.pezzi} pz, ${s.ore}h"
            onpointerdown="ggIniziaDrag(event, this)">
-        ${s.op_codice}${s.commessa ? ' · ' + s.commessa : ''}
+        ${stretta ? '' : etichetta}
       </div>`;
+    // Barra troppo stretta per contenere il testo: l'etichetta esce fuori,
+    // subito a destra della barra — mai invisibile/tagliata, l'unico modo
+    // per riconoscere una commessa senza colori a testa (con 200 commesse
+    // sono comunque indistinguibili) resta poterne leggere il codice.
+    const etichettaEsterna = stretta
+      ? `<div class="gg-etichetta-esterna" style="left:${left + width + 6}px">${etichetta}</div>` : '';
+    return barra + etichettaEsterna;
   }).join('');
   return `<div class="gg-centro-nome">${centro.nome} <span style="font-weight:400;color:var(--text-dim);font-size:11px">(${centro.capacita_ore_giorno}h/giorno · ${centro.n_risorse_equivalenti} risorse)</span></div>
     <div class="gg-riga" data-sottogruppo-lista style="width:${N_GIORNI * PX_PER_GIORNO}px">${barre}</div>`;
@@ -140,19 +156,37 @@ function filtraEvidenziaGenerale(testo){
 // tocca — questo e' esattamente il "riprogramma tutto in automatico"
 // richiesto, non serve altro algoritmo: la simulazione e' sempre
 // ricalcolata da zero, mai uno stato salvato a parte.
+//
+// Un semplice CLICK (senza trascinare) invece EVIDENZIA la stessa
+// commessa ovunque compaia (anche su altri centri) — con 200 commesse
+// un colore a testa e' indistinguibile, ma poter "accendere" a colpo
+// d'occhio dove passa una commessa specifica prima di decidere se/dove
+// spostarla risolve lo stesso problema in un altro modo.
+const SOGLIA_TRASCINAMENTO_PX = 6;   // sotto questa distanza, è un click, non un trascinamento
 let _ggDragEl = null;
 let _ggTargetOpCodice = null;
+let _ggPointerStart = null;
+let _ggTrascinamentoIniziato = false;
+
 function ggIniziaDrag(e, barra){
   e.preventDefault();
   _ggDragEl = barra;
-  barra.classList.add('trascinando');
+  _ggPointerStart = {x: e.clientX, y: e.clientY};
+  _ggTrascinamentoIniziato = false;
   barra.setPointerCapture(e.pointerId);
   document.addEventListener('pointermove', ggDragMove);
   document.addEventListener('pointerup', ggDragFine, {once: true});
-  document.addEventListener('pointercancel', ggDragFine, {once: true});
+  document.addEventListener('pointercancel', ggDragAnnulla, {once: true});
 }
+
 function ggDragMove(e){
   if(!_ggDragEl) return;
+  if(!_ggTrascinamentoIniziato){
+    const dx = e.clientX - _ggPointerStart.x, dy = e.clientY - _ggPointerStart.y;
+    if(Math.hypot(dx, dy) < SOGLIA_TRASCINAMENTO_PX) return;  // ancora dentro la soglia: non è ancora un trascinamento
+    _ggTrascinamentoIniziato = true;
+    _ggDragEl.classList.add('trascinando');
+  }
   const sotto = document.elementFromPoint(e.clientX, e.clientY);
   const barraSotto = sotto ? sotto.closest('.gg-barra') : null;
   document.querySelectorAll('.gg-barra').forEach(b => b.style.outline = '');
@@ -163,15 +197,32 @@ function ggDragMove(e){
     _ggTargetOpCodice = null;
   }
 }
+
+function ggDragAnnulla(){
+  document.removeEventListener('pointermove', ggDragMove);
+  if(_ggDragEl) _ggDragEl.classList.remove('trascinando');
+  document.querySelectorAll('.gg-barra').forEach(b => b.style.outline = '');
+  _ggDragEl = null; _ggTargetOpCodice = null;
+}
+
 async function ggDragFine(){
   document.removeEventListener('pointermove', ggDragMove);
   document.querySelectorAll('.gg-barra').forEach(b => b.style.outline = '');
   const esito = document.getElementById('gantt-generale-esito');
   if(!_ggDragEl) return;
   const opTrascinato = _ggDragEl.dataset.opCodice;
-  _ggDragEl.classList.remove('trascinando');
+  const eraUnTrascinamento = _ggTrascinamentoIniziato;
+  if(_ggTrascinamentoIniziato) _ggDragEl.classList.remove('trascinando');
   _ggDragEl = null;
-  if(!_ggTargetOpCodice || _ggTargetOpCodice === opTrascinato){ return; }
+
+  if(!eraUnTrascinamento){
+    // Era un semplice click: evidenzia questa commessa OVUNQUE compaia,
+    // senza spostare nulla.
+    evidenziaCommessaOvunque(opTrascinato);
+    return;
+  }
+
+  if(!_ggTargetOpCodice || _ggTargetOpCodice === opTrascinato){ _ggTargetOpCodice = null; return; }
   const target = _ggTargetOpCodice;
   _ggTargetOpCodice = null;
 
@@ -189,9 +240,18 @@ async function ggDragFine(){
     if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = 'Errore nel salvare l\'ordine.'; return; }
     esito.style.color = '#1a9e5c'; esito.textContent = `✅ ${opTrascinato} anticipata rispetto a ${target} — tutti i centri riprogrammati.`;
     await carica();
+    evidenziaCommessaOvunque(opTrascinato);  // dopo il ricalcolo, resta chiaro quale commessa si è appena spostata
   }catch(e){
     esito.style.color = '#c0392b'; esito.textContent = 'Errore di rete durante il salvataggio.';
   }
+}
+
+function evidenziaCommessaOvunque(opCodice){
+  document.querySelectorAll('.gg-barra').forEach(b => {
+    b.classList.toggle('evidenziata', b.dataset.opCodice === opCodice);
+  });
+  const prima = document.querySelector('.gg-barra.evidenziata');
+  if(prima) prima.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'center'});
 }
 
 carica();

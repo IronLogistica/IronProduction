@@ -88,8 +88,12 @@
     font-size:11px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;cursor:grab;
     touch-action:none;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,.4);
   }
-  .gantt-barra.evidenziata{outline:3px solid #fff;z-index:5}
+  .gantt-barra.evidenziata{outline:3px solid #fff;z-index:5;box-shadow:0 0 0 2px rgba(255,255,255,.4),0 1px 3px rgba(0,0,0,.4)}
   .gantt-barra.trascinando{opacity:.55;z-index:10}
+  .gantt-etichetta-esterna{
+    position:absolute;top:6px;height:28px;display:flex;align-items:center;font-size:11px;font-weight:700;
+    color:#e5eefc;white-space:nowrap;pointer-events:none;
+  }
 </style>
 {% endblock %}
 {% block scripts %}
@@ -253,6 +257,7 @@ function renderGantt(){
   // lavorazione) — per costruzione i segmenti non si sovrappongono mai
   // nel tempo, quindi stanno tutti in fila sulla stessa riga senza
   // scontrarsi visivamente, esattamente come richiesto.
+  const LARGHEZZA_MIN_TESTO = 70;
   const barre = SEGMENTI.map((s, i) => {
     const inizio = new Date(s.inizio_iso);
     const fine = new Date(s.fine_iso);
@@ -260,12 +265,17 @@ function renderGantt(){
     const larghezzaGiorni = Math.max(Math.round((fine - inizio) / 86400000), 1);
     const left = offsetGiorni * PX_PER_GIORNO;
     const width = larghezzaGiorni * PX_PER_GIORNO - 4;
-    return `<div class="gantt-barra" data-op-codice="${s.op_codice}" data-indice="${i}"
+    const etichetta = `${s.op_codice}${s.commessa ? ' · ' + s.commessa : ''}`;
+    const stretta = width < LARGHEZZA_MIN_TESTO;
+    const barra = `<div class="gantt-barra" data-op-codice="${s.op_codice}" data-indice="${i}"
            style="left:${left}px;width:${width}px;background:${coloreBandiera(s.bandiera_stato)}"
            title="${s.op_codice} — ${s.codice_articolo}${s.cliente ? ' — ' + s.cliente : ''} — ${s.pezzi} pz, ${s.ore}h"
            onpointerdown="ganttIniziaDrag(event, this)">
-        ${s.op_codice}${s.commessa ? ' · ' + s.commessa : ''}
+        ${stretta ? '' : etichetta}
       </div>`;
+    const etichettaEsterna = stretta
+      ? `<div class="gantt-etichetta-esterna" style="left:${left + width + 6}px">${etichetta}</div>` : '';
+    return barra + etichettaEsterna;
   }).join('');
   righeBox.innerHTML = `<div class="gantt-riga" style="width:${nGiorni * PX_PER_GIORNO}px">${barre}</div>`;
 }
@@ -292,19 +302,34 @@ function filtraEvidenziaCommessa(testo){
 // quella su cui viene rilasciata nell'ordine GLOBALE (tutti i centri,
 // non solo questo) — coerente col fatto che una commessa attraversa più
 // centri, non ha senso una priorità diversa su ciascuno.
+//
+// Un semplice CLICK (senza trascinare) invece EVIDENZIA la stessa
+// commessa — utile per essere sicuri di aver individuato quella giusta
+// prima di trascinarla davvero.
+const SOGLIA_TRASCINAMENTO_PX = 6;
 let _ganttDragEl = null;
+let _ganttTargetOpCodice = null;
+let _ganttPointerStart = null;
+let _ganttTrascinamentoIniziato = false;
+
 function ganttIniziaDrag(e, barra){
   e.preventDefault();
   _ganttDragEl = barra;
-  barra.classList.add('trascinando');
+  _ganttPointerStart = {x: e.clientX, y: e.clientY};
+  _ganttTrascinamentoIniziato = false;
   barra.setPointerCapture(e.pointerId);
   document.addEventListener('pointermove', ganttDragMove);
   document.addEventListener('pointerup', ganttDragFine, {once: true});
-  document.addEventListener('pointercancel', ganttDragFine, {once: true});
+  document.addEventListener('pointercancel', ganttDragAnnulla, {once: true});
 }
-let _ganttTargetOpCodice = null;
 function ganttDragMove(e){
   if(!_ganttDragEl) return;
+  if(!_ganttTrascinamentoIniziato){
+    const dx = e.clientX - _ganttPointerStart.x, dy = e.clientY - _ganttPointerStart.y;
+    if(Math.hypot(dx, dy) < SOGLIA_TRASCINAMENTO_PX) return;
+    _ganttTrascinamentoIniziato = true;
+    _ganttDragEl.classList.add('trascinando');
+  }
   const sotto = document.elementFromPoint(e.clientX, e.clientY);
   const barraSotto = sotto ? sotto.closest('.gantt-barra') : null;
   document.querySelectorAll('.gantt-barra').forEach(b => b.style.outline = '');
@@ -315,15 +340,28 @@ function ganttDragMove(e){
     _ganttTargetOpCodice = null;
   }
 }
+function ganttDragAnnulla(){
+  document.removeEventListener('pointermove', ganttDragMove);
+  if(_ganttDragEl) _ganttDragEl.classList.remove('trascinando');
+  document.querySelectorAll('.gantt-barra').forEach(b => b.style.outline = '');
+  _ganttDragEl = null; _ganttTargetOpCodice = null;
+}
 async function ganttDragFine(){
   document.removeEventListener('pointermove', ganttDragMove);
   document.querySelectorAll('.gantt-barra').forEach(b => b.style.outline = '');
   const esito = document.getElementById('gantt-esito');
   if(!_ganttDragEl){ return; }
   const opTrascinato = _ganttDragEl.dataset.opCodice;
-  _ganttDragEl.classList.remove('trascinando');
+  const eraUnTrascinamento = _ganttTrascinamentoIniziato;
+  if(_ganttTrascinamentoIniziato) _ganttDragEl.classList.remove('trascinando');
   _ganttDragEl = null;
-  if(!_ganttTargetOpCodice || _ganttTargetOpCodice === opTrascinato){ return; }
+
+  if(!eraUnTrascinamento){
+    evidenziaCommessaGantt(opTrascinato);
+    return;
+  }
+
+  if(!_ganttTargetOpCodice || _ganttTargetOpCodice === opTrascinato){ _ganttTargetOpCodice = null; return; }
   const target = _ganttTargetOpCodice;
   _ganttTargetOpCodice = null;
 
@@ -344,9 +382,16 @@ async function ganttDragFine(){
     if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '❌ Errore nel salvare l\'ordine.'; return; }
     esito.style.color = '#1a9e5c'; esito.textContent = `✅ ${opTrascinato} anticipata rispetto a ${target}.`;
     await caricaGantt();
+    evidenziaCommessaGantt(opTrascinato);
   }catch(e){
     esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete durante il salvataggio.';
   }
+}
+
+function evidenziaCommessaGantt(opCodice){
+  document.querySelectorAll('.gantt-barra').forEach(b => {
+    b.classList.toggle('evidenziata', b.dataset.opCodice === opCodice);
+  });
 }
 
 caricaListaCentri();
