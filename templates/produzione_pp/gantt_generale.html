@@ -12,6 +12,11 @@
       sotto in automatico — nessun passaggio manuale in piu'.
     </p>
 
+    <div id="pannello-commessa" style="display:none;background:var(--dark3);border:2px solid #2589c7;border-radius:10px;padding:14px 18px;margin-bottom:16px">
+      <div id="pannello-commessa-titolo" style="font-weight:800;font-size:15px;margin-bottom:6px"></div>
+      <div id="pannello-commessa-date" style="font-size:13px"></div>
+    </div>
+
     <div style="position:relative;max-width:420px;margin:12px 0 18px">
       <input id="ricerca-commessa-generale" type="text" placeholder="Trova una commessa (codice OP, cliente, articolo)..." autocomplete="off"
              style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"
@@ -24,6 +29,7 @@
       <span><span class="legenda-swatch" style="background:#7f8c8d"></span> Sospesa</span>
       <span><span class="legenda-swatch" style="background:#2a9d5c"></span> In Lavorazione</span>
       <span><span class="legenda-swatch" style="background:#3d5a80"></span> (nessuna bandiera)</span>
+      <span>🔲 <span style="border:2px solid #c0392b;padding:1px 4px;border-radius:3px">bordo rosso</span> = a rischio ritardo sulla consegna promessa</span>
     </div>
 
     <div id="gantt-generale-esito" style="font-size:12px;margin-bottom:10px"></div>
@@ -48,8 +54,9 @@
     font-size:11px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;cursor:grab;
     touch-action:none;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,.4);
   }
-  .gg-barra.evidenziata{outline:3px solid #fff;z-index:5;box-shadow:0 0 0 2px rgba(255,255,255,.4),0 1px 3px rgba(0,0,0,.4)}
+  .gg-barra.evidenziata{outline:4px solid #ffd54f;z-index:6;box-shadow:0 0 0 2px rgba(0,0,0,.5),0 0 14px 3px rgba(255,213,79,.7);filter:brightness(1.25)}
   .gg-barra.trascinando{opacity:.55;z-index:10}
+  .gg-barra.gg-in-ritardo{border:2px solid #c0392b}
   .gg-etichetta-esterna{
     position:absolute;top:6px;height:28px;display:flex;align-items:center;font-size:11px;font-weight:700;
     color:#e5eefc;white-space:nowrap;pointer-events:none;
@@ -58,6 +65,7 @@
 {% endblock %}
 {% block scripts %}
 let CENTRI = [];
+let SEGMENTI_PER_OP = {};   // op_codice -> {op_codice, codice_articolo, commessa, cliente, data_prevista, data_consegna_iso, data_consegna_stimata, in_ritardo}
 const PX_PER_GIORNO = 34;
 let DATA_MIN = null, N_GIORNI = 14;
 
@@ -72,6 +80,8 @@ async function carica(){
   try{
     const r = await fetch('/api/gantt/tutti');
     CENTRI = await r.json();
+    SEGMENTI_PER_OP = {};
+    CENTRI.forEach(c => c.segmenti.forEach(s => { if(!SEGMENTI_PER_OP[s.op_codice]) SEGMENTI_PER_OP[s.op_codice] = s; }));
     renderTutto();
   }catch(e){
     corpo.innerHTML = '<p style="padding:16px;color:#c0392b">Errore di rete.</p>';
@@ -120,11 +130,11 @@ function renderCentro(centro){
     const larghezzaGiorni = Math.max(Math.round((fine - inizio) / 86400000), 1);
     const left = offsetGiorni * PX_PER_GIORNO;
     const width = larghezzaGiorni * PX_PER_GIORNO - 4;
-    const etichetta = `${s.op_codice}${s.commessa ? ' · ' + s.commessa : ''}`;
+    const etichetta = `${s.op_codice}${s.commessa ? ' · ' + s.commessa : ''}${s.in_ritardo ? ' ⚠️' : ''}`;
     const stretta = width < LARGHEZZA_MIN_TESTO;
-    const barra = `<div class="gg-barra" data-op-codice="${s.op_codice}"
+    const barra = `<div class="gg-barra ${s.in_ritardo ? 'gg-in-ritardo' : ''}" data-op-codice="${s.op_codice}"
            style="left:${left}px;width:${width}px;background:${coloreBandiera(s.bandiera_stato)}"
-           title="${s.op_codice} — ${s.codice_articolo}${s.cliente ? ' — ' + s.cliente : ''} — ${s.pezzi} pz, ${s.ore}h"
+           title="${s.op_codice} — ${s.codice_articolo}${s.cliente ? ' — ' + s.cliente : ''} — ${s.pezzi} pz, ${s.ore}h${s.data_prevista ? ' — Consegna promessa: ' + s.data_prevista : ''}${s.in_ritardo ? ' — ⚠️ IN RITARDO' : ''}"
            onpointerdown="ggIniziaDrag(event, this)">
         ${stretta ? '' : etichetta}
       </div>`;
@@ -252,6 +262,35 @@ function evidenziaCommessaOvunque(opCodice){
   });
   const prima = document.querySelector('.gg-barra.evidenziata');
   if(prima) prima.scrollIntoView({behavior: 'smooth', block: 'center', inline: 'center'});
+
+  // Pannello con le date di consegna — risponde a "perché anticipare
+  // questa commessa e non un'altra": mostra la data PROMESSA al cliente
+  // (data_prevista) accanto alla data che l'attuale programmazione
+  // stima davvero (data_consegna_iso), con un avviso esplicito se
+  // rischia di arrivare in ritardo.
+  const info = SEGMENTI_PER_OP[opCodice];
+  const pannello = document.getElementById('pannello-commessa');
+  const titolo = document.getElementById('pannello-commessa-titolo');
+  const dateBox = document.getElementById('pannello-commessa-date');
+  if(!info){ pannello.style.display = 'none'; return; }
+  titolo.textContent = `📌 ${info.op_codice}${info.commessa ? ' · ' + info.commessa : ''} — ${info.codice_articolo}`;
+  let html = '';
+  if(info.data_prevista){
+    html += `<span style="color:var(--text-dim)">Consegna promessa:</span> <b>${info.data_prevista}</b>`;
+  }else{
+    html += `<span style="color:var(--text-dim)">Nessuna data di consegna promessa impostata su questo OP.</span>`;
+  }
+  if(info.data_consegna_stimata){
+    html += `<span style="margin:0 8px;color:var(--text-dim)">·</span><span style="color:var(--text-dim)">Stima attuale:</span> <b>${info.data_consegna_stimata}</b>`;
+    if(info.in_ritardo){
+      html += ` <span style="color:#e07a6e;font-weight:800">⚠️ IN RITARDO rispetto al promesso</span>`;
+    }else if(info.data_prevista){
+      html += ` <span style="color:#5ecb85;font-weight:800">✅ in tempo</span>`;
+    }
+  }
+  dateBox.innerHTML = html;
+  pannello.style.display = 'block';
+  pannello.style.borderColor = info.in_ritardo ? '#c0392b' : '#2589c7';
 }
 
 carica();

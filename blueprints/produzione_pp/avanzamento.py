@@ -349,4 +349,22 @@ def calcola_avanzamento_commesse():
             'avvisi': avvisi,
         })
 
+    # Arricchisce ogni segmento (organizzato per centro) con le stesse date
+    # di consegna già calcolate per l'OP nel riepilogo sopra — per il
+    # Gantt Centri di Costo/Pianificazione Generale, che altrimenti
+    # avrebbe solo le date di lavorazione della singola fase, senza sapere
+    # se quella commessa arriverà puntuale o in ritardo rispetto a quanto
+    # promesso al cliente (o.data_prevista).
+    date_per_op = {r['op_codice']: (r['data_prevista'], r['data_consegna_iso'], r['data_consegna_stimata'])
+                   for r in risultati}
+    for segmenti in segmenti_per_centro.values():
+        for seg in segmenti:
+            data_prevista, data_consegna_iso, data_consegna_stimata = date_per_op.get(seg['op_codice'], (None, None, None))
+            seg['data_prevista'] = data_prevista
+            seg['data_consegna_iso'] = data_consegna_iso
+            seg['data_consegna_stimata'] = data_consegna_stimata
+            seg['in_ritardo'] = bool(data_prevista and data_consegna_iso
+                                      and datetime.strptime(data_consegna_iso, '%Y-%m-%d').date()
+                                      > datetime.strptime(data_prevista, '%d/%m/%Y').date())
+
     return risultati, segmenti_per_centro
