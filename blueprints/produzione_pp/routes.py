@@ -26,6 +26,8 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _contestuale_attivo_per_op, _saldo_materiale_op)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
+from blueprints.produzione_pp.avanzamento import (calcola_avanzamento_commesse,
+                    _capacita_giornaliera_ore, DEFAULT_ORE_GIORNO)
 
 pp_bp = Blueprint("produzione_pp", __name__)
 
@@ -172,7 +174,13 @@ def admin_crea_dati_test_gantt():
         DistintaBaseWood.query.filter_by(codice_padre=codice_finto).delete()
         db.session.flush()
         for seq, centro in enumerate(centri_di_questo, start=1):
-            db.session.add(CicloLavoroWood(codice=codice_finto, sequenza=seq, centro_costo_id=centro.id))
+            # 20 pezzi/ora — con 5000 pianificati fa ~250 ore, circa 31
+            # giorni lavorativi a 8h/giorno con 1 sola risorsa: un esempio
+            # di carico multi-giorno realistico, non 0 (senza tempo
+            # standard configurato la simulazione darebbe 0 ore/0 giorni,
+            # inutile per vedere un esempio di Gantt).
+            db.session.add(CicloLavoroWood(codice=codice_finto, sequenza=seq, centro_costo_id=centro.id,
+                                            produttivita_oraria=20))
         db.session.add(DistintaBaseWood(codice_padre=codice_finto, codice_figlio=materiale_finto, quantita=1))
         if not DescrizioneCodiceWood.query.get(codice_finto):
             db.session.add(DescrizioneCodiceWood(codice=codice_finto,
@@ -211,6 +219,69 @@ def admin_elimina_dati_test_gantt():
     ArticoloApprovvigionamento.query.filter_by(codice='TEST-DEMO-MATERIALE').delete()
     db.session.commit()
     return jsonify(ok=True, op_eliminati=n_op, messaggio='Dati di test TEST-DEMO rimossi completamente.')
+
+
+@pp_bp.route('/gantt-centri-costo')
+def pagina_gantt_centri_costo():
+    """
+    Una pagina, un Gantt per centro di costo — carico giornaliero reale
+    (ore necessarie / capacità del centro, che include già il numero di
+    risorse equivalenti assegnate — vedi CentroCostoWood.n_risorse_
+    equivalenti: raddoppiare le persone dimezza i giorni) per pianificare
+    consegne, non solo una vista calendario. Riusa AL 100% la stessa
+    simulazione già in produzione per 'Avanzamento Commesse' — nessun
+    secondo motore di calcolo separato che rischi di disallinearsi.
+    """
+    return render_template('produzione_pp/gantt_centri_costo.html', active='gantt_centri_costo')
+
+
+@pp_bp.route('/api/gantt/centri')
+def api_gantt_centri():
+    """Elenco dei centri di costo con del carico in coda — giorni totali
+    stimati (ore/capacità) per un colpo d'occhio su quali sono più carichi
+    prima di aprirne uno."""
+    _risultati, segmenti_per_centro = calcola_avanzamento_commesse()
+    centri = {c.id: c for c in CentroCostoWood.query.all()}
+    righe = []
+    for centro_id, segmenti in segmenti_per_centro.items():
+        centro = centri.get(centro_id)
+        if not centro:
+            continue
+        ore_totali = sum(s['ore'] for s in segmenti)
+        cap = _capacita_giornaliera_ore(centro) or DEFAULT_ORE_GIORNO
+        righe.append({
+            'id': centro_id, 'nome': centro.nome,
+            'n_commesse': len({s['op_codice'] for s in segmenti}),
+            'giorni_di_carico': round(ore_totali / cap, 1) if cap else None,
+            'n_risorse_equivalenti': centro.n_risorse_equivalenti or 1,
+        })
+    righe.sort(key=lambda r: r['nome'])
+    return jsonify(righe)
+
+
+@pp_bp.route('/api/gantt/centro/<int:centro_id>')
+def api_gantt_centro(centro_id):
+    """
+    Segmenti di lavoro schedulati su QUESTO centro — stesso ordine di coda
+    di Avanzamento Commesse (priorità, o posizione manuale se Angelo ha
+    già trascinato qualcosa lì). Ogni segmento è già affiancato dal
+    codice OP/commessa/cliente per etichettare la barra, e dalla bandiera
+    di stato per colorarla per urgenza — mai per commessa: con centinaia
+    di commesse un colore a testa diventerebbe indistinguibile, l'unico
+    modo che scala è leggere il codice scritto sulla barra.
+    """
+    centro = CentroCostoWood.query.get_or_404(centro_id)
+    _risultati, segmenti_per_centro = calcola_avanzamento_commesse()
+    segmenti = segmenti_per_centro.get(centro_id, [])
+    cap = _capacita_giornaliera_ore(centro)
+    return jsonify({
+        'centro': {'id': centro.id, 'nome': centro.nome,
+                    'n_risorse_equivalenti': centro.n_risorse_equivalenti or 1,
+                    'capacita_ore_giorno': cap or DEFAULT_ORE_GIORNO,
+                    'capacita_configurata': cap is not None},
+        'segmenti': segmenti,
+    })
+
 
 def _calcola_controllo_scorta(codice_articolo, qta, escludi_op_id=None):
     """

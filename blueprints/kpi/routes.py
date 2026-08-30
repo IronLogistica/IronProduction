@@ -59,7 +59,8 @@ def api_kpi():
 
 @kpi_bp.route('/api/kpi/avanzamento-commesse')
 def api_avanzamento_commesse():
-    return jsonify(calcola_avanzamento_commesse())
+    risultati, _segmenti_per_centro = calcola_avanzamento_commesse()
+    return jsonify(risultati)
 
 @kpi_bp.route('/api/kpi/avanzamento-commesse/riordina', methods=['POST'])
 def api_riordina_avanzamento_commesse():

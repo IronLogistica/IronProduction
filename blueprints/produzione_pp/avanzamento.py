@@ -105,10 +105,18 @@ def _zona_di_centro(centro):
 
 
 def calcola_avanzamento_commesse():
-    """Ritorna una lista di dict, una per OP aperto, ordinata come la coda di
-    priorità già usata nel resto dell'app (stessa priorità = stessa data di
-    consegna stimata sarebbe fuorviante: qui l'ordine riflette chi viene
-    servito per primo sui centri condivisi)."""
+    """Ritorna (risultati, segmenti_per_centro): risultati è la lista per OP
+    già in uso da Avanzamento Commesse; segmenti_per_centro è la STESSA
+    simulazione riorganizzata per centro di costo invece che per OP — un
+    segmento (op_codice, codice, inizio, fine, ore) per ogni fase
+    schedulata su quel centro, nello stesso ordine di coda (priorità →
+    SequenzaAvanzamentoKPI se Angelo ha trascinato manualmente) — usata dal
+    Gantt per centro di costo. Un'unica simulazione, mai due calcoli
+    separati che potrebbero disallinearsi (stesso principio già applicato
+    più volte oggi ad altri bug di questo tipo).
+    Ordinata come la coda di priorità già usata nel resto dell'app (stessa
+    priorità = stessa data di consegna stimata sarebbe fuorviante: qui
+    l'ordine riflette chi viene servito per primo sui centri condivisi)."""
     from models import (db, OrdineProduzione, CicloLavoroWood, CentroCostoWood,
                          EventoConsuntivoPP, ArticoloApprovvigionamento, FotoArticolo,
                          SequenzaAvanzamentoKPI)
@@ -119,7 +127,7 @@ def calcola_avanzamento_commesse():
 
     ordini = OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO)).all()
     if not ordini:
-        return []
+        return [], {}
 
     # Ordine di visualizzazione — e di SIMULAZIONE (chi viene servito prima
     # sui centri condivisi, quindi anche le date stimate ne dipendono): se
@@ -147,6 +155,7 @@ def calcola_avanzamento_commesse():
 
     cursore_centro = {}   # centro_id -> datetime primo momento libero
     risultati = []
+    segmenti_per_centro = {}   # centro_id -> [segmento, ...], stesso ordine di coda
 
     for o in ordini:
         saldo_op = (o.qta_pianificata or 0) - (o.qta_buona or 0)
@@ -274,6 +283,14 @@ def calcola_avanzamento_commesse():
 
                 cursore_centro[centro.id] = fine_fase
                 cursore_componente = fine_fase
+                segmenti_per_centro.setdefault(centro.id, []).append({
+                    'op_codice': o.codice, 'commessa': o.commessa or '', 'cliente': o.cliente or '',
+                    'codice': codice, 'codice_articolo': o.codice_articolo,
+                    'descrizione': o.descrizione or '',
+                    'pezzi': saldo_fase, 'ore': round(ore_necessarie, 2),
+                    'inizio_iso': inizio_fase.strftime('%Y-%m-%d'), 'fine_iso': fine_fase.strftime('%Y-%m-%d'),
+                    'bandiera_stato': o.bandiera_stato, 'priorita': o.priorita,
+                })
 
             if cursore_componente > fine_produzione_op:
                 fine_produzione_op = cursore_componente
@@ -323,4 +340,4 @@ def calcola_avanzamento_commesse():
             'avvisi': avvisi,
         })
 
-    return risultati
+    return risultati, segmenti_per_centro

@@ -1,0 +1,259 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">📊 Gantt Centri di Costo — carico giornaliero</div>
+</div>
+
+<div class="mon-section" id="box-lista-centri">
+  <div style="padding:16px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px">
+      Carico reale in giorni per centro di costo (ore necessarie diviso capacità giornaliera — cambiando il numero di
+      risorse assegnate al centro in Centri di Costo, i giorni si ricalcolano di conseguenza). Usalo per pianificare
+      le consegne, non solo come calendario.
+    </p>
+    <div id="centri-grid" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:14px">Caricamento...</div>
+  </div>
+</div>
+
+<div class="mon-section" id="box-gantt" style="display:none">
+  <div style="padding:16px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:6px;flex-wrap:wrap">
+      <button class="btn btn-ghost" onclick="tornaAiCentri()">← Centri</button>
+      <div class="page-title" style="margin:0;font-size:20px" id="titolo-centro"></div>
+      <span id="riepilogo-centro" style="font-size:12px;color:var(--text-dim)"></span>
+    </div>
+
+    <div style="position:relative;max-width:420px;margin:12px 0 18px">
+      <input id="ricerca-commessa" type="text" placeholder="🔍 Trova una commessa (codice OP, cliente, articolo)..." autocomplete="off"
+             style="width:100%;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"
+             oninput="filtraEvidenziaCommessa(this.value)">
+    </div>
+
+    <div style="display:flex;gap:14px;margin-bottom:14px;font-size:11px;color:var(--text-dim);flex-wrap:wrap">
+      <span><span class="legenda-swatch" style="background:#c0392b"></span> Urgente</span>
+      <span><span class="legenda-swatch" style="background:#2589c7"></span> Nuova Commessa</span>
+      <span><span class="legenda-swatch" style="background:#7f8c8d"></span> Sospesa</span>
+      <span><span class="legenda-swatch" style="background:#2a9d5c"></span> In Lavorazione</span>
+      <span><span class="legenda-swatch" style="background:#3d5a80"></span> (nessuna bandiera)</span>
+    </div>
+
+    <div id="gantt-scroll" style="overflow-x:auto;border:1px solid var(--border);border-radius:8px">
+      <div id="gantt-intestazione-giorni" style="display:flex;position:sticky;top:0;background:var(--dark2,#0f1e35);z-index:2;border-bottom:1px solid var(--border)"></div>
+      <div id="gantt-righe" data-sottogruppo-lista style="position:relative">Caricamento...</div>
+    </div>
+    <div id="gantt-esito" style="font-size:12px;margin-top:10px"></div>
+  </div>
+</div>
+
+<style>
+  .centro-card{
+    background:var(--surface);border:1px solid var(--border);border-radius:10px;
+    padding:18px 14px;text-align:center;cursor:pointer;transition:background .15s;
+  }
+  .centro-card:hover{background:rgba(30,111,165,.15)}
+  .centro-card .giorni{font-size:26px;font-weight:800;color:#fff}
+  .centro-card .giorni.carico-alto{color:#e07a6e}
+  .centro-card .nome{font-size:13px;color:var(--text-dim);margin:4px 0}
+  .centro-card .dettagli{font-size:10px;color:var(--text-dim)}
+
+  .legenda-swatch{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+
+  .gantt-giorno-col{min-width:34px;flex-shrink:0;text-align:center;font-size:9px;color:var(--text-dim);padding:4px 0;border-right:1px solid rgba(255,255,255,.06)}
+  .gantt-giorno-col.oggi{background:rgba(30,111,165,.18);font-weight:800;color:#fff}
+
+  .gantt-riga{display:flex;align-items:center;position:relative;height:40px;border-bottom:1px solid var(--border)}
+  .gantt-barra{
+    position:absolute;top:6px;height:28px;border-radius:5px;display:flex;align-items:center;padding:0 8px;
+    font-size:11px;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;cursor:grab;
+    touch-action:none;user-select:none;box-shadow:0 1px 3px rgba(0,0,0,.4);
+  }
+  .gantt-barra.evidenziata{outline:3px solid #fff;z-index:5}
+  .gantt-barra.trascinando{opacity:.55;z-index:10}
+</style>
+{% endblock %}
+{% block scripts %}
+let CENTRI = [];
+let CENTRO_ATTIVO_ID = null;
+let SEGMENTI = [];
+let CENTRO_INFO = null;
+const PX_PER_GIORNO = 34;
+
+function coloreBandiera(bandiera){
+  const mappa = {'Urgente': '#c0392b', 'Nuova Commessa': '#2589c7', 'Sospesa': '#7f8c8d', 'In Lavorazione': '#2a9d5c'};
+  return mappa[bandiera] || '#3d5a80';
+}
+
+async function caricaListaCentri(){
+  const box = document.getElementById('centri-grid');
+  try{
+    const r = await fetch('/api/gantt/centri');
+    CENTRI = await r.json();
+    if(!CENTRI.length){
+      box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun centro con carico in coda al momento.</p>';
+      return;
+    }
+    box.innerHTML = CENTRI.map(c => `
+      <div class="centro-card" onclick="apriGanttCentro(${c.id})">
+        <div class="giorni ${c.giorni_di_carico > 15 ? 'carico-alto' : ''}">${c.giorni_di_carico ?? '—'}</div>
+        <div class="dettagli">giorni di carico</div>
+        <div class="nome">${c.nome}</div>
+        <div class="dettagli">${c.n_commesse} commesse · ${c.n_risorse_equivalenti} risorse</div>
+      </div>`).join('');
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function tornaAiCentri(){
+  document.getElementById('box-gantt').style.display = 'none';
+  document.getElementById('box-lista-centri').style.display = 'block';
+  caricaListaCentri();
+}
+
+async function apriGanttCentro(id){
+  CENTRO_ATTIVO_ID = id;
+  document.getElementById('box-lista-centri').style.display = 'none';
+  document.getElementById('box-gantt').style.display = 'block';
+  document.getElementById('ricerca-commessa').value = '';
+  document.getElementById('gantt-esito').textContent = '';
+  await caricaGantt();
+}
+
+async function caricaGantt(){
+  const righeBox = document.getElementById('gantt-righe');
+  righeBox.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch(`/api/gantt/centro/${CENTRO_ATTIVO_ID}`);
+    const d = await r.json();
+    CENTRO_INFO = d.centro;
+    SEGMENTI = d.segmenti;
+    document.getElementById('titolo-centro').textContent = CENTRO_INFO.nome;
+    document.getElementById('riepilogo-centro').textContent =
+      `${CENTRO_INFO.n_risorse_equivalenti} risorse · ${CENTRO_INFO.capacita_ore_giorno}h/giorno` +
+      (CENTRO_INFO.capacita_configurata ? '' : ' (capacità stimata di default, non configurata)');
+    renderGantt();
+  }catch(e){
+    righeBox.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function renderGantt(){
+  const intestazione = document.getElementById('gantt-intestazione-giorni');
+  const righeBox = document.getElementById('gantt-righe');
+  if(!SEGMENTI.length){
+    intestazione.innerHTML = '';
+    righeBox.innerHTML = '<p style="padding:16px;color:#aaa;font-style:italic">Nessuna commessa in coda su questo centro.</p>';
+    return;
+  }
+  const oggi = new Date(); oggi.setHours(0,0,0,0);
+  const dataMin = SEGMENTI.reduce((min, s) => { const d = new Date(s.inizio_iso); return d < min ? d : min; }, oggi);
+  const dataMax = SEGMENTI.reduce((max, s) => { const d = new Date(s.fine_iso); return d > max ? d : max; }, oggi);
+  const nGiorni = Math.max(Math.round((dataMax - dataMin) / 86400000) + 3, 14);
+
+  let colonne = '';
+  for(let i = 0; i < nGiorni; i++){
+    const d = new Date(dataMin); d.setDate(d.getDate() + i);
+    const eOggi = d.getTime() === oggi.getTime();
+    colonne += `<div class="gantt-giorno-col ${eOggi ? 'oggi' : ''}" style="width:${PX_PER_GIORNO}px">${d.getDate()}/${d.getMonth()+1}</div>`;
+  }
+  intestazione.innerHTML = colonne;
+
+  righeBox.innerHTML = SEGMENTI.map((s, i) => {
+    const inizio = new Date(s.inizio_iso);
+    const fine = new Date(s.fine_iso);
+    const offsetGiorni = Math.round((inizio - dataMin) / 86400000);
+    const larghezzaGiorni = Math.max(Math.round((fine - inizio) / 86400000), 1);
+    const left = offsetGiorni * PX_PER_GIORNO;
+    const width = larghezzaGiorni * PX_PER_GIORNO - 4;
+    return `<div class="gantt-riga" style="width:${nGiorni * PX_PER_GIORNO}px">
+      <div class="gantt-barra" data-op-codice="${s.op_codice}" data-indice="${i}"
+           style="left:${left}px;width:${width}px;background:${coloreBandiera(s.bandiera_stato)}"
+           title="${s.op_codice} — ${s.codice_articolo}${s.cliente ? ' — ' + s.cliente : ''} — ${s.pezzi} pz, ${s.ore}h"
+           onpointerdown="ganttIniziaDrag(event, this)">
+        ${s.op_codice}${s.commessa ? ' · ' + s.commessa : ''}
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function filtraEvidenziaCommessa(testo){
+  const q = testo.trim().toLowerCase();
+  document.querySelectorAll('.gantt-barra').forEach(barra => {
+    const i = parseInt(barra.dataset.indice);
+    const s = SEGMENTI[i];
+    const match = q.length >= 2 && (
+      (s.op_codice||'').toLowerCase().includes(q) ||
+      (s.cliente||'').toLowerCase().includes(q) ||
+      (s.commessa||'').toLowerCase().includes(q) ||
+      (s.codice_articolo||'').toLowerCase().includes(q)
+    );
+    barra.classList.toggle('evidenziata', match);
+    if(match) barra.scrollIntoView({behavior: 'smooth', block: 'nearest', inline: 'center'});
+  });
+}
+
+// Trascina una barra per anticiparla/posticiparla — riusa lo STESSO
+// meccanismo globale di priorità già in uso in Avanzamento Commesse
+// (SequenzaAvanzamentoKPI): sposta la commessa trascinata accanto a
+// quella su cui viene rilasciata nell'ordine GLOBALE (tutti i centri,
+// non solo questo) — coerente col fatto che una commessa attraversa più
+// centri, non ha senso una priorità diversa su ciascuno.
+let _ganttDragEl = null;
+function ganttIniziaDrag(e, barra){
+  e.preventDefault();
+  _ganttDragEl = barra;
+  barra.classList.add('trascinando');
+  barra.setPointerCapture(e.pointerId);
+  document.addEventListener('pointermove', ganttDragMove);
+  document.addEventListener('pointerup', ganttDragFine, {once: true});
+  document.addEventListener('pointercancel', ganttDragFine, {once: true});
+}
+let _ganttTargetOpCodice = null;
+function ganttDragMove(e){
+  if(!_ganttDragEl) return;
+  const sotto = document.elementFromPoint(e.clientX, e.clientY);
+  const barraSotto = sotto ? sotto.closest('.gantt-barra') : null;
+  document.querySelectorAll('.gantt-barra').forEach(b => b.style.outline = '');
+  if(barraSotto && barraSotto !== _ganttDragEl){
+    barraSotto.style.outline = '2px dashed #fff';
+    _ganttTargetOpCodice = barraSotto.dataset.opCodice;
+  }else{
+    _ganttTargetOpCodice = null;
+  }
+}
+async function ganttDragFine(){
+  document.removeEventListener('pointermove', ganttDragMove);
+  document.querySelectorAll('.gantt-barra').forEach(b => b.style.outline = '');
+  const esito = document.getElementById('gantt-esito');
+  if(!_ganttDragEl){ return; }
+  const opTrascinato = _ganttDragEl.dataset.opCodice;
+  _ganttDragEl.classList.remove('trascinando');
+  _ganttDragEl = null;
+  if(!_ganttTargetOpCodice || _ganttTargetOpCodice === opTrascinato){ return; }
+  const target = _ganttTargetOpCodice;
+  _ganttTargetOpCodice = null;
+
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Salvataggio nuovo ordine...';
+  try{
+    // 1) L'ordine GLOBALE attuale (tutti i centri) è già quello di Avanzamento Commesse
+    const rOrdine = await fetch('/api/kpi/avanzamento-commesse');
+    const globale = (await rOrdine.json()).map(x => x.op_codice);
+    // 2) Sposta opTrascinato subito PRIMA di target nell'ordine globale
+    const senzaTrascinato = globale.filter(c => c !== opTrascinato);
+    const posTarget = senzaTrascinato.indexOf(target);
+    senzaTrascinato.splice(posTarget, 0, opTrascinato);
+    // 3) Salva col MEDESIMO endpoint già in uso in Avanzamento Commesse
+    const rSalva = await fetch('/api/kpi/avanzamento-commesse/riordina', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({op_codici: senzaTrascinato})
+    });
+    const d = await rSalva.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '❌ Errore nel salvare l\'ordine.'; return; }
+    esito.style.color = '#1a9e5c'; esito.textContent = `✅ ${opTrascinato} anticipata rispetto a ${target}.`;
+    await caricaGantt();
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete durante il salvataggio.';
+  }
+}
+
+caricaListaCentri();
+{% endblock %}
