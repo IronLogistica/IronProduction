@@ -383,6 +383,31 @@ def api_matrice_competenze():
     })
 
 
+@pp_bp.route('/api/matrice-competenze/operai-da-registrare')
+def api_matrice_competenze_operai_da_registrare():
+    """
+    Nomi di operai già visti lavorare (arrivati da MasterWork, sempre
+    ASA Carpenteria Propria — l'unica ASA che l'integrazione gestisce,
+    vedi ASA_MASTERWORK) che non hanno ANCORA nessuna competenza
+    registrata nella Matrice — né come OperatoreWood mai creato, né
+    come OperatoreWood creato ma con zero centri segnati. Usata per il
+    promemoria automatico che compare ad Angelo finché non sono tutti a
+    posto — nessun bisogno di 'pescare' nomi manualmente: arrivano già
+    da soli a ogni dichiarazione MasterWork (EventoConsuntivoPP.operatore).
+    """
+    nomi_da_masterwork = {r[0].strip() for r in db.session.query(EventoConsuntivoPP.operatore)
+                           .filter(EventoConsuntivoPP.operatore.isnot(None),
+                                   EventoConsuntivoPP.operatore != '').distinct().all()}
+    if not nomi_da_masterwork:
+        return jsonify([])
+    operatori_esistenti = {o.nome.strip().lower(): o.id for o in OperatoreWood.query.all()}
+    ha_competenze = {c.operatore_id for c in CompetenzaOperatoreWood.query.all()}
+    mancanti = sorted(nome for nome in nomi_da_masterwork
+                       if operatori_esistenti.get(nome.strip().lower()) not in ha_competenze
+                       or nome.strip().lower() not in operatori_esistenti)
+    return jsonify(mancanti)
+
+
 @pp_bp.route('/api/matrice-competenze/toggle', methods=['POST'])
 def api_matrice_competenze_toggle():
     d = request.get_json(force=True)

@@ -681,5 +681,44 @@ document.addEventListener('keydown',e=>{
 
 {% block scripts %}{% endblock %}
 </script>
+
+<!-- Promemoria automatico Matrice Competenze — compare da solo su ogni
+     pagina finché resta almeno un operatore (arrivato da MasterWork,
+     sempre ASA Carpenteria Propria) senza nessuna competenza registrata.
+     Nessun modo di disattivarlo in modo permanente da qui apposta:
+     chiudendolo si nasconde solo per questa pagina, ricompare alla
+     prossima navigazione finché la Matrice non è completa. -->
+<div id="overlayPromemoriaCompetenze" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:#0f1e35;border:3px solid #e6b800;border-radius:12px;padding:28px 32px;max-width:480px;width:92%;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div style="font-size:38px;text-align:center;margin-bottom:10px">🧩⚠️</div>
+    <div style="font-size:19px;font-weight:800;text-align:center;margin-bottom:14px;color:#fff">SEGNA GLI SKILLS</div>
+    <p style="font-size:13px;color:#c8d4e6;text-align:center;margin-bottom:14px">
+      Questi operai hanno già dichiarato produzione ma non hanno ancora nessuna competenza registrata —
+      a quali centri di costo (macchine) possono lavorare?
+    </p>
+    <div id="listaOperaiDaRegistrare" style="background:rgba(0,0,0,.25);border-radius:8px;padding:12px 16px;margin-bottom:18px;max-height:180px;overflow-y:auto;font-size:14px;font-weight:700;color:#ffd54f"></div>
+    <div style="display:flex;gap:10px;justify-content:center">
+      <button onclick="document.getElementById('overlayPromemoriaCompetenze').style.display='none'"
+              style="background:transparent;color:#9db3cc;border:1px solid #3a5170;border-radius:8px;padding:10px 20px;font-size:13px;cursor:pointer">
+        Ci penso dopo
+      </button>
+      <a href="/matrice-competenze" style="background:#e6b800;color:#1a1a1a;border:none;border-radius:8px;padding:10px 24px;font-size:14px;font-weight:800;cursor:pointer;text-decoration:none">
+        🧩 Vai alla Matrice Competenze
+      </a>
+    </div>
+  </div>
+</div>
+<script>
+(async function controllaOperaiDaRegistrare(){
+  if(window.location.pathname === '/matrice-competenze') return;  // già lì, ridondante ripeterlo
+  try{
+    const r = await fetch('/api/matrice-competenze/operai-da-registrare');
+    const nomi = await r.json();
+    if(!nomi || !nomi.length) return;
+    document.getElementById('listaOperaiDaRegistrare').innerHTML = nomi.map(n => `👤 ${n}`).join('<br>');
+    document.getElementById('overlayPromemoriaCompetenze').style.display = 'flex';
+  }catch(e){ /* silenzioso: un promemoria che non carica non deve mai bloccare il resto della pagina */ }
+})();
+</script>
 </body>
 </html>
