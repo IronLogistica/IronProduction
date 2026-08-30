@@ -117,6 +117,101 @@ def crea():
     except (ValueError, IntegrityError) as exc:
         db.session.rollback(); return jsonify(ok=False, error=str(exc)), 400
 
+
+@pp_bp.route('/admin/crea-dati-test-gantt', methods=['GET', 'POST'])
+def admin_crea_dati_test_gantt():
+    """
+    ENDPOINT TEMPORANEO — da usare UNA volta, poi da eliminare dal codice.
+    Crea 4 Ordini di Produzione FINTI, marcati chiaramente con commessa
+    'TEST-DEMO' e codici articolo 'TEST-DEMO-1'...'TEST-DEMO-4' — pensati
+    per riempire OGNI centro di costo reale del programma con del carico,
+    prima di costruire il Gantt per-centro (serve un esempio visibile su
+    ogni macchina per progettarlo). Distribuisce i centri di costo REALI
+    (letti in questo momento dal database, non inventati) sulle 4 commesse
+    a rotazione, così ognuna ne copre una parte e insieme le 4 coprono
+    tutti i centri esistenti.
+
+    Idempotente: rilanciandolo ripulisce prima i propri dati precedenti,
+    non li duplica. Non richiede login (nessun endpoint di
+    amministrazione lo richiede in questo programma) — proprio per
+    questo va tolto dal codice non appena non serve più, non lasciato
+    raggiungibile a tempo indeterminato.
+    """
+    if request.method == 'GET':
+        return ('<h3>Crea 4 Ordini di Produzione di TEST (commessa TEST-DEMO)</h3>'
+                '<p>Riempie ogni centro di costo reale con del carico finto, per progettare il Gantt.</p>'
+                '<form method="POST"><button type="submit" style="padding:10px 20px;font-size:15px">'
+                'Crea i 4 OP di test</button></form>')
+
+    centri = CentroCostoWood.query.order_by(CentroCostoWood.id).all()
+    if not centri:
+        return jsonify(ok=False, error='Nessun centro di costo configurato — niente su cui distribuire il carico.'), 400
+
+    # Pulizia di un run precedente PRIMA di ricreare — senza questo, ogni
+    # rilancio aggiungeva altri 4 OP invece di sostituire i 4 di prima.
+    OrdineProduzione.query.filter_by(commessa='TEST-DEMO').delete()
+    db.session.flush()
+
+    materiale_finto = 'TEST-DEMO-MATERIALE'
+    if not GiacenzaWood.query.get(materiale_finto):
+        db.session.add(GiacenzaWood(codice=materiale_finto, quantita=1000000))
+    if not ArticoloApprovvigionamento.query.filter_by(codice=materiale_finto).first():
+        db.session.add(ArticoloApprovvigionamento(codice=materiale_finto, tipo_approvvigionamento='MATERIA_PRIMA_FORNITORE', unita_misura='PZ'))
+    db.session.flush()
+
+    n_gruppi = 4
+    creati = []
+    for i in range(n_gruppi):
+        codice_finto = f'TEST-DEMO-{i + 1}'
+        centri_di_questo = centri[i::n_gruppi]  # rotazione: insieme le 4 commesse coprono TUTTI i centri
+        if not centri_di_questo:
+            continue
+        # Pulizia dei dati di un run precedente per lo STESSO codice finto,
+        # prima di ricrearli — idempotente, mai duplicati.
+        CicloLavoroWood.query.filter_by(codice=codice_finto).delete()
+        DistintaBaseWood.query.filter_by(codice_padre=codice_finto).delete()
+        db.session.flush()
+        for seq, centro in enumerate(centri_di_questo, start=1):
+            db.session.add(CicloLavoroWood(codice=codice_finto, sequenza=seq, centro_costo_id=centro.id))
+        db.session.add(DistintaBaseWood(codice_padre=codice_finto, codice_figlio=materiale_finto, quantita=1))
+        if not DescrizioneCodiceWood.query.get(codice_finto):
+            db.session.add(DescrizioneCodiceWood(codice=codice_finto,
+                            descrizione=f'PRODOTTO DI TEST — {len(centri_di_questo)} centri di costo'))
+        job = prossimo_numero_commessa()
+        o = OrdineProduzione(codice=prossimo_codice_ordine_pp(), codice_articolo=codice_finto,
+            descrizione=f'ORDINE DI TEST — carico macchine ({len(centri_di_questo)} centri: '
+                        f'{", ".join(c.nome for c in centri_di_questo)})',
+            commessa='TEST-DEMO', qta_pianificata=5000, qta_buona=0,
+            asa='Carpenteria Propria', priorita=5, stato='In esecuzione', creato_il=datetime.utcnow())
+        db.session.add(o)
+        creati.append({'op': o.codice, 'codice_articolo': codice_finto,
+                        'n_centri': len(centri_di_questo), 'centri': [c.nome for c in centri_di_questo]})
+    db.session.commit()
+    return jsonify(ok=True, creati=creati,
+                    messaggio=f'{len(creati)} OP di test creati (commessa TEST-DEMO, 5000 pezzi ciascuno). '
+                              f'Rimuovili con /admin/elimina-dati-test-gantt quando hai finito.')
+
+
+@pp_bp.route('/admin/elimina-dati-test-gantt', methods=['GET', 'POST'])
+def admin_elimina_dati_test_gantt():
+    """Rimuove TUTTO quello creato da admin_crea_dati_test_gantt (OP, cicli,
+    distinta, materiale finto) — identificato dalla commessa 'TEST-DEMO' e
+    dal prefisso 'TEST-DEMO-'. Da togliere insieme all'altro endpoint una
+    volta finita la sperimentazione sul Gantt."""
+    if request.method == 'GET':
+        return ('<h3>Elimina TUTTI i dati di test TEST-DEMO</h3>'
+                '<form method="POST"><button type="submit" style="padding:10px 20px;font-size:15px;'
+                'background:#c0392b;color:#fff;border:none;border-radius:6px">Elimina</button></form>')
+    n_op = OrdineProduzione.query.filter_by(commessa='TEST-DEMO').delete()
+    codici_finti = [f'TEST-DEMO-{i + 1}' for i in range(4)]
+    CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(codici_finti)).delete(synchronize_session=False)
+    DistintaBaseWood.query.filter(DistintaBaseWood.codice_padre.in_(codici_finti)).delete(synchronize_session=False)
+    DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici_finti)).delete(synchronize_session=False)
+    GiacenzaWood.query.filter_by(codice='TEST-DEMO-MATERIALE').delete()
+    ArticoloApprovvigionamento.query.filter_by(codice='TEST-DEMO-MATERIALE').delete()
+    db.session.commit()
+    return jsonify(ok=True, op_eliminati=n_op, messaggio='Dati di test TEST-DEMO rimossi completamente.')
+
 def _calcola_controllo_scorta(codice_articolo, qta, escludi_op_id=None):
     """
     Giacenza/impegnato/disponibile/mancante per un codice+quantità, rispetto
