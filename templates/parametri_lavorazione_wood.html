@@ -174,7 +174,7 @@
       <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px">
         <input id="cl-sequenza" type="number" step="1" min="1" value="1" placeholder="Sequenza" style="width:85px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
         <select id="cl-reparto" style="min-width:180px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)"><option value="">Reparto...</option></select>
-        <input id="cl-produttivita" type="number" step="0.01" min="0" placeholder="Pezzi/ora" style="width:100px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="cl-produttivita" type="number" step="0.01" min="0.01" required placeholder="Pezzi/ora *" title="Obbligatorio — anche una stima approssimativa se non hai ancora lo storico: senza questo dato la fase resta invisibile al Gantt" style="width:110px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
         <label style="display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)" title="Se spuntato, il sistema non lo aggiorna da solo con i consuntivi reali">
           <input id="cl-produttivita-manuale" type="checkbox" style="width:14px;height:14px"> 🔒 blocca
         </label>
@@ -779,11 +779,17 @@ async function caricaFasiCiclo(){
 }
 
 async function aggiungiFaseCiclo(){
+  const produttivita = parseFloat(document.getElementById('cl-produttivita').value);
+  if(!produttivita || produttivita <= 0){
+    alert('⚠️ Serve una stima dei pezzi/ora, anche approssimativa se non hai ancora lo storico — senza questo dato la fase resta invisibile al Gantt.');
+    document.getElementById('cl-produttivita').focus();
+    return;
+  }
   const payload = {
     codice: CODICE_CICLO_ATTIVO,
     sequenza: document.getElementById('cl-sequenza').value,
     centro_costo_id: document.getElementById('cl-reparto').value,
-    produttivita_oraria: document.getElementById('cl-produttivita').value,
+    produttivita_oraria: produttivita,
     produttivita_oraria_manuale: document.getElementById('cl-produttivita-manuale').checked,
     scarto_max_pct: document.getElementById('cl-scarto-max').value,
     lotto_trasferimento_minimo: document.getElementById('cl-lotto-trasferimento').value || null,

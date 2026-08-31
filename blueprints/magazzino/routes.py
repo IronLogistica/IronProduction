@@ -2581,6 +2581,18 @@ def api_ciclo_lavoro_crea():
         produttivita = float(d.get('produttivita_oraria') or 0)
     except (TypeError, ValueError):
         return jsonify({'errore': True, 'messaggio': 'La produttività oraria deve essere un numero'}), 400
+    if produttivita <= 0:
+        # BUG REALE CORRETTO: prima si poteva salvare una fase senza
+        # nessuna produttività (0 o vuoto) — il Gantt/Avanzamento
+        # Commesse per quella fase calcolava sempre 0 ore necessarie,
+        # 0 giorni di carico: la fase restava invisibile a tutta la
+        # pianificazione, senza nemmeno un errore chiaro al momento del
+        # salvataggio. Ora è obbligatoria una stima, anche approssimativa
+        # (senza ancora lo storico) — si affina da sola più avanti se non
+        # viene bloccata a mano (produttivita_oraria_manuale).
+        return jsonify({'errore': True, 'messaggio':
+            "Serve una stima dei pezzi/ora, anche approssimativa se non hai ancora lo storico — "
+            "senza questo dato la fase resta invisibile al Gantt (calcolerebbe sempre 0 giorni di carico)."}), 400
     try:
         scarto_max_pct = float(d['scarto_max_pct']) if d.get('scarto_max_pct') not in (None, '') else None
     except (TypeError, ValueError):
