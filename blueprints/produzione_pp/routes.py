@@ -828,10 +828,19 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
     eventi_grezzi = {}   # (op_code, componente) -> [(fase, pezzi_buoni), ...]
     op_codes = [o.codice for o in ordini]
     if op_codes:
+        # Solo eventi GIÀ APPROVATI — da quando esiste lo stand-by delle
+        # dichiarazioni MasterWork (vedi _registra_evento_consuntivo), una
+        # dichiarazione non ancora approvata non ha mosso nulla di
+        # ufficiale: contarla qui gonfierebbe "pz_effettuati" oltre
+        # qta_buona (l'unico dato realmente aggiornato dall'approvazione),
+        # disallineando questa vista da quella basata su qta_buona (es. il
+        # Kanban) — stesso identico bug appena trovato e corretto nella
+        # Dichiarazione di Produzione.
         for op_code, fase, componente, tot in (db.session.query(
                 EventoConsuntivoPP.op_code, EventoConsuntivoPP.fase, EventoConsuntivoPP.componente,
                 db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-                .filter(EventoConsuntivoPP.op_code.in_(op_codes))
+                .filter(EventoConsuntivoPP.op_code.in_(op_codes),
+                        EventoConsuntivoPP.approvato_direzione == True)  # noqa: E712
                 .group_by(EventoConsuntivoPP.op_code, EventoConsuntivoPP.fase, EventoConsuntivoPP.componente).all()):
             eventi_grezzi.setdefault((op_code, componente), []).append((fase, tot or 0))
 
@@ -1166,8 +1175,11 @@ def api_ordine_dettaglio_per_categoria(codice):
                     NumeroListaLavoroWood.op_code == o.codice,
                     NumeroListaLavoroWood.centro_costo_id.in_(centri_ids)).first())
             componente_param = None if cod == o.codice_articolo else cod
+            # Solo eventi APPROVATI — stessa correzione applicata ovunque
+            # in questo file per lo stand-by delle dichiarazioni MasterWork.
             base['pezzi_fatti'] = int((db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
                                        .filter(EventoConsuntivoPP.op_code == o.codice,
+                                               EventoConsuntivoPP.approvato_direzione == True,  # noqa: E712
                                                EventoConsuntivoPP.componente == componente_param if componente_param
                                                else EventoConsuntivoPP.componente.is_(None))
                                        .scalar()) or 0)
@@ -3222,11 +3234,16 @@ def api_reintegro_scarti():
     codici_op = [o.codice for o in ordini]
     dati_per_riga = {}  # (op_code, componente, fase_lower) -> {buoni, scarto}
     if codici_op:
+        # Solo eventi APPROVATI — stessa correzione applicata ovunque in
+        # questo file: uno scarto ancora in stand-by potrebbe essere
+        # respinto (dichiarazione sbagliata), quindi non deve ancora
+        # generare un bisogno di reintegro reale.
         for op_code, componente, fase, buoni, scarto in (
                 db.session.query(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente,
                                   EventoConsuntivoPP.fase, db.func.sum(EventoConsuntivoPP.pezzi_buoni),
                                   db.func.sum(EventoConsuntivoPP.pezzi_scarto))
-                .filter(EventoConsuntivoPP.op_code.in_(codici_op))
+                .filter(EventoConsuntivoPP.op_code.in_(codici_op),
+                        EventoConsuntivoPP.approvato_direzione == True)  # noqa: E712
                 .group_by(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente, EventoConsuntivoPP.fase).all()):
             dati_per_riga[(op_code, componente, fase.strip().lower())] = {
                 'buoni': buoni or 0, 'scarto': scarto or 0}
@@ -3321,8 +3338,18 @@ def api_dichiarazione_op_aperti(cid):
         # errato proprio sulla schermata principale di dichiarazione — il
         # capo reparto vedeva un saldo sbagliato per produzione già
         # dichiarata da MasterWork con un nome fase diverso.
+        # Solo eventi GIÀ APPROVATI dalla Direzione contano come "fatti" —
+        # da quando esiste lo stand-by (vedi _registra_evento_consuntivo),
+        # una dichiarazione MasterWork non ancora approvata non ha ancora
+        # mosso nulla di ufficiale: contarla qui dava un saldo "ottimista"
+        # (es. 8 pezzi) disallineato da quello vero sul Kanban (basato su
+        # qta_buona, che riflette solo gli eventi APPROVATI — es. 151),
+        # rischiando di far pensare al capo reparto che manchi pochissimo
+        # quando in realtà una fetta consistente di quel "fatto" è ancora
+        # da confermare e potrebbe essere respinta.
         for op_code, componente, fase, buoni in (
-                EventoConsuntivoPP.query.filter(EventoConsuntivoPP.op_code.in_(codici_op))
+                EventoConsuntivoPP.query.filter(EventoConsuntivoPP.op_code.in_(codici_op),
+                                                 EventoConsuntivoPP.approvato_direzione == True)  # noqa: E712
                 .with_entities(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente,
                                EventoConsuntivoPP.fase, EventoConsuntivoPP.pezzi_buoni).all()):
             if _fasi_corrispondono(centro.nome, fase):
@@ -3504,12 +3531,14 @@ def _verifica_eccedenza_dichiarazione(o, centro, componente, good):
     if not qta_necessaria or qta_necessaria <= 0:
         return None  # nessun pianificato di riferimento: non blocchiamo alla cieca
 
-    gia_fatti = (db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-                 .filter(EventoConsuntivoPP.op_code == o.codice,
-                         db.func.lower(EventoConsuntivoPP.fase) == centro.nome.strip().lower(),
-                         EventoConsuntivoPP.componente == componente if componente
-                         else EventoConsuntivoPP.componente.is_(None))
-                 .scalar()) or 0
+    # Confronto TOLLERANTE (_fasi_corrispondono), non un'uguaglianza esatta
+    # — stesso bug reale già corretto altrove: MasterWork manda in 'fase'
+    # un testo libero per articolo, non il nome esatto del Centro di Costo.
+    eventi_riga = (EventoConsuntivoPP.query
+                   .filter(EventoConsuntivoPP.op_code == o.codice,
+                           EventoConsuntivoPP.componente == componente if componente
+                           else EventoConsuntivoPP.componente.is_(None)).all())
+    gia_fatti = sum(e.pezzi_buoni or 0 for e in eventi_riga if _fasi_corrispondono(centro.nome, e.fase))
     nuovo_totale = gia_fatti + good
     eccedenza_pct = round(max(0, (nuovo_totale - qta_necessaria) / qta_necessaria * 100), 1)
     if eccedenza_pct <= SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE:
@@ -3556,12 +3585,14 @@ def api_non_conformita_8d_crea():
     qta_necessaria = _qta_necessaria_riga(o, componente)
     if not qta_necessaria or qta_necessaria <= 0:
         return jsonify(ok=False, error='Riga non riconosciuta nella distinta: nessun pianificato di riferimento'), 400
-    gia_fatti = (db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-                 .filter(EventoConsuntivoPP.op_code == o.codice,
-                         db.func.lower(EventoConsuntivoPP.fase) == centro.nome.strip().lower(),
-                         EventoConsuntivoPP.componente == componente if componente
-                         else EventoConsuntivoPP.componente.is_(None))
-                 .scalar()) or 0
+    # Confronto TOLLERANTE (_fasi_corrispondono), non un'uguaglianza esatta
+    # — stesso bug reale già corretto altrove: MasterWork manda in 'fase'
+    # un testo libero per articolo, non il nome esatto del Centro di Costo.
+    eventi_riga = (EventoConsuntivoPP.query
+                   .filter(EventoConsuntivoPP.op_code == o.codice,
+                           EventoConsuntivoPP.componente == componente if componente
+                           else EventoConsuntivoPP.componente.is_(None)).all())
+    gia_fatti = sum(e.pezzi_buoni or 0 for e in eventi_riga if _fasi_corrispondono(centro.nome, e.fase))
     eccedenza_pct = round(max(0, (gia_fatti + good - qta_necessaria) / qta_necessaria * 100), 1)
 
     modulo = ModuloNonConformita8D(

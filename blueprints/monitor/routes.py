@@ -10,7 +10,7 @@ from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
                     _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo,
                     _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op)
-from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria
+from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria, _fasi_corrispondono
 
 monitor_bp = Blueprint('monitor', __name__)
 
@@ -20,16 +20,6 @@ SEZIONI = {
     'terminati':   ('✅ APPENA TERMINATI (questa fase)',    'terminati-hdr'),
 }
 
-
-def _pezzi_fase(op_code, nome_centro, componente=None):
-    """Pezzi buoni già consuntivati per questo OP in QUESTA fase (per nome centro di costo, case-insensitive).
-    'componente'=None cerca i consuntivi del PRODOTTO FINITO dell'OP (componente IS NULL nel DB);
-    valorizzato cerca i consuntivi di QUEL componente intermedio specifico — non li mescola mai."""
-    q = db.session.query(db.func.sum(EventoConsuntivoPP.pezzi_buoni)).filter(
-        EventoConsuntivoPP.op_code == op_code,
-        db.func.lower(EventoConsuntivoPP.fase) == nome_centro.lower())
-    q = q.filter(EventoConsuntivoPP.componente.is_(None)) if not componente else q.filter(EventoConsuntivoPP.componente == componente)
-    return q.scalar() or 0
 
 
 def _materiale_disponibile(o, giacenza_residua=None, mappa_distinta=None):
@@ -146,19 +136,33 @@ def _righe_macchina(centro):
     # Vedi punto 4) sopra: una sola query aggregata per TUTTI i pezzi_buoni
     # consuntivati sugli OP coinvolti, invece di una query per (OP, fase,
     # componente) ripetuta nel ciclo sotto.
+    #
+    # BUG REALE TROVATO E CORRETTO: raggruppava per fase ESATTA
+    # (lower(fase)), poi la cercava con nome_centro.lower() — un'uguaglianza
+    # esatta, non il confronto TOLLERANTE (_fasi_corrispondono) già usato
+    # per far avanzare qta_buona dell'OP. MasterWork manda in 'fase' un
+    # testo libero per articolo (es. 'Saldatura Frontale c/Assemblaggio'),
+    # non il nome esatto del Centro di Costo qui — quella dichiarazione
+    # avanzava CORRETTAMENTE qta_buona, ma sul Totem Live risultava
+    # ignorata, mostrando un saldo più alto del vero.
+    #
+    # Filtra anche SOLO gli eventi APPROVATI: da quando esiste lo stand-by
+    # delle dichiarazioni MasterWork, una non ancora approvata non ha
+    # mosso nulla di ufficiale — contarla qui disallineava il Totem Live
+    # da qta_buona (il dato vero, aggiornato solo all'approvazione).
     codici_op = [o.codice for o in ordini]
-    somma_pezzi = {}
+    eventi_grezzi_op = {}  # (op_code, componente) -> [(fase, pezzi_buoni), ...]
     if codici_op:
-        for op_code, fase, componente, tot in (db.session.query(
-                EventoConsuntivoPP.op_code, db.func.lower(EventoConsuntivoPP.fase),
-                EventoConsuntivoPP.componente, db.func.sum(EventoConsuntivoPP.pezzi_buoni))
-                .filter(EventoConsuntivoPP.op_code.in_(codici_op))
-                .group_by(EventoConsuntivoPP.op_code, db.func.lower(EventoConsuntivoPP.fase),
-                          EventoConsuntivoPP.componente).all()):
-            somma_pezzi[(op_code, fase, componente)] = tot or 0
+        for op_code, fase, componente, buoni in (
+                db.session.query(EventoConsuntivoPP.op_code, EventoConsuntivoPP.fase,
+                                  EventoConsuntivoPP.componente, EventoConsuntivoPP.pezzi_buoni)
+                .filter(EventoConsuntivoPP.op_code.in_(codici_op),
+                        EventoConsuntivoPP.approvato_direzione == True).all()):  # noqa: E712
+            eventi_grezzi_op.setdefault((op_code, componente), []).append((fase, buoni or 0))
 
     def _pezzi_fase_cached(op_code, nome_centro, componente=None):
-        return somma_pezzi.get((op_code, (nome_centro or '').lower(), componente), 0)
+        return sum(tot for fase, tot in eventi_grezzi_op.get((op_code, componente), [])
+                   if _fasi_corrispondono(nome_centro, fase))
 
     # Disponibilità materiale — stesso motore "a residuo progressivo" di
     # Situazione Ordini di Produzione (priorità servita in ordine), ma qui
