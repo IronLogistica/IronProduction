@@ -1677,6 +1677,43 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
                                        componente=None if componente_finale else componente,
                                        timestamp_evento=ts, pezzi_buoni=good, pezzi_scarto=scrap, tempo_minuti=tempo,
                                        operatore=operatore, approvato_direzione=approvato_direzione))
+
+    # STAND-BY finché la Direzione non approva: la riga sopra esiste già
+    # (compare nella coda "Approva o Elimina"), ma NIENT'ALTRO si muove —
+    # OP, magazzino e varianza restano esattamente come prima — finché
+    # approvato_direzione non diventa True. Prima ogni dichiarazione era
+    # SUBITO valida ovunque, approvazione o no: un carico sbagliato da
+    # MasterWork movimentava OP e magazzino PRIMA che Angelo avesse anche
+    # solo la possibilità di vederlo e rifiutarlo — l'unico modo per
+    # correggerlo era uno storno completo dopo il fatto, con la merce già
+    # uscita/entrata nel frattempo. Le dichiarazioni fatte dal titolare
+    # (o chi ne fa le veci) dalla Dichiarazione di Produzione qui in
+    # IronProduction entrano SEMPRE con approvato_direzione=True (nessuna
+    # coda per quelle, vedi la funzione più sopra): per queste il
+    # comportamento resta esattamente quello di sempre, applicazione
+    # immediata. Solo le dichiarazioni MasterWork (approvato_direzione=False
+    # di default) restano in stand-by qui.
+    if not approvato_direzione:
+        return None
+
+    return _applica_effetti_evento_consuntivo(
+        o, fase_nome, ts, good, scrap, tempo, event_id, componente_finale, codice_lavorato, avanza_op, consumi_override)
+
+
+def _applica_effetti_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id,
+                                        componente_finale, codice_lavorato, avanza_op, consumi_override=None):
+    """
+    Tutto quello che una dichiarazione APPROVATA fa DAVVERO muovere: OP
+    (qta_buona/scarto, stato, avvisi), scarico/carico giacenza, varianza di
+    lavorazione, apprendimento produttività. Separata da
+    _registra_evento_consuntivo per poter essere chiamata in DUE momenti
+    diversi: SUBITO per una dichiarazione già approvata all'origine (dal
+    titolare, in Dichiarazione di Produzione), oppure PIÙ TARDI — quando
+    Angelo approva una dichiarazione MasterWork rimasta in stand-by (vedi
+    api_dichiarazione_approva) — con esattamente la stessa logica in
+    entrambi i casi, un solo posto da mantenere.
+    """
+    componente = None if componente_finale else codice_lavorato
     o.tempo_consuntivo_minuti += tempo
     if avanza_op:
         o.qta_buona += good; o.qta_scarto += scrap
@@ -3984,9 +4021,12 @@ def api_dichiarazione_verifica_pin_direzione():
 
 @pp_bp.get('/api/dichiarazione-produzione/approvazioni')
 def api_dichiarazione_approvazioni():
-    """Dichiarazioni NON ancora approvate dalla Direzione, su tutti i centri
-    — richiede il PIN Direzione. Sono comunque già registrate/valide in
-    OP e giacenza: questa è solo la coda di controllo successivo."""
+    """Dichiarazioni MasterWork ancora IN STAND-BY, non ancora approvate —
+    richiede il PIN Direzione. Da quando esiste lo stand-by (vedi
+    _registra_evento_consuntivo), NON sono ancora valide in OP e
+    giacenza: quelle si muovono solo al momento dell'approvazione qui
+    sotto — questa coda decide, non si limita più a controllare a
+    cose fatte."""
     if not _verifica_pin_direzione(request.args):
         return jsonify(ok=False, error='PIN Direzione non valido'), 403
     eventi = (EventoConsuntivoPP.query.filter_by(approvato_direzione=False)
@@ -4008,14 +4048,34 @@ def api_dichiarazione_approvazioni():
 
 @pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/approva')
 def api_dichiarazione_approva(eid):
+    """
+    Approvazione = il momento in cui la dichiarazione MasterWork, ferma in
+    stand-by da quando è arrivata, MUOVE davvero OP e magazzino per la
+    prima volta (vedi _applica_effetti_evento_consuntivo) — non più un
+    controllo a cose già fatte.
+    """
     d = request.get_json(force=True)
     if not _verifica_pin_direzione(d):
         return jsonify(ok=False, error='PIN Direzione non valido'), 403
     e = EventoConsuntivoPP.query.get_or_404(eid)
+    if e.approvato_direzione:
+        return jsonify(ok=True)  # già approvata (doppio click): nessun secondo movimento
+    o = OrdineProduzione.query.filter_by(codice=e.op_code).with_for_update().first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione collegato non trovato'), 404
+
+    componente_finale = e.componente is None
+    codice_lavorato = o.codice_articolo if componente_finale else e.componente
+    avanza_op = componente_finale and _e_ultima_fase_del_ciclo(codice_lavorato, e.fase)
+    avviso_magazzino = _applica_effetti_evento_consuntivo(
+        o, e.fase, e.timestamp_evento, e.pezzi_buoni, e.pezzi_scarto, e.tempo_minuti, e.event_id,
+        componente_finale, codice_lavorato, avanza_op)
+
     e.approvato_direzione = True
     e.approvato_il = datetime.utcnow()
     db.session.add(AuditPP(op_code=e.op_code, event_id=e.event_id, azione='APPROVAZIONE_DIREZIONE',
-                            dettaglio=f'dichiarazione {e.event_id} approvata dalla Direzione'))
+                            dettaglio=f'dichiarazione {e.event_id} approvata dalla Direzione — movimentazione applicata ora'
+                            + (f' — ⚠️ {avviso_magazzino}' if avviso_magazzino else '')))
     # Aggancio Storico Produzione Kanban: questa approvazione è ESATTAMENTE
     # la stessa condizione che fa salire "Grezzo IW" in Magazzino
     # (componente NULL, fase Saldatura, approvato dalla Direzione — vedi
@@ -4023,15 +4083,13 @@ def api_dichiarazione_approva(eid):
     # deve contarla nello stesso istante, non restare fermo ai soli rientri
     # DDT dalla verniciatura.
     if e.componente is None and 'sald' in (e.fase or '').strip().lower() and e.pezzi_buoni > 0:
-        o = OrdineProduzione.query.filter_by(codice=e.op_code).first()
-        if o:
-            p = (KanbanProdotto.query
-                 .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{(o.codice_articolo or "").upper()}%'))
-                 .first())
-            if p:
-                storico_aggiungi_auto(p.id, e.pezzi_buoni)
+        p = (KanbanProdotto.query
+             .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{(o.codice_articolo or "").upper()}%'))
+             .first())
+        if p:
+            storico_aggiungi_auto(p.id, e.pezzi_buoni)
     db.session.commit()
-    return jsonify(ok=True)
+    return jsonify(ok=True, avviso_magazzino=avviso_magazzino)
 
 
 def _storna_evento_consuntivo(e, o):
@@ -4138,16 +4196,27 @@ def _storna_evento_consuntivo(e, o):
 @pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/annulla')
 def api_dichiarazione_annulla(eid):
     """
-    Storno di una dichiarazione sbagliata — col PIN del capo OPPURE della
+    Elimina una dichiarazione sbagliata — col PIN del capo OPPURE della
     Direzione (chi trova l'errore prima interviene: la Direzione lo vede
     tipicamente qui, nella coda di approvazione, prima ancora che il capo
-    se ne accorga nello storico). Non modifica i numeri sul posto: inverte
-    esattamente quantità OP, giacenza (ri-carica i materiali scaricati,
-    ri-scarica il prodotto caricato), tempo ed eventuale Varianza di
-    Produzione collegata, poi elimina l'evento. La correzione via
-    MasterWork (es. il saldatore aveva segnato 100 invece di 80) resta
-    comunque un intervento SEPARATO che Angelo fa di là, per conto suo —
-    qui si toglie solo l'errore da IronProduction.
+    se ne accorga nello storico).
+
+    Due casi DIVERSI, a seconda che l'evento avesse già mosso qualcosa:
+    - Ancora in STAND-BY (approvato_direzione=False, mai approvato — vedi
+      _registra_evento_consuntivo): non ha mai toccato OP né magazzino,
+      quindi non c'è nessuno storno da fare — si cancella la riga e basta,
+      esattamente come non fosse mai arrivata. Esattamente il caso che ha
+      fatto nascere questo stand-by: un carico sbagliato da MasterWork
+      eliminato PRIMA che movimentasse ordini e magazzino.
+    - Già APPROVATA (o dichiarata dal titolare, sempre approvata
+      all'origine): aveva davvero mosso quantità OP e giacenza — serve lo
+      storno completo (_storna_evento_consuntivo), che inverte esattamente
+      quantità OP, giacenza (ri-carica i materiali scaricati, ri-scarica
+      il prodotto caricato), tempo ed eventuale Varianza di Produzione
+      collegata, poi elimina l'evento.
+    La correzione via MasterWork (es. il saldatore aveva segnato 100
+    invece di 80) resta comunque un intervento SEPARATO che Angelo fa di
+    là, per conto suo — qui si toglie solo l'errore da IronProduction.
     ⚠️ LIMITE RESIDUO: le righe di Varianza di Produzione create PRIMA che
     esistesse VarianzaProduzioneWood.event_id (dato storico) non hanno un
     collegamento diretto all'evento e non vengono rimosse dallo storno —
@@ -4158,6 +4227,16 @@ def api_dichiarazione_annulla(eid):
     if not (_verifica_pin_capo(d) or _verifica_pin_direzione(d)):
         return jsonify(ok=False, error='PIN capo o Direzione non valido'), 403
     e = EventoConsuntivoPP.query.get_or_404(eid)
+
+    if not e.approvato_direzione:
+        # Mai approvata: non ha mai mosso nulla, niente da stornare.
+        db.session.add(AuditPP(op_code=e.op_code, event_id=e.event_id, azione='ELIMINATO_STAND_BY',
+                                dettaglio=f'dichiarazione {e.event_id} eliminata prima dell\'approvazione — '
+                                          f'nessun movimento da annullare, non aveva ancora mosso OP né magazzino'))
+        db.session.delete(e)
+        db.session.commit()
+        return jsonify(ok=True)
+
     o = OrdineProduzione.query.filter_by(codice=e.op_code).first()
     if not o:
         return jsonify(ok=False, error='Ordine di produzione collegato non trovato'), 404
