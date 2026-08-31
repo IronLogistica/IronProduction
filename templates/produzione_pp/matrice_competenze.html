@@ -11,8 +11,12 @@
       persone competenti quando assegni risorse a un centro.
     </p>
     <div style="display:flex;gap:10px;margin-bottom:18px;align-items:center">
-      <input id="nuovo-operatore-nome" type="text" placeholder="Nome nuovo operatore..."
-             style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)">
+      <div style="position:relative">
+        <input id="nuovo-operatore-nome" type="text" placeholder="Nome nuovo operatore..." autocomplete="off"
+               style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"
+               oninput="_operatoreRicercaInput(this)" onfocus="_operatoreRicercaInput(this)">
+        <div id="operatore-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+      </div>
       <button class="btn btn-primary" onclick="creaOperatore()">➕ Aggiungi Operatore</button>
     </div>
     <div id="matrice-box" style="overflow-x:auto">Caricamento...</div>
@@ -86,6 +90,49 @@ async function toggleCompetenza(operatoreId, centroId, casella){
   }
 }
 
+let _operatoriDaRegistrareCache = null;
+let _operatoreRicercaTimer = null;
+function _posizionaOperatoreDropdown(input){
+  const dropdown = document.getElementById('operatore-dropdown');
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = rect.width + 'px';
+}
+async function _operatoreRicercaInput(input){
+  const dropdown = document.getElementById('operatore-dropdown');
+  clearTimeout(_operatoreRicercaTimer);
+  _operatoreRicercaTimer = setTimeout(async () => {
+    if(_operatoriDaRegistrareCache === null){
+      try{
+        const r = await fetch('/api/matrice-competenze/operai-da-registrare');
+        _operatoriDaRegistrareCache = await r.json();
+      }catch(e){ _operatoriDaRegistrareCache = []; }
+    }
+    const q = input.value.trim().toLowerCase();
+    const risultati = q ? _operatoriDaRegistrareCache.filter(n => n.toLowerCase().includes(q)) : _operatoriDaRegistrareCache;
+    if(!risultati.length){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+    dropdown.innerHTML = risultati.map(nome => {
+      const n = nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      return `<div class="wms-item" onmousedown="_operatoreSceltaNome('${n}')">
+        <div>${nome} <span style="font-size:10px;color:var(--text-dim)">— visto da MasterWork, non ancora registrato</span></div>
+      </div>`;
+    }).join('');
+    _posizionaOperatoreDropdown(input);
+    dropdown.style.display = 'block';
+  }, 150);
+}
+function _operatoreSceltaNome(nome){
+  document.getElementById('nuovo-operatore-nome').value = nome;
+  document.getElementById('operatore-dropdown').style.display = 'none';
+}
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('operatore-dropdown');
+  if(dropdown && dropdown.style.display !== 'none' && e.target !== document.getElementById('nuovo-operatore-nome') && !dropdown.contains(e.target)){
+    dropdown.style.display = 'none';
+  }
+});
+
 async function creaOperatore(){
   const input = document.getElementById('nuovo-operatore-nome');
   const nome = input.value.trim();
@@ -97,6 +144,7 @@ async function creaOperatore(){
     const d = await r.json();
     if(!d.ok){ alert(d.error || 'Errore.'); return; }
     input.value = '';
+    _operatoriDaRegistrareCache = null;  // il nome appena aggiunto non deve più comparire nei suggerimenti
     caricaMatrice();
   }catch(e){ alert('Errore di rete.'); }
 }
