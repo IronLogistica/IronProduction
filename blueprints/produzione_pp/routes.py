@@ -848,7 +848,30 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
         return sum(tot for fase, tot in eventi_grezzi.get((op_code, componente), [])
                    if _fasi_corrispondono(nome_centro, fase))
 
+    # BUG REALE TROVATO E CORRETTO (stesso bug appena trovato in
+    # _lista_lavoro_op — la stampa dell'Ordine di Lavoro — qui nella
+    # sorella 'leggera' usata da Situazione OP/Liste di Lavoro): il
+    # residuo non teneva conto di quanto di un componente (specialmente
+    # un SEMILAVORATO) fosse già disponibile a magazzino. Esempio reale:
+    # P60120SA pianificato 60, il suo semilavorato PP60120 ha già 60
+    # pezzi in giacenza (tagliati in precedenza) — la card mostrava
+    # ancora 60 da fare alla Segatrice, quando in realtà quella fase è
+    # già coperta e non dovrebbe comparire.
+    # _residuo_giacenza_progressivo(op_aperti=None) — NON i possibili
+    # 'ordini' passati a questa funzione (a volte più ampi di
+    # STATI_CHE_IMPEGNANO, es. include anche 'Creato' per le Liste di
+    # Lavoro) — usa sempre la stessa definizione CANONICA di impegno già
+    # in vigore ovunque nell'app, indipendente da cosa il chiamante
+    # specifico sta iterando qui per la vista.
+    residuo_per_op_id, residuo_finale = _residuo_giacenza_progressivo(mappa=mappa_distinta)
+
     for o in ordini:
+        # Un OP che non impegna nulla (es. ancora 'Creato', non
+        # rilasciato) non compare in residuo_per_op_id — per lui il
+        # residuo coincide con quello finale (dopo aver servito tutti
+        # quelli che impegnano davvero), come da contratto di
+        # _residuo_giacenza_progressivo.
+        residuo_giacenza_op = residuo_per_op_id.get(o.id, residuo_finale)
         per_centro = {}
         for n in componenti_per_op[o.id]:
             codice_comp = n['codice']
@@ -867,7 +890,11 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
                     'totale_pz': 0, 'pz_effettuati': 0,
                 })
                 acc['totale_pz'] += nr_pz_da_fare
-                acc['pz_effettuati'] += pezzi_fatti
+                # La giacenza già disponibile del componente vale come
+                # 'già fatto' ai fini del residuo — non serve rifare un
+                # lavoro il cui risultato è già pronto a magazzino.
+                gia_disponibile = max(residuo_giacenza_op.get(codice_comp, 0), 0)
+                acc['pz_effettuati'] += min(pezzi_fatti + gia_disponibile, nr_pz_da_fare)
         for v in per_centro.values():
             v['residuo_pz'] = max(v['totale_pz'] - v['pz_effettuati'], 0)
         risultato[o.id] = list(per_centro.values())
@@ -2752,12 +2779,22 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         for p in ParametriLavorazioneWood.query.filter(ParametriLavorazioneWood.codice.in_(componenti_di_centro)).all():
             parametri_per_codice[p.codice] = p
 
-    # ERRORE CONCETTUALE CORRETTO (rimossa la sottrazione della 'giacenza già
-    # disponibile' dal saldo qui): l'emissione di un Ordine di Lavoro parte
-    # GIÀ dopo aver interrogato quanta merce c'è a magazzino — il
-    # pianificato dell'OP tiene già conto di questo. Sottrarla di nuovo qui
-    # era un doppio conteggio, non un aiuto: confondeva l'operaio con un
-    # saldo troppo basso rispetto alla realtà del lavoro da fare.
+    # BUG REALE TROVATO E CORRETTO (il commento precedente qui era
+    # sbagliato — 'il pianificato dell'OP tiene già conto della giacenza'
+    # non è vero: qta_pianificata è una quantità FISSA del prodotto
+    # finito, mai ricalcolata in base a quanto SEMILAVORATO esiste già a
+    # magazzino). Esempio reale: P60120SA pianificato 60, il suo
+    # semilavorato PP60120 ha già 60 pezzi in giacenza (tagliati in
+    # precedenza, mai consumati) — l'Ordine di Lavoro per la Segatrice
+    # continuava a chiedere di tagliarne 60 nuovi, ignorando che sono
+    # già pronti; solo l'ultima fase sul codice padre (qui: Trapani)
+    # dovrebbe davvero comparire.
+    # Fix: sottrae anche quanto di QUESTO componente risulta già
+    # disponibile a magazzino, al netto di ciò che altri OP aperti (a
+    # parità o maggiore priorità) già se ne contendono — stessa logica
+    # di 'Impegnato/Disponibile' già in uso in Magazzino, non un nuovo
+    # calcolo isolato.
+    residuo_giacenza_per_op = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
 
     righe_per_materiale = {}
     for codice_comp in componenti_di_centro:
@@ -2790,7 +2827,9 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                                      else EventoConsuntivoPP.componente.is_(None)).all())
         pezzi_fatti = sum(e.pezzi_buoni or 0 for e in eventi_componente
                           if _fasi_corrispondono(centro.nome, e.fase))
-        saldo = max(nr_pz_da_fare - pezzi_fatti, 0)
+        saldo_prima_giacenza = max(nr_pz_da_fare - pezzi_fatti, 0)
+        gia_disponibile = max(residuo_giacenza_per_op.get(codice_comp, 0), 0)
+        saldo = max(saldo_prima_giacenza - gia_disponibile, 0)
 
         # 'Materiale' mostrato in tabella è SEMPRE il primo figlio diretto in
         # Distinta Base di codice_comp — un dato di distinta, indipendente
