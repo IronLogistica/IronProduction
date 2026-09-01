@@ -516,6 +516,99 @@ def scheda_stampa(sid):
 #  API ANAGRAFICA TERZISTI
 # ══════════════════════════════════════════════════════════════════════════════
 
+@terzisti_bp.route('/terzisti/spedizioni')
+def pagina_spedizioni_terzisti():
+    """Una card per ogni DDT spedito ai terzisti — è come se fosse un
+    ordine: quantità spedita/rientrata/residua per ciascun codice, con la
+    possibilità di eliminare righe (o l'intero DDT) finché non è ancora
+    rientrato nulla."""
+    return render_template('terzisti/spedizioni_cards.html', active='terzisti')
+
+
+@terzisti_bp.route('/api/ddt_uscita_cards')
+def api_ddt_uscita_cards():
+    """
+    Le stesse lavorazioni di /api/spedizioni_terzisti, raggruppate per DDT
+    di uscita (numero + terzista + data) — una card per DDT, come un
+    ordine: ogni riga è un codice con quantità spedita/rientrata/residua.
+    """
+    lavorazioni = LavorazioneTerzista.query.order_by(LavorazioneTerzista.data_uscita.desc()).all()
+    terzisti_per_id = {t.id: t for t in Terzista.query.all()}
+
+    ddt_map = {}
+    for lav in lavorazioni:
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            note_j = {}
+        qta_rientrata = int(note_j.get('qta_rientrata', 0))
+        qta_residua = max(0, lav.qta - qta_rientrata)
+        tz = terzisti_per_id.get(lav.terzista_id)
+
+        chiave = (lav.ddt_uscita or '(senza numero)', lav.terzista_id, lav.data_uscita)
+        card = ddt_map.setdefault(chiave, {
+            'ddt_uscita': lav.ddt_uscita or '(senza numero)',
+            'terzista': tz.nome if tz else '?',
+            'data_uscita': lav.data_uscita,
+            'righe': [],
+        })
+        card['righe'].append({
+            'id': lav.id,
+            'codice': note_j.get('codice', ''),
+            'desc': note_j.get('desc', ''),
+            'trattamento': note_j.get('trattamento', lav.fase),
+            'qta_spedita': lav.qta,
+            'qta_rientrata': qta_rientrata,
+            'qta_residua': qta_residua,
+        })
+
+    risultato = []
+    for card in ddt_map.values():
+        card['tot_spedita'] = sum(r['qta_spedita'] for r in card['righe'])
+        card['tot_rientrata'] = sum(r['qta_rientrata'] for r in card['righe'])
+        card['tot_residua'] = sum(r['qta_residua'] for r in card['righe'])
+        card['tutto_da_rientrare'] = card['tot_rientrata'] == 0
+        risultato.append(card)
+    return jsonify(risultato)
+
+
+@terzisti_bp.route('/api/lavorazioni/elimina', methods=['POST'])
+def api_elimina_lavorazioni():
+    """
+    Elimina una o più righe (lavorazioni) — SOLO quelle su cui non è
+    ancora rientrato nulla (qta_rientrata deve essere 0): una riga con
+    anche un solo pezzo già rientrato non si elimina mai, avrebbe un
+    rientro DDT reale agganciato a una riga sparita. Elabora OGNI id
+    indipendentemente — elimina quelle valide, segnala quelle rifiutate
+    col motivo — così 'elimina l'intero ordine' (passando tutti gli id di
+    una card) funziona anche quando SOLO alcune righe sono eleggibili:
+    elimina quelle che può, lascia le altre, non è tutto-o-niente.
+    """
+    d = request.get_json(force=True)
+    ids = d.get('ids') or []
+    if not ids:
+        return jsonify(ok=False, error='Nessuna riga indicata'), 400
+
+    eliminate, rifiutate = [], []
+    for lid in ids:
+        lav = LavorazioneTerzista.query.get(lid)
+        if not lav:
+            rifiutate.append({'id': lid, 'motivo': 'Riga non trovata (forse già eliminata)'})
+            continue
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            note_j = {}
+        qta_rientrata = int(note_j.get('qta_rientrata', 0))
+        if qta_rientrata > 0:
+            rifiutate.append({'id': lid, 'motivo': f'Già rientrati {qta_rientrata} pezzi su questa riga — non eliminabile'})
+            continue
+        db.session.delete(lav)
+        eliminate.append(lid)
+    db.session.commit()
+    return jsonify(ok=True, eliminate=eliminate, rifiutate=rifiutate)
+
+
 @terzisti_bp.route('/api/terzisti')
 def api_lista():
     return jsonify([{

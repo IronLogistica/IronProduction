@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🚚 Spedizioni ai Terzisti</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
+      Una card per ogni DDT spedito ai terzisti — e' come se fosse un ordine: quantita' spedita, rientrata e
+      residua per ciascun codice. Finche' non e' rientrato nulla puoi eliminare una singola riga, piu' righe o
+      l'intero DDT; se e' gia' rientrato qualcosa, resta possibile eliminare solo le righe di cui non e'
+      rientrato ancora niente.
+    </p>
+    <div id="ddt-cards" style="display:flex;flex-wrap:wrap;gap:14px;align-items:flex-start">Caricamento...</div>
+  </div>
+</div>
+
+<style>
+  .ddt-card{width:380px;background:var(--dark3);border:1px solid var(--border);border-left:4px solid var(--accent);border-radius:10px;padding:14px;box-shadow:var(--shadow)}
+  .ddt-card.completo{border-left-color:#1a9e5c}
+  .ddt-card-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px}
+  .ddt-card-titolo{font-size:16px;font-weight:800;color:#e0eefc}
+  .ddt-card-sub{font-size:11px;color:var(--text-dim)}
+  table.ddt-righe{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:10px}
+  table.ddt-righe th{text-align:left;font-size:10px;color:var(--text-dim);text-transform:uppercase;padding:4px 4px;border-bottom:1px solid var(--border)}
+  table.ddt-righe td{padding:5px 4px;border-bottom:1px solid rgba(255,255,255,.05)}
+  table.ddt-righe td.num{text-align:center;font-weight:700}
+  .riga-con-rientro{opacity:.65}
+  .ddt-card-footer{display:flex;gap:8px;justify-content:space-between;align-items:center;font-size:11px}
+  .ddt-tot{color:var(--text-dim)}
+  .ddt-tot b{color:var(--text)}
+</style>
+{% endblock %}
+{% block scripts %}
+let CARDS = [];
+
+async function carica(){
+  const box = document.getElementById('ddt-cards');
+  try{
+    const r = await fetch('/api/ddt_uscita_cards');
+    CARDS = await r.json();
+    render();
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">Errore di rete.</p>';
+  }
+}
+
+function render(){
+  const box = document.getElementById('ddt-cards');
+  if(!CARDS.length){
+    box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna spedizione a terzisti registrata.</p>';
+    return;
+  }
+  box.innerHTML = CARDS.map((c, ci) => {
+    const completo = c.tot_residua === 0 && c.tot_spedita > 0;
+    const righe = c.righe.map((r, ri) => {
+      const haRientro = r.qta_rientrata > 0;
+      return `<tr class="${haRientro ? 'riga-con-rientro' : ''}">
+        <td><input type="checkbox" data-card="${ci}" data-riga-id="${r.id}" ${haRientro ? 'disabled title="Già rientrati '+r.qta_rientrata+' pezzi — non eliminabile"' : ''}></td>
+        <td>${r.codice}${r.desc ? ' <span style="color:var(--text-dim);font-size:10px">'+r.desc+'</span>' : ''}</td>
+        <td class="num">${r.qta_spedita}</td>
+        <td class="num">${r.qta_rientrata}</td>
+        <td class="num" style="color:${r.qta_residua > 0 ? '#e6b800' : '#1a9e5c'}">${r.qta_residua}</td>
+      </tr>`;
+    }).join('');
+
+    return `<div class="ddt-card ${completo ? 'completo' : ''}">
+      <div class="ddt-card-hdr">
+        <div>
+          <div class="ddt-card-titolo">DDT ${c.ddt_uscita}</div>
+          <div class="ddt-card-sub">${c.terzista} · ${c.data_uscita || '—'}</div>
+        </div>
+        ${completo ? '<span style="background:rgba(26,158,92,.18);color:#1a9e5c;font-size:10px;font-weight:700;padding:3px 9px;border-radius:999px">✅ RIENTRATO</span>' : ''}
+      </div>
+      <table class="ddt-righe">
+        <thead><tr><th></th><th>Codice</th><th>Spedita</th><th>Rientrata</th><th>Residua</th></tr></thead>
+        <tbody>${righe}</tbody>
+      </table>
+      <div class="ddt-card-footer">
+        <span class="ddt-tot">Tot: <b>${c.tot_spedita}</b> sped. · <b>${c.tot_rientrata}</b> rient. · <b>${c.tot_residua}</b> res.</span>
+        <div style="display:flex;gap:6px">
+          <button class="btn btn-ghost" style="padding:4px 10px;font-size:11px" onclick="selezionaTutteEliminabili(${ci})">Seleziona eliminabili</button>
+          <button class="btn btn-danger" style="padding:4px 10px;font-size:11px" onclick="eliminaSelezionate(${ci})">🗑️ Elimina selezionate</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function selezionaTutteEliminabili(ci){
+  document.querySelectorAll(`input[data-card="${ci}"]:not(:disabled)`).forEach(cb => cb.checked = true);
+}
+
+async function eliminaSelezionate(ci){
+  const checkbox = document.querySelectorAll(`input[data-card="${ci}"]:checked`);
+  const ids = Array.from(checkbox).map(cb => parseInt(cb.dataset.rigaId));
+  if(!ids.length){ alert('Seleziona almeno una riga da eliminare.'); return; }
+  if(!confirm(`Eliminare ${ids.length} riga/e selezionata/e?`)) return;
+  try{
+    const r = await fetch('/api/lavorazioni/elimina', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ids})
+    });
+    const d = await r.json();
+    if(!d.ok){ alert(d.error || 'Errore.'); return; }
+    let msg = `✅ ${d.eliminate.length} riga/e eliminata/e.`;
+    if(d.rifiutate.length){
+      msg += `\n\n⚠️ ${d.rifiutate.length} riga/e NON eliminata/e:\n` + d.rifiutate.map(x => `- ${x.motivo}`).join('\n');
+    }
+    alert(msg);
+    await carica();
+  }catch(e){
+    alert('Errore di rete.');
+  }
+}
+
+carica();
+{% endblock %}
