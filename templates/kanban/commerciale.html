@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">📦 Disponibilità Prodotti</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px">
+      Quanto è pronto ora, quanto rientra a breve dal trattamento esterno, quanto si può ancora vendere senza
+      intaccare la scorta minima. Solo consultazione — nessuna modifica da qui.
+    </p>
+    <input id="filtro-ricerca" type="text" placeholder="Cerca prodotto..." autocomplete="off"
+           style="width:100%;padding:14px 16px;font-size:16px;border-radius:8px;border:1px solid var(--border);margin-bottom:18px"
+           oninput="filtraProdotti()">
+    <div id="prodotti-lista" style="display:flex;flex-direction:column;gap:10px">Caricamento...</div>
+  </div>
+</div>
+
+<style>
+  .prod-riga{
+    display:flex;align-items:center;gap:16px;padding:16px;border:1px solid var(--border);
+    border-radius:10px;background:var(--surface);flex-wrap:wrap;
+  }
+  .prod-nome{flex:1;min-width:200px}
+  .prod-nome .n{font-weight:800;font-size:17px;color:#eaf4ff}
+  .prod-nome .c{font-size:12px;color:var(--text-dim)}
+  .prod-numeri{display:flex;gap:22px;flex-wrap:wrap}
+  .prod-num{text-align:center;min-width:100px}
+  .prod-num .v{font-size:24px;font-weight:800}
+  .prod-num .l{font-size:11px;color:var(--text-dim);text-transform:uppercase;margin-top:2px}
+  .v-ok{color:#1a9e5c}
+  .v-basso{color:#e6b800}
+  .v-zero{color:#7a828a}
+  .v-nd{color:var(--text-dim);font-size:16px}
+</style>
+{% endblock %}
+{% block scripts %}
+let PRODOTTI = [];
+
+async function carica(){
+  const box = document.getElementById('prodotti-lista');
+  try{
+    const r = await fetch('/api/commerciale/disponibilita');
+    PRODOTTI = await r.json();
+    render();
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function classeValore(v){
+  if(v === null || v === undefined) return 'v-nd';
+  if(v > 0) return 'v-ok';
+  if(v === 0) return 'v-zero';
+  return 'v-basso';
+}
+
+function render(){
+  const box = document.getElementById('prodotti-lista');
+  const filtro = (document.getElementById('filtro-ricerca').value || '').trim().toLowerCase();
+  const visibili = filtro ? PRODOTTI.filter(p => p.prodotto.toLowerCase().includes(filtro)) : PRODOTTI;
+  if(!visibili.length){
+    box.innerHTML = '<p class="muted" style="font-style:italic">Nessun prodotto trovato.</p>';
+    return;
+  }
+  box.innerHTML = visibili.map(p => `
+    <div class="prod-riga">
+      <div class="prod-nome">
+        <div class="n">${p.icona} ${p.prodotto}</div>
+        <div class="c">${p.categoria || ''}</div>
+      </div>
+      <div class="prod-numeri">
+        <div class="prod-num">
+          <div class="v ${classeValore(p.pronto_oggi)}">${p.pronto_oggi}</div>
+          <div class="l">Pronto oggi</div>
+        </div>
+        <div class="prod-num">
+          <div class="v ${classeValore(p.pronto_a_breve)}">${p.pronto_a_breve}</div>
+          <div class="l">Pronto a breve</div>
+        </div>
+        <div class="prod-num">
+          <div class="v ${classeValore(p.producibile)}">${p.producibile === null ? '—' : p.producibile}</div>
+          <div class="l">Producibile${p.scorta_minima_nota ? ' *' : ''}</div>
+        </div>
+      </div>
+    </div>`).join('');
+}
+
+function filtraProdotti(){ render(); }
+
+carica();
+{% endblock %}

@@ -292,6 +292,14 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
   <!-- ══ MAIN ══════════════════════════════════════════════════════════════ -->
   <main class="tz-main">
 
+    <!-- Avviso in ritardo — ben visibile, compare solo se c'e' davvero qualcosa da controllare -->
+    <div id="banner-ritardo" style="display:none;background:rgba(196,60,60,.14);border:1.5px solid var(--red);
+                                     border-radius:10px;padding:14px 18px;margin-bottom:14px;
+                                     align-items:center;gap:12px;font-size:14px;font-weight:700;color:var(--red)">
+      <span style="font-size:22px">⚠️</span>
+      <span id="banner-ritardo-testo"></span>
+    </div>
+
     <!-- KPI -->
     <div class="kpi-bar">
       <div class="kpi-tz kpi-att"><div class="kv" id="k-att">—</div><div class="kl">In attesa</div></div>
@@ -717,8 +725,18 @@ async function caricaResiduoPerFornitore(){
 function aggKPI(){
   document.getElementById('k-att').textContent=_dati.filter(d=>d.stato==='ATTESA_RIENTRO').length;
   document.getElementById('k-par').textContent=_dati.filter(d=>d.stato==='PARZIALE').length;
-  document.getElementById('k-rit').textContent=_dati.filter(d=>d.stato==='IN_RITARDO').length;
+  const nRitardo=_dati.filter(d=>d.stato==='IN_RITARDO').length;
+  document.getElementById('k-rit').textContent=nRitardo;
   document.getElementById('k-chi').textContent=_dati.filter(d=>d.stato==='RIENTRATA').length;
+  const banner=document.getElementById('banner-ritardo');
+  if(nRitardo>0){
+    document.getElementById('banner-ritardo-testo').textContent=
+      nRitardo===1 ? '1 spedizione in ritardo — controllarla prima delle altre.'
+                   : `${nRitardo} spedizioni in ritardo — controllarle prima delle altre.`;
+    banner.style.display='flex';
+  }else{
+    banner.style.display='none';
+  }
 }
 
 window.filt = function(f,el){

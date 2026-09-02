@@ -357,6 +357,49 @@ def _calcola_alert_scorte():
 
 
 # ── PAGINA ALERT SCORTE ──────────────────────────────────────────────────────
+@kanban_bp.route('/commerciale/disponibilita')
+def pagina_commerciale_disponibilita():
+    """
+    Vista per il commerciale — sola lettura, niente pulsanti di modifica.
+    Tre soli numeri per prodotto, in linguaggio umano invece delle sigle
+    tecniche del Kanban interno (Grezzi/In Trattamento/ecc. non le vede):
+    quanto è pronto OGGI, quanto rientra A BREVE dal trattamento esterno,
+    quanto si può ANCORA VENDERE senza intaccare la scorta minima.
+    """
+    return render_template('kanban/commerciale.html', active='commerciale_disponibilita')
+
+
+@kanban_bp.route('/api/commerciale/disponibilita')
+def api_commerciale_disponibilita():
+    """
+    Stessi identici numeri già mostrati sul Kanban interno (Saldo
+    Disponibile/BT/C-Scorta) — MAI ricalcolati con una formula diversa,
+    solo tradotti in etichette comprensibili a chi non è del reparto.
+    Legge SOLO valori già sincronizzati in locale (nessuna chiamata WMS
+    live): la pagina deve aprirsi istantanea anche durante una telefonata
+    con un cliente, non deve mai aspettare una rete esterna.
+    """
+    scorta_minima_per_sku = _mappa_scorta_minima_per_sku()
+    prodotti = (KanbanProdotto.query
+                .filter(~KanbanProdotto.prodotto.in_(['Totali']))
+                .order_by(KanbanProdotto.categoria, KanbanProdotto.prodotto).all())
+    risultato = []
+    for p in prodotti:
+        if p.prodotto.isdigit():
+            continue
+        sku = sku_da_nome_prodotto(p.prodotto)
+        scorta_minima = scorta_minima_per_sku.get(sku.upper()) if sku else None
+        saldo_lt = p.saldo_contabile
+        risultato.append({
+            'prodotto': p.prodotto, 'categoria': p.categoria, 'icona': p.icona or '📦',
+            'pronto_oggi': p.verniciati + p.finiti_is - p.riservato,
+            'pronto_a_breve': p.saldo_contabile_breve_termine,
+            'producibile': (round(saldo_lt - scorta_minima)) if scorta_minima is not None else None,
+            'scorta_minima_nota': scorta_minima is None,
+        })
+    return jsonify(risultato)
+
+
 @kanban_bp.route('/alert-scorte')
 def pagina_alert_scorte():
     from blueprints.magazzino.routes import calcola_alert_fabbisogno_codici_padre
