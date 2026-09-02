@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Situazione Prodotti e Fornitori — IronProduction</title>
+<style>
+  :root{
+    --dark:#0d1b2e; --dark2:#0a1623; --dark3:#112240;
+    --accent:#1e6fa5; --accent2:#2589c7;
+    --orange:#e8760a; --yellow:#e6b800; --red:#c0392b; --green:#1a9e5c;
+    --bg:#0f1e35; --surface:#132035;
+    --text:#c8ddf0; --text-dim:#6b8aaa; --border:rgba(30,111,165,.25);
+    --shadow:0 2px 12px rgba(0,0,0,.4); --radius:8px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+
+  .topbar{background:var(--dark2);color:#fff;padding:16px 24px;box-shadow:0 2px 12px rgba(0,0,0,.4);border-bottom:1px solid var(--border)}
+  .topbar-title{font-size:18px;font-weight:700;color:#e0eefc}
+  .topbar-sub{font-size:11px;color:var(--text-dim);margin-top:2px}
+
+  .tabs{display:flex;background:var(--dark2);border-bottom:2px solid var(--accent)}
+  .tab{flex:1;padding:16px;text-align:center;font-size:15px;font-weight:700;color:var(--text-dim);cursor:pointer;border-bottom:3px solid transparent;transition:all .15s}
+  .tab:hover{color:var(--text)}
+  .tab.attivo{color:#fff;border-bottom-color:var(--steel2,#4d9fd6);background:rgba(30,111,165,.12)}
+
+  .content{padding:20px 24px;max-width:1100px;margin:0 auto}
+  .pannello{display:none}
+  .pannello.attivo{display:block}
+  .mon-section{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px;border:1px solid var(--border)}
+
+  .intro{font-size:13px;color:var(--text-dim);margin-bottom:16px;line-height:1.5}
+  #filtro-prodotti, #filtro-fornitori{
+    width:100%;padding:14px 16px;font-size:16px;border-radius:8px;border:1px solid var(--border);
+    margin-bottom:14px;background:var(--dark3);color:var(--text);
+  }
+  #filtro-prodotti::placeholder, #filtro-fornitori::placeholder{color:var(--text-dim)}
+
+  .categorie-pill{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+  .pill{padding:8px 16px;border-radius:999px;border:1px solid var(--border);background:var(--dark3);color:var(--text-dim);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+  .pill:hover{border-color:var(--accent2)}
+  .pill.attiva{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+  .categoria-titolo{font-size:13px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:.5px;margin:22px 0 10px;padding-bottom:6px;border-bottom:1.5px solid var(--border)}
+  .categoria-titolo:first-child{margin-top:0}
+
+  .prod-riga{display:flex;align-items:center;gap:16px;padding:16px;border:1px solid var(--border);border-radius:10px;background:var(--dark3);flex-wrap:wrap;margin-bottom:10px}
+  .prod-nome{flex:1;min-width:200px}
+  .prod-nome .n{font-weight:800;font-size:16px;color:#eaf4ff}
+  .prod-numeri{display:flex;gap:22px;flex-wrap:wrap}
+  .prod-num{text-align:center;min-width:100px}
+  .prod-num .v{font-size:24px;font-weight:800}
+  .prod-num .l{font-size:11px;color:var(--text-dim);text-transform:uppercase;margin-top:2px}
+  .v-ok{color:#1a9e5c}
+  .v-basso{color:#e6b800}
+  .v-zero{color:#7a828a}
+  .v-nd{color:var(--text-dim);font-size:16px}
+  .nota-finale{font-size:11px;color:var(--text-dim);margin-top:18px}
+
+  .banner-ritardo{
+    display:none;background:rgba(196,60,60,.14);border:1.5px solid var(--red);border-radius:10px;
+    padding:14px 18px;margin-bottom:16px;align-items:center;gap:12px;font-size:14px;font-weight:700;color:var(--red);
+  }
+  .fornitore-card{background:var(--dark3);border:1px solid var(--border);border-radius:10px;padding:16px;margin-bottom:14px}
+  .fornitore-hdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px}
+  .fornitore-nome{font-size:16px;font-weight:800;color:#eaf4ff}
+  .fornitore-badge{font-size:11px;font-weight:700;padding:4px 10px;border-radius:999px}
+  .badge-ritardo{background:rgba(196,60,60,.18);color:var(--red)}
+  .badge-ok{background:rgba(26,158,92,.18);color:var(--green)}
+  table.ddt-righe{width:100%;border-collapse:collapse;font-size:13px}
+  table.ddt-righe th{text-align:left;font-size:10px;color:var(--text-dim);text-transform:uppercase;padding:6px 6px;border-bottom:1px solid var(--border)}
+  table.ddt-righe td{padding:8px 6px;border-bottom:1px solid rgba(255,255,255,.05)}
+  .stato-tag{font-size:10px;font-weight:700;padding:3px 8px;border-radius:999px}
+  .st-ritardo{background:rgba(196,60,60,.18);color:var(--red)}
+  .st-parziale{background:rgba(230,184,0,.18);color:var(--yellow)}
+  .st-attesa{background:rgba(30,111,165,.18);color:var(--accent2)}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-title">📋 Situazione Prodotti e Fornitori</div>
+  <div class="topbar-sub">IronProduction — solo consultazione</div>
+</div>
+
+<div class="tabs">
+  <div class="tab attivo" id="tab-prodotti" onclick="mostraPannello('prodotti')">📦 Prodotti</div>
+  <div class="tab" id="tab-fornitori" onclick="mostraPannello('fornitori')">🚚 Fornitori</div>
+</div>
+
+<div class="content">
+
+  <!-- ══════ PANNELLO PRODOTTI ══════ -->
+  <div class="pannello attivo" id="pannello-prodotti">
+    <div class="mon-section">
+      <div style="padding:16px">
+        <p class="intro">
+          Quanto è pronto ora, quanto rientra a breve dal trattamento esterno, quanto si può ancora produrre senza
+          intaccare la scorta minima.
+        </p>
+        <input id="filtro-prodotti" type="text" placeholder="Cerca prodotto..." autocomplete="off" oninput="renderProdotti()">
+        <div id="categorie-pills" class="categorie-pill"></div>
+        <div id="prodotti-lista">Caricamento...</div>
+        <div class="nota-finale">* Scorta minima non ancora sincronizzata per questo codice — mostrato "—".</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════ PANNELLO FORNITORI ══════ -->
+  <div class="pannello" id="pannello-fornitori">
+    <div class="mon-section">
+      <div style="padding:16px">
+        <p class="intro">
+          Merce spedita ai fornitori di trattamento esterno (zincatura, verniciatura) e quanto è ancora da rientrare.
+        </p>
+        <div class="banner-ritardo" id="banner-ritardo">
+          <span style="font-size:22px">⚠️</span>
+          <span id="banner-ritardo-testo"></span>
+        </div>
+        <input id="filtro-fornitori" type="text" placeholder="Cerca fornitore o codice..." autocomplete="off" oninput="renderFornitori()">
+        <div id="fornitori-lista">Caricamento...</div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let PRODOTTI = [];
+let CATEGORIA_ATTIVA = 'TUTTE';
+let LAVORAZIONI = [];
+
+function mostraPannello(nome){
+  document.querySelectorAll('.pannello').forEach(p => p.classList.remove('attivo'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('attivo'));
+  document.getElementById('pannello-' + nome).classList.add('attivo');
+  document.getElementById('tab-' + nome).classList.add('attivo');
+}
+
+// ═══════════════════ PRODOTTI ═══════════════════
+async function caricaProdotti(){
+  const box = document.getElementById('prodotti-lista');
+  try{
+    const r = await fetch('/api/commerciale/disponibilita');
+    PRODOTTI = await r.json();
+    renderPills();
+    renderProdotti();
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function renderPills(){
+  const box = document.getElementById('categorie-pills');
+  const categorie = [...new Set(PRODOTTI.map(p => p.categoria || 'Senza gruppo'))].sort();
+  const pills = ['TUTTE', ...categorie];
+  box.innerHTML = pills.map(c => {
+    const label = c === 'TUTTE' ? 'Tutte' : c;
+    return `<div class="pill ${c === CATEGORIA_ATTIVA ? 'attiva' : ''}" onclick="sceglicategoria('${c.replace(/'/g,"\\'")}')">${label}</div>`;
+  }).join('');
+}
+
+function sceglicategoria(c){
+  CATEGORIA_ATTIVA = c;
+  renderPills();
+  renderProdotti();
+}
+
+function classeValore(v){
+  if(v === null || v === undefined) return 'v-nd';
+  if(v > 0) return 'v-ok';
+  if(v === 0) return 'v-zero';
+  return 'v-basso';
+}
+
+function rigaProdottoHtml(p){
+  return `<div class="prod-riga">
+    <div class="prod-nome"><div class="n">${p.icona} ${p.prodotto}</div></div>
+    <div class="prod-numeri">
+      <div class="prod-num"><div class="v ${classeValore(p.pronto_oggi)}">${p.pronto_oggi}</div><div class="l">Pronto oggi</div></div>
+      <div class="prod-num"><div class="v ${classeValore(p.pronto_a_breve)}">${p.pronto_a_breve}</div><div class="l">Pronto a breve</div></div>
+      <div class="prod-num"><div class="v ${classeValore(p.producibile)}">${p.producibile === null ? '—' : p.producibile}</div><div class="l">Producibile${p.scorta_minima_nota ? ' *' : ''}</div></div>
+    </div>
+  </div>`;
+}
+
+function renderProdotti(){
+  const box = document.getElementById('prodotti-lista');
+  const filtro = (document.getElementById('filtro-prodotti').value || '').trim().toLowerCase();
+  let visibili = filtro ? PRODOTTI.filter(p => p.prodotto.toLowerCase().includes(filtro)) : PRODOTTI;
+  if(CATEGORIA_ATTIVA !== 'TUTTE'){
+    visibili = visibili.filter(p => (p.categoria || 'Senza gruppo') === CATEGORIA_ATTIVA);
+  }
+  if(!visibili.length){
+    box.innerHTML = '<p style="color:var(--text-dim);font-style:italic;padding:20px 0">Nessun prodotto trovato.</p>';
+    return;
+  }
+  const gruppi = {};
+  visibili.forEach(p => {
+    const cat = p.categoria || 'Senza gruppo';
+    (gruppi[cat] = gruppi[cat] || []).push(p);
+  });
+  const nomiCategorie = Object.keys(gruppi).sort();
+  box.innerHTML = nomiCategorie.map(cat =>
+    `<div class="categoria-titolo">🗂️ ${cat}</div>` + gruppi[cat].map(rigaProdottoHtml).join('')
+  ).join('');
+}
+
+// ═══════════════════ FORNITORI ═══════════════════
+async function caricaFornitori(){
+  const box = document.getElementById('fornitori-lista');
+  try{
+    const r = await fetch('/api/spedizioni_terzisti');
+    LAVORAZIONI = await r.json();
+    renderFornitori();
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+const statoLabel = {
+  IN_RITARDO:   ['🚨 In ritardo', 'st-ritardo'],
+  PARZIALE:     ['🔄 Parziale',  'st-parziale'],
+  ATTESA_RIENTRO:['⏳ Attesa',    'st-attesa'],
+};
+
+function renderFornitori(){
+  const box = document.getElementById('fornitori-lista');
+  const filtro = (document.getElementById('filtro-fornitori').value || '').trim().toLowerCase();
+
+  const aperte = LAVORAZIONI.filter(l => l.stato !== 'RIENTRATA');
+  const visibili = filtro
+    ? aperte.filter(l => (l.terzista||'').toLowerCase().includes(filtro) || (l.codice||'').toLowerCase().includes(filtro))
+    : aperte;
+
+  const nRitardo = aperte.filter(l => l.stato === 'IN_RITARDO').length;
+  const banner = document.getElementById('banner-ritardo');
+  if(nRitardo > 0){
+    document.getElementById('banner-ritardo-testo').textContent =
+      nRitardo === 1 ? '1 spedizione in ritardo — controllarla prima delle altre.'
+                     : `${nRitardo} spedizioni in ritardo — controllarle prima delle altre.`;
+    banner.style.display = 'flex';
+  }else{
+    banner.style.display = 'none';
+  }
+
+  if(!visibili.length){
+    box.innerHTML = '<p style="color:var(--text-dim);font-style:italic;padding:20px 0">Nessuna spedizione aperta.</p>';
+    return;
+  }
+
+  // Raggruppa per fornitore
+  const perFornitore = {};
+  visibili.forEach(l => {
+    (perFornitore[l.terzista] = perFornitore[l.terzista] || []).push(l);
+  });
+  const prioOrd = {IN_RITARDO:0, PARZIALE:1, ATTESA_RIENTRO:2};
+  const nomiFornitori = Object.keys(perFornitore).sort();
+
+  box.innerHTML = nomiFornitori.map(nome => {
+    const righe = perFornitore[nome].sort((a,b) => (prioOrd[a.stato]??3) - (prioOrd[b.stato]??3));
+    const haRitardo = righe.some(r => r.stato === 'IN_RITARDO');
+    const righeHtml = righe.map(r => {
+      const [slabel, sclass] = statoLabel[r.stato] || ['—',''];
+      return `<tr>
+        <td><b>${r.codice||'—'}</b>${r.desc ? ' <span style="color:var(--text-dim);font-size:11px">'+r.desc+'</span>' : ''}</td>
+        <td>${r.ddt_uscita||'—'}</td>
+        <td>${r.data_uscita||'—'}</td>
+        <td style="text-align:center">${r.qta_spedita}</td>
+        <td style="text-align:center">${r.qta_rientrata}</td>
+        <td style="text-align:center;color:${r.qta_residua>0?'var(--yellow)':'var(--green)'}">${r.qta_residua}</td>
+        <td><span class="stato-tag ${sclass}">${slabel}</span></td>
+      </tr>`;
+    }).join('');
+    return `<div class="fornitore-card">
+      <div class="fornitore-hdr">
+        <div class="fornitore-nome">🏭 ${nome}</div>
+        <span class="fornitore-badge ${haRitardo ? 'badge-ritardo' : 'badge-ok'}">${haRitardo ? '🚨 Ha ritardi' : '✅ Nei tempi'}</span>
+      </div>
+      <table class="ddt-righe">
+        <thead><tr><th>Codice</th><th>DDT Uscita</th><th>Data Uscita</th><th>Spedita</th><th>Rientrata</th><th>Residua</th><th>Stato</th></tr></thead>
+        <tbody>${righeHtml}</tbody>
+      </table>
+    </div>`;
+  }).join('');
+}
+
+caricaProdotti();
+caricaFornitori();
+</script>
+</body>
+</html>

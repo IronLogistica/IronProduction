@@ -516,6 +516,21 @@ def scheda_stampa(sid):
 #  API ANAGRAFICA TERZISTI
 # ══════════════════════════════════════════════════════════════════════════════
 
+@terzisti_bp.route('/postvendita/situazione')
+def pagina_postvendita_situazione():
+    """
+    Totem per l'addetta spedizioni/post-vendita — pagina AUTONOMA (nessun
+    extends base.html, stesso principio già applicato alla Disponibilità
+    Prodotti del commerciale): non deve vedere il resto del programma,
+    solo due schede in sola consultazione — situazione interna dei
+    prodotti (stessi dati del commerciale) e situazione dei fornitori di
+    trattamento esterno (spedito/rientrato/in ritardo, per fornitore).
+    Nessuna logica qui: la pagina consuma via JS gli stessi endpoint già
+    esistenti (/api/commerciale/disponibilita, /api/spedizioni_terzisti).
+    """
+    return render_template('postvendita/situazione.html')
+
+
 @terzisti_bp.route('/terzisti/spedizioni')
 def pagina_spedizioni_terzisti():
     """Una card per ogni DDT spedito ai terzisti — è come se fosse un
