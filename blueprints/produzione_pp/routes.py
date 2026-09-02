@@ -17,7 +17,8 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D,
                     MatriceWood, ContromatriceWood, MappaCodiceMasterWork, RettificaGrezzoIW,
                     ParametriLavorazioneWood, OperatoreWood, CompetenzaOperatoreWood,
-                    AssegnazioneOperatoreCentroWood)
+                    AssegnazioneOperatoreCentroWood, SequenzaMonitorMacchina, SequenzaAvanzamentoKPI,
+                    SessioneLavoroMacchina, FotoLavorazioneMacchina)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -249,14 +250,32 @@ _TABELLE_COLLEGATE_A_OP = [
     (ModuloNonConformita8D, 'op_code'),
 ]
 
+# BUG REALE TROVATO E CORRETTO: queste 5 tabelle referenziano l'OP con
+# una VERA foreign key sull'id numerico (ordine_produzione_id), non con
+# la stringa op_code come le tabelle sopra — la ricerca che aveva
+# individuato le tabelle 'collegate a un OP' cercava solo colonne
+# op_code, saltando queste 5 del tutto. La cancellazione falliva con un
+# errore di vincolo di integrità (ForeignKeyViolation) non appena l'OP
+# aveva anche solo una riga in una di queste — es. una posizione
+# manuale impostata sui KPI (SequenzaAvanzamentoKPI).
+_TABELLE_COLLEGATE_A_OP_PER_ID = [
+    (SequenzaMonitorMacchina, 'ordine_produzione_id'),
+    (SequenzaAvanzamentoKPI, 'ordine_produzione_id'),
+    (SessioneLavoroMacchina, 'ordine_produzione_id'),
+    (FotoLavorazioneMacchina, 'ordine_produzione_id'),
+    (ManodoperaRealeWood, 'ordine_produzione_id'),
+]
 
-def _calcola_impatto_eliminazione_op(op_code):
+
+def _calcola_impatto_eliminazione_op(o):
     """
     Calcola COSA verrebbe cancellato e COME cambierebbe la giacenza se si
     eliminasse questo OP — usata sia per l'anteprima (sola lettura) sia
     per l'eliminazione vera (stessa funzione, non due calcoli separati
     che potrebbero disallinearsi — stesso principio già applicato più
-    volte in questo programma).
+    volte in questo programma). Riceve l'OGGETTO OrdineProduzione intero
+    (non solo il codice): serve sia o.codice (tabelle collegate per
+    op_code) sia o.id (tabelle collegate per vera foreign key).
 
     Ritorna {'righe_per_tabella': {nome_tabella: n_righe}, 'movimenti_giacenza':
     [{'codice', 'giacenza_attuale', 'delta_totale_da_invertire',
@@ -268,9 +287,12 @@ def _calcola_impatto_eliminazione_op(op_code):
     righe_per_tabella = {}
     for modello, campo in _TABELLE_COLLEGATE_A_OP:
         righe_per_tabella[modello.__tablename__] = modello.query.filter(
-            getattr(modello, campo) == op_code).count()
+            getattr(modello, campo) == o.codice).count()
+    for modello, campo in _TABELLE_COLLEGATE_A_OP_PER_ID:
+        righe_per_tabella[modello.__tablename__] = modello.query.filter(
+            getattr(modello, campo) == o.id).count()
 
-    movimenti = (MovimentoGiacenzaWood.query.filter_by(riferimento=op_code).all())
+    movimenti = (MovimentoGiacenzaWood.query.filter_by(riferimento=o.codice).all())
     delta_per_codice = {}
     for m in movimenti:
         delta_per_codice[m.codice] = delta_per_codice.get(m.codice, 0) + m.quantita
@@ -335,8 +357,8 @@ def api_manutenzione_sistema_ordini():
 def api_manutenzione_sistema_anteprima(op_code):
     """Sola lettura — mostra esattamente cosa verrebbe cancellato e come
     cambierebbe la giacenza, PRIMA di eliminare per davvero."""
-    OrdineProduzione.query.filter_by(codice=op_code).first_or_404()
-    return jsonify(_calcola_impatto_eliminazione_op(op_code))
+    o = OrdineProduzione.query.filter_by(codice=op_code).first_or_404()
+    return jsonify(_calcola_impatto_eliminazione_op(o))
 
 
 @pp_bp.route('/api/manutenzione-sistema/ordini/<path:op_code>/elimina', methods=['POST'])
@@ -349,7 +371,7 @@ def api_manutenzione_sistema_elimina(op_code):
     storto, non resta nulla a metà.
     """
     o = OrdineProduzione.query.filter_by(codice=op_code).first_or_404()
-    impatto = _calcola_impatto_eliminazione_op(op_code)
+    impatto = _calcola_impatto_eliminazione_op(o)
 
     try:
         # 1) Inverte la giacenza PRIMA di cancellare i movimenti che la
@@ -367,9 +389,16 @@ def api_manutenzione_sistema_elimina(op_code):
         # stesso, ora che il loro effetto è stato invertito).
         MovimentoGiacenzaWood.query.filter_by(riferimento=op_code).delete(synchronize_session=False)
 
-        # 3) Cancella tutte le tabelle collegate via op_code.
+        # 3) Cancella tutte le tabelle collegate via op_code...
         for modello, campo in _TABELLE_COLLEGATE_A_OP:
             modello.query.filter(getattr(modello, campo) == op_code).delete(synchronize_session=False)
+        # ...e quelle collegate via vera foreign key sull'id (SequenzaAvanzamentoKPI,
+        # SequenzaMonitorMacchina, SessioneLavoroMacchina, FotoLavorazioneMacchina,
+        # ManodoperaRealeWood) — PRIMA di cancellare l'OP stesso, altrimenti il
+        # database rifiuta la cancellazione per violazione del vincolo di
+        # integrità (ForeignKeyViolation, il bug reale appena corretto qui).
+        for modello, campo in _TABELLE_COLLEGATE_A_OP_PER_ID:
+            modello.query.filter(getattr(modello, campo) == o.id).delete(synchronize_session=False)
 
         # 4) Infine l'OP stesso.
         db.session.delete(o)
