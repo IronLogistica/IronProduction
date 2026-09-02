@@ -14,6 +14,7 @@
   <div class="page-title">⚙️ Monitor {{ centro.nome }}</div>
   <div style="display:flex;gap:8px;flex-wrap:wrap">
     <a href="/totem/macchina/{{ centro.id }}" target="_blank" class="btn btn-primary" style="font-size:11px">📺 Apri Totem Live</a>
+    <a href="/kpi" class="btn btn-ghost" style="font-size:11px" title="La priorità delle commesse si imposta lì — vale ovunque, anche qui">🔀 Anticipa una commessa (KPI)</a>
     {% for m in macchine %}
     <a href="/monitor/macchina/{{ m.id }}" class="btn {% if m.id == centro.id %}btn-primary{% else %}btn-ghost{% endif %}" style="font-size:11px">{{ m.nome }}</a>
     {% endfor %}
@@ -58,8 +59,9 @@
       {% set gid = sezione ~ '-' ~ g.op_id %}
       {% set multi = g.componenti|length > 1 %}
       <tr id="grp-{{ gid }}" {% if multi %}style="cursor:pointer" onclick="toggleGruppo('{{ gid }}')"{% endif %}>
-        <td onclick="event.stopPropagation()"><input class="prio-input" type="number" value="{{ g.posizione_manuale if g.posizione_manuale is not none else '' }}"
-                   placeholder="{{ g.priorita }}" onchange="impostaPosizione({{ g.op_id }}, this.value)"></td>
+        <td onclick="event.stopPropagation()" title="{{ 'Priorità impostata su Avanzamento Commesse (KPI)' if g.posizione_manuale is not none else 'Ordine di default — priorità/data consegna. Per anticiparla, vai su Avanzamento Commesse' }}">
+          {% if g.posizione_manuale is not none %}<span style="font-weight:800;color:var(--accent2)">#{{ g.posizione_manuale }}</span>{% else %}<span style="color:var(--text-dim)">{{ g.priorita }}</span>{% endif %}
+        </td>
         <td class="comm-id">{{ g.commessa }}</td>
         <td class="codice" style="cursor:pointer" onclick="event.stopPropagation();apriSituazioneOP('{{ g.op_codice }}')">{{ g.op_codice }}
           {% if g.non_rilasciato %}<span class="badge" style="font-size:9px;background:rgba(230,184,0,.25);color:#e6b800" title="Ordine di Produzione inserito ma non ancora rilasciato — questa è solo un promemoria, non ha ancora impegnato materiale né generato un ordine di lavoro">🔔 non rilasciato</span>{% endif %}
@@ -140,22 +142,6 @@ function toggleGruppo(gid){
   const aperto = righe.length && righe[0].style.display !== 'none';
   righe.forEach(r => r.style.display = aperto ? 'none' : '');
   if(chev) chev.textContent = aperto ? '▶' : '▼';
-}
-
-function impostaPosizione(opId, valore){
-  valore = (valore || '').trim();
-  if(valore === ''){
-    fetch(`/api/monitor_macchina/${CENTRO_ID}/ordina/${opId}`, {method:'DELETE'})
-      .then(r=>r.json()).then(d=>{ showToast('↩️ Torna all\'ordine automatico'); setTimeout(()=>location.reload(), 500); });
-    return;
-  }
-  fetch(`/api/monitor_macchina/${CENTRO_ID}/ordina`, {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body: JSON.stringify({ordine_produzione_id: opId, posizione: parseInt(valore)})
-  }).then(r=>r.json()).then(d=>{
-    if(d.errore){ showToast('❌ ' + d.messaggio, true); return; }
-    showToast('✅ Posizione aggiornata'); setTimeout(()=>location.reload(), 500);
-  }).catch(()=>showToast('❌ Errore di rete', true));
 }
 
 function apriSituazioneOP(codice){

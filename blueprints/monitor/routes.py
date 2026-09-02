@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
-                    EventoConsuntivoPP, SequenzaMonitorMacchina, get_macchine_monitor,
+                    EventoConsuntivoPP, SequenzaAvanzamentoKPI, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo,
                     NumeroListaLavoroWood, SchedaLavorazioneWood, ArticoloML, DescrizioneCodiceWood,
                     ParametriLavorazioneWood)
@@ -104,10 +104,18 @@ def _righe_macchina(centro):
     op_con_ordine_emesso = {r[0] for r in db.session.query(NumeroListaLavoroWood.op_code)
                             .filter_by(centro_costo_id=centro.id).distinct().all()}
 
-    sequenze_manuali = {
-        (s.ordine_produzione_id, s.centro_costo_id): s.posizione
-        for s in SequenzaMonitorMacchina.query.filter_by(centro_costo_id=centro.id).all()
-    }
+    # BUG REALE TROVATO E CORRETTO: l'ordine manuale qui veniva letto da
+    # SequenzaMonitorMacchina, una tabella SEPARATA e scollegata da quella
+    # usata da Avanzamento Commesse/KPI (SequenzaAvanzamentoKPI) — due
+    # sistemi di priorità paralleli che potevano disallinearsi: Angelo
+    # trascinava una commessa in cima ai KPI, ma il Monitor Macchina
+    # continuava a mostrarla nella sua vecchia posizione, ignorando del
+    # tutto quella scelta. Ora la priorità si imposta in UN solo posto
+    # (Avanzamento Commesse) e vale ovunque, monitor compresi — GLOBALE
+    # (per OP, non più per singolo centro), coerente col fatto che una
+    # commessa attraversa più macchine e non ha senso un ordine diverso
+    # su ciascuna.
+    posizioni_manuali_kpi = {s.ordine_produzione_id: s.posizione for s in SequenzaAvanzamentoKPI.query.all()}
 
     # Tutta la distinta base in memoria una volta sola — vedi punto 1) sopra.
     mappa_distinta = _carica_mappa_distinta_base_wood()
@@ -221,7 +229,7 @@ def _righe_macchina(centro):
                 for cs in consumi_standard
             ) if consumi_standard else True
 
-            posizione_manuale = sequenze_manuali.get((o.id, centro.id))
+            posizione_manuale = posizioni_manuali_kpi.get(o.id)
             chiave_ordine = (0, posizione_manuale) if posizione_manuale is not None else (
                 1, o.priorita, o.data_prevista or datetime.max.date(), o.id, codice_comp)
 
@@ -547,40 +555,13 @@ def api_righe_macchina(cid):
     return jsonify(_righe_macchina(centro))
 
 
-@monitor_bp.route('/api/monitor_macchina/<int:cid>/ordina', methods=['POST'])
-def api_ordina_macchina(cid):
-    """
-    Il capo fissa a mano la posizione di un OP nella coda di questa macchina
-    (es. per metterlo davanti a tutti perché urgente). Se l'OP non ha ancora
-    una riga qui, viene creata; altrimenti la posizione viene aggiornata.
-    """
-    CentroCostoWood.query.get_or_404(cid)
-    d = request.get_json(force=True)
-    try:
-        op_id = int(d['ordine_produzione_id'])
-        posizione = int(d['posizione'])
-    except (KeyError, TypeError, ValueError):
-        return jsonify({'errore': True, 'messaggio': 'ordine_produzione_id e posizione sono obbligatori (numerici)'}), 400
-    OrdineProduzione.query.get_or_404(op_id)
-
-    riga = SequenzaMonitorMacchina.query.filter_by(ordine_produzione_id=op_id, centro_costo_id=cid).first()
-    if riga:
-        riga.posizione = posizione
-    else:
-        db.session.add(SequenzaMonitorMacchina(ordine_produzione_id=op_id, centro_costo_id=cid, posizione=posizione))
-    log(f'Monitor macchina: OP #{op_id} posizionato a {posizione} su centro di costo {cid}')
-    db.session.commit()
-    return jsonify({'ok': True})
-
-
-@monitor_bp.route('/api/monitor_macchina/<int:cid>/ordina/<int:op_id>', methods=['DELETE'])
-def api_reset_ordine_macchina(cid, op_id):
-    """Rimuove la posizione manuale: l'OP torna a ordinarsi da solo (priorità/data consegna)."""
-    riga = SequenzaMonitorMacchina.query.filter_by(ordine_produzione_id=op_id, centro_costo_id=cid).first()
-    if riga:
-        db.session.delete(riga)
-        db.session.commit()
-    return jsonify({'ok': True})
+# I due endpoint che erano qui (POST/DELETE .../ordina) scrivevano su
+# SequenzaMonitorMacchina — la vecchia tabella di priorità PER CENTRO, ora
+# rimossa: la priorità si imposta in UN solo posto (Avanzamento Commesse
+# nel Cruscotto KPI, tabella SequenzaAvanzamentoKPI, GLOBALE) e vale
+# ovunque, monitor compresi. Lasciarli avrebbe scritto in una tabella che
+# il Monitor non legge più — codice morto che sembra funzionare ma non fa
+# nulla di visibile, peggio di rimuoverlo del tutto.
 
 
 # ══════════════════════════════════════════════════════════════════════════════
