@@ -1,30 +1,57 @@
-{% extends "base.html" %}
-{% block content %}
-<div class="page-toolbar">
-  <div class="page-title">📦 Disponibilità Prodotti</div>
-</div>
-
-<div class="mon-section">
-  <div style="padding:16px">
-    <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px">
-      Quanto è pronto ora, quanto rientra a breve dal trattamento esterno, quanto si può ancora vendere senza
-      intaccare la scorta minima. Solo consultazione — nessuna modifica da qui.
-    </p>
-    <input id="filtro-ricerca" type="text" placeholder="Cerca prodotto..." autocomplete="off"
-           style="width:100%;padding:14px 16px;font-size:16px;border-radius:8px;border:1px solid var(--border);margin-bottom:18px"
-           oninput="filtraProdotti()">
-    <div id="prodotti-lista" style="display:flex;flex-direction:column;gap:10px">Caricamento...</div>
-  </div>
-</div>
-
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disponibilità Prodotti — IronProduction</title>
 <style>
+  :root{
+    --dark:#0d1b2e; --dark2:#0a1623; --dark3:#112240;
+    --accent:#1e6fa5; --accent2:#2589c7;
+    --orange:#e8760a; --yellow:#e6b800; --red:#c0392b; --green:#1a9e5c;
+    --bg:#0f1e35; --surface:#132035;
+    --text:#c8ddf0; --text-dim:#6b8aaa; --border:rgba(30,111,165,.25);
+    --shadow:0 2px 12px rgba(0,0,0,.4); --radius:8px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--text);min-height:100vh}
+  .topbar{
+    background:var(--dark2);color:#fff;padding:16px 24px;box-shadow:0 2px 12px rgba(0,0,0,.4);
+    border-bottom:1px solid var(--border);
+  }
+  .topbar-title{font-size:18px;font-weight:700;color:#e0eefc;display:flex;align-items:center;gap:8px}
+  .topbar-sub{font-size:11px;color:var(--text-dim);margin-top:2px}
+  .content{padding:20px 24px;max-width:1100px;margin:0 auto}
+  .mon-section{background:var(--surface);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-bottom:16px;border:1px solid var(--border)}
+
+  .intro{font-size:13px;color:var(--text-dim);margin-bottom:16px;line-height:1.5}
+  #filtro-ricerca{
+    width:100%;padding:14px 16px;font-size:16px;border-radius:8px;border:1px solid var(--border);
+    margin-bottom:14px;background:var(--dark3);color:var(--text);
+  }
+  #filtro-ricerca::placeholder{color:var(--text-dim)}
+
+  .categorie-pill{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:20px}
+  .pill{
+    padding:8px 16px;border-radius:999px;border:1px solid var(--border);background:var(--dark3);
+    color:var(--text-dim);font-size:13px;font-weight:600;cursor:pointer;transition:all .15s;
+  }
+  .pill:hover{border-color:var(--accent2)}
+  .pill.attiva{background:var(--accent);color:#fff;border-color:var(--accent)}
+
+  .categoria-titolo{
+    font-size:13px;font-weight:800;color:var(--accent2);text-transform:uppercase;letter-spacing:.5px;
+    margin:22px 0 10px;padding-bottom:6px;border-bottom:1.5px solid var(--border);
+    display:flex;align-items:center;gap:8px;
+  }
+  .categoria-titolo:first-child{margin-top:0}
+
   .prod-riga{
     display:flex;align-items:center;gap:16px;padding:16px;border:1px solid var(--border);
-    border-radius:10px;background:var(--surface);flex-wrap:wrap;
+    border-radius:10px;background:var(--dark3);flex-wrap:wrap;margin-bottom:10px;
   }
   .prod-nome{flex:1;min-width:200px}
-  .prod-nome .n{font-weight:800;font-size:17px;color:#eaf4ff}
-  .prod-nome .c{font-size:12px;color:var(--text-dim)}
+  .prod-nome .n{font-weight:800;font-size:16px;color:#eaf4ff}
   .prod-numeri{display:flex;gap:22px;flex-wrap:wrap}
   .prod-num{text-align:center;min-width:100px}
   .prod-num .v{font-size:24px;font-weight:800}
@@ -33,20 +60,61 @@
   .v-basso{color:#e6b800}
   .v-zero{color:#7a828a}
   .v-nd{color:var(--text-dim);font-size:16px}
+  .nota-finale{font-size:11px;color:var(--text-dim);margin-top:18px}
 </style>
-{% endblock %}
-{% block scripts %}
+</head>
+<body>
+
+<div class="topbar">
+  <div class="topbar-title">📦 Disponibilità Prodotti</div>
+  <div class="topbar-sub">IronProduction — solo consultazione</div>
+</div>
+
+<div class="content">
+  <div class="mon-section">
+    <div style="padding:16px">
+      <p class="intro">
+        Quanto è pronto ora, quanto rientra a breve dal trattamento esterno, quanto si può ancora vendere senza
+        intaccare la scorta minima.
+      </p>
+      <input id="filtro-ricerca" type="text" placeholder="Cerca prodotto..." autocomplete="off" oninput="render()">
+      <div id="categorie-pills" class="categorie-pill"></div>
+      <div id="prodotti-lista">Caricamento...</div>
+      <div class="nota-finale">* Scorta minima non ancora sincronizzata per questo codice — mostrato "—".</div>
+    </div>
+  </div>
+</div>
+
+<script>
 let PRODOTTI = [];
+let CATEGORIA_ATTIVA = 'TUTTE';
 
 async function carica(){
   const box = document.getElementById('prodotti-lista');
   try{
     const r = await fetch('/api/commerciale/disponibilita');
     PRODOTTI = await r.json();
+    renderPills();
     render();
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
   }
+}
+
+function renderPills(){
+  const box = document.getElementById('categorie-pills');
+  const categorie = [...new Set(PRODOTTI.map(p => p.categoria || 'Senza gruppo'))].sort();
+  const pills = ['TUTTE', ...categorie];
+  box.innerHTML = pills.map(c => {
+    const label = c === 'TUTTE' ? 'Tutte' : c;
+    return `<div class="pill ${c === CATEGORIA_ATTIVA ? 'attiva' : ''}" onclick="sceglicategoria('${c.replace(/'/g,"\\'")}')">${label}</div>`;
+  }).join('');
+}
+
+function sceglicategoria(c){
+  CATEGORIA_ATTIVA = c;
+  renderPills();
+  render();
 }
 
 function classeValore(v){
@@ -56,38 +124,51 @@ function classeValore(v){
   return 'v-basso';
 }
 
+function rigaHtml(p){
+  return `<div class="prod-riga">
+    <div class="prod-nome"><div class="n">${p.icona} ${p.prodotto}</div></div>
+    <div class="prod-numeri">
+      <div class="prod-num">
+        <div class="v ${classeValore(p.pronto_oggi)}">${p.pronto_oggi}</div>
+        <div class="l">Pronto oggi</div>
+      </div>
+      <div class="prod-num">
+        <div class="v ${classeValore(p.pronto_a_breve)}">${p.pronto_a_breve}</div>
+        <div class="l">Pronto a breve</div>
+      </div>
+      <div class="prod-num">
+        <div class="v ${classeValore(p.producibile)}">${p.producibile === null ? '—' : p.producibile}</div>
+        <div class="l">Producibile${p.scorta_minima_nota ? ' *' : ''}</div>
+      </div>
+    </div>
+  </div>`;
+}
+
 function render(){
   const box = document.getElementById('prodotti-lista');
   const filtro = (document.getElementById('filtro-ricerca').value || '').trim().toLowerCase();
-  const visibili = filtro ? PRODOTTI.filter(p => p.prodotto.toLowerCase().includes(filtro)) : PRODOTTI;
+  let visibili = filtro ? PRODOTTI.filter(p => p.prodotto.toLowerCase().includes(filtro)) : PRODOTTI;
+  if(CATEGORIA_ATTIVA !== 'TUTTE'){
+    visibili = visibili.filter(p => (p.categoria || 'Senza gruppo') === CATEGORIA_ATTIVA);
+  }
   if(!visibili.length){
-    box.innerHTML = '<p class="muted" style="font-style:italic">Nessun prodotto trovato.</p>';
+    box.innerHTML = '<p style="color:var(--text-dim);font-style:italic;padding:20px 0">Nessun prodotto trovato.</p>';
     return;
   }
-  box.innerHTML = visibili.map(p => `
-    <div class="prod-riga">
-      <div class="prod-nome">
-        <div class="n">${p.icona} ${p.prodotto}</div>
-        <div class="c">${p.categoria || ''}</div>
-      </div>
-      <div class="prod-numeri">
-        <div class="prod-num">
-          <div class="v ${classeValore(p.pronto_oggi)}">${p.pronto_oggi}</div>
-          <div class="l">Pronto oggi</div>
-        </div>
-        <div class="prod-num">
-          <div class="v ${classeValore(p.pronto_a_breve)}">${p.pronto_a_breve}</div>
-          <div class="l">Pronto a breve</div>
-        </div>
-        <div class="prod-num">
-          <div class="v ${classeValore(p.producibile)}">${p.producibile === null ? '—' : p.producibile}</div>
-          <div class="l">Producibile${p.scorta_minima_nota ? ' *' : ''}</div>
-        </div>
-      </div>
-    </div>`).join('');
+  // Raggruppa per categoria (gruppo Kanban) — sempre, anche con "Tutte" selezionato,
+  // così i prodotti restano organizzati come sulle board interne invece di un elenco piatto.
+  const gruppi = {};
+  visibili.forEach(p => {
+    const cat = p.categoria || 'Senza gruppo';
+    (gruppi[cat] = gruppi[cat] || []).push(p);
+  });
+  const nomiCategorie = Object.keys(gruppi).sort();
+  box.innerHTML = nomiCategorie.map(cat =>
+    `<div class="categoria-titolo">🗂️ ${cat}</div>` + gruppi[cat].map(rigaHtml).join('')
+  ).join('');
 }
 
-function filtraProdotti(){ render(); }
-
 carica();
-{% endblock %}
+</script>
+</body>
+</html>
