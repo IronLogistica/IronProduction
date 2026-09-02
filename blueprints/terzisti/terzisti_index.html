@@ -804,9 +804,12 @@ function renderPanel(nomeTerzista){
   <div class="fp-sec-title">📋 DDT spediti a ${nomeTerzista}</div>`;
 
   // Ordina DDT: aperti prima, poi per numero DDT discendente
+  // (i DDT completati/rientrati non vengono mostrati, su richiesta di Angelo)
   const prioOrd = {IN_RITARDO:0,PARZIALE:1,ATTESA_RIENTRO:2,RIENTRATA:3};
-  const ddtList = Object.values(perDDT).sort((a,b) =>
-    (prioOrd[a.stato_gen]??3) - (prioOrd[b.stato_gen]??3));
+  const ddtList = Object.values(perDDT)
+    .filter(d => d.stato_gen !== 'RIENTRATA')
+    .sort((a,b) =>
+      (prioOrd[a.stato_gen]??3) - (prioOrd[b.stato_gen]??3));
 
   ddtList.forEach(ddt => {
     const [slabel,sclass] = statoLabel[ddt.stato_gen] || ['—',''];
@@ -848,7 +851,7 @@ function renderPanel(nomeTerzista){
   });
 
   if(!ddtList.length){
-    html += '<div style="text-align:center;padding:30px;color:var(--text-dim);font-size:.8rem">Nessun DDT trovato.</div>';
+    html += '<div style="text-align:center;padding:30px;color:var(--text-dim);font-size:.8rem">Nessun DDT aperto.</div>';
   }
 
   document.getElementById('fp-body').innerHTML = html;
