@@ -222,6 +222,165 @@ def admin_elimina_dati_test_gantt():
     return jsonify(ok=True, op_eliminati=n_op, messaggio='Dati di test TEST-DEMO rimossi completamente.')
 
 
+    db.session.commit()
+    return jsonify(ok=True, op_eliminati=n_op, messaggio='Dati di test TEST-DEMO rimossi completamente.')
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  MANUTENZIONI DI SISTEMA — vedere ogni Ordine di Produzione con le sue
+#  dichiarazioni/movimenti, ed eliminare in sicurezza le commesse FITTIZIE
+#  create per testare il sistema (mescolate a OP veri nello stesso database).
+#  Eliminare un OP non basta cancellarlo: bisogna anche INVERTIRE l'effetto
+#  che le sue dichiarazioni hanno avuto sulla giacenza, non solo cancellare
+#  lo storico — altrimenti il magazzino resta sballato anche dopo.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Tabelle che referenziano un OP tramite op_code — cancellate INSIEME
+# all'OP. Il Kanban Prodotti (Grezzi IW, In Produzione, In Verniciatura)
+# NON compare qui apposta: si ricalcola da solo dai dati correnti ogni
+# volta che la board si apre, non serve/non va toccato a mano.
+_TABELLE_COLLEGATE_A_OP = [
+    (EventoConsuntivoPP, 'op_code'),
+    (VarianzaProduzioneWood, 'op_code'),
+    (MovimentoContabileWood, 'op_code'),
+    (AvvisoScostamentoWood, 'op_code'),
+    (NumeroListaLavoroWood, 'op_code'),
+    (AuditPP, 'op_code'),
+    (ModuloNonConformita8D, 'op_code'),
+]
+
+
+def _calcola_impatto_eliminazione_op(op_code):
+    """
+    Calcola COSA verrebbe cancellato e COME cambierebbe la giacenza se si
+    eliminasse questo OP — usata sia per l'anteprima (sola lettura) sia
+    per l'eliminazione vera (stessa funzione, non due calcoli separati
+    che potrebbero disallinearsi — stesso principio già applicato più
+    volte in questo programma).
+
+    Ritorna {'righe_per_tabella': {nome_tabella: n_righe}, 'movimenti_giacenza':
+    [{'codice', 'giacenza_attuale', 'delta_totale_da_invertire',
+    'giacenza_dopo'}, ...]} — il delta è la SOMMA di tutti i movimenti di
+    giacenza con riferimento=op_code: invertirlo significa sottrarlo dalla
+    giacenza attuale (un carico di +50 diventa -50 alla cancellazione, uno
+    scarico di -30 diventa +30).
+    """
+    righe_per_tabella = {}
+    for modello, campo in _TABELLE_COLLEGATE_A_OP:
+        righe_per_tabella[modello.__tablename__] = modello.query.filter(
+            getattr(modello, campo) == op_code).count()
+
+    movimenti = (MovimentoGiacenzaWood.query.filter_by(riferimento=op_code).all())
+    delta_per_codice = {}
+    for m in movimenti:
+        delta_per_codice[m.codice] = delta_per_codice.get(m.codice, 0) + m.quantita
+    righe_per_tabella[MovimentoGiacenzaWood.__tablename__] = len(movimenti)
+
+    giacenze_correnti = {g.codice: g.quantita for g in
+                         GiacenzaWood.query.filter(GiacenzaWood.codice.in_(delta_per_codice.keys())).all()} \
+                         if delta_per_codice else {}
+    movimenti_giacenza = []
+    for codice, delta_totale in sorted(delta_per_codice.items()):
+        giacenza_attuale = giacenze_correnti.get(codice, 0) or 0
+        movimenti_giacenza.append({
+            'codice': codice,
+            'giacenza_attuale': giacenza_attuale,
+            'delta_totale_da_invertire': delta_totale,
+            'giacenza_dopo': giacenza_attuale - delta_totale,
+        })
+
+    return {'righe_per_tabella': righe_per_tabella, 'movimenti_giacenza': movimenti_giacenza}
+
+
+@pp_bp.route('/manutenzione-sistema')
+def pagina_manutenzione_sistema():
+    return render_template('produzione_pp/manutenzione_sistema.html', active='manutenzione_sistema')
+
+
+@pp_bp.route('/api/manutenzione-sistema/ordini')
+def api_manutenzione_sistema_ordini():
+    """
+    Ogni Ordine di Produzione APERTO oggi (non 'Chiuso CO'), con un
+    riepilogo che aiuta a distinguere le commesse vere da quelle fittizie
+    create per testare il sistema — quante dichiarazioni ha, se ha
+    movimenti di giacenza, quando è stato creato.
+    """
+    ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato != 'Chiuso CO')
+              .order_by(OrdineProduzione.creato_il.desc()).all())
+    op_codes = [o.codice for o in ordini]
+    n_eventi_per_op = {}
+    if op_codes:
+        for op_code, tot in (db.session.query(EventoConsuntivoPP.op_code, db.func.count(EventoConsuntivoPP.id))
+                             .filter(EventoConsuntivoPP.op_code.in_(op_codes))
+                             .group_by(EventoConsuntivoPP.op_code).all()):
+            n_eventi_per_op[op_code] = tot
+    n_movimenti_per_op = {}
+    if op_codes:
+        for rif, tot in (db.session.query(MovimentoGiacenzaWood.riferimento, db.func.count(MovimentoGiacenzaWood.id))
+                         .filter(MovimentoGiacenzaWood.riferimento.in_(op_codes))
+                         .group_by(MovimentoGiacenzaWood.riferimento).all()):
+            n_movimenti_per_op[rif] = tot
+
+    return jsonify([{
+        'codice': o.codice, 'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
+        'cliente': o.cliente or '', 'commessa': o.commessa or '', 'stato': o.stato,
+        'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona,
+        'creato_il': o.creato_il.strftime('%d/%m/%Y %H:%M') if o.creato_il else '',
+        'n_dichiarazioni': n_eventi_per_op.get(o.codice, 0),
+        'n_movimenti_giacenza': n_movimenti_per_op.get(o.codice, 0),
+    } for o in ordini])
+
+
+@pp_bp.route('/api/manutenzione-sistema/ordini/<path:op_code>/anteprima')
+def api_manutenzione_sistema_anteprima(op_code):
+    """Sola lettura — mostra esattamente cosa verrebbe cancellato e come
+    cambierebbe la giacenza, PRIMA di eliminare per davvero."""
+    OrdineProduzione.query.filter_by(codice=op_code).first_or_404()
+    return jsonify(_calcola_impatto_eliminazione_op(op_code))
+
+
+@pp_bp.route('/api/manutenzione-sistema/ordini/<path:op_code>/elimina', methods=['POST'])
+def api_manutenzione_sistema_elimina(op_code):
+    """
+    Elimina l'OP e TUTTO quello collegato, invertendo prima l'effetto sulla
+    giacenza (non solo cancellando lo storico dei movimenti — la giacenza
+    ATTUALE deve tornare a essere quella che sarebbe stata se questo OP
+    non fosse mai esistito). Tutto in un'unica transazione: se qualcosa va
+    storto, non resta nulla a metà.
+    """
+    o = OrdineProduzione.query.filter_by(codice=op_code).first_or_404()
+    impatto = _calcola_impatto_eliminazione_op(op_code)
+
+    try:
+        # 1) Inverte la giacenza PRIMA di cancellare i movimenti che la
+        # documentavano — l'ordine conta: dopo, non ci sarebbe più modo
+        # di sapere quanto invertire.
+        for riga in impatto['movimenti_giacenza']:
+            g = GiacenzaWood.query.get(riga['codice'])
+            if not g:
+                g = GiacenzaWood(codice=riga['codice'], quantita=0)
+                db.session.add(g)
+            g.quantita = (g.quantita or 0) - riga['delta_totale_da_invertire']
+            g.aggiornato_il = datetime.utcnow()
+
+        # 2) Cancella i movimenti di giacenza di questo OP (lo storico
+        # stesso, ora che il loro effetto è stato invertito).
+        MovimentoGiacenzaWood.query.filter_by(riferimento=op_code).delete(synchronize_session=False)
+
+        # 3) Cancella tutte le tabelle collegate via op_code.
+        for modello, campo in _TABELLE_COLLEGATE_A_OP:
+            modello.query.filter(getattr(modello, campo) == op_code).delete(synchronize_session=False)
+
+        # 4) Infine l'OP stesso.
+        db.session.delete(o)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify(ok=False, error=f'Eliminazione interrotta, nessuna modifica salvata: {e}'), 500
+
+    return jsonify(ok=True, op_eliminato=op_code, impatto_applicato=impatto)
+
+
 @pp_bp.route('/gantt-centri-costo')
 def pagina_gantt_centri_costo():
     """

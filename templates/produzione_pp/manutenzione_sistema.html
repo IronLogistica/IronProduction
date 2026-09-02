@@ -1,0 +1,140 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🧹 Manutenzioni di Sistema</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
+      Ogni Ordine di Produzione ancora aperto (non chiuso), con dichiarazioni e movimenti di magazzino collegati —
+      per ripulire le commesse FITTIZIE create per testare il sistema, lasciando intatte quelle vere. Eliminare un
+      OP cancella anche le sue dichiarazioni/movimenti e RIPORTA la giacenza al valore che avrebbe avuto se quell'OP
+      non fosse mai esistito — non solo cancella lo storico.
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px">
+      <thead>
+        <tr style="text-align:left;font-size:10px;color:var(--text-dim);text-transform:uppercase">
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border)">OP</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border)">Articolo</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border)">Cliente / Commessa</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border)">Stato</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">Q.tà</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">Dichiaraz.</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:center">Mov. Magazzino</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border)">Creato il</th>
+          <th style="padding:6px 8px;border-bottom:1px solid var(--border)"></th>
+        </tr>
+      </thead>
+      <tbody id="corpo-tabella"><tr><td colspan="9">Caricamento...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<div class="modal-overlay" id="modal-anteprima">
+  <div class="modal-box" style="width:640px;max-width:96vw;max-height:88vh;overflow-y:auto">
+    <h3>⚠️ Anteprima eliminazione — <span id="ant-titolo"></span></h3>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
+      Questo è esattamente cosa succederà se confermi — nessuna modifica è ancora stata fatta.
+    </p>
+    <div id="ant-tabelle" style="margin-bottom:16px"></div>
+    <div id="ant-giacenza"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-anteprima')">Annulla</button>
+      <button class="btn btn-danger" id="btn-conferma-elimina" onclick="confermaEliminazione()">🗑️ Conferma Eliminazione</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+let ORDINI = [];
+let OP_DA_ELIMINARE = null;
+
+async function carica(){
+  const corpo = document.getElementById('corpo-tabella');
+  try{
+    const r = await fetch('/api/manutenzione-sistema/ordini');
+    ORDINI = await r.json();
+    render();
+  }catch(e){
+    corpo.innerHTML = '<tr><td colspan="9" style="color:#c0392b">Errore di rete.</td></tr>';
+  }
+}
+
+function render(){
+  const corpo = document.getElementById('corpo-tabella');
+  if(!ORDINI.length){
+    corpo.innerHTML = '<tr><td colspan="9" style="color:#aaa;font-style:italic">Nessun Ordine di Produzione aperto.</td></tr>';
+    return;
+  }
+  corpo.innerHTML = ORDINI.map(o => `
+    <tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+      <td style="padding:6px 8px;font-weight:700">${o.codice}</td>
+      <td style="padding:6px 8px">${o.codice_articolo}<div style="font-size:10px;color:var(--text-dim)">${o.descrizione||''}</div></td>
+      <td style="padding:6px 8px;font-size:11px">${o.cliente||'—'}${o.commessa ? '<br>'+o.commessa : ''}</td>
+      <td style="padding:6px 8px;font-size:11px">${o.stato}</td>
+      <td style="padding:6px 8px;text-align:center">${o.qta_buona}/${o.qta_pianificata}</td>
+      <td style="padding:6px 8px;text-align:center">${o.n_dichiarazioni}</td>
+      <td style="padding:6px 8px;text-align:center">${o.n_movimenti_giacenza}</td>
+      <td style="padding:6px 8px;font-size:11px;color:var(--text-dim)">${o.creato_il}</td>
+      <td style="padding:6px 8px"><button class="btn btn-danger" style="padding:4px 10px;font-size:11px" onclick="apriAnteprima('${o.codice}')">🗑️ Elimina</button></td>
+    </tr>`).join('');
+}
+
+async function apriAnteprima(opCode){
+  OP_DA_ELIMINARE = opCode;
+  document.getElementById('ant-titolo').textContent = opCode;
+  document.getElementById('ant-tabelle').innerHTML = 'Caricamento...';
+  document.getElementById('ant-giacenza').innerHTML = '';
+  document.getElementById('btn-conferma-elimina').disabled = true;
+  openModal('modal-anteprima');
+  try{
+    const r = await fetch(`/api/manutenzione-sistema/ordini/${encodeURIComponent(opCode)}/anteprima`);
+    const d = await r.json();
+    renderAnteprima(d);
+    document.getElementById('btn-conferma-elimina').disabled = false;
+  }catch(e){
+    document.getElementById('ant-tabelle').innerHTML = '<p style="color:#c0392b">Errore di rete.</p>';
+  }
+}
+
+function renderAnteprima(d){
+  const righeTabelle = Object.entries(d.righe_per_tabella).filter(([_, n]) => n > 0);
+  document.getElementById('ant-tabelle').innerHTML = righeTabelle.length
+    ? '<b>Righe cancellate:</b><br>' + righeTabelle.map(([tab, n]) => `• ${tab}: ${n}`).join('<br>')
+    : '<i style="color:var(--text-dim)">Nessuna dichiarazione/movimento collegato — solo l\'OP verrà rimosso.</i>';
+
+  if(!d.movimenti_giacenza.length){
+    document.getElementById('ant-giacenza').innerHTML = '<p style="color:var(--text-dim);font-style:italic;margin-top:10px">Nessun movimento di magazzino da invertire.</p>';
+    return;
+  }
+  let html = '<b>Giacenza — prima → dopo:</b><table style="width:100%;margin-top:8px;border-collapse:collapse;font-size:12px">';
+  html += '<tr style="font-size:10px;color:var(--text-dim);text-transform:uppercase"><th style="text-align:left">Codice</th><th>Attuale</th><th></th><th>Dopo</th></tr>';
+  d.movimenti_giacenza.forEach(m => {
+    const colore = m.giacenza_dopo > m.giacenza_attuale ? '#1a9e5c' : (m.giacenza_dopo < m.giacenza_attuale ? '#e6b800' : 'var(--text)');
+    html += `<tr><td style="padding:4px 0">${m.codice}</td><td style="text-align:center">${m.giacenza_attuale}</td><td style="text-align:center">→</td><td style="text-align:center;font-weight:700;color:${colore}">${m.giacenza_dopo}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById('ant-giacenza').innerHTML = html;
+}
+
+async function confermaEliminazione(){
+  if(!OP_DA_ELIMINARE) return;
+  if(!confirm(`Confermi l'eliminazione definitiva di ${OP_DA_ELIMINARE}? Non è reversibile.`)) return;
+  const btn = document.getElementById('btn-conferma-elimina');
+  btn.disabled = true; btn.textContent = 'Eliminazione in corso...';
+  try{
+    const r = await fetch(`/api/manutenzione-sistema/ordini/${encodeURIComponent(OP_DA_ELIMINARE)}/elimina`, {method: 'POST'});
+    const d = await r.json();
+    if(!d.ok){ alert('❌ ' + (d.error || 'Errore.')); btn.disabled = false; btn.textContent = '🗑️ Conferma Eliminazione'; return; }
+    closeModal('modal-anteprima');
+    btn.textContent = '🗑️ Conferma Eliminazione';
+    await carica();
+  }catch(e){
+    alert('Errore di rete.');
+    btn.disabled = false; btn.textContent = '🗑️ Conferma Eliminazione';
+  }
+}
+
+carica();
+{% endblock %}
