@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, jsonify, request
 from models import db, Commessa, KanbanProdotto, RigaMonitor, calcola_kpi, OrdineProduzione, SequenzaAvanzamentoKPI
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from blueprints.produzione_pp.avanzamento import calcola_avanzamento_commesse
 
 kpi_bp = Blueprint('kpi', __name__)
@@ -102,6 +102,45 @@ def api_in_attesa_rilascio():
         'qta_pianificata': o.qta_pianificata, 'priorita': o.priorita,
         'data_prevista': o.data_prevista.strftime('%d/%m/%Y') if o.data_prevista else None,
     } for o in ordini])
+
+
+@kpi_bp.route('/api/kpi/appena-terminate')
+def api_appena_terminate():
+    """
+    Ordini 'Tecnicamente completato' la cui ULTIMA dichiarazione di
+    produzione risale a non più di 3 giorni fa — promemoria temporaneo,
+    trasversale a tutti i centri di costo come 'In Attesa di Rilascio':
+    appena finita una commessa resta visibile qui per un po' (spedizione,
+    controllo qualità, fatturazione...) invece di sparire subito dal
+    Cruscotto KPI non appena l'ultimo pezzo è dichiarato — ma passati 3
+    giorni senza altre dichiarazioni, esce da sola, senza doverla
+    rimuovere a mano.
+    """
+    from models import OrdineProduzione, EventoConsuntivoPP
+    limite = datetime.utcnow() - timedelta(days=3)
+    ordini = OrdineProduzione.query.filter_by(stato='Tecnicamente completato').all()
+    if not ordini:
+        return jsonify([])
+    op_codes = [o.codice for o in ordini]
+    ultima_dichiarazione_per_op = dict(
+        db.session.query(EventoConsuntivoPP.op_code, db.func.max(EventoConsuntivoPP.timestamp_evento))
+        .filter(EventoConsuntivoPP.op_code.in_(op_codes))
+        .group_by(EventoConsuntivoPP.op_code).all())
+
+    risultato = []
+    for o in ordini:
+        ultima = ultima_dichiarazione_per_op.get(o.codice)
+        if not ultima or ultima < limite:
+            continue   # nessuna dichiarazione, o troppo vecchia — non più 'appena terminata'
+        risultato.append({
+            'id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
+            'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
+            'cliente': o.cliente or '', 'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona,
+            'ultima_dichiarazione': ultima.strftime('%d/%m/%Y %H:%M'),
+        })
+    risultato.sort(key=lambda r: r['ultima_dichiarazione'], reverse=True)
+    return jsonify(risultato)
+
 
 @kpi_bp.route('/api/kpi/storico')
 def api_storico():

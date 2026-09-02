@@ -40,6 +40,18 @@
 
 <div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-top:20px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-weight:800;font-size:14px;color:var(--dark)">✅ Commesse Appena Terminate</div>
+    <button class="btn btn-ghost" style="font-size:11px" onclick="caricaAppenaTerminate()">🔄 Aggiorna</button>
+  </div>
+  <p style="font-size:11px;color:var(--text-dim);margin-bottom:12px">
+    Commesse tecnicamente completate, con l'ultima dichiarazione di produzione negli ultimi 3 giorni — restano qui
+    come promemoria (spedizione, controllo qualità, fatturazione...), poi escono da sole senza doverle rimuovere a mano.
+  </p>
+  <div id="appena-terminate-box" style="overflow-x:auto">Caricamento...</div>
+</div>
+
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-top:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
     <div style="font-weight:800;font-size:14px;color:var(--dark)">🔔 In Attesa di Rilascio</div>
     <button class="btn btn-ghost" style="font-size:11px" onclick="caricaInAttesaRilascio()">🔄 Aggiorna</button>
   </div>
@@ -262,6 +274,31 @@ async function acDragFine(){
     showToast('❌ Errore di rete durante il salvataggio dell\'ordine');
   }
 }
+
+async function caricaAppenaTerminate(){
+  const box = document.getElementById('appena-terminate-box');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/kpi/appena-terminate');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna commessa terminata di recente.</p>'; return; }
+    box.innerHTML = '<table class="kanban-table"><thead><tr>' +
+      '<th>OP</th><th>Commessa</th><th>Codice</th><th>Descrizione</th><th>Cliente</th><th>Qtà</th><th>Ultima dichiarazione</th>' +
+      '</tr></thead><tbody>' +
+      righe.map(o => `<tr style="background:#0d1b2e">
+        <td style="text-align:center;padding:8px"><a href="/ordini-produzione" style="color:#4d9fd6;font-weight:800">${o.op_codice}</a></td>
+        <td style="text-align:center;color:#fff;padding:8px">${o.commessa || '—'}</td>
+        <td style="text-align:center;color:#fff;font-weight:800;padding:8px">${o.codice_articolo}</td>
+        <td style="text-align:center;color:#fff;padding:8px">${o.descrizione || ''}</td>
+        <td style="text-align:center;color:#fff;padding:8px">${o.cliente || '—'}</td>
+        <td style="text-align:center;color:#fff;padding:8px">${o.qta_buona}/${o.qta_pianificata}</td>
+        <td style="text-align:center;font-size:11px;color:#9fb8d0;padding:8px">${o.ultima_dichiarazione}</td>
+      </tr>`).join('') + '</tbody></table>';
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+caricaAppenaTerminate();
 
 async function caricaInAttesaRilascio(){
   const box = document.getElementById('in-attesa-rilascio-box');
