@@ -374,6 +374,17 @@ def api_modifica_riga_ordine(rid):
     return jsonify({'ok': True})
 
 
+@acquisti_wood_bp.route('/api/ordini_acquisto_wood/righe/<int:rid>', methods=['DELETE'])
+def api_elimina_riga_ordine(rid):
+    """Elimina una singola riga dell'ordine (es. una riga letta male dal
+    PDF, o un articolo che in realtà non era su questo ordine) — non
+    elimina l'intero ordine, solo quella riga."""
+    r = RigaOrdineAcquistoWood.query.get_or_404(rid)
+    db.session.delete(r)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
 @acquisti_wood_bp.route('/ordini_acquisto_wood/<int:oid>/pdf')
 def api_scarica_pdf(oid):
     o = OrdineAcquistoWood.query.get_or_404(oid)

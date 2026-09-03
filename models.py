@@ -2593,7 +2593,7 @@ class RigaOrdineAcquistoWood(db.Model):
     qta_ricevuta   = db.Column(db.Float, default=0)
     prezzo_unitario = db.Column(db.Float, nullable=True)   # €/unità estratto dal PDF ordine — None = non trovato dal parsing, va inserito a mano
     data_evasione  = db.Column(db.String(20), default='')   # come estratta dal PDF, stringa gg/mm/aaaa
-    ordine = db.relationship('OrdineAcquistoWood', backref='righe')
+    ordine = db.relationship('OrdineAcquistoWood', backref=db.backref('righe', cascade='all, delete-orphan'))
 
 
 class MappaCodiceFornitoreWood(db.Model):
