@@ -224,6 +224,33 @@ def api_lista_ordini_acquisto():
     return jsonify([_ordine_dict(o) for o in ordini])
 
 
+@acquisti_wood_bp.route('/api/ordini_acquisto_wood/<int:oid>/testo-grezzo-pdf')
+def api_testo_grezzo_pdf(oid):
+    """
+    ENDPOINT DIAGNOSTICO TEMPORANEO — mostra il testo COSÌ COM'È estratto
+    dal PDF già caricato (senza nessun parsing sopra), per capire perché
+    l'estrazione automatica degli articoli manca alcune righe: la
+    formattazione di un PDF può nascondere differenze sottili (spazi,
+    ritorni a capo, unità di misura scritte diversamente) invisibili
+    guardando solo il PDF a video, ma decisive per il regex che estrae
+    codice/descrizione/quantità.
+    """
+    o = OrdineAcquistoWood.query.get_or_404(oid)
+    if not o.pdf_bytes:
+        return jsonify({'errore': True, 'messaggio': 'Nessun PDF salvato per questo ordine.'}), 404
+    try:
+        reader = PyPDF2.PdfReader(io.BytesIO(o.pdf_bytes))
+        testo_completo = "\n".join(page.extract_text() or '' for page in reader.pages)
+    except Exception as e:
+        return jsonify({'errore': True, 'messaggio': f'Impossibile rileggere il PDF: {e}'}), 400
+    return jsonify({
+        'filename': o.filename,
+        'righe_estratte_da_parser': [a.codice for a in o.righe],
+        'testo_grezzo': testo_completo,
+        'righe_numerate': [f'{i}: {r}' for i, r in enumerate(testo_completo.split('\n'))],
+    })
+
+
 @acquisti_wood_bp.route('/api/ordini_acquisto_wood/upload', methods=['POST'])
 def api_upload_ordine_acquisto():
     file = request.files.get('file_pdf')
