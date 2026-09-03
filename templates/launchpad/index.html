@@ -1,0 +1,68 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .lp-wrap{padding:4px 4px 24px}
+  .lp-intro{font-size:13px;color:var(--text-dim);margin-bottom:20px}
+  .lp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:18px}
+  .lp-card{background:var(--surface,#132035);border-radius:12px;border:1px solid var(--border);overflow:hidden;box-shadow:0 4px 16px rgba(0,0,0,.25)}
+  .lp-card-header{padding:14px 16px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)}
+  .lp-card-header .icona{font-size:20px}
+  .lp-card-header .nome{font-weight:800;font-size:14px;letter-spacing:.3px;text-transform:uppercase;flex:1}
+  .lp-card-header .conteggio{font-size:11px;font-weight:700;background:rgba(255,255,255,.12);border-radius:999px;padding:3px 9px}
+  .lp-tiles{padding:10px;display:flex;flex-direction:column;gap:4px}
+  .lp-tile{
+    display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:8px;
+    color:var(--text);text-decoration:none;font-size:13px;font-weight:600;transition:background .12s;
+  }
+  .lp-tile:hover{background:rgba(255,255,255,.06)}
+  .lp-tile .icona{font-size:16px;width:20px;text-align:center;flex-shrink:0}
+  .lp-tile .badge{margin-left:auto;font-size:10px;font-weight:700;background:rgba(30,111,165,.35);color:var(--steel2,#4d9fd6);border-radius:8px;padding:1px 6px}
+</style>
+
+<div class="page-toolbar">
+  <div class="page-title">🏠 Launchpad</div>
+</div>
+
+<div class="lp-wrap">
+  <p class="lp-intro">Tutte le pagine di IronProduction, raggruppate — tocca una tile per andarci.</p>
+
+  <div class="lp-grid">
+    {% for gruppo in gruppi %}
+    <div class="lp-card">
+      <div class="lp-card-header" style="border-top:3px solid {{ gruppo.colore }}">
+        <span class="icona">{{ gruppo.icona }}</span>
+        <span class="nome" style="color:{{ gruppo.colore }}">{{ gruppo.nome }}</span>
+        <span class="conteggio">{{ gruppo.voci|length }}</span>
+      </div>
+      <div class="lp-tiles">
+        {% for voce in gruppo.voci %}
+        <a class="lp-tile" href="{{ voce.url }}">
+          <span class="icona">{{ voce.icona }}</span>
+          <span>{{ voce.label }}</span>
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endfor %}
+
+    {% if kanban_gruppi %}
+    <div class="lp-card">
+      <div class="lp-card-header" style="border-top:3px solid #d9a441">
+        <span class="icona">🗂️</span>
+        <span class="nome" style="color:#d9a441">Kanban Gruppi</span>
+        <span class="conteggio">{{ kanban_gruppi|length }}</span>
+      </div>
+      <div class="lp-tiles">
+        {% for g in kanban_gruppi %}
+        <a class="lp-tile" href="/kanban/{{ g.url_key }}">
+          <span class="icona">{{ g.icona }}</span>
+          <span>{{ g.label }}</span>
+          {% if g.n_prodotti > 0 %}<span class="badge">{{ g.n_prodotti }}</span>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}
