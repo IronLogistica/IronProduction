@@ -75,6 +75,10 @@
   .st-ritardo{background:rgba(196,60,60,.18);color:var(--red)}
   .st-parziale{background:rgba(230,184,0,.18);color:var(--yellow)}
   .st-attesa{background:rgba(30,111,165,.18);color:var(--accent2)}
+
+  .wms-item{padding:8px 12px;cursor:pointer;border-bottom:1px solid var(--border);display:flex;align-items:center;transition:background .12s}
+  .wms-item:last-child{border-bottom:none}
+  .wms-item:hover{background:rgba(30,111,165,.25)}
 </style>
 </head>
 <body>
@@ -133,8 +137,12 @@
         <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
           Spunta la casellina su una o più card qui sotto per aggiungerle all'ordine, poi indica il fornitore e genera.
         </p>
-        <input id="crea-ordine-fornitore" type="text" placeholder="Fornitore..." autocomplete="off"
-               style="width:100%;padding:12px 14px;font-size:15px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text);margin-bottom:10px">
+        <div style="position:relative;margin-bottom:10px">
+          <input id="crea-ordine-fornitore" type="text" placeholder="Fornitore..." autocomplete="off"
+                 style="width:100%;padding:12px 14px;font-size:15px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"
+                 oninput="_fornitoreRicercaInput(this)" onfocus="_fornitoreRicercaInput(this)">
+          <div id="fornitore-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+        </div>
         <button class="pill" style="background:var(--accent);color:#fff;border:none;padding:12px 24px;font-size:14px" onclick="creaOrdineFornitori()">💾 Genera Ordine di Acquisto</button>
         <div id="crea-ordine-esito" style="font-size:13px;margin-top:10px"></div>
       </div>
@@ -317,6 +325,45 @@ function renderFornitori(){
 // ═══════════════════ ORDINI FORNITORI ═══════════════════
 let RIGHE_ORDINI = [];
 let SELEZIONATE_ORDINI = new Set();
+
+let _fornitoreRicercaTimer = null;
+function _posizionaFornitoreDropdown(input){
+  const dropdown = document.getElementById('fornitore-dropdown');
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = rect.width + 'px';
+}
+async function _fornitoreRicercaInput(input){
+  const dropdown = document.getElementById('fornitore-dropdown');
+  const q = input.value.trim();
+  clearTimeout(_fornitoreRicercaTimer);
+  _fornitoreRicercaTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/fornitori_wood/ricerca?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){ dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = risultati.map(f => {
+      const nome = f.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+      return `<div class="wms-item" onmousedown="_fornitoreScelto('${nome}')"><div>${f}</div></div>`;
+    }).join('');
+    _posizionaFornitoreDropdown(input);
+    dropdown.style.display = 'block';
+  }, 200);
+}
+function _fornitoreScelto(nome){
+  document.getElementById('crea-ordine-fornitore').value = nome;
+  document.getElementById('fornitore-dropdown').style.display = 'none';
+}
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('fornitore-dropdown');
+  if(dropdown && dropdown.style.display !== 'none' && e.target !== document.getElementById('crea-ordine-fornitore') && !dropdown.contains(e.target)){
+    dropdown.style.display = 'none';
+  }
+});
+
 
 async function caricaOrdini(){
   const box = document.getElementById('ordini-lista');

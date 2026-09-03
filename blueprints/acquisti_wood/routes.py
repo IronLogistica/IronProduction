@@ -11,7 +11,7 @@ from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     AnagraficaAziendaWood)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
                     _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
-                    _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO)
+                    _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO, _leggi_file_tabellare_tollerante)
 
 acquisti_wood_bp = Blueprint('acquisti_wood', __name__)
 
@@ -203,6 +203,21 @@ def _data_da_gg_mm_aaaa(s):
         return datetime.strptime(s, '%d/%m/%Y').date()
     except ValueError:
         return None
+
+
+def _data_tollerante(s):
+    """Come _data_da_gg_mm_aaaa, ma prova ANCHE il formato ISO
+    (aaaa-mm-gg, quello che manda un <input type="date"> del browser o
+    una colonna data letta da Excel) — usata dove la data può arrivare
+    in uno dei due formati, non solo da un PDF fornitore."""
+    if not s:
+        return None
+    for fmt in ('%d/%m/%Y', '%Y-%m-%d'):
+        try:
+            return datetime.strptime(str(s).strip(), fmt).date()
+        except ValueError:
+            continue
+    return None
 
 
 def _ordine_dict(o):
@@ -723,6 +738,154 @@ def api_elimina_ddt_carico(did):
 #  una data coppia (fornitore, codice), si continua a usare il codice grezzo
 #  del PDF, come prima — nessuna mappa è mai obbligatoria.
 # ══════════════════════════════════════════════════════════════════════════════
+
+@acquisti_wood_bp.route('/api/fornitori_wood/ricerca')
+def api_ricerca_fornitori_wood():
+    """
+    Widget di ricerca intelligente per il campo Fornitore — suggerisce dai
+    nomi fornitore già usati in Ordini di Acquisto PASSATI (caricati o
+    emessi da qui), invece di doverli riscrivere identici a mano ogni
+    volta (con rischio di piccole differenze che spezzano lo storico
+    acquisti per quel fornitore in due nomi diversi).
+    """
+    q = (request.args.get('q') or '').strip().lower()
+    fornitori = {f[0] for f in db.session.query(OrdineAcquistoWood.fornitore).distinct().all() if f[0]}
+    if q:
+        fornitori = {f for f in fornitori if q in f.lower()}
+    return jsonify(sorted(fornitori)[:20])
+
+
+def _crea_prezzo_storico(codice, fornitore, prezzo, data_prezzo=None, qta=None, unita_misura=''):
+    """
+    Registra UN prezzo storico come un piccolo Ordine di Acquisto (una
+    testata + una riga, origine='STORICO_MANUALE') — stessa tabella già
+    usata per gli ordini veri, così _storico_ultimi_acquisti (che legge
+    da lì) lo vede automaticamente, senza bisogno di una tabella
+    parallela né di un secondo posto da controllare per "l'ultimo
+    prezzo pagato". Non è un vero ordine (nessuna consegna attesa,
+    nessuna rintracciabilità DDT): serve solo a far partire lo storico
+    prezzi con dati già noti, prima ancora che il sistema li registri
+    da solo con i primi ordini veri.
+    """
+    data_prezzo = data_prezzo or date.today()
+    filename = f"STORICO-{codice}-{fornitore}-{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}.pdf"
+    o = OrdineAcquistoWood(filename=filename, fornitore=fornitore, ordine_n='STORICO',
+                            data_ordine=data_prezzo, stato_label='ORDINE_RICEVUTO', origine='STORICO_MANUALE')
+    db.session.add(o)
+    db.session.flush()
+    db.session.add(RigaOrdineAcquistoWood(ordine_id=o.id, codice=codice, unita_misura=unita_misura,
+                                           qta_originale=qta or 0, qta_ricevuta=qta or 0, prezzo_unitario=prezzo))
+
+
+@acquisti_wood_bp.route('/api/prezzi_storici_wood/nuovo', methods=['POST'])
+def api_prezzo_storico_nuovo():
+    """Caricamento manuale SINGOLO — un prezzo storico alla volta, per un
+    solo codice. Vedi _crea_prezzo_storico per come viene registrato."""
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip()
+    fornitore = (d.get('fornitore') or '').strip()
+    try:
+        prezzo = float(d.get('prezzo'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Prezzo non valido'), 400
+    if not codice or not fornitore or prezzo <= 0:
+        return jsonify(ok=False, error='Codice, fornitore e prezzo (maggiore di zero) sono obbligatori'), 400
+    data_prezzo = _data_tollerante(d.get('data')) if d.get('data') else date.today()
+    try:
+        qta = float(d.get('qta')) if d.get('qta') else None
+    except (TypeError, ValueError):
+        qta = None
+    _crea_prezzo_storico(codice, fornitore, prezzo, data_prezzo, qta, (d.get('unita_misura') or '').strip())
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+def _parse_import_prezzi_storici(raw, filename):
+    """
+    Legge un file di caricamento massivo prezzi storici — tollerante al
+    'finto excel' (stessa _leggi_file_tabellare_tollerante già usata per
+    l'anagrafica Zucchetti). Formato a righe: una riga per ogni prezzo
+    conosciuto (colonne codice/fornitore/prezzo, facoltative data/qta/
+    unita_misura) — per caricare gli ultimi 3 prezzi di un codice bastano
+    3 righe con lo stesso codice, non serve un formato a colonne fisse.
+    """
+    df, formato = _leggi_file_tabellare_tollerante(raw, filename)
+    if df is None:
+        raise ValueError('File non leggibile in nessun formato riconosciuto (provato: xlsx, xls, "finto excel"/HTML, csv).')
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    mancanti = [c for c in ('codice', 'fornitore', 'prezzo') if c not in df.columns]
+    if mancanti:
+        raise ValueError(f'Colonne obbligatorie mancanti: {", ".join(mancanti)}. Trovate nel file: {", ".join(df.columns)}')
+
+    righe = []
+    for _, row in df.iterrows():
+        codice = str(row.get('codice', '')).strip()
+        fornitore = str(row.get('fornitore', '')).strip()
+        if not codice or codice.lower() == 'nan' or not fornitore or fornitore.lower() == 'nan':
+            continue
+        try:
+            prezzo = float(str(row.get('prezzo', '')).replace(',', '.'))
+        except (TypeError, ValueError):
+            continue
+        if prezzo <= 0:
+            continue
+        data_prezzo = None
+        if 'data' in df.columns:
+            data_grezza = str(row.get('data', '') or '').strip()
+            if data_grezza and data_grezza.lower() != 'nan':
+                data_prezzo = _data_tollerante(data_grezza)
+        qta = None
+        if 'qta' in df.columns:
+            try:
+                qta = float(row.get('qta'))
+            except (TypeError, ValueError):
+                qta = None
+        unita_misura = str(row.get('unita_misura', '') or '').strip()
+        if unita_misura.lower() == 'nan':
+            unita_misura = ''
+        righe.append({'codice': codice, 'fornitore': fornitore, 'prezzo': prezzo,
+                       'data': data_prezzo.isoformat() if data_prezzo else None, 'qta': qta, 'unita_misura': unita_misura})
+    return righe, formato
+
+
+@acquisti_wood_bp.route('/api/prezzi_storici_wood/importa', methods=['POST'])
+def api_prezzi_storici_importa():
+    """
+    Caricamento MASSIVO prezzi storici — file con colonne
+    codice/fornitore/prezzo (facoltative data/qta/unita_misura), una riga
+    per ogni prezzo conosciuto. Due passi obbligati, stesso stile già in
+    uso per l'anagrafica Zucchetti: senza 'conferma', solo anteprima
+    (nessuna scrittura); con 'conferma'='true', applica davvero (stesso
+    file ricaricato).
+    """
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'ok': False, 'error': 'Nessun file selezionato.'}), 400
+    conferma = (request.form.get('conferma') or '').lower() == 'true'
+    try:
+        righe, formato = _parse_import_prezzi_storici(file.read(), file.filename)
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+    if not righe:
+        return jsonify({'ok': False, 'error': 'Nessuna riga valida trovata nel file.'}), 400
+
+    if not conferma:
+        codici_coinvolti = sorted({r['codice'] for r in righe})
+        return jsonify({'ok': True, 'anteprima': True, 'formato_rilevato': formato,
+                         'totale_righe': len(righe), 'codici_coinvolti': len(codici_coinvolti),
+                         'esempio_righe': righe[:5]})
+
+    for r in righe:
+        _crea_prezzo_storico(r['codice'], r['fornitore'], r['prezzo'],
+                              date.fromisoformat(r['data']) if r['data'] else None, r['qta'], r['unita_misura'])
+    db.session.commit()
+    return jsonify({'ok': True, 'anteprima': False, 'totale_righe': len(righe)})
+
+
+@acquisti_wood_bp.route('/prezzi-storici-wood')
+def pagina_prezzi_storici():
+    return render_template('acquisti_wood/prezzi_storici.html', active='acquisti_wood')
+
 
 @acquisti_wood_bp.route('/api/mappa_codici_fornitore_wood', methods=['GET'])
 def api_lista_mappa_codici_fornitore():

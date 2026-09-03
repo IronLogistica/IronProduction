@@ -1,0 +1,208 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">💰 Prezzi Storici — Caricamento Massimo/Manuale</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px">
+      Fa partire lo storico prezzi (visibile nelle card del fabbisogno) con dati già noti, prima ancora che il
+      sistema li registri da solo con i primi ordini veri. Non serve caricarli — se non li carichi, il sistema
+      si popola comunque da solo man mano che emetti ordini da Ordini Fornitori.
+    </p>
+
+    <div style="border:1.5px solid var(--accent2);border-radius:10px;padding:16px;margin-bottom:20px">
+      <div style="font-weight:700;margin-bottom:8px;color:var(--accent2)">📋 Caricamento massivo</div>
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+        File Excel/CSV con colonne <b>codice, fornitore, prezzo</b> (facoltative: data, qta, unita_misura) — una riga
+        per ogni prezzo conosciuto. Per caricare gli ultimi 3 prezzi di un codice bastano 3 righe con lo stesso codice.
+        Tollerante anche al "finto excel" (tabella HTML salvata come .xlsx).
+      </p>
+      <input type="file" id="ps-file" accept=".xlsx,.xls,.csv" style="margin-bottom:8px">
+      <button class="btn btn-primary" onclick="anteprimaImportPrezzi()">🔍 Verifica prima di importare</button>
+      <div id="ps-anteprima" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:8px;background:rgba(30,111,165,.06)">
+        <div id="ps-anteprima-corpo" style="font-size:13px"></div>
+        <button class="btn btn-primary" style="margin-top:12px" onclick="confermaImportPrezzi()">✅ Conferma import</button>
+      </div>
+      <div id="ps-import-esito" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
+    <div style="border:1px dashed var(--border);border-radius:10px;padding:16px">
+      <div style="font-weight:600;margin-bottom:8px">✍️ Caricamento manuale (un codice alla volta)</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div style="position:relative">
+          <label class="modal-label" style="margin-top:0">Codice</label>
+          <input id="ps-codice" type="text" placeholder="Cerca codice..." autocomplete="off"
+                 style="width:180px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)"
+                 oninput="_psCodiceRicercaInput(this)" onfocus="_psCodiceRicercaInput(this)">
+          <div id="ps-codice-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+        </div>
+        <div style="position:relative">
+          <label class="modal-label" style="margin-top:0">Fornitore</label>
+          <input id="ps-fornitore" type="text" placeholder="Fornitore..." autocomplete="off"
+                 style="width:200px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)"
+                 oninput="_psFornitoreRicercaInput(this)" onfocus="_psFornitoreRicercaInput(this)">
+          <div id="ps-fornitore-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+        </div>
+        <div>
+          <label class="modal-label" style="margin-top:0">Prezzo</label>
+          <input id="ps-prezzo" type="number" step="0.01" min="0" placeholder="€" style="width:100px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <div>
+          <label class="modal-label" style="margin-top:0">Data (facoltativa)</label>
+          <input id="ps-data" type="date" style="padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <div>
+          <label class="modal-label" style="margin-top:0">Quantità (facoltativa)</label>
+          <input id="ps-qta" type="number" step="0.01" min="0" style="width:100px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <button class="btn btn-primary" onclick="creaPrezzoStoricoManuale()">➕ Aggiungi</button>
+      </div>
+      <div id="ps-manuale-esito" style="font-size:12px;margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+async function anteprimaImportPrezzi(){
+  const fileInput = document.getElementById('ps-file');
+  const esito = document.getElementById('ps-import-esito');
+  const box = document.getElementById('ps-anteprima');
+  box.style.display = 'none';
+  esito.innerHTML = '';
+  if(!fileInput.files.length){ esito.innerHTML = '<span style="color:#c0392b">Seleziona un file prima.</span>'; return; }
+  esito.innerHTML = 'Lettura in corso...';
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  try{
+    const r = await fetch('/api/prezzi_storici_wood/importa', {method:'POST', body: fd});
+    const d = await r.json();
+    if(!d.ok){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.error + '</span>'; return; }
+    esito.innerHTML = '';
+    document.getElementById('ps-anteprima-corpo').innerHTML = `
+      <div>Formato rilevato: <b>${d.formato_rilevato}</b></div>
+      <div style="margin-top:6px">Righe totali: <b>${d.totale_righe}</b> — <b>${d.codici_coinvolti}</b> codici diversi coinvolti</div>
+    `;
+    box.style.display = 'block';
+  }catch(e){
+    esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete.</span>';
+  }
+}
+
+async function confermaImportPrezzi(){
+  const fileInput = document.getElementById('ps-file');
+  const esito = document.getElementById('ps-import-esito');
+  if(!fileInput.files.length){ esito.innerHTML = '<span style="color:#c0392b">Seleziona di nuovo il file.</span>'; return; }
+  esito.innerHTML = 'Import in corso...';
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  fd.append('conferma', 'true');
+  try{
+    const r = await fetch('/api/prezzi_storici_wood/importa', {method:'POST', body: fd});
+    const d = await r.json();
+    if(!d.ok){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.error + '</span>'; return; }
+    esito.innerHTML = `<span style="color:#2a9d5c">✅ Import completato — ${d.totale_righe} prezzi caricati.</span>`;
+    document.getElementById('ps-anteprima').style.display = 'none';
+    fileInput.value = '';
+  }catch(e){
+    esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete durante l\'import.</span>';
+  }
+}
+
+let _psCodiceTimer = null;
+function _posizionaDropdown(id, input){
+  const dropdown = document.getElementById(id);
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = rect.width + 'px';
+}
+async function _psCodiceRicercaInput(input){
+  const dropdown = document.getElementById('ps-codice-dropdown');
+  const q = input.value.trim();
+  clearTimeout(_psCodiceTimer);
+  if(q.length < 2){ dropdown.style.display = 'none'; return; }
+  _psCodiceTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/ricerca_materiale_wood?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessun codice trovato</div>';
+      _posizionaDropdown('ps-codice-dropdown', input);
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = risultati.map(x => `<div class="wms-item" onmousedown="_psCodiceScelto('${String(x.codice).replace(/'/g,"\\'")}')">
+      <div><b class="codice">${x.codice}</b>${x.descrizione ? `<br><span style="font-size:11px;color:var(--text-dim)">${x.descrizione}</span>` : ''}</div></div>`).join('');
+    _posizionaDropdown('ps-codice-dropdown', input);
+    dropdown.style.display = 'block';
+  }, 200);
+}
+function _psCodiceScelto(codice){
+  document.getElementById('ps-codice').value = codice;
+  document.getElementById('ps-codice-dropdown').style.display = 'none';
+}
+
+let _psFornitoreTimer = null;
+async function _psFornitoreRicercaInput(input){
+  const dropdown = document.getElementById('ps-fornitore-dropdown');
+  const q = input.value.trim();
+  clearTimeout(_psFornitoreTimer);
+  _psFornitoreTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/fornitori_wood/ricerca?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){ dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = risultati.map(f => `<div class="wms-item" onmousedown="_psFornitoreScelto('${f.replace(/'/g,"\\'")}')"><div>${f}</div></div>`).join('');
+    _posizionaDropdown('ps-fornitore-dropdown', input);
+    dropdown.style.display = 'block';
+  }, 200);
+}
+function _psFornitoreScelto(nome){
+  document.getElementById('ps-fornitore').value = nome;
+  document.getElementById('ps-fornitore-dropdown').style.display = 'none';
+}
+
+document.addEventListener('click', e => {
+  ['ps-codice-dropdown', 'ps-fornitore-dropdown'].forEach(id => {
+    const dropdown = document.getElementById(id);
+    const inputId = id.replace('-dropdown', '');
+    if(dropdown && dropdown.style.display !== 'none' && e.target !== document.getElementById(inputId) && !dropdown.contains(e.target)){
+      dropdown.style.display = 'none';
+    }
+  });
+});
+
+async function creaPrezzoStoricoManuale(){
+  const esito = document.getElementById('ps-manuale-esito');
+  const payload = {
+    codice: document.getElementById('ps-codice').value.trim(),
+    fornitore: document.getElementById('ps-fornitore').value.trim(),
+    prezzo: document.getElementById('ps-prezzo').value,
+    data: document.getElementById('ps-data').value,
+    qta: document.getElementById('ps-qta').value,
+  };
+  if(!payload.codice || !payload.fornitore || !payload.prezzo){
+    esito.style.color = '#c0392b'; esito.textContent = '⚠️ Codice, fornitore e prezzo sono obbligatori.'; return;
+  }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Salvataggio...';
+  try{
+    const r = await fetch('/api/prezzi_storici_wood/nuovo', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ ' + d.error; return; }
+    esito.style.color = '#1a9e5c'; esito.textContent = `✅ Prezzo aggiunto per ${payload.codice}.`;
+    document.getElementById('ps-codice').value = '';
+    document.getElementById('ps-fornitore').value = '';
+    document.getElementById('ps-prezzo').value = '';
+    document.getElementById('ps-data').value = '';
+    document.getElementById('ps-qta').value = '';
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+{% endblock %}
