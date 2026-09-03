@@ -296,7 +296,7 @@ def api_upload_ordine_acquisto():
     o = OrdineAcquistoWood(
         filename=file.filename, pdf_bytes=pdf_bytes, fornitore=dati['fornitore'],
         ordine_n=dati['ordine_n'], rif_fornitore=dati['rif_fornitore'],
-        testo_grezzo_pdf=testo_completo, stato_label='DA_CONFERMARE',
+        testo_grezzo_pdf=testo_completo, stato_label='LETTURA_DA_VERIFICARE',
     )
     # data_consegna comune = la prima data di evasione trovata tra gli articoli, se c'è
     prima_data = next((a['data_evasione'] for a in dati['articoli'] if a['data_evasione']), None)
@@ -334,7 +334,7 @@ def api_modifica_ordine_acquisto(oid):
         if o.confermato and o.stato_label == 'DA_CONFERMARE':
             o.stato_label = 'ORDINE_CONFERMATO'
     if 'stato_label' in d:
-        if d['stato_label'] not in ('DA_CONFERMARE', 'ORDINE_CONFERMATO', 'ORDINE_IN_ARRIVO', 'ORDINE_DA_RITIRARE', 'ORDINE_RICEVUTO'):
+        if d['stato_label'] not in ('LETTURA_DA_VERIFICARE', 'DA_CONFERMARE', 'ORDINE_CONFERMATO', 'ORDINE_IN_ARRIVO', 'ORDINE_DA_RITIRARE', 'ORDINE_RICEVUTO'):
             return jsonify({'errore': True, 'messaggio': 'Stato non valido'}), 400
         o.stato_label = d['stato_label']
     if 'data_consegna' in d:
@@ -508,6 +508,7 @@ def _ddt_dict(d):
     return {
         'id': d.id, 'filename': d.filename, 'fornitore': d.fornitore, 'numero_ddt': d.numero_ddt,
         'data_ddt': d.data_ddt, 'caricato_il': d.caricato_il.isoformat() if d.caricato_il else None,
+        'confermato': d.confermato,
         'righe': [{
             'id': r.id, 'codice': r.codice, 'descrizione': r.descrizione, 'quantita': r.quantita,
             'ordine_n_riferimento': r.ordine_n_riferimento, 'abbinata': r.abbinata,
@@ -524,6 +525,16 @@ def api_lista_ddt_carico():
 
 @acquisti_wood_bp.route('/api/ddt_carico_wood/upload', methods=['POST'])
 def api_upload_ddt_carico():
+    """
+    FASE 1 — legge il PDF e salva la lettura come BOZZA (confermato=False):
+    NON tocca ancora la Giacenza Iron Wood né aggiorna gli Ordini di
+    Acquisto abbinati. Solo dopo revisione umana e conferma esplicita
+    (vedi api_conferma_ddt_carico) questi effetti reali vengono applicati
+    — stesso principio già in uso per gli Ordini di Acquisto (stato
+    'LETTURA_DA_VERIFICARE') e nell'altro programma (MasterLogistic-WMS):
+    l'automazione sostituisce la battitura, non il controllo di quanto è
+    stato letto.
+    """
     file = request.files.get('file_pdf')
     if not file or not file.filename.lower().endswith('.pdf'):
         return jsonify({'errore': True, 'messaggio': 'Carica un file PDF valido.'}), 400
@@ -542,48 +553,63 @@ def api_upload_ddt_carico():
         return jsonify({'errore': True, 'messaggio': 'Questo PDF sembra un DDT di VENDITA (uscita merci), non di carico/acquisto.'}), 400
 
     ddt = DDTCaricoWood(filename=file.filename, pdf_bytes=pdf_bytes, fornitore=dati['fornitore'],
-                        numero_ddt=dati['numero_ddt'], data_ddt=dati['data_ddt'], testo_grezzo_pdf=testo)
+                        numero_ddt=dati['numero_ddt'], data_ddt=dati['data_ddt'], testo_grezzo_pdf=testo,
+                        confermato=False)
     db.session.add(ddt)
     db.session.flush()
 
-    n_abbinate = 0
-    n_totali = 0
-    n_ordini_completati = 0
     tutte_le_righe = [(sez['ordine_n'], art) for sez in dati['sezioni'] for art in sez['articoli']]
     tutte_le_righe += [('', art) for art in dati.get('articoli_senza_sezione', [])]
 
     for ordine_n_rif, art in tutte_le_righe:
-        n_totali += 1
         try:
             qta = float(art['quantita'])
         except (TypeError, ValueError):
             qta = 0
         codice_risolto = _risolvi_codice_fornitore(dati['fornitore'], art['codice'])
-        riga_ddt = RigaDDTCaricoWood(ddt_id=ddt.id, ordine_n_riferimento=ordine_n_rif,
-                                     codice=codice_risolto, descrizione=art['descrizione'], quantita=qta)
-
+        # Calcola già ORA se esiste un abbinamento — SOLO per farlo vedere
+        # nell'anteprima (nessuna riga OA viene toccata qui, nessuna
+        # giacenza registrata: questo succede solo alla conferma).
         oa = OrdineAcquistoWood.query.filter_by(ordine_n=ordine_n_rif).first() if ordine_n_rif else None
-        if oa:
-            riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=codice_risolto).first()
-            if riga_oa:
-                riga_oa.qta_ricevuta = (riga_oa.qta_ricevuta or 0) + qta
-                riga_ddt.ordine_acquisto_id = oa.id
-                riga_ddt.abbinata = True
-                n_abbinate += 1
+        riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=codice_risolto).first() if oa else None
+        db.session.add(RigaDDTCaricoWood(
+            ddt_id=ddt.id, ordine_n_riferimento=ordine_n_rif, codice=codice_risolto,
+            descrizione=art['descrizione'], quantita=qta,
+            ordine_acquisto_id=oa.id if (oa and riga_oa) else None, abbinata=bool(oa and riga_oa),
+        ))
 
-        db.session.add(riga_ddt)
+    db.session.commit()
+    return jsonify({'ok': True, 'ddt': _ddt_dict(ddt), 'n_righe_totali': len(tutte_le_righe),
+                    'n_righe_abbinate': sum(1 for r in ddt.righe if r.abbinata)})
 
-        # Carica la Giacenza Iron Wood indipendentemente dall'abbinamento: la
-        # merce È arrivata fisicamente, va tracciata comunque. costo_unitario
-        # non disponibile qui (gli Ordini di Acquisto Fase 1 non estraggono
-        # ancora il prezzo dal PDF) — movimento registrato senza valorizzazione.
-        if qta > 0 and codice_risolto:
-            _registra_movimento_giacenza(codice_risolto, qta, 'carico_acquisto',
+
+@acquisti_wood_bp.route('/api/ddt_carico_wood/<int:did>/conferma', methods=['POST'])
+def api_conferma_ddt_carico(did):
+    """
+    FASE 2 — applica gli effetti REALI del DDT, dopo revisione: carica la
+    Giacenza Iron Wood per ogni riga, aggiorna le quantità ricevute degli
+    Ordini di Acquisto abbinati, segna come 'ricevuti' gli ordini ormai
+    completi. Rifiuta una seconda conferma sullo stesso DDT — questi
+    effetti (in particolare il carico di giacenza) non sono pensati per
+    essere applicati due volte.
+    """
+    ddt = DDTCaricoWood.query.get_or_404(did)
+    if ddt.confermato:
+        return jsonify({'errore': True, 'messaggio': 'Questo DDT è già stato confermato in precedenza — non si conferma due volte.'}), 409
+
+    for riga_ddt in ddt.righe:
+        if riga_ddt.quantita > 0 and riga_ddt.codice:
+            _registra_movimento_giacenza(riga_ddt.codice, riga_ddt.quantita, 'carico_acquisto',
                                           riferimento=ddt.filename,
-                                          note=f'DDT {dati["numero_ddt"] or ddt.filename}' +
-                                               (f' — rif. OA {ordine_n_rif}' if ordine_n_rif else ''))
+                                          note=f'DDT {ddt.numero_ddt or ddt.filename}' +
+                                               (f' — rif. OA {riga_ddt.ordine_n_riferimento}' if riga_ddt.ordine_n_riferimento else ''))
+        if riga_ddt.ordine_acquisto_id:
+            riga_oa = RigaOrdineAcquistoWood.query.filter_by(
+                ordine_id=riga_ddt.ordine_acquisto_id, codice=riga_ddt.codice).first()
+            if riga_oa:
+                riga_oa.qta_ricevuta = (riga_oa.qta_ricevuta or 0) + riga_ddt.quantita
 
-    # Se tutte le righe di un OA abbinato sono ora coperte, segna l'ordine come ricevuto
+    n_ordini_completati = 0
     ordini_toccati = {r.ordine_acquisto_id for r in ddt.righe if r.ordine_acquisto_id}
     for oa_id in ordini_toccati:
         oa = OrdineAcquistoWood.query.get(oa_id)
@@ -591,9 +617,62 @@ def api_upload_ddt_carico():
             oa.stato_label = 'ORDINE_RICEVUTO'
             n_ordini_completati += 1
 
+    ddt.confermato = True
     db.session.commit()
-    return jsonify({'ok': True, 'ddt': _ddt_dict(ddt), 'n_righe_totali': n_totali,
-                    'n_righe_abbinate': n_abbinate, 'n_ordini_completati': n_ordini_completati})
+    return jsonify({'ok': True, 'ddt': _ddt_dict(ddt), 'n_ordini_completati': n_ordini_completati})
+
+
+@acquisti_wood_bp.route('/api/ddt_carico_wood/righe/<int:rid>', methods=['PUT'])
+def api_modifica_riga_ddt(rid):
+    """Modifica una riga BOZZA (solo prima della conferma — dopo, i valori
+    sono già stati applicati alla giacenza/agli ordini, modificarli qui
+    non li correggerebbe più). Se cambia codice o numero d'ordine di
+    riferimento, ricalcola l'abbinamento a un Ordine di Acquisto."""
+    r = RigaDDTCaricoWood.query.get_or_404(rid)
+    if r.ddt.confermato:
+        return jsonify({'errore': True, 'messaggio': 'DDT già confermato — non più modificabile da qui.'}), 409
+    d = request.get_json(force=True)
+    if 'codice' in d: r.codice = (d.get('codice') or '').strip()
+    if 'descrizione' in d: r.descrizione = (d.get('descrizione') or '').strip()
+    if 'ordine_n_riferimento' in d: r.ordine_n_riferimento = (d.get('ordine_n_riferimento') or '').strip()
+    if 'quantita' in d:
+        try:
+            r.quantita = float(d.get('quantita') or 0)
+        except (TypeError, ValueError):
+            return jsonify({'errore': True, 'messaggio': 'Quantità non valida'}), 400
+    if 'codice' in d or 'ordine_n_riferimento' in d:
+        oa = OrdineAcquistoWood.query.filter_by(ordine_n=r.ordine_n_riferimento).first() if r.ordine_n_riferimento else None
+        riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=r.codice).first() if oa else None
+        r.ordine_acquisto_id = oa.id if (oa and riga_oa) else None
+        r.abbinata = bool(oa and riga_oa)
+    db.session.commit()
+    return jsonify({'ok': True, 'abbinata': r.abbinata})
+
+
+@acquisti_wood_bp.route('/api/ddt_carico_wood/righe/<int:rid>', methods=['DELETE'])
+def api_elimina_riga_ddt(rid):
+    """Elimina una riga BOZZA (es. letta male dal PDF) — solo prima della conferma."""
+    r = RigaDDTCaricoWood.query.get_or_404(rid)
+    if r.ddt.confermato:
+        return jsonify({'errore': True, 'messaggio': 'DDT già confermato — non più modificabile da qui.'}), 409
+    db.session.delete(r)
+    db.session.commit()
+    return jsonify({'ok': True})
+
+
+@acquisti_wood_bp.route('/api/ddt_carico_wood/<int:did>', methods=['DELETE'])
+def api_elimina_ddt_carico(did):
+    """Elimina un DDT ancora in BOZZA (es. caricato per sbaglio, o da
+    ricaricare da capo) — rifiuta se già confermato, dato che a quel punto
+    ha già toccato la giacenza reale e gli ordini: cancellarlo senza
+    invertire quegli effetti lascerebbe il magazzino sballato."""
+    ddt = DDTCaricoWood.query.get_or_404(did)
+    if ddt.confermato:
+        return jsonify({'errore': True, 'messaggio':
+            'DDT già confermato — ha già aggiornato la giacenza reale, non si può eliminare da qui senza rischiare di sballare il magazzino.'}), 409
+    db.session.delete(ddt)
+    db.session.commit()
+    return jsonify({'ok': True})
 
 
 # ══════════════════════════════════════════════════════════════════════════════

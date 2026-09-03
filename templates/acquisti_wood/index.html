@@ -98,6 +98,7 @@ async function caricaPdfOrdine(){
 }
 
 const STATO_LABEL = {
+  LETTURA_DA_VERIFICARE: {testo:'📋 Lettura da verificare', colore:'#e6b800'},
   DA_CONFERMARE: {testo:'🟠 Da confermare', colore:'#f0ad4e'},
   ORDINE_CONFERMATO: {testo:'✅ Confermato', colore:'#28a745'},
   ORDINE_IN_ARRIVO: {testo:'🚢 In arrivo', colore:'#00d2ff'},
@@ -112,20 +113,23 @@ async function caricaListaOrdini(){
     const r = await fetch('/api/ordini_acquisto_wood');
     const ordini = await r.json();
     if(!ordini.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di acquisto caricato ancora.</p>'; return; }
+    // Le letture ancora da verificare vengono prima di tutto — non devono passare inosservate
+    ordini.sort((a,b) => (a.stato_label === 'LETTURA_DA_VERIFICARE') === (b.stato_label === 'LETTURA_DA_VERIFICARE') ? 0 : (a.stato_label === 'LETTURA_DA_VERIFICARE' ? -1 : 1));
     let html = '<div style="display:flex;flex-wrap:wrap;gap:12px">';
     ordini.forEach(o=>{
+      const daVerificare = o.stato_label === 'LETTURA_DA_VERIFICARE';
       const totRighe = o.articoli.length;
       const ricevute = o.articoli.filter(a => a.qta_ricevuta >= a.qta_originale && a.qta_originale > 0).length;
       const nienteRicevuto = ricevute === 0;
       const tuttoRicevuto = totRighe > 0 && ricevute === totRighe;
       // Stesso schema colori della Situazione Ordini di Produzione:
       // rosso = niente ancora arrivato, blu = in arrivo/parziale, verde = tutto ricevuto.
-      const bordo = tuttoRicevuto ? '#1a9e5c' : (nienteRicevuto ? '#c0392b' : '#2589c7');
+      const bordo = daVerificare ? '#e6b800' : (tuttoRicevuto ? '#1a9e5c' : (nienteRicevuto ? '#c0392b' : '#2589c7'));
       const pct = totRighe > 0 ? Math.round((ricevute / totRighe) * 100) : 0;
-      const pillTesto = tuttoRicevuto ? '✅ RICEVUTO' : (nienteRicevuto ? '🔴 DA RICEVERE' : '🚚 PARZIALE');
-      const pillColore = tuttoRicevuto ? '#1a9e5c' : (nienteRicevuto ? '#c0392b' : '#2589c7');
+      const pillTesto = daVerificare ? '📋 DA VERIFICARE' : (tuttoRicevuto ? '✅ RICEVUTO' : (nienteRicevuto ? '🔴 DA RICEVERE' : '🚚 PARZIALE'));
+      const pillColore = daVerificare ? '#e6b800' : (tuttoRicevuto ? '#1a9e5c' : (nienteRicevuto ? '#c0392b' : '#2589c7'));
 
-      html += `<div style="width:290px;background:var(--dark3);border:1px solid var(--border);border-left:4px solid ${bordo};border-radius:10px;padding:16px;cursor:pointer" onclick="apriOrdine(${o.id})">
+      html += `<div style="width:290px;background:var(--dark3);border:1px solid var(--border);border-left:4px solid ${bordo};${daVerificare?'border-width:2px':''};border-radius:10px;padding:16px;cursor:pointer" onclick="apriOrdine(${o.id})">
         <div style="font-size:11px;color:var(--text-dim)">OA n° ${o.ordine_n} · ${o.filename}</div>
         <div style="font-size:18px;font-weight:800;color:#e0eefc;margin-bottom:6px">${o.fornitore}</div>
         <div style="display:flex;justify-content:space-between;text-align:center;margin-bottom:8px">
@@ -182,7 +186,13 @@ async function apriOrdine(id){
   document.getElementById('oa-modal-titolo').textContent = o.fornitore + ' — OA n° ' + o.ordine_n;
 
   const stati = Object.keys(STATO_LABEL).map(k => `<option value="${k}" ${o.stato_label===k?'selected':''}>${STATO_LABEL[k].testo}</option>`).join('');
+  const bannerLettura = o.stato_label === 'LETTURA_DA_VERIFICARE'
+    ? `<div style="background:#e6b80022;border:1px solid #e6b80055;border-radius:8px;padding:10px;margin-bottom:10px">
+        <b style="color:#e6b800">📋 Lettura automatica da verificare</b> — correggi codice/descrizione/quantità qui sotto se il PDF è stato letto male, poi conferma.
+        <button onclick="confermaLetturaOrdine()" class="btn btn-primary" style="margin-top:8px;width:100%">✅ CONFERMA LETTURA</button>
+      </div>` : '';
   document.getElementById('oa-modal-testata').innerHTML = `
+    ${bannerLettura}
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
       <select id="oa-stato-sel" onchange="cambiaStatoOrdine()">${stati}</select>
       <label style="font-size:12px"><input type="checkbox" id="oa-ritiro" ${o.ritiro_proprio?'checked':''} onchange="cambiaRitiro()"> Ritiriamo noi</label>
@@ -211,6 +221,12 @@ async function apriOrdine(id){
   righe += '</tbody></table></div>';
   document.getElementById('oa-modal-righe').innerHTML = righe;
   openModal('modal-ordine-acquisto');
+}
+
+async function confermaLetturaOrdine(){
+  await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({stato_label: 'DA_CONFERMARE'})});
+  closeModal('modal-ordine-acquisto');
+  caricaListaOrdini();
 }
 
 async function cambiaStatoOrdine(){
@@ -251,12 +267,10 @@ async function caricaPdfDdt(){
     const r = await fetch('/api/ddt_carico_wood/upload', {method:'POST', body: fd});
     const d = await r.json();
     if(d.errore){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.messaggio + '</span>'; return; }
-    esito.innerHTML = `<span style="color:#2a9d5c">✅ DDT caricato — ${d.n_righe_abbinate}/${d.n_righe_totali} righe abbinate a un Ordine di Acquisto` +
-      (d.n_ordini_completati ? `, ${d.n_ordini_completati} ordine/i segnato/i come ricevuto/i` : '') +
-      `. Giacenza aggiornata per tutte le righe.</span>`;
+    esito.innerHTML = `<span style="color:#e6b800">📋 PDF letto — ${d.n_righe_abbinate}/${d.n_righe_totali} righe abbinate a un Ordine di Acquisto. ` +
+      `<b>Rivedi qui sotto e premi "✅ CONFERMA LETTURA"</b> per applicare davvero il carico di magazzino — finché non confermi, giacenza e ordini restano invariati.</span>`;
     fileInput.value = '';
     caricaListaDdt();
-    caricaListaOrdini();
   }catch(e){
     esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete durante il caricamento.</span>';
   }
@@ -269,25 +283,86 @@ async function caricaListaDdt(){
     const r = await fetch('/api/ddt_carico_wood');
     const ddts = await r.json();
     if(!ddts.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun DDT di carico registrato ancora.</p>'; return; }
-    let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>DDT n.</th><th>Fornitore</th><th>Data</th><th>Righe</th><th></th></tr></thead><tbody>';
+    // Le BOZZE (ancora da confermare) prima, così non si perdono di vista
+    ddts.sort((a,b) => (a.confermato === b.confermato) ? 0 : (a.confermato ? 1 : -1));
+    let html = '<div style="display:flex;flex-direction:column;gap:10px">';
     ddts.forEach(d=>{
       const abbinate = d.righe.filter(r=>r.abbinata).length;
-      html += `<tr><td class="codice">${d.numero_ddt||'—'}</td><td>${d.fornitore||'—'}</td><td class="lav-td">${d.data_ddt||'—'}</td>` +
-        `<td class="num">${abbinate}/${d.righe.length} abbinate</td>` +
-        `<td><a href="/ddt_carico_wood/${d.id}/pdf" target="_blank" class="btn btn-ghost" style="padding:4px 8px;font-size:11px">📄 PDF</a></td></tr>`;
-      if(d.righe.length){
-        html += `<tr><td colspan="5" style="padding:4px 4px 10px 20px">`;
+      const bordo = d.confermato ? 'var(--border)' : '#e6b800';
+      html += `<div style="border:1px solid ${bordo};${d.confermato?'':'border-width:2px'};border-radius:8px;padding:12px;background:var(--dark3)">
+        <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px;margin-bottom:8px">
+          <div><b class="codice">DDT ${d.numero_ddt||'—'}</b> — ${d.fornitore||'—'} <span style="font-size:11px;color:var(--text-dim)">${d.data_ddt||''}</span></div>
+          <div style="display:flex;gap:6px;align-items:center">
+            ${d.confermato
+              ? '<span class="badge" style="background:#1a9e5c22;color:#1a9e5c;border:1px solid #1a9e5c55;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">✅ CONFERMATO</span>'
+              : '<span class="badge" style="background:#e6b80022;color:#e6b800;border:1px solid #e6b80055;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">⚠️ BOZZA — DA CONFERMARE</span>'}
+            <a href="/ddt_carico_wood/${d.id}/pdf" target="_blank" class="btn btn-ghost" style="padding:4px 8px;font-size:11px">📄 PDF</a>
+            ${!d.confermato ? `<button onclick="eliminaDdtBozza(${d.id})" class="btn btn-ghost" style="padding:4px 8px;font-size:11px;color:#e07a6e">🗑️ Elimina bozza</button>` : ''}
+          </div>
+        </div>
+        <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">${abbinate}/${d.righe.length} righe abbinate a un Ordine di Acquisto</div>`;
+
+      if(d.confermato){
+        // Confermato: sola lettura, come prima
         d.righe.forEach(r=>{
           html += `<div style="font-size:11px;color:${r.abbinata?'#2a9d5c':'#b8860b'}">${r.abbinata?'✓':'⚠️'} ${r.codice} — ${r.descrizione||''} × ${r.quantita}${r.ordine_n_riferimento?' (rif. OA '+r.ordine_n_riferimento+')':' (nessun riferimento OA)'}</div>`;
         });
-        html += `</td></tr>`;
+      }else{
+        // Bozza: righe modificabili, come nell'anteprima di MasterLogistic-WMS
+        html += '<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr style="color:var(--text-dim)"><th style="text-align:left">Codice</th><th style="text-align:left">Descrizione</th><th>Qtà</th><th>Rif. OA</th><th></th></tr></thead><tbody>';
+        d.righe.forEach(r=>{
+          html += `<tr>
+            <td><input type="text" value="${r.codice}" style="width:90px;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;font-family:monospace;padding:2px 4px" onchange="modificaRigaDdt(${r.id}, 'codice', this.value)"></td>
+            <td><input type="text" value="${(r.descrizione||'').replace(/"/g,'&quot;')}" style="width:100%;min-width:120px;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;padding:2px 4px" onchange="modificaRigaDdt(${r.id}, 'descrizione', this.value)"></td>
+            <td><input type="number" step="0.01" value="${r.quantita}" style="width:70px;text-align:center" onchange="modificaRigaDdt(${r.id}, 'quantita', this.value)"></td>
+            <td><input type="text" value="${r.ordine_n_riferimento||''}" style="width:60px;text-align:center;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;padding:2px 4px" onchange="modificaRigaDdt(${r.id}, 'ordine_n_riferimento', this.value)"></td>
+            <td><button onclick="eliminaRigaDdt(${r.id}, ${d.id})" title="Elimina questa riga" style="background:none;border:none;color:#c0392b;cursor:pointer">🗑️</button></td>
+          </tr>`;
+        });
+        html += '</tbody></table>';
+        html += `<button onclick="confermaDdt(${d.id})" class="btn btn-primary" style="margin-top:10px;width:100%">✅ CONFERMA LETTURA — applica il carico di magazzino</button>`;
       }
+      html += '</div>';
     });
-    html += '</tbody></table></div>';
+    html += '</div>';
     box.innerHTML = html;
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
   }
+}
+
+async function modificaRigaDdt(rigaId, campo, valore){
+  const r = await fetch('/api/ddt_carico_wood/righe/' + rigaId, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({[campo]: valore})});
+  const d = await r.json();
+  if(d.errore){ alert('❌ ' + d.messaggio); }
+  caricaListaDdt();
+}
+async function eliminaRigaDdt(rigaId, ddtId){
+  if(!confirm('Eliminare questa riga dalla bozza?')) return;
+  const r = await fetch('/api/ddt_carico_wood/righe/' + rigaId, {method:'DELETE'});
+  const d = await r.json();
+  if(d.errore){ alert('❌ ' + d.messaggio); }
+  caricaListaDdt();
+}
+async function confermaDdt(ddtId){
+  if(!confirm('Confermare questo DDT? Verrà caricata la Giacenza reale e aggiornati gli Ordini di Acquisto abbinati — non è reversibile da qui.')) return;
+  try{
+    const r = await fetch('/api/ddt_carico_wood/' + ddtId + '/conferma', {method:'POST'});
+    const d = await r.json();
+    if(d.errore){ alert('❌ ' + d.messaggio); return; }
+    alert(`✅ DDT confermato — giacenza aggiornata` + (d.n_ordini_completati ? `, ${d.n_ordini_completati} ordine/i segnato/i come ricevuto/i` : '') + '.');
+    caricaListaDdt();
+    caricaListaOrdini();
+  }catch(e){ alert('❌ Errore di rete.'); }
+}
+async function eliminaDdtBozza(ddtId){
+  if(!confirm('Eliminare questa bozza di DDT? Non è ancora stata confermata, nessun effetto sul magazzino da annullare.')) return;
+  try{
+    const r = await fetch('/api/ddt_carico_wood/' + ddtId, {method:'DELETE'});
+    const d = await r.json();
+    if(d.errore){ alert('❌ ' + d.messaggio); return; }
+    caricaListaDdt();
+  }catch(e){ alert('❌ Errore di rete.'); }
 }
 
 caricaListaDdt();

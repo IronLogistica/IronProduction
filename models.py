@@ -1550,6 +1550,32 @@ def assicura_lotto_trasferimento_minimo():
             db.session.commit()
 
 
+def assicura_ddt_carico_confermato():
+    """
+    Migrazione compatibile con DB già esistenti: aggiunge
+    ddt_carico_wood.confermato — introdotta insieme al nuovo flusso
+    'anteprima prima di confermare' per il caricamento DDT (come già in
+    uso per gli Ordini di Acquisto e come nell'altro programma,
+    MasterLogistic-WMS): senza questa colonna il caricamento continuerebbe
+    a toccare la giacenza reale subito, senza nessuna revisione umana
+    possibile prima. False per i DDT esistenti prima di questa modifica —
+    già stati processati a suo tempo col vecchio comportamento immediato,
+    non richiedono una conferma retroattiva.
+    """
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE ddt_carico_wood ADD COLUMN IF NOT EXISTS confermato BOOLEAN DEFAULT TRUE"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('ddt_carico_wood')}
+        if 'confermato' not in colonne:
+            db.session.execute(text("ALTER TABLE ddt_carico_wood ADD COLUMN confermato BOOLEAN DEFAULT 1"))
+            db.session.commit()
+
+
 def assicura_contestuale_distinta_base():
     """Migrazione compatibile con DB già esistenti: aggiunge
     distinta_base_wood.contestuale e distinta_base_wood.data_flag_contestuale
@@ -2640,7 +2666,12 @@ class DDTCaricoWood(db.Model):
     caricato da PDF e parsato automaticamente. Ogni riga viene abbinata, se
     possibile, alla riga corrispondente di un OrdineAcquistoWood (tramite il
     numero d'ordine di riferimento presente nel DDT), aggiornando la
-    quantità ricevuta e caricando la Giacenza Iron Wood in automatico.
+    quantità ricevuta e caricando la Giacenza Iron Wood in automatico —
+    SOLO dopo conferma umana (vedi 'confermato'): il caricamento da solo
+    salva la lettura come BOZZA, senza toccare giacenza/ordini, finché non
+    viene rivista e confermata — stessa logica già in uso per gli Ordini
+    di Acquisto (stato 'LETTURA_DA_VERIFICARE'), qui ancora più importante
+    perché confermare tocca la giacenza REALE, non solo un record locale.
     """
     __tablename__ = 'ddt_carico_wood'
     id               = db.Column(db.Integer, primary_key=True)
@@ -2650,6 +2681,7 @@ class DDTCaricoWood(db.Model):
     numero_ddt       = db.Column(db.String(50), default='')
     data_ddt         = db.Column(db.String(20), default='')   # gg/mm/aaaa come estratta dal PDF
     testo_grezzo_pdf = db.Column(db.Text, default='')
+    confermato       = db.Column(db.Boolean, default=False)   # False = bozza appena letta, giacenza/ordini NON ancora toccati
     caricato_il      = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -2664,7 +2696,7 @@ class RigaDDTCaricoWood(db.Model):
     descrizione           = db.Column(db.String(300), default='')
     quantita              = db.Column(db.Float, default=0)
     abbinata              = db.Column(db.Boolean, default=False)   # True = trovata una riga OA corrispondente, aggiornata
-    ddt = db.relationship('DDTCaricoWood', backref='righe')
+    ddt = db.relationship('DDTCaricoWood', backref=db.backref('righe', cascade='all, delete-orphan'))
     ordine_acquisto = db.relationship('OrdineAcquistoWood')
 
 
