@@ -1594,6 +1594,37 @@ def assicura_origine_ordine_acquisto_wood():
             db.session.commit()
 
 
+def assicura_campi_stampa_ordine_fornitore():
+    """
+    Migrazione compatibile con DB già esistenti: aggiunge i campi
+    facoltativi usati dalla stampa "Ordine a Fornitore" in stile Iron
+    Segnaletica (fornitore_indirizzo/fornitore_piva/destinazione_consegna/
+    condizioni_pagamento/note_ordine) — tutti opzionali, NULL per gli
+    ordini esistenti (compaiono come riquadro vuoto sul foglio stampato,
+    esattamente come "Destinazione:" nel modulo originale quando non
+    compilata).
+    """
+    colonne_da_aggiungere = [
+        ('fornitore_indirizzo', 'VARCHAR(300)'), ('fornitore_piva', 'VARCHAR(50)'),
+        ('destinazione_consegna', 'VARCHAR(300)'), ('condizioni_pagamento', 'VARCHAR(200)'),
+        ('note_ordine', 'TEXT'),
+    ]
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        for nome, tipo in colonne_da_aggiungere:
+            try:
+                db.session.execute(text(f"ALTER TABLE ordini_acquisto_wood ADD COLUMN IF NOT EXISTS {nome} {tipo}"))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('ordini_acquisto_wood')}
+        for nome, tipo in colonne_da_aggiungere:
+            if nome not in colonne:
+                db.session.execute(text(f"ALTER TABLE ordini_acquisto_wood ADD COLUMN {nome} {tipo}"))
+                db.session.commit()
+
+
 def assicura_ddt_carico_confermato():
     """
     Migrazione compatibile con DB già esistenti: aggiunge
@@ -2702,6 +2733,15 @@ class OrdineAcquistoWood(db.Model):
     # solo per distinguere le due origini in UI (badge, filtro), nessuna
     # logica di business dipende da questo valore.
     origine           = db.Column(db.String(20), default='CARICATO_PDF')
+    # Campi per la stampa "Ordine a Fornitore" in stile Iron Segnaletica —
+    # tutti facoltativi (come "Destinazione:" nell'originale, lasciata
+    # in bianco se non compilata): compaiono come riquadro vuoto da
+    # riempire a mano sul foglio stampato quando non indicati qui.
+    fornitore_indirizzo   = db.Column(db.String(300), default='')
+    fornitore_piva        = db.Column(db.String(50), default='')
+    destinazione_consegna = db.Column(db.String(300), default='')  # dove va consegnata la merce, se diverso dalla sede
+    condizioni_pagamento  = db.Column(db.String(200), default='')  # es. "Bonifico a 60 gg df fm"
+    note_ordine           = db.Column(db.Text, default='')          # es. "CONSEGNE DA CONCORDARE", note libere
     caricato_il       = db.Column(db.DateTime, default=datetime.utcnow)
     aggiornato_il     = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 

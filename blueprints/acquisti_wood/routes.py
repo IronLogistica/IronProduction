@@ -937,7 +937,12 @@ def api_crea_ordine_acquisto_manuale():
 
     filename = f"EMESSO-{ordine_n}-{fornitore}.pdf"
     o = OrdineAcquistoWood(filename=filename, fornitore=fornitore, ordine_n=ordine_n,
-                            data_ordine=date.today(), stato_label='DA_CONFERMARE', origine='EMESSO_MANUALE')
+                            data_ordine=date.today(), stato_label='DA_CONFERMARE', origine='EMESSO_MANUALE',
+                            fornitore_indirizzo=(d.get('fornitore_indirizzo') or '').strip(),
+                            fornitore_piva=(d.get('fornitore_piva') or '').strip(),
+                            destinazione_consegna=(d.get('destinazione_consegna') or '').strip(),
+                            condizioni_pagamento=(d.get('condizioni_pagamento') or '').strip(),
+                            note_ordine=(d.get('note_ordine') or '').strip())
     db.session.add(o)
     db.session.flush()
     for r in righe:
