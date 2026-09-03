@@ -331,8 +331,8 @@ async function ricercaCommesseVernInt(input){
     dropdown.innerHTML = _vernintRisultati.map((r, i) => `
       <div style="padding:10px 12px;cursor:pointer;border-bottom:1px solid var(--border)"
            onmousedown="sceltaCommessaVernInt(${i})" onmouseover="this.style.background='rgba(42,157,92,.12)'" onmouseout="this.style.background=''">
-        <b class="codice">${r.codice_articolo}</b> — ${r.op_code}
-        <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${r.commessa||'—'} · ${r.cliente||'—'} · Grezzo IW disponibile: <b style="color:#2a9d5c">${r.grezzo_iw_disponibile}</b></div>
+        <b class="codice">${r.codice_articolo}</b>${r.op_code ? ' — ' + r.op_code : ''}
+        <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${r.descrizione||''}${r.op_code ? ' · ' + (r.commessa||'—') + ' · ' + (r.cliente||'—') : ' · <span style=\'color:#e6b800\'>nessuna commessa aperta</span>'} · Grezzo IW disponibile: <b style="color:#2a9d5c">${r.grezzo_iw_disponibile}</b></div>
       </div>`).join('');
     posizionaVernintDropdown(input);
     dropdown.style.display = 'block';
@@ -351,7 +351,9 @@ function sceltaCommessaVernInt(indice){
   document.getElementById('vernint-dropdown').style.display = 'none';
   document.getElementById('vernint-ricerca').value = '';
   document.getElementById('vernint-codice').textContent = r.codice_articolo;
-  document.getElementById('vernint-op-commessa').textContent = `${r.op_code} · ${r.commessa||'—'} · ${r.cliente||'—'}`;
+  document.getElementById('vernint-op-commessa').textContent = r.op_code
+    ? `${r.op_code} · ${r.commessa||'—'} · ${r.cliente||'—'}`
+    : 'Nessuna commessa aperta su questo codice';
   document.getElementById('vernint-grezzo-disp').textContent = r.grezzo_iw_disponibile;
   document.getElementById('vernint-quantita').value = '';
   document.getElementById('vernint-esito').textContent = '';
@@ -369,7 +371,7 @@ async function confermaVerniciaturaInterna(){
   const conferma = confirm(
     `Confermi l'invio a verniciatura interna?\n\n` +
     `Codice: ${_vernintOpSelezionato.codice_articolo}\n` +
-    `Commessa: ${_vernintOpSelezionato.op_code} — ${_vernintOpSelezionato.commessa || '—'}\n` +
+    (_vernintOpSelezionato.op_code ? `Commessa: ${_vernintOpSelezionato.op_code} — ${_vernintOpSelezionato.commessa || '—'}\n` : `(Nessuna commessa aperta su questo codice)\n`) +
     `Quantità: ${quantita} pezzi\n\n` +
     `Sposta ${quantita} pezzi da Grezzo IW a Finiti IW — nessun DDT, operazione immediata.`
   );
@@ -378,7 +380,7 @@ async function confermaVerniciaturaInterna(){
   try{
     const r = await fetch('/api/dichiarazione-produzione/verniciatura-interna', {
       method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({op_code: _vernintOpSelezionato.op_code, quantita})
+      body: JSON.stringify({codice: _vernintOpSelezionato.codice_articolo, op_code: _vernintOpSelezionato.op_code || '', quantita})
     });
     const d = await r.json();
     if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '❌ ' + (d.error || 'Errore.'); return; }

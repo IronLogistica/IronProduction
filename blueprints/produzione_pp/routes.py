@@ -3320,49 +3320,61 @@ def api_diagnostica_fasi_op(op_code):
 @pp_bp.get('/api/dichiarazione-produzione/verniciatura-interna/ricerca-commesse')
 def api_verniciatura_interna_ricerca_commesse():
     """
-    Widget di ricerca intelligente per trovare la commessa aperta a cui
-    applicare la verniciatura interna — cerca per codice OP, codice
-    articolo o numero commessa. Ritorna anche il Grezzo IW disponibile per
-    ciascun codice, così Angelo vede subito quanto può inviare.
+    Widget di ricerca intelligente per trovare un codice a cui applicare
+    la verniciatura interna — cerca per codice o descrizione TRA TUTTI i
+    codici conosciuti dal programma (DescrizioneCodiceWood), non solo tra
+    quelli con un Ordine di Produzione aperto in questo momento.
+
+    BUG REALE CORRETTO: prima la ricerca partiva dagli Ordini di
+    Produzione APERTI, richiedendo che ce ne fosse uno per il codice —
+    ma il Grezzo IW è materiale già fisicamente pronto a magazzino,
+    indipendente da un OP attivo (può essere avanzato da un OP già
+    chiuso, o da una rettifica manuale): un codice con Grezzo IW > 0 ma
+    nessuna commessa aperta restava invisibile a questa ricerca, pur
+    avendo davvero del materiale pronto da verniciare (segnalato con un
+    caso reale: A601012CTD6-CP, Grezzo IW 5, nessuna commessa aperta).
+
+    L'OP aperto più prioritario, se esiste, resta mostrato come
+    riferimento SUGGERITO — non più un requisito per comparire qui.
     """
     q = (request.args.get('q') or '').strip()
     if len(q) < 2:
         return jsonify([])
     like = f'%{q}%'
-    # SOLO ordini davvero aperti — 'Tecnicamente completato' (produzione
-    # già finita, anche se ancora "impegna" materiale per altri conteggi)
-    # non ha senso qui: non ha più senso spedire a verniciare qualcosa il
-    # cui ordine è già chiuso.
-    ordini = (OrdineProduzione.query
-              .filter(OrdineProduzione.stato.in_(('Rilasciato', 'In esecuzione')))
-              .filter(db.or_(OrdineProduzione.codice.ilike(like),
-                              OrdineProduzione.codice_articolo.ilike(like),
-                              OrdineProduzione.commessa.ilike(like)))
-              .order_by(OrdineProduzione.priorita, OrdineProduzione.codice).limit(80).all())
-    if not ordini:
+    candidati = (DescrizioneCodiceWood.query
+                 .filter(db.or_(DescrizioneCodiceWood.codice.ilike(like),
+                                 DescrizioneCodiceWood.descrizione.ilike(like)))
+                 .limit(80).all())
+    if not candidati:
         return jsonify([])
-    codici = list({o.codice_articolo for o in ordini})
+    codici = [c.codice for c in candidati]
     grezzo_per_codice = _grezzo_iw_per_codici(codici)
 
-    # Il Grezzo IW è materiale generico in magazzino condiviso da TUTTI gli
-    # OP aperti dello stesso codice (non appartiene a un OP specifico) —
-    # mostrare una riga per OGNI OP con lo stesso codice ripeteva lo stesso
-    # numero più volte (es. PINX110: sia OP-16 sia OP-25 mostravano '15
-    # disponibile', lo stesso grezzo condiviso, non 15+15), confondendo
-    # quale selezionare. Una sola riga per codice, con l'OP aperto più
-    # prioritario come destinatario suggerito.
+    # L'OP aperto più prioritario per ciascun codice, SE esiste — solo
+    # come riferimento suggerito (per l'audit trail), mai più un
+    # requisito per comparire nei risultati.
+    ordini_aperti = (OrdineProduzione.query
+                     .filter(OrdineProduzione.stato.in_(('Rilasciato', 'In esecuzione')))
+                     .filter(OrdineProduzione.codice_articolo.in_(codici)).all())
     migliore_op_per_codice = {}
-    for o in ordini:
+    for o in ordini_aperti:
         attuale = migliore_op_per_codice.get(o.codice_articolo)
         if attuale is None or (o.priorita or 999) < (attuale.priorita or 999):
             migliore_op_per_codice[o.codice_articolo] = o
 
-    risultati = [{
-        'op_code': o.codice, 'codice_articolo': o.codice_articolo,
-        'commessa': o.commessa or '', 'cliente': o.cliente or '',
-        'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona,
-        'grezzo_iw_disponibile': round(grezzo_per_codice.get(o.codice_articolo, 0), 3),
-    } for o in migliore_op_per_codice.values() if grezzo_per_codice.get(o.codice_articolo, 0) > 0]
+    descrizioni = {c.codice: c.descrizione for c in candidati}
+    risultati = []
+    for codice in codici:
+        grezzo = round(grezzo_per_codice.get(codice, 0), 3)
+        if grezzo <= 0:
+            continue
+        o = migliore_op_per_codice.get(codice)
+        risultati.append({
+            'codice_articolo': codice, 'descrizione': descrizioni.get(codice, ''),
+            'op_code': o.codice if o else None,
+            'commessa': (o.commessa or '') if o else '', 'cliente': (o.cliente or '') if o else '',
+            'grezzo_iw_disponibile': grezzo,
+        })
     risultati.sort(key=lambda r: r['codice_articolo'])
     return jsonify(risultati[:20])
 
@@ -3370,14 +3382,21 @@ def api_verniciatura_interna_ricerca_commesse():
 @pp_bp.post('/api/dichiarazione-produzione/verniciatura-interna')
 def api_verniciatura_interna_conferma():
     """
-    Conferma l'invio di N pezzi a verniciatura interna per una commessa —
+    Conferma l'invio di N pezzi a verniciatura interna per un CODICE —
     scarica Grezzo IW e carica Finiti IW (magazzino locale + Kanban) della
     stessa quantità. Blocca se la quantità richiesta supera il Grezzo IW
     davvero disponibile per quel codice (a differenza di altri scarichi
     automatici nel sistema, qui è un'azione manuale diretta di Angelo — un
     refuso di battitura va segnalato subito, non silenziato).
+
+    'codice' è il campo obbligatorio (non più 'op_code'): l'OP resta
+    facoltativo, solo per tracciare a quale commessa aperta si riferisce
+    SE ce n'è una — il movimento è valido anche senza, come una
+    Dichiarazione Libera (stesso principio già in uso altrove: un
+    movimento senza OP dietro non è un errore, è un caso normale).
     """
     d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip()
     op_code = (d.get('op_code') or '').strip()
     try:
         quantita = float(d.get('quantita'))
@@ -3385,11 +3404,10 @@ def api_verniciatura_interna_conferma():
         return jsonify({'ok': False, 'error': 'Quantità non valida'}), 400
     if quantita <= 0:
         return jsonify({'ok': False, 'error': 'La quantità deve essere maggiore di zero'}), 400
+    if not codice:
+        return jsonify({'ok': False, 'error': 'Codice obbligatorio'}), 400
 
-    o = OrdineProduzione.query.filter_by(codice=op_code).first()
-    if not o:
-        return jsonify({'ok': False, 'error': 'Ordine di produzione non trovato'}), 404
-    codice = o.codice_articolo
+    o = OrdineProduzione.query.filter_by(codice=op_code).first() if op_code else None
 
     grezzo_disponibile = _grezzo_iw_per_codici([codice]).get(codice, 0)
     if quantita > grezzo_disponibile:
@@ -3397,11 +3415,13 @@ def api_verniciatura_interna_conferma():
             f'Grezzo IW disponibile per {codice}: {grezzo_disponibile} — richiesti {quantita}. '
             f'Verifica la quantità o attendi che venga saldata altra produzione.'}), 400
 
+    riferimento_nota = f'OP {o.codice}' if o else 'nessun OP aperto'
     db.session.add(RettificaGrezzoIW(
         codice=codice, delta=-quantita,
-        note=f'Verniciatura interna — OP {o.codice}'))
+        note=f'Verniciatura interna — {riferimento_nota}'))
     _registra_movimento_giacenza(codice, quantita, 'carico_produzione',
-                                  riferimento=o.codice, note='Verniciatura interna (nessun DDT — lavorazione in casa)')
+                                  riferimento=(o.codice if o else ''),
+                                  note='Verniciatura interna (nessun DDT — lavorazione in casa)')
 
     kanban_verniciati_dopo = None
     p = (KanbanProdotto.query
@@ -3411,10 +3431,15 @@ def api_verniciatura_interna_conferma():
         p.verniciati = (p.verniciati or 0) + quantita
         kanban_verniciati_dopo = p.verniciati
 
-    _audit(o, 'VERNICIATURA_INTERNA', f'{quantita} pezzi di {codice} verniciati internamente (nessun DDT)')
+    if o:
+        _audit(o, 'VERNICIATURA_INTERNA', f'{quantita} pezzi di {codice} verniciati internamente (nessun DDT)')
+    else:
+        db.session.add(AuditPP(op_code='', azione='VERNICIATURA_INTERNA',
+                        dettaglio=f'{quantita} pezzi di {codice} verniciati internamente (nessun DDT, nessun OP aperto)'))
     db.session.commit()
     nuova_giacenza = GiacenzaWood.query.get(codice)
-    log(f'Verniciatura interna: {codice} -{quantita} da Grezzo IW, +{quantita} a Finiti IW (OP {o.codice})')
+    log(f'Verniciatura interna: {codice} -{quantita} da Grezzo IW, +{quantita} a Finiti IW' +
+        (f' (OP {o.codice})' if o else ' (nessun OP aperto)'))
     return jsonify({'ok': True, 'codice': codice,
                      'grezzo_iw_residuo': _grezzo_iw_per_codici([codice]).get(codice, 0),
                      'giacenza_finiti_iw': nuova_giacenza.quantita if nuova_giacenza else None,
