@@ -63,6 +63,45 @@
       </div>
     </div>
 
+    <div style="border:1.5px solid var(--accent2);border-radius:8px;padding:12px;margin-bottom:16px">
+      <div style="font-weight:700;margin-bottom:6px;color:var(--accent2)">📋 Import Anagrafica da Zucchetti (caricamento massivo)</div>
+      <p style="font-size:11px;color:var(--text-dim);margin-bottom:8px">
+        File di export Zucchetti (colonne CATEGORIA/ARCODART/ARDESART/ARUNMIS1) — riconosce anche il "finto excel"
+        (una tabella HTML salvata con estensione .xlsx, un difetto comune di questo tipo di export). Importa
+        <b>solo codice, descrizione, categoria e unità di misura — MAI la quantità</b>: quella si stabilisce con
+        l'Inventario, non con un numero storico di Zucchetti che nessuno controlla più.
+      </p>
+      <input type="file" id="anag-file" accept=".xlsx,.xls,.csv" style="margin-bottom:8px">
+      <button class="btn btn-primary" onclick="anteprimaImportAnagrafica()">🔍 Verifica prima di importare</button>
+      <div id="anag-anteprima" style="display:none;margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:8px;background:rgba(30,111,165,.06)">
+        <div id="anag-anteprima-corpo" style="font-size:13px"></div>
+        <button class="btn btn-primary" style="margin-top:12px" onclick="confermaImportAnagrafica()">✅ Conferma import</button>
+      </div>
+      <div id="anag-import-esito" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+      <div style="font-weight:600;margin-bottom:6px">➕ Nuovo Codice (caricamento manuale singolo, anagrafica)</div>
+      <p style="font-size:11px;color:var(--text-dim);margin-bottom:8px">Solo codice/descrizione/categoria/U.M. — la quantità si imposta con l'Inventario.</p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+        <input id="nuovo-anag-codice" type="text" placeholder="Codice *" style="width:140px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <input id="nuovo-anag-descrizione" type="text" placeholder="Descrizione" style="flex:1;min-width:200px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <select id="nuovo-anag-categoria" style="padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+          <option value="DA_CLASSIFICARE">Da Classificare</option>
+          <option value="MATERIA_PRIMA_FORNITORE">Materia Prima (fornitore)</option>
+          <option value="COMPONENTE_ACQUISTO">Componente d'Acquisto</option>
+          <option value="LASERATO">Laserato</option>
+          <option value="MATERIALE_CONSUMO">Materiale di Consumo</option>
+          <option value="MATERIALE_SICUREZZA">Materiale di Sicurezza</option>
+          <option value="PRODOTTI_UFFICIO">Prodotti per Ufficio</option>
+          <option value="PRODOTTI_COMMERCIALE">Prodotti per Commerciale</option>
+        </select>
+        <input id="nuovo-anag-um" type="text" placeholder="U.M. (es. n.)" style="width:100px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+        <button class="btn btn-primary" onclick="creaNuovoCodiceAnagrafica()">➕ Crea</button>
+      </div>
+      <div id="nuovo-anag-esito" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
     <div class="giac-search-bar">
       <input id="giac-ricerca" type="text" placeholder="🔍 Cerca codice o descrizione..." oninput="caricaGiacenza()">
     </div>
@@ -120,6 +159,82 @@ async function rettificaGiacenza(){
     caricaGiacenza();
   }catch(e){
     alert('❌ Errore di rete durante il salvataggio.');
+  }
+}
+
+async function anteprimaImportAnagrafica(){
+  const fileInput = document.getElementById('anag-file');
+  const esito = document.getElementById('anag-import-esito');
+  const box = document.getElementById('anag-anteprima');
+  box.style.display = 'none';
+  esito.innerHTML = '';
+  if(!fileInput.files.length){ esito.innerHTML = '<span style="color:#c0392b">Seleziona un file prima.</span>'; return; }
+  esito.innerHTML = 'Lettura in corso...';
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  try{
+    const r = await fetch('/api/anagrafica_wood/importa_zucchetti', {method:'POST', body: fd});
+    const d = await r.json();
+    if(!d.ok){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.error + '</span>'; return; }
+    esito.innerHTML = '';
+    const nonRic = d.categorie_non_riconosciute.length
+      ? `<p style="color:#e6b800;margin-top:8px">⚠️ Categorie non riconosciute (finiranno in "Da Classificare"): ${d.categorie_non_riconosciute.join(', ')}</p>`
+      : '';
+    const perCat = Object.entries(d.conteggio_per_categoria).map(([k,v]) => `${k}: ${v}`).join(' · ');
+    document.getElementById('anag-anteprima-corpo').innerHTML = `
+      <div>Formato rilevato: <b>${d.formato_rilevato}</b></div>
+      <div style="margin-top:6px">Righe totali: <b>${d.totale_righe}</b> — <span style="color:#1a9e5c">${d.nuovi} nuovi</span>, <span style="color:#e6b800">${d.aggiornati} già esistenti (verranno aggiornati)</span></div>
+      <div style="margin-top:6px;color:var(--text-dim)">${perCat}</div>
+      ${nonRic}
+    `;
+    box.style.display = 'block';
+  }catch(e){
+    esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete.</span>';
+  }
+}
+
+async function confermaImportAnagrafica(){
+  const fileInput = document.getElementById('anag-file');
+  const esito = document.getElementById('anag-import-esito');
+  if(!fileInput.files.length){ esito.innerHTML = '<span style="color:#c0392b">Seleziona di nuovo il file.</span>'; return; }
+  esito.innerHTML = 'Import in corso...';
+  const fd = new FormData();
+  fd.append('file', fileInput.files[0]);
+  fd.append('conferma', 'true');
+  try{
+    const r = await fetch('/api/anagrafica_wood/importa_zucchetti', {method:'POST', body: fd});
+    const d = await r.json();
+    if(!d.ok){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.error + '</span>'; return; }
+    esito.innerHTML = `<span style="color:#2a9d5c">✅ Import completato — ${d.nuovi} nuovi codici, ${d.aggiornati} aggiornati.</span>`;
+    document.getElementById('anag-anteprima').style.display = 'none';
+    fileInput.value = '';
+    caricaGiacenza();
+  }catch(e){
+    esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete durante l\'import.</span>';
+  }
+}
+
+async function creaNuovoCodiceAnagrafica(){
+  const esito = document.getElementById('nuovo-anag-esito');
+  const payload = {
+    codice: document.getElementById('nuovo-anag-codice').value.trim(),
+    descrizione: document.getElementById('nuovo-anag-descrizione').value.trim(),
+    tipo_approvvigionamento: document.getElementById('nuovo-anag-categoria').value,
+    unita_misura: document.getElementById('nuovo-anag-um').value.trim(),
+  };
+  if(!payload.codice){ esito.innerHTML = '<span style="color:#c0392b">⚠️ Il codice è obbligatorio.</span>'; return; }
+  esito.innerHTML = 'Salvataggio...';
+  try{
+    const r = await fetch('/api/anagrafica_wood/nuovo_codice', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.error + '</span>'; return; }
+    esito.innerHTML = `<span style="color:#2a9d5c">✅ Codice "${payload.codice}" creato.</span>`;
+    document.getElementById('nuovo-anag-codice').value = '';
+    document.getElementById('nuovo-anag-descrizione').value = '';
+    document.getElementById('nuovo-anag-um').value = '';
+    caricaGiacenza();
+  }catch(e){
+    esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete.</span>';
   }
 }
 

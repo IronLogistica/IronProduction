@@ -2,6 +2,8 @@ from flask import Blueprint, render_template, jsonify, request, redirect, curren
 from datetime import datetime, date
 import json
 import os
+import io
+import pandas as pd
 from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
@@ -1969,6 +1971,231 @@ def api_importa_giacenza():
     except Exception as e:
         db.session.rollback()
         return jsonify({'errore': True, 'messaggio': f'Errore durante l\'import: {e}'}), 500
+
+
+def _leggi_file_tabellare_tollerante(raw, filename):
+    """
+    Legge un file caricato in modo TOLLERANTE al formato REALE, non solo
+    all'estensione dichiarata — i gestionali datati come Zucchetti a volte
+    esportano un "finto excel": una tabella HTML salvata con estensione
+    .xlsx (Excel la apre comunque, convertendola al volo, ma openpyxl no
+    — genererebbe un errore o un file illeggibile se ci si fermasse al
+    primo tentativo). Prova in ordine: vero .xlsx/.xls, poi HTML (il
+    "finto excel"), poi CSV — mai un solo tentativo secondo l'estensione.
+    Ritorna (dataframe, formato_rilevato) oppure (None, None) se nessun
+    formato ha funzionato.
+    """
+    filename = (filename or '').lower()
+    tentativi = []
+    if filename.endswith('.xls'):
+        tentativi = [('xls', lambda: pd.read_excel(io.BytesIO(raw), engine='xlrd')),
+                     ('xlsx', lambda: pd.read_excel(io.BytesIO(raw), engine='openpyxl'))]
+    elif filename.endswith('.csv'):
+        tentativi = [('csv', None)]  # gestito a parte sotto, prova più encoding
+    else:
+        tentativi = [('xlsx', lambda: pd.read_excel(io.BytesIO(raw), engine='openpyxl')),
+                     ('xls', lambda: pd.read_excel(io.BytesIO(raw), engine='xlrd'))]
+
+    for formato, leggi in tentativi:
+        if leggi is None:
+            continue
+        try:
+            df = leggi()
+            if df is not None and len(df.columns) > 1:
+                return df, formato
+        except Exception:
+            pass
+
+    # "Finto excel" — tabella HTML travestita da .xlsx/.xls: pandas.read_html
+    # (via lxml) la legge comunque, esattamente come farebbe Excel aprendola.
+    try:
+        tabelle = pd.read_html(io.BytesIO(raw))
+        if tabelle:
+            df = max(tabelle, key=lambda t: t.shape[0] * t.shape[1])
+            if len(df.columns) > 1:
+                return df, 'html (finto excel)'
+    except Exception:
+        pass
+
+    # CSV, come ultima spiaggia (o primo tentativo se l'estensione lo dichiarava).
+    for enc in ['utf-8', 'latin-1', 'cp1252']:
+        try:
+            df = pd.read_csv(io.BytesIO(raw), encoding=enc, sep=None, engine='python')
+            if df is not None and len(df.columns) > 1:
+                return df, 'csv'
+        except Exception:
+            pass
+
+    return None, None
+
+
+# Nome colonna GSMA_SIF (Zucchetti) → nome interno. Solo le colonne che
+# servono per l'anagrafica — MAI 'ESISATTU'/'RISEATTU' qui: le giacenze di
+# Zucchetti sono un dato storico non più controllato, la quantità vera si
+# stabilisce con un inventario fisico (vedi Inventario Magazzino), non
+# importando un numero che nessuno controlla più da quando è stato scritto.
+COLONNE_ZUCCHETTI_ANAGRAFICA = {
+    'categoria': 'categoria', 'arcodart': 'codice', 'ardesart': 'descrizione', 'arunmis1': 'unita_misura',
+}
+
+# Categoria Zucchetti (testo libero in maiuscolo) → categoria interna
+# (TIPI_APPROVVIGIONAMENTO). Un valore NON riconosciuto non viene mai
+# scartato silenziosamente: finisce in DA_CLASSIFICARE, segnalato
+# chiaramente nell'anteprima — Angelo lo vede e decide lui, invece di
+# perdere righe senza saperlo.
+MAPPA_CATEGORIA_ZUCCHETTI = {
+    'CONSUMABILI': 'MATERIALE_CONSUMO',
+    'MATERIALE DI CONSUMO': 'MATERIALE_CONSUMO',
+    'PRODOTTI DELLA SICUREZZA': 'MATERIALE_SICUREZZA',
+    'MATERIALE DI SICUREZZA': 'MATERIALE_SICUREZZA',
+    'SICUREZZA': 'MATERIALE_SICUREZZA',
+    'MATERIA PRIMA': 'MATERIA_PRIMA_FORNITORE',
+    'MATERIE PRIME': 'MATERIA_PRIMA_FORNITORE',
+    'COMPONENTI ACQUISTO': 'COMPONENTE_ACQUISTO',
+    "COMPONENTI D'ACQUISTO": 'COMPONENTE_ACQUISTO',
+    'LASERATI': 'LASERATO',
+    'PRODOTTI UFFICIO': 'PRODOTTI_UFFICIO',
+    'UFFICIO': 'PRODOTTI_UFFICIO',
+    'PRODOTTI COMMERCIALE': 'PRODOTTI_COMMERCIALE',
+    'COMMERCIALE': 'PRODOTTI_COMMERCIALE',
+}
+
+
+def _parse_import_anagrafica_zucchetti(raw, filename):
+    """
+    Legge il file (tollerante al 'finto excel', vedi
+    _leggi_file_tabellare_tollerante) e lo traduce in una lista di righe
+    pronte {codice, descrizione, unita_misura, categoria_zucchetti,
+    tipo_approvvigionamento} — SENZA scrivere nulla sul database: usata
+    sia per l'anteprima sia per la conferma, stessa unica lettura per non
+    rischiare che le due fasi vedano il file in modo diverso.
+    Solleva ValueError con un messaggio chiaro se il file non è leggibile
+    o mancano le colonne indispensabili (codice/descrizione).
+    """
+    df, formato = _leggi_file_tabellare_tollerante(raw, filename)
+    if df is None:
+        raise ValueError('File non leggibile in nessun formato riconosciuto (provato: xlsx, xls, "finto excel"/HTML, csv).')
+
+    df.columns = [str(c).strip().lower() for c in df.columns]
+    mancanti = [c for c in ('arcodart', 'ardesart') if c not in df.columns]
+    if mancanti:
+        raise ValueError(f'Colonne Zucchetti attese mancanti: {", ".join(mancanti)}. '
+                          f'Trovate nel file: {", ".join(df.columns)}')
+
+    righe = []
+    for _, row in df.iterrows():
+        codice = str(row.get('arcodart', '')).strip()
+        if not codice or codice.lower() == 'nan':
+            continue
+        descrizione = str(row.get('ardesart', '') or '').strip()
+        if descrizione.lower() == 'nan':
+            descrizione = ''
+        unita = str(row.get('arunmis1', '') or '').strip()
+        if unita.lower() == 'nan':
+            unita = ''
+        categoria_zucchetti = str(row.get('categoria', '') or '').strip().upper()
+        tipo = MAPPA_CATEGORIA_ZUCCHETTI.get(categoria_zucchetti, 'DA_CLASSIFICARE')
+        righe.append({
+            'codice': codice, 'descrizione': descrizione, 'unita_misura': unita[:20],
+            'categoria_zucchetti': categoria_zucchetti, 'tipo_approvvigionamento': tipo,
+        })
+    return righe, formato
+
+
+@magazzino_bp.route('/api/anagrafica_wood/importa_zucchetti', methods=['POST'])
+def api_importa_anagrafica_zucchetti():
+    """
+    Caricamento massivo dell'ANAGRAFICA magazzino IW da un export
+    Zucchetti (colonne CATEGORIA/ARCODART/ARDESART/ARUNMIS1) — SOLO
+    codice/descrizione/categoria/unità di misura, MAI la quantità (vedi
+    COLONNE_ZUCCHETTI_ANAGRAFICA). Due passi obbligati:
+    - senza 'conferma' nel form → SOLO anteprima, nessuna scrittura:
+      quanti codici nuovi, quanti già esistenti (aggiornati), quante
+      categorie non riconosciute (finiscono in "Da Classificare").
+    - con 'conferma'='true' → applica davvero, stesso file ricaricato
+      (niente stato lato server da tenere in sincrono tra i due passi).
+    UPSERT su ArticoloApprovvigionamento (tipo/unità) e
+    DescrizioneCodiceWood (descrizione) — non tocca mai GiacenzaWood.
+    """
+    file = request.files.get('file')
+    if not file:
+        return jsonify({'ok': False, 'error': 'Nessun file selezionato.'}), 400
+    conferma = (request.form.get('conferma') or '').lower() == 'true'
+
+    try:
+        righe, formato = _parse_import_anagrafica_zucchetti(file.read(), file.filename)
+    except ValueError as e:
+        return jsonify({'ok': False, 'error': str(e)}), 400
+
+    if not righe:
+        return jsonify({'ok': False, 'error': 'Nessuna riga valida trovata nel file.'}), 400
+
+    codici = [r['codice'] for r in righe]
+    esistenti = {a.codice for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()}
+    non_riconosciute = sorted({r['categoria_zucchetti'] for r in righe if r['tipo_approvvigionamento'] == 'DA_CLASSIFICARE' and r['categoria_zucchetti']})
+    conteggio_per_categoria = {}
+    for r in righe:
+        conteggio_per_categoria[r['tipo_approvvigionamento']] = conteggio_per_categoria.get(r['tipo_approvvigionamento'], 0) + 1
+
+    if not conferma:
+        return jsonify({
+            'ok': True, 'anteprima': True, 'formato_rilevato': formato,
+            'totale_righe': len(righe),
+            'nuovi': len([c for c in codici if c not in esistenti]),
+            'aggiornati': len([c for c in codici if c in esistenti]),
+            'categorie_non_riconosciute': non_riconosciute,
+            'conteggio_per_categoria': {LABEL_TIPO_APPROVVIGIONAMENTO.get(t, t): n for t, n in conteggio_per_categoria.items()},
+            'esempio_righe': righe[:5],
+        })
+
+    nuovi = aggiornati = 0
+    for r in righe:
+        a = ArticoloApprovvigionamento.query.filter_by(codice=r['codice']).first()
+        if a is None:
+            a = ArticoloApprovvigionamento(codice=r['codice'])
+            db.session.add(a)
+            nuovi += 1
+        else:
+            aggiornati += 1
+        a.tipo_approvvigionamento = r['tipo_approvvigionamento']
+        if r['unita_misura']:
+            a.unita_misura = r['unita_misura']
+        if r['descrizione']:
+            d = DescrizioneCodiceWood.query.get(r['codice'])
+            if d is None:
+                db.session.add(DescrizioneCodiceWood(codice=r['codice'], descrizione=r['descrizione']))
+            else:
+                d.descrizione = r['descrizione']
+    db.session.commit()
+    return jsonify({'ok': True, 'anteprima': False, 'nuovi': nuovi, 'aggiornati': aggiornati, 'totale_righe': len(righe)})
+
+
+@magazzino_bp.route('/api/anagrafica_wood/nuovo_codice', methods=['POST'])
+def api_anagrafica_wood_nuovo_codice():
+    """
+    Caricamento manuale SINGOLO — un codice alla volta, stesso principio
+    del massivo: solo codice/descrizione/categoria/unità di misura, MAI
+    la quantità (si imposta con l'Inventario). Non lega il codice a una
+    categoria già scelta a monte come /api/inventario/<tipo>/nuovo-codice
+    (quello nasce dentro l'Inventario, già dentro un gruppo aperto) —
+    qui la categoria è un campo del form, per un caricamento libero.
+    """
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip()
+    descrizione = (d.get('descrizione') or '').strip()
+    unita_misura = (d.get('unita_misura') or '').strip()
+    tipo = (d.get('tipo_approvvigionamento') or 'DA_CLASSIFICARE').strip()
+    if not codice:
+        return jsonify(ok=False, error='Il codice è obbligatorio'), 400
+    if tipo not in TIPI_APPROVVIGIONAMENTO:
+        return jsonify(ok=False, error='Categoria non valida'), 400
+    if ArticoloApprovvigionamento.query.filter_by(codice=codice).first():
+        return jsonify(ok=False, error=f'Il codice "{codice}" esiste già'), 409
+    db.session.add(ArticoloApprovvigionamento(codice=codice, tipo_approvvigionamento=tipo, unita_misura=unita_misura))
+    if descrizione and not DescrizioneCodiceWood.query.get(codice):
+        db.session.add(DescrizioneCodiceWood(codice=codice, descrizione=descrizione))
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _profondita=0, _max_profondita=12, mappa=None, escludi_fabbisogno_per=None):
