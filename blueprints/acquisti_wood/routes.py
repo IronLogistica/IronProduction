@@ -7,7 +7,8 @@ from flask import Blueprint, render_template, jsonify, request, Response
 
 from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
-                    OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento, ScortaMinimaWood)
+                    OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento, ScortaMinimaWood,
+                    AnagraficaAziendaWood)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
                     _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
                     _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO)
@@ -220,6 +221,45 @@ def _ordine_dict(o):
             'codice_fornitore_originale': r.codice_fornitore_originale or '',
         } for r in o.righe],
     }
+
+
+@acquisti_wood_bp.route('/anagrafica-azienda-wood')
+def pagina_anagrafica_azienda():
+    """
+    Dati aziendali di Iron Wood — una pagina, una volta compilata resta
+    valida per ogni Ordine a Fornitore futuro (vedi
+    api_crea_ordine_acquisto_manuale/pagina_stampa_ordine_acquisto, che
+    la leggono invece di mostrare '[da completare]').
+    """
+    return render_template('acquisti_wood/anagrafica_azienda.html', active='acquisti_wood')
+
+
+@acquisti_wood_bp.route('/api/anagrafica_azienda_wood', methods=['GET'])
+def api_anagrafica_azienda_leggi():
+    a = AnagraficaAziendaWood.query.first()
+    if not a:
+        return jsonify({'ragione_sociale': 'IRON WOOD', 'indirizzo': '', 'piva_codfis': '', 'email': '', 'pec': '', 'telefono': ''})
+    return jsonify({
+        'ragione_sociale': a.ragione_sociale or 'IRON WOOD', 'indirizzo': a.indirizzo or '',
+        'piva_codfis': a.piva_codfis or '', 'email': a.email or '', 'pec': a.pec or '', 'telefono': a.telefono or '',
+    })
+
+
+@acquisti_wood_bp.route('/api/anagrafica_azienda_wood', methods=['POST'])
+def api_anagrafica_azienda_salva():
+    d = request.get_json(force=True)
+    a = AnagraficaAziendaWood.query.first()
+    if not a:
+        a = AnagraficaAziendaWood()
+        db.session.add(a)
+    a.ragione_sociale = (d.get('ragione_sociale') or 'IRON WOOD').strip()
+    a.indirizzo = (d.get('indirizzo') or '').strip()
+    a.piva_codfis = (d.get('piva_codfis') or '').strip()
+    a.email = (d.get('email') or '').strip()
+    a.pec = (d.get('pec') or '').strip()
+    a.telefono = (d.get('telefono') or '').strip()
+    db.session.commit()
+    return jsonify({'ok': True})
 
 
 @acquisti_wood_bp.route('/ordini-acquisto-wood')
@@ -978,7 +1018,8 @@ def pagina_stampa_ordine_acquisto(oid):
     nel programma (Inventario, Ordine di Lavoro).
     """
     o = OrdineAcquistoWood.query.get_or_404(oid)
-    return render_template('acquisti_wood/ordine_stampa.html', o=o)
+    azienda = AnagraficaAziendaWood.query.first()
+    return render_template('acquisti_wood/ordine_stampa.html', o=o, azienda=azienda)
 
 
 

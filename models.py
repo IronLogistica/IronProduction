@@ -401,6 +401,25 @@ class MovimentoGiacenzaWood(db.Model):
     creato_il      = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class AnagraficaAziendaWood(db.Model):
+    """
+    Dati aziendali di Iron Wood (riga singola) — usati per compilare
+    automaticamente la testata degli Ordini a Fornitore stampati
+    (ordine_stampa.html), invece dei segnaposto '[da completare]'. Angelo
+    li inserisce una volta sola da qui, restano validi per ogni ordine
+    futuro finché non li cambia lui stesso.
+    """
+    __tablename__ = 'anagrafica_azienda_wood'
+    id             = db.Column(db.Integer, primary_key=True)
+    ragione_sociale = db.Column(db.String(200), default='IRON WOOD')
+    indirizzo      = db.Column(db.String(300), default='')
+    piva_codfis    = db.Column(db.String(50), default='')
+    email          = db.Column(db.String(150), default='')
+    pec            = db.Column(db.String(150), default='')
+    telefono       = db.Column(db.String(50), default='')
+    aggiornato_il  = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ImpostazioneCostoWood(db.Model):
     """
     Impostazioni globali per il calcolo del costo standard Iron Wood (riga

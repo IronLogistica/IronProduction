@@ -71,10 +71,10 @@
     <div class="logo">IRON</div>
     <div class="sotto">W O O D</div>
     <div class="dati">
-      <b>IRON WOOD</b><br>
-      [Indirizzo sede da completare]<br>
-      Cod.Fis./P.Iva [da completare]<br>
-      @mail [da completare] &nbsp; @PEC [da completare]
+      <b>{{ azienda.ragione_sociale if azienda and azienda.ragione_sociale else 'IRON WOOD' }}</b><br>
+      {{ azienda.indirizzo if azienda and azienda.indirizzo else '[Indirizzo sede da completare]' }}<br>
+      Cod.Fis./P.Iva {{ azienda.piva_codfis if azienda and azienda.piva_codfis else '[da completare]' }}<br>
+      @mail {{ azienda.email if azienda and azienda.email else '[da completare]' }} &nbsp; @PEC {{ azienda.pec if azienda and azienda.pec else '[da completare]' }}
     </div>
   </div>
   <div class="doc-titolo">
@@ -86,7 +86,7 @@
 <div class="righe-box">
   <div class="riquadro">
     <div class="lbl-box">Destinazione (consegna merce):</div>
-    <div class="dest-nome">{{ o.destinazione_consegna or 'Iron Wood' }}</div>
+    <div class="dest-nome">{{ o.destinazione_consegna or (azienda.ragione_sociale if azienda and azienda.ragione_sociale else 'Iron Wood') }}</div>
   </div>
   <div class="riquadro">
     <div class="lbl-box">Destinatario (fornitore):</div>

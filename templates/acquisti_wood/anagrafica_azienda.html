@@ -1,0 +1,78 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🏢 Anagrafica Iron Wood</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px;max-width:600px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:18px">
+      Questi dati vengono usati automaticamente in testata di ogni Ordine a Fornitore stampato — compilali una
+      volta sola, restano validi finché non li cambi.
+    </p>
+
+    <label class="modal-label" style="margin-top:0">Ragione sociale</label>
+    <input id="an-ragione" type="text" class="big-input" placeholder="IRON WOOD" style="margin-bottom:14px">
+
+    <label class="modal-label">Indirizzo sede</label>
+    <input id="an-indirizzo" type="text" class="big-input" placeholder="Via, civico - CAP Città (PV)" style="margin-bottom:14px">
+
+    <label class="modal-label">Cod. Fiscale / P.IVA</label>
+    <input id="an-piva" type="text" class="big-input" placeholder="Cod.Fis./P.Iva" style="margin-bottom:14px">
+
+    <div style="display:flex;gap:12px;flex-wrap:wrap">
+      <div style="flex:1;min-width:220px">
+        <label class="modal-label">Email</label>
+        <input id="an-email" type="text" class="big-input" placeholder="es. acquisti@ironwood.it">
+      </div>
+      <div style="flex:1;min-width:220px">
+        <label class="modal-label">PEC</label>
+        <input id="an-pec" type="text" class="big-input" placeholder="es. ironwood@pec.it">
+      </div>
+    </div>
+
+    <label class="modal-label" style="margin-top:14px">Telefono (facoltativo)</label>
+    <input id="an-telefono" type="text" class="big-input" placeholder="Telefono" style="margin-bottom:18px">
+
+    <button class="btn btn-primary" onclick="salvaAnagrafica()">💾 Salva</button>
+    <div id="an-esito" style="font-size:13px;margin-top:10px"></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+async function caricaAnagrafica(){
+  try{
+    const r = await fetch('/api/anagrafica_azienda_wood');
+    const d = await r.json();
+    document.getElementById('an-ragione').value = d.ragione_sociale || '';
+    document.getElementById('an-indirizzo').value = d.indirizzo || '';
+    document.getElementById('an-piva').value = d.piva_codfis || '';
+    document.getElementById('an-email').value = d.email || '';
+    document.getElementById('an-pec').value = d.pec || '';
+    document.getElementById('an-telefono').value = d.telefono || '';
+  }catch(e){}
+}
+
+async function salvaAnagrafica(){
+  const esito = document.getElementById('an-esito');
+  const payload = {
+    ragione_sociale: document.getElementById('an-ragione').value.trim(),
+    indirizzo: document.getElementById('an-indirizzo').value.trim(),
+    piva_codfis: document.getElementById('an-piva').value.trim(),
+    email: document.getElementById('an-email').value.trim(),
+    pec: document.getElementById('an-pec').value.trim(),
+    telefono: document.getElementById('an-telefono').value.trim(),
+  };
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Salvataggio...';
+  try{
+    const r = await fetch('/api/anagrafica_azienda_wood', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Errore nel salvataggio.'; return; }
+    esito.style.color = '#1a9e5c'; esito.textContent = '✅ Dati salvati — verranno usati in ogni Ordine a Fornitore da ora in poi.';
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
+caricaAnagrafica();
+{% endblock %}
