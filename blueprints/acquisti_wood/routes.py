@@ -148,7 +148,15 @@ def _estrai_dati_ordine_acquisto(testo_completo):
             match_art = re.search(
                 r'^(\d{2,})\s+(.+?)\s+([a-z]{1,3})\.\s+([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?' + PREZZO_INLINE, linea)
         if not match_art:
-            m_split = re.match(r'^([A-Za-z0-9]{2,})\s+([A-Z].{3,})$', linea)
+            # BUG REALE TROVATO E CORRETTO: questo pattern di recupero (per
+            # quando codice e descrizione stanno su una riga e la quantità
+            # sulla riga successiva — comune quando PyPDF2 spezza le righe
+            # di un PDF multi-colonna) escludeva "/", "_", "-", "." dal
+            # codice — mentre il pattern principale sopra li include. Un
+            # codice come "T30/34" finiva silenziosamente scartato: non
+            # corrispondeva a NESSUNO dei pattern, quindi l'intera riga
+            # spariva senza generare nessun articolo, né un errore.
+            m_split = re.match(r'^([A-Za-z0-9][A-Za-z0-9./_-]+)\s+([A-Z].{3,})$', linea)
             if m_split and m_split.group(1) not in SKIP_CODICI_PDF:
                 _pending_codice = m_split.group(1)
                 _pending_desc = m_split.group(2).strip()
