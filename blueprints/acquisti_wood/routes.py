@@ -119,7 +119,7 @@ def _estrai_dati_ordine_acquisto(testo_completo):
     _indici_articoli = []  # indice in linee_articoli dove è stato trovato ogni articolo, per il fallback prezzo
     for idx, linea in enumerate(linee_articoli):
         if _pending_codice:
-            m_qty = re.search(r'^([a-z]{1,3})\.\s+([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?' + PREZZO_INLINE, linea)
+            m_qty = re.search(r'^((?:m|mq|ml|pz|kg|nr|cad|lt|mt))\.\s*([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?' + PREZZO_INLINE, linea)
             if m_qty:
                 dati['articoli'].append({
                     "codice": _pending_codice, "descrizione": _pending_desc,
@@ -142,11 +142,11 @@ def _estrai_dati_ordine_acquisto(testo_completo):
                     _pending_desc = None
 
         match_art = re.search(
-            r'([A-Za-z0-9][A-Za-z0-9./_-]+)\s+(.+?)\s+([a-z]{1,3})\.\s+([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?' + PREZZO_INLINE,
+            r'([A-Za-z0-9][A-Za-z0-9./_-]+)\s+(.+?)\s+((?:m|mq|ml|pz|kg|nr|cad|lt|mt))\.\s*([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?' + PREZZO_INLINE,
             linea)
         if not match_art:
             match_art = re.search(
-                r'^(\d{2,})\s+(.+?)\s+([a-z]{1,3})\.\s+([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?' + PREZZO_INLINE, linea)
+                r'^(\d{2,})\s+(.+?)\s+((?:m|mq|ml|pz|kg|nr|cad|lt|mt))\.\s*([\d\.]+)(?:,\d+)?(?:\s+(\d{2}/\d{2}/\d{4}))?' + PREZZO_INLINE, linea)
         if not match_art:
             # BUG REALE TROVATO E CORRETTO: questo pattern di recupero (per
             # quando codice e descrizione stanno su una riga e la quantità
