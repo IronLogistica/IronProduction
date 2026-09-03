@@ -127,6 +127,19 @@
 
   <!-- ══════ PANNELLO ORDINI FORNITORI ══════ -->
   <div class="pannello" id="pannello-ordini">
+    <div class="mon-section" id="crea-ordine-box" style="border:2px solid var(--accent2)">
+      <div style="padding:16px">
+        <div style="font-weight:700;margin-bottom:10px;font-size:16px">🧾 Emetti Ordine a Fornitore — <span id="crea-ordine-conteggio">0</span> righe selezionate</div>
+        <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+          Spunta la casellina su una o più card qui sotto per aggiungerle all'ordine, poi indica il fornitore e genera.
+        </p>
+        <input id="crea-ordine-fornitore" type="text" placeholder="Fornitore..." autocomplete="off"
+               style="width:100%;padding:12px 14px;font-size:15px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text);margin-bottom:10px">
+        <button class="pill" style="background:var(--accent);color:#fff;border:none;padding:12px 24px;font-size:14px" onclick="creaOrdineFornitori()">💾 Genera Ordine di Acquisto</button>
+        <div id="crea-ordine-esito" style="font-size:13px;margin-top:10px"></div>
+      </div>
+    </div>
+
     <div class="mon-section">
       <div style="padding:16px">
         <p class="intro">
@@ -135,16 +148,6 @@
         </p>
         <input id="filtro-ordini" type="text" placeholder="Cerca codice, descrizione o categoria..." autocomplete="off" oninput="renderOrdini()">
         <div id="ordini-lista">Caricamento...</div>
-      </div>
-    </div>
-
-    <div class="mon-section" id="crea-ordine-box" style="display:none">
-      <div style="padding:16px">
-        <div style="font-weight:700;margin-bottom:10px">🧾 Crea Ordine di Acquisto — <span id="crea-ordine-conteggio"></span> righe selezionate</div>
-        <input id="crea-ordine-fornitore" type="text" placeholder="Fornitore..." autocomplete="off"
-               style="width:100%;padding:12px 14px;font-size:15px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text);margin-bottom:10px">
-        <button class="pill" style="background:var(--accent);color:#fff;border:none;padding:12px 24px;font-size:14px" onclick="creaOrdineFornitori()">💾 Genera Ordine di Acquisto</button>
-        <div id="crea-ordine-esito" style="font-size:13px;margin-top:10px"></div>
       </div>
     </div>
   </div>
@@ -370,10 +373,8 @@ function toggleRigaOrdine(i, checked){
 }
 
 function aggiornaContatoreOrdini(){
-  const box = document.getElementById('crea-ordine-box');
   const n = SELEZIONATE_ORDINI.size;
   document.getElementById('crea-ordine-conteggio').textContent = n;
-  box.style.display = n > 0 ? 'block' : 'none';
 }
 
 async function creaOrdineFornitori(){
