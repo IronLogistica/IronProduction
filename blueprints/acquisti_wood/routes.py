@@ -8,7 +8,7 @@ from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
                     OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento, ScortaMinimaWood,
-                    AnagraficaAziendaWood)
+                    AnagraficaAziendaWood, AnagraficaFornitoreWood, CatalogoFornitoreWood)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
                     _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
                     _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO, _leggi_file_tabellare_tollerante)
@@ -373,6 +373,7 @@ def api_upload_ordine_acquisto():
             unita_misura=art['unita_misura'], qta_originale=qta, data_evasione=art['data_evasione'],
             prezzo_unitario=art.get('prezzo_unitario'),
         ))
+        _aggiungi_a_catalogo_fornitore(dati['fornitore'], codice_risolto)
     db.session.commit()
     return jsonify({'ok': True, 'ordine': _ordine_dict(o), 'n_articoli_trovati': len(dati['articoli'])})
 
@@ -755,6 +756,129 @@ def api_ricerca_fornitori_wood():
     return jsonify(sorted(fornitori)[:20])
 
 
+def _aggiungi_a_catalogo_fornitore(fornitore, codice):
+    """
+    Registra (se non già presente) che questo fornitore può fornire
+    questo codice — chiamata ogni volta che si crea un ordine/prezzo
+    storico per quella coppia fornitore+codice, così il catalogo si
+    costruisce da solo con l'uso reale, senza dover essere compilato a
+    mano da zero. Idempotente: non duplica se la coppia esiste già.
+    """
+    fornitore = (fornitore or '').strip()
+    codice = (codice or '').strip()
+    if not fornitore or not codice:
+        return
+    esiste = CatalogoFornitoreWood.query.filter_by(fornitore=fornitore, codice=codice).first()
+    if not esiste:
+        db.session.add(CatalogoFornitoreWood(fornitore=fornitore, codice=codice))
+
+
+def _esposizione_corrente_fornitore(fornitore):
+    """
+    Somma degli Ordini di Acquisto ancora APERTI (non ricevuti) verso
+    questo fornitore — quanto gli dobbiamo ancora per ordini in corso.
+    Approssimazione: non segue pagamenti/fatture reali (il programma non
+    li traccia), è quanto risulta dagli ordini stessi non ancora
+    chiusi — un'indicazione per il confronto col fido, non un dato
+    contabile preciso.
+    """
+    ordini_aperti = OrdineAcquistoWood.query.filter(
+        OrdineAcquistoWood.fornitore == fornitore, OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all()
+    totale = 0.0
+    for o in ordini_aperti:
+        for r in o.righe:
+            if r.prezzo_unitario:
+                totale += r.prezzo_unitario * (r.qta_originale or 0)
+    return round(totale, 2)
+
+
+@acquisti_wood_bp.route('/api/catalogo_fornitore_wood')
+def api_catalogo_fornitore_lista():
+    """Codici che questo fornitore può fornire (secondo il catalogo
+    costruito finora) — ?fornitore=X obbligatorio."""
+    fornitore = (request.args.get('fornitore') or '').strip()
+    if not fornitore:
+        return jsonify([])
+    righe = CatalogoFornitoreWood.query.filter_by(fornitore=fornitore).order_by(CatalogoFornitoreWood.codice).all()
+    return jsonify([r.codice for r in righe])
+
+
+@acquisti_wood_bp.route('/api/catalogo_fornitore_wood', methods=['POST'])
+def api_catalogo_fornitore_aggiungi():
+    """Aggiunta MANUALE al catalogo — per chi conosce già il listino di
+    un fornitore e vuole impostarlo senza aspettare il primo ordine reale."""
+    d = request.get_json(force=True)
+    fornitore = (d.get('fornitore') or '').strip()
+    codice = (d.get('codice') or '').strip()
+    if not fornitore or not codice:
+        return jsonify(ok=False, error='Fornitore e codice sono obbligatori'), 400
+    _aggiungi_a_catalogo_fornitore(fornitore, codice)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@acquisti_wood_bp.route('/api/catalogo_fornitore_wood/<int:cid>', methods=['DELETE'])
+def api_catalogo_fornitore_elimina(cid):
+    riga = CatalogoFornitoreWood.query.get_or_404(cid)
+    db.session.delete(riga)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@acquisti_wood_bp.route('/api/fornitori_wood/<path:nome>/fido')
+def api_fornitore_fido_leggi(nome):
+    """Fido impostato (se c'è) + esposizione attuale (ordini aperti non
+    ancora ricevuti) per questo fornitore — per il confronto mostrato
+    quando si sta per creare un nuovo ordine."""
+    a = AnagraficaFornitoreWood.query.filter_by(nome=nome).first()
+    esposizione = _esposizione_corrente_fornitore(nome)
+    return jsonify({
+        'fornitore': nome, 'fido_massimo': a.fido_massimo if a else None,
+        'esposizione_attuale': esposizione, 'note': a.note if a else '',
+    })
+
+
+@acquisti_wood_bp.route('/api/fornitori_wood/fido', methods=['POST'])
+def api_fornitore_fido_salva():
+    """Imposta/aggiorna il fido massimo (il "castelletto" — esposizione
+    finanziaria massima, non un tetto di quantità) per un fornitore."""
+    d = request.get_json(force=True)
+    nome = (d.get('fornitore') or '').strip()
+    if not nome:
+        return jsonify(ok=False, error='Il nome del fornitore è obbligatorio'), 400
+    try:
+        fido = float(d.get('fido_massimo')) if d.get('fido_massimo') not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Fido non valido'), 400
+    a = AnagraficaFornitoreWood.query.filter_by(nome=nome).first()
+    if not a:
+        a = AnagraficaFornitoreWood(nome=nome)
+        db.session.add(a)
+    a.fido_massimo = fido
+    a.note = (d.get('note') or '').strip()
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@acquisti_wood_bp.route('/api/prezzo_suggerito')
+def api_prezzo_suggerito():
+    """
+    Prezzo più basso visto tra gli acquisti REALI di questo codice presso
+    QUESTO fornitore (non l'ultimo in assoluto, il più conveniente tra
+    quelli storici) — usato per pre-compilare il prezzo quando si crea un
+    ordine per un fornitore specifico. None se non ci sono acquisti
+    precedenti per quella coppia codice+fornitore.
+    """
+    codice = (request.args.get('codice') or '').strip()
+    fornitore = (request.args.get('fornitore') or '').strip()
+    if not codice or not fornitore:
+        return jsonify({'prezzo': None})
+    righe = (RigaOrdineAcquistoWood.query.filter_by(codice=codice)
+             .join(OrdineAcquistoWood).filter(OrdineAcquistoWood.fornitore == fornitore).all())
+    prezzi = [r.prezzo_unitario for r in righe if r.prezzo_unitario]
+    return jsonify({'prezzo': min(prezzi) if prezzi else None})
+
+
 def _crea_prezzo_storico(codice, fornitore, prezzo, data_prezzo=None, qta=None, unita_misura=''):
     """
     Registra UN prezzo storico come un piccolo Ordine di Acquisto (una
@@ -775,6 +899,7 @@ def _crea_prezzo_storico(codice, fornitore, prezzo, data_prezzo=None, qta=None, 
     db.session.flush()
     db.session.add(RigaOrdineAcquistoWood(ordine_id=o.id, codice=codice, unita_misura=unita_misura,
                                            qta_originale=qta or 0, qta_ricevuta=qta or 0, prezzo_unitario=prezzo))
+    _aggiungi_a_catalogo_fornitore(fornitore, codice)
 
 
 @acquisti_wood_bp.route('/api/prezzi_storici_wood/nuovo', methods=['POST'])
@@ -1169,6 +1294,7 @@ def api_crea_ordine_acquisto_manuale():
                             note_ordine=(d.get('note_ordine') or '').strip())
     db.session.add(o)
     db.session.flush()
+    totale_ordine = 0.0
     for r in righe:
         codice = (r.get('codice') or '').strip()
         if not codice:
@@ -1187,8 +1313,23 @@ def api_crea_ordine_acquisto_manuale():
             ordine_id=o.id, codice=codice, descrizione=(r.get('descrizione') or '').strip(),
             unita_misura=(r.get('unita_misura') or '').strip(), qta_originale=qta, prezzo_unitario=prezzo,
         ))
+        _aggiungi_a_catalogo_fornitore(fornitore, codice)
+        if prezzo:
+            totale_ordine += prezzo * qta
+
+    # Avviso fido (il "castelletto") — MAI un blocco: solo un'informazione
+    # per Angelo, che resta libero di procedere comunque se sa che va bene.
+    avviso_fido = None
+    anagrafica_fornitore = AnagraficaFornitoreWood.query.filter_by(nome=fornitore).first()
+    if anagrafica_fornitore and anagrafica_fornitore.fido_massimo:
+        esposizione_precedente = _esposizione_corrente_fornitore(fornitore)  # non include ancora questo ordine (non commesso)
+        esposizione_dopo = esposizione_precedente + totale_ordine
+        if esposizione_dopo > anagrafica_fornitore.fido_massimo:
+            avviso_fido = (f"Attenzione: con questo ordine l'esposizione verso {fornitore} sale a "
+                           f"€{esposizione_dopo:,.2f}, sopra il fido di €{anagrafica_fornitore.fido_massimo:,.2f}.")
+
     db.session.commit()
-    return jsonify({'ok': True, 'id': o.id, 'ordine_n': ordine_n})
+    return jsonify({'ok': True, 'id': o.id, 'ordine_n': ordine_n, 'avviso_fido': avviso_fido})
 
 
 @acquisti_wood_bp.route('/ordini_acquisto_wood/<int:oid>/stampa')

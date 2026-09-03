@@ -140,9 +140,10 @@
         <div style="position:relative;margin-bottom:10px">
           <input id="crea-ordine-fornitore" type="text" placeholder="Fornitore..." autocomplete="off"
                  style="width:100%;padding:12px 14px;font-size:15px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"
-                 oninput="_fornitoreRicercaInput(this)" onfocus="_fornitoreRicercaInput(this)">
+                 oninput="_fornitoreRicercaInput(this); fornitoreDigitato()" onfocus="_fornitoreRicercaInput(this)">
           <div id="fornitore-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
         </div>
+        <div id="fornitore-info" style="display:none;font-size:12px;margin-bottom:10px;padding:10px;border-radius:8px;background:var(--dark3)"></div>
         <button class="pill" style="background:var(--accent);color:#fff;border:none;padding:12px 24px;font-size:14px" onclick="creaOrdineFornitori()">💾 Genera Ordine di Acquisto</button>
         <div id="crea-ordine-esito" style="font-size:13px;margin-top:10px"></div>
       </div>
@@ -325,6 +326,49 @@ function renderFornitori(){
 // ═══════════════════ ORDINI FORNITORI ═══════════════════
 let RIGHE_ORDINI = [];
 let SELEZIONATE_ORDINI = new Set();
+let CATALOGO_FORNITORE_ATTIVO = null;  // null = nessun filtro (fornitore vuoto o mai usato prima)
+let _fornitoreDigitatoTimer = null;
+
+function fornitoreDigitato(){
+  clearTimeout(_fornitoreDigitatoTimer);
+  _fornitoreDigitatoTimer = setTimeout(aggiornaInfoFornitore, 350);
+}
+
+async function aggiornaInfoFornitore(){
+  const nome = document.getElementById('crea-ordine-fornitore').value.trim();
+  const box = document.getElementById('fornitore-info');
+  if(!nome){
+    CATALOGO_FORNITORE_ATTIVO = null;
+    box.style.display = 'none';
+    renderOrdini();
+    return;
+  }
+  try{
+    const [rCat, rFido] = await Promise.all([
+      fetch('/api/catalogo_fornitore_wood?fornitore=' + encodeURIComponent(nome)),
+      fetch('/api/fornitori_wood/' + encodeURIComponent(nome) + '/fido'),
+    ]);
+    const catalogo = await rCat.json();
+    const fido = await rFido.json();
+    CATALOGO_FORNITORE_ATTIVO = catalogo.length ? catalogo : null;
+
+    let html = '';
+    if(catalogo.length){
+      html += `📦 Questo fornitore risulta poter dare <b>${catalogo.length}</b> codici — la lista qui sotto mostra solo quelli.`;
+    }else{
+      html += `ℹ️ Nessun codice ancora noto per questo fornitore — vedi tutto il fabbisogno (il catalogo si costruisce da solo al primo ordine).`;
+    }
+    if(fido.fido_massimo != null){
+      const sforato = fido.esposizione_attuale > fido.fido_massimo;
+      html += `<br>💳 Fido: <b>€${fido.fido_massimo.toLocaleString('it-IT')}</b> — Esposizione attuale: <b style="color:${sforato?'var(--red)':'var(--green,#1a9e5c)'}">€${fido.esposizione_attuale.toLocaleString('it-IT')}</b>${sforato ? ' ⚠️ già sopra il fido' : ''}`;
+    }
+    box.innerHTML = html;
+    box.style.display = 'block';
+  }catch(e){
+    CATALOGO_FORNITORE_ATTIVO = null;
+  }
+  renderOrdini();
+}
 
 let _fornitoreRicercaTimer = null;
 function _posizionaFornitoreDropdown(input){
@@ -356,6 +400,7 @@ async function _fornitoreRicercaInput(input){
 function _fornitoreScelto(nome){
   document.getElementById('crea-ordine-fornitore').value = nome;
   document.getElementById('fornitore-dropdown').style.display = 'none';
+  aggiornaInfoFornitore();
 }
 document.addEventListener('click', e => {
   const dropdown = document.getElementById('fornitore-dropdown');
@@ -379,11 +424,20 @@ async function caricaOrdini(){
 function renderOrdini(){
   const box = document.getElementById('ordini-lista');
   const filtro = (document.getElementById('filtro-ordini').value || '').trim().toLowerCase();
-  const righeFiltrate = RIGHE_ORDINI.map((r,i) => ({...r, _idx:i}))
+  let righeFiltrate = RIGHE_ORDINI.map((r,i) => ({...r, _idx:i}))
     .filter(r => !filtro || r.codice.toLowerCase().includes(filtro) || (r.descrizione||'').toLowerCase().includes(filtro) || (r.categoria_label||'').toLowerCase().includes(filtro));
 
+  // Se un fornitore col catalogo già noto è indicato, mostra SOLO i codici che può dare —
+  // non tutto il fabbisogno mischiato (su richiesta esplicita).
+  if(CATALOGO_FORNITORE_ATTIVO){
+    righeFiltrate = righeFiltrate.filter(r => CATALOGO_FORNITORE_ATTIVO.includes(r.codice));
+  }
+
   if(!righeFiltrate.length){
-    box.innerHTML = '<p style="color:var(--text-dim);font-style:italic;padding:20px 0">Nessun codice da ordinare al momento — tutto coperto da scorta o già ordinato.</p>';
+    const motivo = CATALOGO_FORNITORE_ATTIVO
+      ? 'Nessuno dei codici che questo fornitore può dare è attualmente nel fabbisogno.'
+      : 'Nessun codice da ordinare al momento — tutto coperto da scorta o già ordinato.';
+    box.innerHTML = `<p style="color:var(--text-dim);font-style:italic;padding:20px 0">${motivo}</p>`;
     return;
   }
 
@@ -434,20 +488,41 @@ async function creaOrdineFornitori(){
   const esito = document.getElementById('crea-ordine-esito');
   const fornitore = document.getElementById('crea-ordine-fornitore').value.trim();
   if(!fornitore){ esito.style.color='#c0392b'; esito.textContent='⚠️ Indica il fornitore.'; return; }
-  const righe = Array.from(SELEZIONATE_ORDINI).map(i => ({
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Calcolo prezzi migliori per questo fornitore...';
+
+  // Per ogni riga selezionata, il prezzo più basso visto SPECIFICAMENTE per
+  // questo fornitore (non l'ultimo in assoluto) — se non c'è storico per
+  // questa coppia, resta il prezzo generico già mostrato in card.
+  const selezioni = Array.from(SELEZIONATE_ORDINI);
+  const prezziMigliori = await Promise.all(selezioni.map(async i => {
+    try{
+      const r = await fetch(`/api/prezzo_suggerito?codice=${encodeURIComponent(RIGHE_ORDINI[i].codice)}&fornitore=${encodeURIComponent(fornitore)}`);
+      const d = await r.json();
+      return d.prezzo;
+    }catch(e){ return null; }
+  }));
+
+  const righe = selezioni.map((i, idx) => ({
     codice: RIGHE_ORDINI[i].codice, descrizione: RIGHE_ORDINI[i].descrizione, unita_misura: RIGHE_ORDINI[i].unita_misura,
-    qta: RIGHE_ORDINI[i].da_ordinare_suggerito, prezzo_unitario: RIGHE_ORDINI[i].ultimo_prezzo,
+    qta: RIGHE_ORDINI[i].da_ordinare_suggerito,
+    prezzo_unitario: prezziMigliori[idx] != null ? prezziMigliori[idx] : RIGHE_ORDINI[i].ultimo_prezzo,
   })).filter(r => r.qta > 0);
   if(!righe.length){ esito.style.color='#c0392b'; esito.textContent='⚠️ Nessuna riga con quantità valida.'; return; }
-  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Creazione ordine...';
+  esito.textContent = 'Creazione ordine...';
   try{
     const r = await fetch('/api/ordini_acquisto_wood/manuale', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fornitore, righe})});
     const d = await r.json();
     if(d.errore){ esito.style.color='#c0392b'; esito.textContent='⚠️ '+d.messaggio; return; }
     esito.style.color = '#1a9e5c';
-    esito.innerHTML = `✅ Ordine <b>${d.ordine_n}</b> creato — <a href="/ordini_acquisto_wood/${d.id}/stampa" target="_blank" style="color:var(--accent2)">🖨️ Stampa ordine</a>`;
+    let html = `✅ Ordine <b>${d.ordine_n}</b> creato — <a href="/ordini_acquisto_wood/${d.id}/stampa" target="_blank" style="color:var(--accent2)">🖨️ Stampa ordine</a>`;
+    if(d.avviso_fido){
+      html += `<div style="color:var(--red);margin-top:6px">⚠️ ${d.avviso_fido}</div>`;
+    }
+    esito.innerHTML = html;
     SELEZIONATE_ORDINI.clear();
     document.getElementById('crea-ordine-fornitore').value = '';
+    document.getElementById('fornitore-info').style.display = 'none';
+    CATALOGO_FORNITORE_ATTIVO = null;
     aggiornaContatoreOrdini();
     setTimeout(caricaOrdini, 1200);
   }catch(e){

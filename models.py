@@ -401,6 +401,45 @@ class MovimentoGiacenzaWood(db.Model):
     creato_il      = db.Column(db.DateTime, default=datetime.utcnow)
 
 
+class AnagraficaFornitoreWood(db.Model):
+    """
+    Un fornitore (riga per nome — lo stesso testo libero già scritto in
+    OrdineAcquistoWood.fornitore, non una nuova entità con FK rigide: i
+    fornitori sono nomi liberi in tutto il resto del programma, questa
+    resta un'anagrafica AGGIUNTIVA per chi vuole impostare un fido).
+    'fido_massimo': il "castelletto" — l'esposizione finanziaria massima
+    verso questo fornitore (quanto possiamo dovergli, non un tetto di
+    quantità/materiale) — confrontato con la somma degli Ordini di
+    Acquisto ancora aperti (non ricevuti) al momento di creare un nuovo
+    ordine. Un AVVISO se lo si supera, non un blocco: il fido è
+    un'indicazione per Angelo, la decisione finale resta sua.
+    NULL = nessun fido impostato, nessun controllo per quel fornitore.
+    """
+    __tablename__ = 'anagrafica_fornitore_wood'
+    id            = db.Column(db.Integer, primary_key=True)
+    nome          = db.Column(db.String(200), unique=True, nullable=False)
+    fido_massimo  = db.Column(db.Float, nullable=True)
+    note          = db.Column(db.String(300), default='')
+    aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class CatalogoFornitoreWood(db.Model):
+    """
+    Quali codici un fornitore può DAVVERO fornire — usato per filtrare
+    la scheda Ordini Fornitori: quando si sceglie un fornitore, si vede
+    solo il fabbisogno dei codici che PUÒ dare, non tutto il fabbisogno
+    mischiato. Si popola in due modi, non serve compilarlo a mano per
+    forza: automaticamente ogni volta che si crea un ordine per quel
+    fornitore con quel codice (vedi _aggiungi_a_catalogo_fornitore), o
+    manualmente da chi conosce già il listino del fornitore.
+    """
+    __tablename__ = 'catalogo_fornitore_wood'
+    id        = db.Column(db.Integer, primary_key=True)
+    fornitore = db.Column(db.String(200), nullable=False, index=True)
+    codice    = db.Column(db.String(100), nullable=False, index=True)
+    __table_args__ = (db.UniqueConstraint('fornitore', 'codice', name='uq_catalogo_fornitore_codice'),)
+
+
 class AnagraficaAziendaWood(db.Model):
     """
     Dati aziendali di Iron Wood (riga singola) — usati per compilare
