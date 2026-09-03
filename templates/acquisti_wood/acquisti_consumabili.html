@@ -102,7 +102,13 @@ function renderCards(){
       <label style="font-size:10px;color:var(--text-dim)">Quantità da ordinare</label>
       <input type="number" step="0.01" min="0" value="${r.da_ordinare_suggerito}" style="width:100%;padding:6px;margin-bottom:8px;border-radius:5px;border:1px solid var(--border);background:var(--surf);color:inherit"
              onchange="RIGHE[${i}].da_ordinare_suggerito=parseFloat(this.value)||0">
-      <div style="font-size:11px;color:var(--text-dim)">${r.ultimo_fornitore ? '🏭 '+r.ultimo_fornitore : 'Mai ordinato prima'}${r.ultimo_prezzo!=null?' — € '+r.ultimo_prezzo:''}</div>
+      ${(r.storico_acquisti && r.storico_acquisti.length) ? `
+      <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;margin:8px 0 4px;border-top:1px solid var(--border);padding-top:8px">Ultimi ${r.storico_acquisti.length} acquisti</div>
+      ${r.storico_acquisti.map(s => `<div style="font-size:11px;display:flex;justify-content:space-between;padding:2px 0">
+        <span style="color:var(--text-dim)">${s.data ? s.data.split('-').reverse().join('/') : '—'} · 🏭 ${s.fornitore}</span>
+        <span>${s.qta} ${s.unita_misura||''} ${s.prezzo_unitario!=null ? '— €'+s.prezzo_unitario : ''}</span>
+      </div>`).join('')}
+      ` : `<div style="font-size:11px;color:var(--text-dim);margin-top:8px">Mai acquistato prima da qui</div>`}
     </div>`;
   }).join('');
 }

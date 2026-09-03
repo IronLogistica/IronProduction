@@ -773,6 +773,23 @@ def api_scarica_pdf_ddt(did):
                      headers={'Content-Disposition': f'inline; filename="{d.filename}"'})
 
 
+def _storico_ultimi_acquisti(codice, n=3):
+    """
+    Ultimi N acquisti REALI di questo codice (fornitore, data, quantità,
+    prezzo) — dagli Ordini di Acquisto già registrati, sia caricati da
+    PDF fornitore sia emessi da qui. Oggi il sistema è appena partito,
+    quindi per la maggior parte dei codici sarà vuoto o con una riga
+    sola — si popola da solo mano a mano che si emettono/caricano nuovi
+    ordini, nessuna azione da fare per "attivarlo".
+    """
+    righe = (RigaOrdineAcquistoWood.query.filter_by(codice=codice)
+             .join(OrdineAcquistoWood).order_by(OrdineAcquistoWood.caricato_il.desc()).limit(n).all())
+    return [{
+        'fornitore': r.ordine.fornitore, 'data': r.ordine.data_ordine.isoformat() if r.ordine.data_ordine else None,
+        'qta': r.qta_originale, 'prezzo_unitario': r.prezzo_unitario, 'unita_misura': r.unita_misura,
+    } for r in righe]
+
+
 @acquisti_wood_bp.route('/acquisti-da-fabbisogno')
 def pagina_acquisti_da_fabbisogno():
     return render_template('acquisti_wood/acquisti_da_fabbisogno.html', active='acquisti_wood')
@@ -812,6 +829,7 @@ def api_fabbisogno_acquisti_globale():
         if r['fabbisogno'] <= 0:
             continue
         cod = r['codice']
+        storico = _storico_ultimi_acquisti(cod)
         ultima_riga_oa = (RigaOrdineAcquistoWood.query.filter_by(codice=cod)
                           .join(OrdineAcquistoWood).order_by(OrdineAcquistoWood.caricato_il.desc()).first())
         righe_oa_aperte = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
@@ -825,6 +843,7 @@ def api_fabbisogno_acquisti_globale():
             'unita_misura': r['unita_misura'] or (ultima_riga_oa.unita_misura if ultima_riga_oa else ''),
             'ultimo_fornitore': ultima_riga_oa.ordine.fornitore if ultima_riga_oa else '',
             'ultimo_prezzo': ultima_riga_oa.prezzo_unitario if ultima_riga_oa else None,
+            'storico_acquisti': storico,
             # 'mancante' qui è già il fabbisogno UNIFICATO (produzione +
             # scorta minima, quanto già ordinato è già netto dentro
             # Disponibile Allargata) — 'gia_ordinato' resta mostrato SOLO
@@ -869,6 +888,7 @@ def _fabbisogno_acquisti_semplice(tipo_approvvigionamento):
         if mancante <= 0:
             continue
 
+        storico = _storico_ultimi_acquisti(a.codice)
         ultima_riga_oa = (RigaOrdineAcquistoWood.query.filter_by(codice=a.codice)
                           .join(OrdineAcquistoWood).order_by(OrdineAcquistoWood.caricato_il.desc()).first())
         righe_oa_aperte = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
@@ -882,6 +902,7 @@ def _fabbisogno_acquisti_semplice(tipo_approvvigionamento):
             'unita_misura': a.unita_misura or (ultima_riga_oa.unita_misura if ultima_riga_oa else ''),
             'ultimo_fornitore': ultima_riga_oa.ordine.fornitore if ultima_riga_oa else '',
             'ultimo_prezzo': ultima_riga_oa.prezzo_unitario if ultima_riga_oa else None,
+            'storico_acquisti': storico,
             'giacenza': round(giacenza, 3),
             'scorta_minima': round(scorta_min, 3),
             'mancante': round(mancante, 3),
