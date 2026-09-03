@@ -8,7 +8,7 @@ from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
                     OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento, ScortaMinimaWood,
-                    AnagraficaAziendaWood, AnagraficaFornitoreWood, CatalogoFornitoreWood)
+                    AnagraficaAziendaWood, AnagraficaFornitoreWood, CatalogoFornitoreWood, Terzista)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
                     _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
                     _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO, _leggi_file_tabellare_tollerante)
@@ -743,14 +743,17 @@ def api_elimina_ddt_carico(did):
 @acquisti_wood_bp.route('/api/fornitori_wood/ricerca')
 def api_ricerca_fornitori_wood():
     """
-    Widget di ricerca intelligente per il campo Fornitore — suggerisce dai
-    nomi fornitore già usati in Ordini di Acquisto PASSATI (caricati o
-    emessi da qui), invece di doverli riscrivere identici a mano ogni
-    volta (con rischio di piccole differenze che spezzano lo storico
-    acquisti per quel fornitore in due nomi diversi).
+    Widget di ricerca intelligente per il campo Fornitore — unisce DUE
+    fonti, non solo una: i nomi fornitore già usati in Ordini di
+    Acquisto PASSATI (caricati o emessi da qui) E i Terzisti già
+    censiti (zincatura, verniciatura — tabella Terzista, completamente
+    separata: sono fornitori di LAVORAZIONE esterna, non di materiale,
+    ma restano comunque fornitori con cui si ha un rapporto commerciale
+    reale — mancavano dal widget, un vuoto reale segnalato).
     """
     q = (request.args.get('q') or '').strip().lower()
     fornitori = {f[0] for f in db.session.query(OrdineAcquistoWood.fornitore).distinct().all() if f[0]}
+    fornitori |= {t[0] for t in db.session.query(Terzista.nome).distinct().all() if t[0]}
     if q:
         fornitori = {f for f in fornitori if q in f.lower()}
     return jsonify(sorted(fornitori)[:20])
