@@ -139,7 +139,8 @@ async function creaOrdineDaFabbisogno(){
     const d = await r.json();
     if(d.errore){ esito.style.color='#c0392b'; esito.textContent='⚠️ '+d.messaggio; return; }
     esito.style.color = '#2a9d5c';
-    esito.innerHTML = `✅ Ordine creato — <a href="/ordini-acquisto-wood" style="color:#00d2ff">vai a Ordini di Acquisto</a>`;
+    esito.innerHTML = `✅ Ordine <b>${d.ordine_n}</b> creato — <a href="/ordini_acquisto_wood/${d.id}/stampa" target="_blank" style="color:#00d2ff">🖨️ Stampa ordine</a>
+      &nbsp;·&nbsp; <a href="/ordini-acquisto-wood" style="color:#00d2ff">vai a Ordini di Acquisto</a>`;
     SELEZIONATE.clear();
     setTimeout(carica, 1200);
   }catch(e){

@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, jsonify, request
+from flask import Blueprint, render_template, jsonify, request, redirect
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
@@ -360,13 +360,13 @@ def _calcola_alert_scorte():
 @kanban_bp.route('/commerciale/disponibilita')
 def pagina_commerciale_disponibilita():
     """
-    Vista per il commerciale — sola lettura, niente pulsanti di modifica.
-    Tre soli numeri per prodotto, in linguaggio umano invece delle sigle
-    tecniche del Kanban interno (Grezzi/In Trattamento/ecc. non le vede):
-    quanto è pronto OGGI, quanto rientra A BREVE dal trattamento esterno,
-    quanto si può ANCORA VENDERE senza intaccare la scorta minima.
+    ATTENZIONE: pagina UNIFICATA con quella dell'addetta post-vendita
+    (/postvendita/situazione) — Claudio (commerciale) e Mariagrazia
+    (post-vendita/logistica) la guardano insieme, non serviva più tenerne
+    due separate. Questa resta solo come indirizzo storico che REINDIRIZZA
+    a quella — se avevi salvato questo link, continua a funzionare.
     """
-    return render_template('kanban/commerciale.html', active='commerciale_disponibilita')
+    return redirect('/postvendita/situazione')
 
 
 @kanban_bp.route('/api/commerciale/disponibilita')

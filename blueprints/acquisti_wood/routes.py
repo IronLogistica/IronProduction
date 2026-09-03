@@ -10,7 +10,7 @@ from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento, ScortaMinimaWood)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
                     _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
-                    _calcola_campi_giacenza)
+                    _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO)
 
 acquisti_wood_bp = Blueprint('acquisti_wood', __name__)
 
@@ -207,7 +207,8 @@ def _data_da_gg_mm_aaaa(s):
 def _ordine_dict(o):
     return {
         'id': o.id, 'filename': o.filename, 'fornitore': o.fornitore, 'ordine_n': o.ordine_n,
-        'rif_fornitore': o.rif_fornitore,
+        'rif_fornitore': o.rif_fornitore, 'origine': o.origine or 'CARICATO_PDF',
+        'ha_pdf_caricato': bool(o.pdf_bytes),
         'data_ordine': o.data_ordine.isoformat() if o.data_ordine else None,
         'data_consegna': o.data_consegna.isoformat() if o.data_consegna else None,
         'ritiro_proprio': o.ritiro_proprio, 'confermato': o.confermato, 'stato_label': o.stato_label,
@@ -877,8 +878,51 @@ def api_fabbisogno_sicurezza():
     return jsonify(_fabbisogno_acquisti_semplice('MATERIALE_SICUREZZA'))
 
 
+@acquisti_wood_bp.route('/api/fabbisogno_acquisti_tutto')
+def api_fabbisogno_acquisti_tutto():
+    """
+    Fabbisogno acquisti UNIFICATO, tutte le categorie insieme — per la
+    scheda "Ordini Fornitori" del monitor Commerciale/Post-Vendita: chi
+    lo guarda non deve sapere che internamente Materia Prima/Componente
+    d'Acquisto (fabbisogno legato agli Ordini di Produzione aperti,
+    _fabbisogno_acquisti_globale) e Consumo/Sicurezza/Laserato/Ufficio/
+    Commerciale (soglia di riordino semplice, _fabbisogno_acquisti_semplice)
+    usano due formule diverse — qui arrivano già unite, ciascuna riga
+    etichettata con la propria categoria leggibile.
+    """
+    righe = []
+    for r in api_fabbisogno_acquisti_globale().get_json():
+        r['categoria_label'] = LABEL_TIPO_APPROVVIGIONAMENTO.get(r.get('tipo', ''), r.get('tipo', ''))
+        righe.append(r)
+    for tipo in ('MATERIALE_CONSUMO', 'MATERIALE_SICUREZZA', 'LASERATO', 'PRODOTTI_UFFICIO', 'PRODOTTI_COMMERCIALE'):
+        for r in _fabbisogno_acquisti_semplice(tipo):
+            r['tipo'] = tipo
+            r['categoria_label'] = LABEL_TIPO_APPROVVIGIONAMENTO.get(tipo, tipo)
+            righe.append(r)
+    righe.sort(key=lambda x: (-x['da_ordinare_suggerito'], x['categoria_label'], x['codice']))
+    return jsonify(righe)
+
+
 @acquisti_wood_bp.route('/api/ordini_acquisto_wood/manuale', methods=['POST'])
 def api_crea_ordine_acquisto_manuale():
+    """
+    Crea un Ordine di Acquisto EMESSO da qui (compilazione digitale, non
+    caricato da un PDF già fatto) — dal fabbisogno selezionato in
+    Acquisti da Fabbisogno / Materiale di Consumo / Sicurezza.
+
+    BUG REALE CORRETTO: prima il numero ordine restava 'N/D' — un
+    segnaposto che rompeva la rintracciabilità nel momento decisivo, il
+    rientro merce: /api/ddt_carico_wood/upload cerca il numero scritto
+    sul DDT del fornitore ("Ns. doc.(ORDFO) n.: XXX") per abbinarlo
+    all'Ordine di Acquisto giusto — con 'N/D' ovunque, l'abbinamento
+    automatico non poteva mai funzionare, e nemmeno una ricerca manuale
+    per numero (api_cerca_ordine_per_numero) trovava niente di utile.
+    Ora genera un numero vero, leggibile e progressivo per giornata
+    (IW-AAAAMMGG-NN) — da scrivere sull'ordine mandato al fornitore
+    (stampato da qui) così, quando risponde con quel riferimento, il
+    rientro si abbina da solo come già succede per gli ordini caricati
+    da PDF.
+    """
     d = request.get_json(force=True)
     fornitore = (d.get('fornitore') or '').strip()
     righe = d.get('righe') or []
@@ -887,8 +931,13 @@ def api_crea_ordine_acquisto_manuale():
     if not righe:
         return jsonify({'errore': True, 'messaggio': 'Aggiungi almeno una riga.'}), 400
 
-    filename = f"MANUALE-{fornitore}-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}.pdf"
-    o = OrdineAcquistoWood(filename=filename, fornitore=fornitore, ordine_n='N/D', stato_label='DA_CONFERMARE')
+    oggi_str = datetime.utcnow().strftime('%Y%m%d')
+    n_oggi = OrdineAcquistoWood.query.filter(OrdineAcquistoWood.ordine_n.like(f'IW-{oggi_str}-%')).count()
+    ordine_n = f'IW-{oggi_str}-{n_oggi + 1:02d}'
+
+    filename = f"EMESSO-{ordine_n}-{fornitore}.pdf"
+    o = OrdineAcquistoWood(filename=filename, fornitore=fornitore, ordine_n=ordine_n,
+                            data_ordine=date.today(), stato_label='DA_CONFERMARE', origine='EMESSO_MANUALE')
     db.session.add(o)
     db.session.flush()
     for r in righe:
@@ -910,4 +959,21 @@ def api_crea_ordine_acquisto_manuale():
             unita_misura=(r.get('unita_misura') or '').strip(), qta_originale=qta, prezzo_unitario=prezzo,
         ))
     db.session.commit()
-    return jsonify({'ok': True, 'id': o.id})
+    return jsonify({'ok': True, 'id': o.id, 'ordine_n': ordine_n})
+
+
+@acquisti_wood_bp.route('/ordini_acquisto_wood/<int:oid>/stampa')
+def pagina_stampa_ordine_acquisto(oid):
+    """
+    Foglio stampabile per un Ordine di Acquisto EMESSO da qui (compilato
+    digitalmente, non caricato da un PDF fornitore già esistente — quelli
+    hanno già il proprio pdf_bytes scaricabile con /pdf). Genera l'HTML
+    al volo dai dati dell'ordine — nessun PDF salvato, il browser stampa
+    direttamente la pagina (Ctrl+P / pulsante 🖨️), come già fatto altrove
+    nel programma (Inventario, Ordine di Lavoro).
+    """
+    o = OrdineAcquistoWood.query.get_or_404(oid)
+    return render_template('acquisti_wood/ordine_stampa.html', o=o)
+
+
+

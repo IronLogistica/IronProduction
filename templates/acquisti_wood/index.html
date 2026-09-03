@@ -196,7 +196,7 @@ async function apriOrdine(id){
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
       <select id="oa-stato-sel" onchange="cambiaStatoOrdine()">${stati}</select>
       <label style="font-size:12px"><input type="checkbox" id="oa-ritiro" ${o.ritiro_proprio?'checked':''} onchange="cambiaRitiro()"> Ritiriamo noi</label>
-      <a href="/ordini_acquisto_wood/${o.id}/pdf" target="_blank" class="btn btn-ghost" style="padding:5px 10px;font-size:12px">📄 Apri PDF</a>
+      <a href="${o.ha_pdf_caricato ? '/ordini_acquisto_wood/'+o.id+'/pdf' : '/ordini_acquisto_wood/'+o.id+'/stampa'}" target="_blank" class="btn btn-ghost" style="padding:5px 10px;font-size:12px">${o.ha_pdf_caricato ? '📄 Apri PDF' : '🖨️ Stampa ordine'}</a>
     </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
       <label style="font-size:12px">Consegna: <input type="date" id="oa-data-consegna" value="${o.data_consegna||''}" onchange="cambiaDataConsegna()"></label>

@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Ordine di Acquisto {{ o.ordine_n }} — IRON WOOD</title>
+<style>
+  @page { size: A4 portrait; margin: 16mm; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 0; color: #000; }
+  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 3px solid #1e6fa5; padding-bottom: 14px; margin-bottom: 20px; }
+  .logo { font-size: 26px; font-weight: 900; color: #1e6fa5; letter-spacing: 1px; }
+  .logo small { display: block; font-size: 11px; font-weight: 400; color: #555; letter-spacing: 0.5px; margin-top: 2px; }
+  .doc-title { text-align: right; }
+  .doc-title .t { font-size: 20px; font-weight: 800; }
+  .doc-title .n { font-size: 15px; font-weight: 700; color: #1e6fa5; margin-top: 4px; }
+  .box-info { display: flex; gap: 20px; margin-bottom: 20px; }
+  .box { flex: 1; border: 1px solid #999; border-radius: 4px; padding: 10px 14px; }
+  .box .l { font-size: 10px; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+  .box .v { font-size: 15px; font-weight: 700; margin-top: 2px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 20px; }
+  th { background: #eee; border: 1px solid #999; padding: 8px; text-align: left; font-size: 10px; text-transform: uppercase; }
+  td { border: 1px solid #999; padding: 9px 8px; vertical-align: middle; }
+  .col-codice { width: 15%; font-weight: 700; }
+  .col-qta { width: 12%; text-align: right; }
+  .col-um { width: 8%; text-align: center; }
+  .col-prezzo { width: 15%; text-align: right; }
+  tfoot td { font-weight: 800; border-top: 2px solid #000; }
+  .note { font-size: 11px; color: #555; margin-top: 20px; line-height: 1.5; }
+  .firma-riga { display: flex; justify-content: space-between; margin-top: 50px; }
+  .firma-box { width: 45%; border-top: 1px solid #000; padding-top: 6px; font-size: 11px; color: #555; text-align: center; }
+  .btn-stampa { display: block; width: 100%; margin: 0 0 16px; padding: 12px; font-size: 16px; font-weight: 700; background: #1e6fa5; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+  @media print { .btn-stampa { display: none; } }
+</style>
+</head>
+<body>
+
+<button class="btn-stampa" onclick="window.print()">🖨️ Stampa</button>
+
+<div class="header">
+  <div class="logo">IRON WOOD<small>Reparto Carpenteria — Ordini di Acquisto</small></div>
+  <div class="doc-title">
+    <div class="t">ORDINE DI ACQUISTO</div>
+    <div class="n">N° {{ o.ordine_n }}</div>
+  </div>
+</div>
+
+<div class="box-info">
+  <div class="box">
+    <div class="l">Fornitore</div>
+    <div class="v">{{ o.fornitore }}</div>
+  </div>
+  <div class="box">
+    <div class="l">Data ordine</div>
+    <div class="v">{{ o.data_ordine.strftime('%d/%m/%Y') if o.data_ordine else '—' }}</div>
+  </div>
+  <div class="box">
+    <div class="l">Consegna richiesta</div>
+    <div class="v">{{ o.data_consegna.strftime('%d/%m/%Y') if o.data_consegna else 'da concordare' }}</div>
+  </div>
+</div>
+
+<table>
+  <thead>
+    <tr>
+      <th class="col-codice">Codice</th>
+      <th>Descrizione</th>
+      <th class="col-um">U.M.</th>
+      <th class="col-qta">Quantità</th>
+      <th class="col-prezzo">Prezzo unit.</th>
+      <th class="col-prezzo">Totale</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% set totale_ordine = namespace(v=0) %}
+    {% for r in o.righe %}
+    {% set riga_tot = (r.prezzo_unitario * r.qta_originale) if r.prezzo_unitario else None %}
+    {% if riga_tot %}{% set totale_ordine.v = totale_ordine.v + riga_tot %}{% endif %}
+    <tr>
+      <td class="col-codice">{{ r.codice }}</td>
+      <td>{{ r.descrizione or '—' }}</td>
+      <td class="col-um">{{ r.unita_misura or '' }}</td>
+      <td class="col-qta">{{ r.qta_originale }}</td>
+      <td class="col-prezzo">{{ '%.2f €'|format(r.prezzo_unitario) if r.prezzo_unitario else '—' }}</td>
+      <td class="col-prezzo">{{ '%.2f €'|format(riga_tot) if riga_tot else '—' }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+  {% if totale_ordine.v > 0 %}
+  <tfoot>
+    <tr><td colspan="5" style="text-align:right">Totale ordine</td><td class="col-prezzo">{{ '%.2f €'|format(totale_ordine.v) }}</td></tr>
+  </tfoot>
+  {% endif %}
+</table>
+
+<p class="note">
+  Si prega di indicare il riferimento <b>{{ o.ordine_n }}</b> sul documento di trasporto e sulla fattura, per permettere
+  il riscontro automatico all'arrivo della merce.
+</p>
+
+<div class="firma-riga">
+  <div class="firma-box">Firma per conferma ordine (fornitore)</div>
+  <div class="firma-box">Firma emissione ordine (Iron Wood)</div>
+</div>
+
+</body>
+</html>

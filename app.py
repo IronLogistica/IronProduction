@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from flask import Flask, redirect, url_for
 from config import Config
-from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate, assicura_lunghezze_barra_default, assicura_unita_misura_articoli, assicura_finiti_is_kanban, assicura_lead_time_esterno_centri, assicura_ordinato_cliente_wms, assicura_operatore_evento_consuntivo, assicura_contestuale_distinta_base, assicura_event_id_varianza_produzione, assicura_contapieghe_matrici, migra_parametri_lavorazione_flat, assicura_bandiera_stato_op, assicura_import_consumabili_sicurezza, assicura_categoria_acquisto_config, assicura_lotto_trasferimento_minimo, assicura_ddt_carico_confermato, assicura_mappa_mw_fase
+from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate, assicura_lunghezze_barra_default, assicura_unita_misura_articoli, assicura_finiti_is_kanban, assicura_lead_time_esterno_centri, assicura_ordinato_cliente_wms, assicura_operatore_evento_consuntivo, assicura_contestuale_distinta_base, assicura_event_id_varianza_produzione, assicura_contapieghe_matrici, migra_parametri_lavorazione_flat, assicura_bandiera_stato_op, assicura_import_consumabili_sicurezza, assicura_categoria_acquisto_config, assicura_lotto_trasferimento_minimo, assicura_ddt_carico_confermato, assicura_mappa_mw_fase, assicura_origine_ordine_acquisto_wood
 
 def create_app():
     app = Flask(__name__)
@@ -63,6 +63,7 @@ def create_app():
         assicura_event_id_varianza_produzione()
         assicura_bandiera_stato_op()
         assicura_lotto_trasferimento_minimo()
+        assicura_origine_ordine_acquisto_wood()
         assicura_ddt_carico_confermato()
         assicura_mappa_mw_fase()
         assicura_import_consumabili_sicurezza()

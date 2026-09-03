@@ -87,6 +87,7 @@
 <div class="tabs">
   <div class="tab attivo" id="tab-prodotti" onclick="mostraPannello('prodotti')">📦 Prodotti</div>
   <div class="tab" id="tab-fornitori" onclick="mostraPannello('fornitori')">🚚 Fornitori</div>
+  <div class="tab" id="tab-ordini" onclick="mostraPannello('ordini')">🧾 Ordini Fornitori</div>
 </div>
 
 <div class="content">
@@ -120,6 +121,30 @@
         </div>
         <input id="filtro-fornitori" type="text" placeholder="Cerca fornitore o codice..." autocomplete="off" oninput="renderFornitori()">
         <div id="fornitori-lista">Caricamento...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════ PANNELLO ORDINI FORNITORI ══════ -->
+  <div class="pannello" id="pannello-ordini">
+    <div class="mon-section">
+      <div style="padding:16px">
+        <p class="intro">
+          Codici sotto scorta minima (o richiesti dalla produzione aperta) — seleziona quelli da ordinare,
+          correggi la quantità se serve, indica il fornitore, genera l'ordine e stampalo.
+        </p>
+        <input id="filtro-ordini" type="text" placeholder="Cerca codice, descrizione o categoria..." autocomplete="off" oninput="renderOrdini()">
+        <div id="ordini-lista">Caricamento...</div>
+      </div>
+    </div>
+
+    <div class="mon-section" id="crea-ordine-box" style="display:none">
+      <div style="padding:16px">
+        <div style="font-weight:700;margin-bottom:10px">🧾 Crea Ordine di Acquisto — <span id="crea-ordine-conteggio"></span> righe selezionate</div>
+        <input id="crea-ordine-fornitore" type="text" placeholder="Fornitore..." autocomplete="off"
+               style="width:100%;padding:12px 14px;font-size:15px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text);margin-bottom:10px">
+        <button class="pill" style="background:var(--accent);color:#fff;border:none;padding:12px 24px;font-size:14px" onclick="creaOrdineFornitori()">💾 Genera Ordine di Acquisto</button>
+        <div id="crea-ordine-esito" style="font-size:13px;margin-top:10px"></div>
       </div>
     </div>
   </div>
@@ -286,8 +311,99 @@ function renderFornitori(){
   }).join('');
 }
 
+// ═══════════════════ ORDINI FORNITORI ═══════════════════
+let RIGHE_ORDINI = [];
+let SELEZIONATE_ORDINI = new Set();
+
+async function caricaOrdini(){
+  const box = document.getElementById('ordini-lista');
+  try{
+    const r = await fetch('/api/fabbisogno_acquisti_tutto');
+    RIGHE_ORDINI = await r.json();
+    renderOrdini();
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>';
+  }
+}
+
+function renderOrdini(){
+  const box = document.getElementById('ordini-lista');
+  const filtro = (document.getElementById('filtro-ordini').value || '').trim().toLowerCase();
+  const righeFiltrate = RIGHE_ORDINI.map((r,i) => ({...r, _idx:i}))
+    .filter(r => !filtro || r.codice.toLowerCase().includes(filtro) || (r.descrizione||'').toLowerCase().includes(filtro) || (r.categoria_label||'').toLowerCase().includes(filtro));
+
+  if(!righeFiltrate.length){
+    box.innerHTML = '<p style="color:var(--text-dim);font-style:italic;padding:20px 0">Nessun codice da ordinare al momento — tutto coperto da scorta o già ordinato.</p>';
+    return;
+  }
+
+  box.innerHTML = '<div style="display:flex;flex-wrap:wrap;gap:12px">' + righeFiltrate.map(r => {
+    const i = r._idx;
+    const bordo = r.gia_ordinato > 0 ? '#2589c7' : '#c0392b';
+    const selezionata = SELEZIONATE_ORDINI.has(i);
+    return `<div style="width:270px;background:var(--dark3);border:1px solid var(--border);border-left:4px solid ${bordo};border-radius:10px;padding:16px;${selezionata?'box-shadow:0 0 0 2px var(--accent2)':''}">
+      <div style="display:flex;justify-content:space-between;align-items:start">
+        <div>
+          <div style="font-size:11px;color:var(--text-dim)">${r.categoria_label||''}</div>
+          <div style="font-size:18px;font-weight:800;color:#e0eefc">${r.codice}</div>
+          <div style="font-size:11px;color:var(--text-dim)">${r.descrizione||''}</div>
+        </div>
+        <input type="checkbox" ${selezionata?'checked':''} style="width:20px;height:20px" onchange="toggleRigaOrdine(${i}, this.checked)">
+      </div>
+      <div style="display:flex;justify-content:space-between;text-align:center;margin:10px 0">
+        <div><div style="font-size:16px;font-weight:800">${r.mancante}</div><div style="font-size:9px;color:var(--text-dim)">MANCANTE</div></div>
+        <div><div style="font-size:16px;font-weight:800;color:#2589c7">${r.gia_ordinato}</div><div style="font-size:9px;color:var(--text-dim)">GIÀ ORDINATO</div></div>
+        <div><div style="font-size:16px;font-weight:800;color:#c0392b">${r.da_ordinare_suggerito}</div><div style="font-size:9px;color:var(--text-dim)">DA ORDINARE</div></div>
+      </div>
+      <label style="font-size:10px;color:var(--text-dim)">Quantità da ordinare</label>
+      <input type="number" step="0.01" min="0" value="${r.da_ordinare_suggerito}" style="width:100%;padding:8px;margin-bottom:6px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text)"
+             onchange="RIGHE_ORDINI[${i}].da_ordinare_suggerito=parseFloat(this.value)||0">
+      <div style="font-size:11px;color:var(--text-dim)">${r.ultimo_fornitore ? '🏭 '+r.ultimo_fornitore : 'Mai ordinato prima'}${r.ultimo_prezzo!=null?' — € '+r.ultimo_prezzo:''}</div>
+    </div>`;
+  }).join('') + '</div>';
+}
+
+function toggleRigaOrdine(i, checked){
+  if(checked) SELEZIONATE_ORDINI.add(i); else SELEZIONATE_ORDINI.delete(i);
+  aggiornaContatoreOrdini();
+  renderOrdini();
+}
+
+function aggiornaContatoreOrdini(){
+  const box = document.getElementById('crea-ordine-box');
+  const n = SELEZIONATE_ORDINI.size;
+  document.getElementById('crea-ordine-conteggio').textContent = n;
+  box.style.display = n > 0 ? 'block' : 'none';
+}
+
+async function creaOrdineFornitori(){
+  const esito = document.getElementById('crea-ordine-esito');
+  const fornitore = document.getElementById('crea-ordine-fornitore').value.trim();
+  if(!fornitore){ esito.style.color='#c0392b'; esito.textContent='⚠️ Indica il fornitore.'; return; }
+  const righe = Array.from(SELEZIONATE_ORDINI).map(i => ({
+    codice: RIGHE_ORDINI[i].codice, descrizione: RIGHE_ORDINI[i].descrizione, unita_misura: RIGHE_ORDINI[i].unita_misura,
+    qta: RIGHE_ORDINI[i].da_ordinare_suggerito, prezzo_unitario: RIGHE_ORDINI[i].ultimo_prezzo,
+  })).filter(r => r.qta > 0);
+  if(!righe.length){ esito.style.color='#c0392b'; esito.textContent='⚠️ Nessuna riga con quantità valida.'; return; }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Creazione ordine...';
+  try{
+    const r = await fetch('/api/ordini_acquisto_wood/manuale', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fornitore, righe})});
+    const d = await r.json();
+    if(d.errore){ esito.style.color='#c0392b'; esito.textContent='⚠️ '+d.messaggio; return; }
+    esito.style.color = '#1a9e5c';
+    esito.innerHTML = `✅ Ordine <b>${d.ordine_n}</b> creato — <a href="/ordini_acquisto_wood/${d.id}/stampa" target="_blank" style="color:var(--accent2)">🖨️ Stampa ordine</a>`;
+    SELEZIONATE_ORDINI.clear();
+    document.getElementById('crea-ordine-fornitore').value = '';
+    aggiornaContatoreOrdini();
+    setTimeout(caricaOrdini, 1200);
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
 caricaProdotti();
 caricaFornitori();
+caricaOrdini();
 </script>
 </body>
 </html>

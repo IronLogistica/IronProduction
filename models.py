@@ -1571,6 +1571,29 @@ def assicura_lotto_trasferimento_minimo():
             db.session.commit()
 
 
+def assicura_origine_ordine_acquisto_wood():
+    """
+    Migrazione compatibile con DB già esistenti: aggiunge
+    ordini_acquisto_wood.origine — introdotta insieme all'emissione
+    digitale di ordini da fabbisogno (prima esisteva solo il caricamento
+    di un PDF fornitore già fatto). NULL/mancante per gli ordini
+    esistenti = trattati come 'CARICATO_PDF' (il comportamento di sempre,
+    l'unico che esisteva prima di questa colonna).
+    """
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE ordini_acquisto_wood ADD COLUMN IF NOT EXISTS origine VARCHAR(20) DEFAULT 'CARICATO_PDF'"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('ordini_acquisto_wood')}
+        if 'origine' not in colonne:
+            db.session.execute(text("ALTER TABLE ordini_acquisto_wood ADD COLUMN origine VARCHAR(20) DEFAULT 'CARICATO_PDF'"))
+            db.session.commit()
+
+
 def assicura_ddt_carico_confermato():
     """
     Migrazione compatibile con DB già esistenti: aggiunge
@@ -2673,6 +2696,12 @@ class OrdineAcquistoWood(db.Model):
     # DA_CONFERMARE / ORDINE_CONFERMATO / ORDINE_IN_ARRIVO / ORDINE_DA_RITIRARE / ORDINE_RICEVUTO
     nota_interna      = db.Column(db.String(500), default='')
     testo_grezzo_pdf  = db.Column(db.Text, default='')   # testo estratto da PyPDF2, per debug/riparsing futuro
+    # 'CARICATO_PDF' (il fornitore ha mandato un PDF che abbiamo caricato
+    # e fatto leggere) oppure 'EMESSO_MANUALE' (l'abbiamo compilato noi
+    # qui, da fabbisogno, e stampato per mandarlo al fornitore) — serve
+    # solo per distinguere le due origini in UI (badge, filtro), nessuna
+    # logica di business dipende da questo valore.
+    origine           = db.Column(db.String(20), default='CARICATO_PDF')
     caricato_il       = db.Column(db.DateTime, default=datetime.utcnow)
     aggiornato_il     = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
