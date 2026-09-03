@@ -259,6 +259,23 @@ def api_testo_grezzo_pdf(oid):
     })
 
 
+@acquisti_wood_bp.route('/api/ordini_acquisto_wood/cerca-per-numero/<path:ordine_n>')
+def api_cerca_ordine_per_numero(ordine_n):
+    """
+    Trova l'ID interno (quello richiesto da .../testo-grezzo-pdf) a
+    partire dal numero d'ordine (es. '76', quello scritto sul PDF) — così
+    non serve indovinare l'id del database, spesso diverso dal numero
+    d'ordine scritto sul documento.
+    """
+    ordini = OrdineAcquistoWood.query.filter_by(ordine_n=str(ordine_n)).all()
+    if not ordini:
+        return jsonify({'trovati': 0, 'messaggio': f"Nessun ordine con numero '{ordine_n}' trovato."}), 404
+    return jsonify({'trovati': len(ordini), 'ordini': [
+        {'id': o.id, 'ordine_n': o.ordine_n, 'fornitore': o.fornitore, 'filename': o.filename,
+         'link_testo_grezzo': f'/api/ordini_acquisto_wood/{o.id}/testo-grezzo-pdf'} for o in ordini
+    ]})
+
+
 @acquisti_wood_bp.route('/api/ordini_acquisto_wood/upload', methods=['POST'])
 def api_upload_ordine_acquisto():
     file = request.files.get('file_pdf')
