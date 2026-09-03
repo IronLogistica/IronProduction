@@ -84,6 +84,42 @@ def pagina_cartellino_op(codice):
 def _audit(o, action, detail="", event_id=""):
     db.session.add(AuditPP(op_code=o.codice, event_id=event_id, azione=action, dettaglio=detail))
 
+
+def _traduci_componente_masterwork(componente_raw, fase):
+    """
+    Traduce un 'componente' arrivato da MasterWork nel codice IronProduction
+    corrispondente, usando MappaCodiceMasterWork — condivisa tra
+    /api/pp/events e /api/pp/events/correggi (mai due implementazioni
+    separate che potrebbero disallinearsi, stesso principio già applicato
+    più volte in questo programma).
+
+    BUG REALE CORRETTO: lo stesso codice_masterwork (es. 'PINX110') può
+    avere più fasi diverse in MasterWork — ciascuna corrisponde a un
+    componente DIVERSO della distinta base qui (PINX110-A, PINX110-B,
+    PINX110) — cercare solo per codice_masterwork, ignorando la fase,
+    traduceva OGNI dichiarazione (qualunque fase fosse) sempre nello
+    stesso componente: le tre fasi finivano per caricare tutte insieme
+    lo stesso pezzo, invece di far avanzare ciascuna il proprio.
+
+    Prova PRIMA una mappa specifica per QUESTA fase (confronto tollerante,
+    stesso _fasi_corrispondono già in uso per le fasi in tutto il
+    programma — MasterWork manda testo discorsivo, non un nome esatto);
+    se non la trova, usa la mappa 'generica' (fase_masterwork NULL) per
+    compatibilità con i codici a fase unica già mappati prima di questa
+    correzione.
+    """
+    if not componente_raw:
+        return componente_raw
+    candidate = MappaCodiceMasterWork.query.filter_by(codice_masterwork=componente_raw).all()
+    if not candidate:
+        return componente_raw
+    for m in candidate:
+        if m.fase_masterwork and fase and _fasi_corrispondono(m.fase_masterwork, fase):
+            return m.codice_ironproduction
+    generica = next((m for m in candidate if not m.fase_masterwork), None)
+    return generica.codice_ironproduction if generica else componente_raw
+
+
 @pp_bp.get('/ordini-produzione')
 def pagina(): return render_template('produzione_pp/index.html', active='produzione_pp', stati=STATI_ORDINE_PP)
 
@@ -2197,11 +2233,7 @@ def api_evento():
         # l'OP né scaricare i materiali giusti. Vedi Parametri di Lavorazione
         # → Corrispondenze MasterWork per gestire le associazioni.
         componente_raw = str(d['componente']).strip() if d.get('componente') else None
-        componente = componente_raw
-        if componente_raw:
-            mappa = MappaCodiceMasterWork.query.filter_by(codice_masterwork=componente_raw).first()
-            if mappa:
-                componente = mappa.codice_ironproduction
+        componente = _traduci_componente_masterwork(componente_raw, str(d['fase']).strip())
 
         _registra_evento_consuntivo(o, str(d['fase']).strip(), ts, good, scrap, tempo, str(d['event_id']).strip(),
                                      componente=componente,
@@ -2271,11 +2303,7 @@ def api_evento_correggi():
         db.session.flush()   # l'event_id originale si libera PRIMA di registrare il nuovo, in caso combaci
 
         componente_raw = str(d['componente']).strip() if d.get('componente') else None
-        componente = componente_raw
-        if componente_raw:
-            mappa = MappaCodiceMasterWork.query.filter_by(codice_masterwork=componente_raw).first()
-            if mappa:
-                componente = mappa.codice_ironproduction
+        componente = _traduci_componente_masterwork(componente_raw, str(d['fase']).strip())
 
         nuovo_event_id = str(d['nuovo_event_id']).strip()
         avviso_magazzino = _registra_evento_consuntivo(
@@ -2338,21 +2366,36 @@ def api_mappa_codici_masterwork_lista():
     righe = MappaCodiceMasterWork.query.order_by(MappaCodiceMasterWork.codice_ironproduction).all()
     return jsonify([{
         'id': m.id, 'codice_ironproduction': m.codice_ironproduction,
-        'codice_masterwork': m.codice_masterwork, 'note': m.note,
+        'codice_masterwork': m.codice_masterwork, 'fase_masterwork': m.fase_masterwork, 'note': m.note,
     } for m in righe])
 
 
 @pp_bp.post('/api/mappa-codici-masterwork')
 def api_mappa_codici_masterwork_crea():
+    """
+    Crea un'associazione codice MasterWork -> codice IronProduction.
+    'fase_masterwork' è FACOLTATIVA: lasciarla vuota crea una mappa
+    GENERICA (vale per qualunque fase di quel codice — comportamento
+    tradizionale, per i codici a fase unica). Se lo stesso
+    codice_masterwork ha PIU' fasi che vanno a componenti DIVERSI della
+    distinta base (es. 'PINX110' — Fase A/B/C su PINX110-A/PINX110-B/
+    PINX110), va creata UNA mappa per ciascuna fase, valorizzando
+    fase_masterwork di volta in volta con l'esatta fase da distinguere.
+    """
     d = request.get_json(force=True)
     codice_ip = (d.get('codice_ironproduction') or '').strip()
     codice_mw = (d.get('codice_masterwork') or '').strip()
+    fase_mw = (d.get('fase_masterwork') or '').strip() or None
     if not codice_ip or not codice_mw:
         return jsonify(ok=False, error='Servono entrambi i codici'), 400
-    if MappaCodiceMasterWork.query.filter_by(codice_masterwork=codice_mw).first():
-        return jsonify(ok=False, error=f'Il codice MasterWork "{codice_mw}" è già associato a un altro codice'), 409
+    if fase_mw:
+        if MappaCodiceMasterWork.query.filter_by(codice_masterwork=codice_mw, fase_masterwork=fase_mw).first():
+            return jsonify(ok=False, error=f'"{codice_mw}" con fase "{fase_mw}" è già associato a un altro codice'), 409
+    else:
+        if MappaCodiceMasterWork.query.filter_by(codice_masterwork=codice_mw, fase_masterwork=None).first():
+            return jsonify(ok=False, error=f'Il codice MasterWork "{codice_mw}" ha già una mappa generica (senza fase) — se questo codice ha più fasi verso componenti diversi, specifica la fase per distinguerle.'), 409
     m = MappaCodiceMasterWork(codice_ironproduction=codice_ip, codice_masterwork=codice_mw,
-                               note=(d.get('note') or '').strip())
+                               fase_masterwork=fase_mw, note=(d.get('note') or '').strip())
     db.session.add(m)
     db.session.commit()
     return jsonify(ok=True, id=m.id)

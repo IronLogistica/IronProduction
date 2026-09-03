@@ -523,7 +523,7 @@ function renderTabellaAlbero(righe){
     html += `<tr id="riga-${i}" onclick="evidenziaRiga(${i},'${x.codice}')">      <td class="codice">${x.codice}</td>
       <td>${tipoInline}</td>
       <td>${badgeCiclo}</td>
-      <td>${_pluCellaMasterWorkHTML(i, x.codice_masterwork)}</td>
+      <td>${_pluCellaMasterWorkHTML(i, x.codice_masterwork, x.fase_masterwork)}</td>
       <td><select style="width:80px" ${dis} ${oblig(x.lunghezza_barra_mm)} ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
       <td><input type="number" step="0.1" min="0" value="${x.spessore_mm??''}" style="width:65px" ${dis} ${oblig(x.spessore_mm)} ${f} onchange="salvaCella(${i},'spessore_mm',this.value)"></td>
       <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${dis} ${oblig(x.pezzi_per_barra)} ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
@@ -542,11 +542,15 @@ function renderTabellaAlbero(righe){
   return html;
 }
 
-function _pluCellaMasterWorkHTML(indice, valoreIniziale){
+function _pluCellaMasterWorkHTML(indice, valoreIniziale, faseIniziale){
   const val = (valoreIniziale || '').replace(/"/g, '&quot;');
+  const fase = (faseIniziale || '').replace(/"/g, '&quot;');
   return `<input type="text" value="${val}" placeholder="—" autocomplete="off" title="Codice con cui MasterWork conosce questo stesso pezzo, se diverso da questo" ` +
     `style="width:100px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px" ` +
-    `oninput="_pluRicercaMasterWorkInput(this,${indice})" onfocus="_pluRicercaMasterWorkInput(this,${indice})" onchange="salvaCodiceMasterWork(${indice},this.value)">`;
+    `oninput="_pluRicercaMasterWorkInput(this,${indice})" onfocus="_pluRicercaMasterWorkInput(this,${indice})" onchange="salvaCodiceMasterWork(${indice},this.value)">` +
+    `<input type="text" value="${fase}" placeholder="fase (se serve)" title="Da compilare SOLO se lo stesso codice MasterWork ha più fasi verso componenti diversi (es. Fase A/B/C dello stesso pezzo) — lasciare vuoto per una corrispondenza semplice" ` +
+    `style="width:100px;padding:3px 6px;margin-top:3px;border-radius:5px;border:1px solid var(--border);font-size:10px;color:var(--text-dim)" ` +
+    `onchange="salvaFaseMasterWork(${indice},this.value)">`;
 }
 
 // Un SOLO dropdown condiviso da tutte le righe (non uno per riga) — la
@@ -614,11 +618,24 @@ async function _pluRicercaMasterWorkInput(input, indice){
       html += '<div style="padding:4px 10px;font-size:10px;color:var(--text-dim);text-transform:uppercase;border-top:1px solid var(--border)">Dal catalogo MasterWork</div>';
       html += nuovi.map(x => {
         const cod = String(x.codice_interno).replace(/"/g, '&quot;');
+        if(x.fasi && x.fasi.length > 1){
+          // Più fasi per lo stesso codice -> vanno a componenti DIVERSI
+          // della distinta base: ciascuna cliccabile per scegliere codice
+          // E fase insieme, non solo il codice da solo.
+          return `<div class="wms-item" style="cursor:default">
+            <div><b class="codice">${x.codice_interno}</b>${x.descrizione_prodotto ? ' — ' + x.descrizione_prodotto : ''}</div>
+            <div style="font-size:10px;color:var(--text-dim);margin:2px 0 2px 8px">Più fasi — scegli quella giusta:</div>
+            ${x.fasi.map(fa => {
+              const faseEsc = String(fa).replace(/"/g, '&quot;').replace(/'/g, "\\'");
+              return `<div style="padding:3px 8px 3px 16px;cursor:pointer;font-size:11px;color:#4d9fd6" onmousedown="_pluSceltaMasterWork('${cod}','${faseEsc}')" onmouseover="this.style.background='rgba(42,157,92,.12)'" onmouseout="this.style.background=''">↳ ${fa}</div>`;
+            }).join('')}
+          </div>`;
+        }
         const fasi = (x.fasi && x.fasi.length) ? x.fasi.join(', ') : '';
         return `<div class="wms-item" onmousedown="_pluSceltaMasterWork('${cod}')">` +
           `<div><b class="codice">${x.codice_interno}</b>` +
           (x.descrizione_prodotto ? ` — ${x.descrizione_prodotto}` : '') +
-          (fasi ? `<br><span style="font-size:11px;color:var(--text-dim)">fasi: ${fasi}</span>` : '') +
+          (fasi ? `<br><span style="font-size:11px;color:var(--text-dim)">fase: ${fasi}</span>` : '') +
           `</div></div>`;
       }).join('');
     }
@@ -632,13 +649,36 @@ async function _pluRicercaMasterWorkInput(input, indice){
   }, 220);
 }
 
-function _pluSceltaMasterWork(codice){
+async function _pluSceltaMasterWork(codice, fase){
   const dropdown = document.getElementById('plu-mw-dropdown');
   const input = document.activeElement;
   if(input && input.tagName === 'INPUT') input.value = codice;
   dropdown.style.display = 'none';
   dropdown.innerHTML = '';
-  if(_pluMwIndiceAttivo !== null) salvaCodiceMasterWork(_pluMwIndiceAttivo, codice);
+  const indice = _pluMwIndiceAttivo;
+  if(indice === null) return;
+  const riga = window._RIGHE_ALBERO[indice];
+  try{
+    const r = await fetch('/api/mappa-codici-masterwork/per-codice-ironproduction', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice_ironproduction: riga.codice, codice_masterwork: codice, fase_masterwork: fase || ''})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    riga.codice_masterwork = codice;
+    riga.fase_masterwork = fase || '';
+    showToast('✅ Corrispondenza salvata');
+    _pluRicaricaRigaMasterWork(indice);
+  }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
+}
+function _pluRicaricaRigaMasterWork(indice){
+  // Aggiorna anche il campo fase visibile in tabella dopo una scelta dal
+  // catalogo, senza dover ricaricare l'intera tabella.
+  const rigaEl = document.getElementById('riga-' + indice);
+  if(!rigaEl) return;
+  const inputFase = rigaEl.querySelectorAll('td')[3]?.querySelectorAll('input')[1];
+  const riga = window._RIGHE_ALBERO[indice];
+  if(inputFase && riga) inputFase.value = riga.fase_masterwork || '';
 }
 document.addEventListener('click', e => {
   const dropdown = document.getElementById('plu-mw-dropdown');
@@ -658,12 +698,28 @@ async function salvaCodiceMasterWork(indice, valore){
   try{
     const r = await fetch('/api/mappa-codici-masterwork/per-codice-ironproduction', {
       method:'PUT', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({codice_ironproduction: riga.codice, codice_masterwork: valore})
+      body: JSON.stringify({codice_ironproduction: riga.codice, codice_masterwork: valore, fase_masterwork: riga.fase_masterwork || ''})
     });
     const d = await r.json();
     if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
     riga.codice_masterwork = valore;
     showToast(valore ? '✅ Corrispondenza salvata' : '✅ Corrispondenza rimossa');
+  }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
+}
+
+async function salvaFaseMasterWork(indice, valore){
+  const riga = window._RIGHE_ALBERO[indice];
+  valore = valore.trim();
+  if(!riga.codice_masterwork){ alert('⚠️ Imposta prima il codice MasterWork, poi la fase.'); return; }
+  try{
+    const r = await fetch('/api/mappa-codici-masterwork/per-codice-ironproduction', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice_ironproduction: riga.codice, codice_masterwork: riga.codice_masterwork, fase_masterwork: valore})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
+    riga.fase_masterwork = valore;
+    showToast('✅ Fase salvata');
   }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
 }
 

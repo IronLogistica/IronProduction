@@ -3171,17 +3171,19 @@ def api_albero_parametri_lavorazione(codice_radice):
         .group_by(CicloLavoroWood.codice).all()
     )
     approvvigionamenti = {a.codice: a for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()}
-    mappe_masterwork = {m.codice_ironproduction: m.codice_masterwork for m in
+    mappe_masterwork = {m.codice_ironproduction: m for m in
                          MappaCodiceMasterWork.query.filter(MappaCodiceMasterWork.codice_ironproduction.in_(codici)).all()}
 
     righe = []
     for cod in codici:
         p = parametri.get(cod)
         a = approvvigionamenti.get(cod)
+        mw = mappe_masterwork.get(cod)
         righe.append({
             'codice': cod,
             'n_fasi_ciclo_lavoro': conteggio_fasi.get(cod, 0),
-            'codice_masterwork': mappe_masterwork.get(cod, ''),
+            'codice_masterwork': mw.codice_masterwork if mw else '',
+            'fase_masterwork': mw.fase_masterwork if mw else '',
             'approvvigionamento': {'tipo_approvvigionamento': a.tipo_approvvigionamento if a else 'DA_CLASSIFICARE',
                                     'unita_misura': a.unita_misura if a else ''},
             'lunghezza_barra_mm': p.lunghezza_barra_mm if p else None,
@@ -3981,7 +3983,8 @@ def api_ricerca_mappa_codici_masterwork():
                              MappaCodiceMasterWork.codice_ironproduction.ilike(like)))
              .order_by(MappaCodiceMasterWork.codice_masterwork).limit(30).all())
     q_lower = q.lower()
-    lista = [{'codice_masterwork': m.codice_masterwork, 'codice_ironproduction': m.codice_ironproduction} for m in righe]
+    lista = [{'codice_masterwork': m.codice_masterwork, 'codice_ironproduction': m.codice_ironproduction,
+              'fase_masterwork': m.fase_masterwork} for m in righe]
     lista.sort(key=lambda r: (0 if r['codice_masterwork'].lower().startswith(q_lower) else 1, r['codice_masterwork']))
     return jsonify(lista)
 
@@ -3996,10 +3999,18 @@ def api_mappa_codice_masterwork_upsert():
     questo codice_ironproduction, la crea se non c'è, la cancella se il
     valore mandato è vuoto (campo svuotato in tabella = nessuna
     corrispondenza necessaria).
+
+    'fase_masterwork' FACOLTATIVA — da valorizzare quando lo STESSO
+    codice_masterwork (es. 'PINX110') serve a PIU' righe diverse di questa
+    tabella (PINX110-A, PINX110-B, PINX110 stesso...), ciascuna una fase
+    diversa dello stesso pezzo fisico su MasterWork: senza distinguerle,
+    ogni dichiarazione di quel codice — qualunque fase fosse davvero —
+    finiva tradotta sempre nello stesso componente IronProduction.
     """
     d = request.get_json(force=True)
     codice_ip = (d.get('codice_ironproduction') or '').strip()
     codice_mw = (d.get('codice_masterwork') or '').strip()
+    fase_mw = (d.get('fase_masterwork') or '').strip() or None
     if not codice_ip:
         return jsonify({'errore': True, 'messaggio': 'Codice IronProduction mancante'}), 400
 
@@ -4013,15 +4024,18 @@ def api_mappa_codice_masterwork_upsert():
 
     conflitto = MappaCodiceMasterWork.query.filter(
         MappaCodiceMasterWork.codice_masterwork == codice_mw,
+        MappaCodiceMasterWork.fase_masterwork == fase_mw,
         MappaCodiceMasterWork.codice_ironproduction != codice_ip).first()
     if conflitto:
         return jsonify({'errore': True,
-                         'messaggio': f'Il codice MasterWork "{codice_mw}" è già associato a "{conflitto.codice_ironproduction}"'}), 409
+                         'messaggio': f'"{codice_mw}"' + (f' (fase "{fase_mw}")' if fase_mw else '') +
+                                      f' è già associato a "{conflitto.codice_ironproduction}"'}), 409
 
     if esistente:
         esistente.codice_masterwork = codice_mw
+        esistente.fase_masterwork = fase_mw
     else:
-        db.session.add(MappaCodiceMasterWork(codice_ironproduction=codice_ip, codice_masterwork=codice_mw))
+        db.session.add(MappaCodiceMasterWork(codice_ironproduction=codice_ip, codice_masterwork=codice_mw, fase_masterwork=fase_mw))
     db.session.commit()
     return jsonify({'ok': True})
 

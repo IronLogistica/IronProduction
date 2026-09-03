@@ -1309,13 +1309,34 @@ class MappaCodiceMasterWork(db.Model):
     altrimenti _registra_evento_consuntivo non trova nessun componente
     corrispondente nella distinta base e l'evento non fa avanzare
     correttamente l'Ordine di Produzione né scarica i materiali giusti.
+
+    BUG REALE TROVATO E CORRETTO: lo stesso codice_masterwork può avere
+    PIU' fasi diverse in anagrafica_articoli (es. 'PINX110' — Fase A:
+    Saldatura Tappo, Fase B: Molatura Tappo e Satinatura, Fase C:
+    Saldatura Finale) — ciascuna corrisponde a un componente DIVERSO
+    della distinta base IronProduction (PINX110-A, PINX110-B, PINX110).
+    Una mappa con solo codice_masterwork, senza distinguere la fase,
+    traduceva OGNI dichiarazione di 'PINX110' (qualunque fase fosse
+    davvero) sempre nello STESSO codice IronProduction — le tre fasi
+    finivano per caricare tutte insieme lo stesso componente, invece di
+    far avanzare ciascuna il proprio.
+
+    fase_masterwork: NULL = mappa 'generica' (vale per qualunque fase di
+    quel codice — comportamento di prima, per i codici a fase unica che
+    non hanno bisogno di questa distinzione); valorizzata = vale SOLO per
+    dichiarazioni la cui fase corrisponde (confronto tollerante, stesso
+    _fasi_corrispondono già in uso per le fasi in tutto il programma) —
+    più mappe con lo stesso codice_masterwork ma fase diversa possono
+    coesistere, una per ciascun componente reale della distinta.
     """
     __tablename__ = 'mappa_codici_masterwork'
     id = db.Column(db.Integer, primary_key=True)
     codice_ironproduction = db.Column(db.String(100), nullable=False, index=True)
-    codice_masterwork = db.Column(db.String(100), nullable=False, unique=True, index=True)
+    codice_masterwork = db.Column(db.String(100), nullable=False, index=True)
+    fase_masterwork = db.Column(db.String(150), nullable=True)
     note = db.Column(db.String(300), default='')
     creato_il = db.Column(db.DateTime, default=datetime.utcnow)
+    __table_args__ = (db.UniqueConstraint('codice_masterwork', 'fase_masterwork', name='uq_mappa_mw_codice_fase'),)
 
 
 def assicura_unita_misura_articoli():
@@ -1573,6 +1594,56 @@ def assicura_ddt_carico_confermato():
         colonne = {c['name'] for c in inspect(db.engine).get_columns('ddt_carico_wood')}
         if 'confermato' not in colonne:
             db.session.execute(text("ALTER TABLE ddt_carico_wood ADD COLUMN confermato BOOLEAN DEFAULT 1"))
+            db.session.commit()
+
+
+def assicura_mappa_mw_fase():
+    """
+    Migrazione compatibile con DB già esistenti: aggiunge
+    mappa_codici_masterwork.fase_masterwork E rimuove il vecchio vincolo
+    UNIQUE su codice_masterwork da solo (sostituito da uno composto su
+    codice_masterwork + fase_masterwork).
+
+    BUG REALE IN PRODUZIONE: lo stesso codice_masterwork (es. 'PINX110')
+    può avere più fasi diverse — ciascuna corrisponde a un componente
+    DIVERSO della distinta base IronProduction (PINX110-A, PINX110-B,
+    PINX110) — ma la mappa permetteva UNA SOLA riga per codice_masterwork,
+    quindi ogni dichiarazione (qualunque fase fosse) veniva tradotta
+    sempre nello stesso componente IronProduction: le tre fasi finivano
+    per caricare tutte insieme lo stesso pezzo.
+
+    Il vecchio vincolo va cercato per nome REALE (non indovinato) — il
+    nome esatto assegnato da Postgres a un vincolo UNIQUE su una singola
+    colonna può variare — prima di poterlo rimuovere: senza toglierlo,
+    il database rifiuterebbe comunque una seconda mappa con lo stesso
+    codice_masterwork e fase diversa.
+    """
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE mappa_codici_masterwork ADD COLUMN IF NOT EXISTS fase_masterwork VARCHAR(150)"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        try:
+            nome_vincolo = db.session.execute(text("""
+                SELECT tc.constraint_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name AND tc.table_name = kcu.table_name
+                WHERE tc.table_name = 'mappa_codici_masterwork' AND tc.constraint_type = 'UNIQUE'
+                GROUP BY tc.constraint_name
+                HAVING COUNT(*) = 1 AND MAX(kcu.column_name) = 'codice_masterwork'
+            """)).scalar()
+            if nome_vincolo:
+                db.session.execute(text(f'ALTER TABLE mappa_codici_masterwork DROP CONSTRAINT "{nome_vincolo}"'))
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('mappa_codici_masterwork')}
+        if 'fase_masterwork' not in colonne:
+            db.session.execute(text("ALTER TABLE mappa_codici_masterwork ADD COLUMN fase_masterwork VARCHAR(150)"))
             db.session.commit()
 
 
