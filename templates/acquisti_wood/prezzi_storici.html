@@ -61,10 +61,100 @@
       </div>
       <div id="ps-manuale-esito" style="font-size:12px;margin-top:10px"></div>
     </div>
+
+    <div style="border:1.5px solid var(--accent2);border-radius:10px;padding:16px;margin-top:20px">
+      <div style="font-weight:700;margin-bottom:8px;color:var(--accent2)">💳 Fido Fornitore (il "castelletto")</div>
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+        L'esposizione finanziaria massima verso questo fornitore — non un tetto di quantità/materiale. Quando
+        crei un ordine da Ordini Fornitori, se lo superi ricevi un avviso (mai un blocco).
+      </p>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end">
+        <div style="position:relative">
+          <label class="modal-label" style="margin-top:0">Fornitore</label>
+          <input id="fido-fornitore" type="text" placeholder="Fornitore..." autocomplete="off"
+                 style="width:220px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)"
+                 oninput="_fidoFornitoreRicercaInput(this)" onfocus="_fidoFornitoreRicercaInput(this)">
+          <div id="fido-fornitore-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+        </div>
+        <div>
+          <label class="modal-label" style="margin-top:0">Fido massimo (€)</label>
+          <input id="fido-massimo" type="number" step="0.01" min="0" placeholder="€" style="width:140px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <div style="flex:1;min-width:180px">
+          <label class="modal-label" style="margin-top:0">Note (facoltative)</label>
+          <input id="fido-note" type="text" placeholder="Note..." style="width:100%;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <button class="btn btn-primary" onclick="salvaFidoFornitore()">💾 Salva Fido</button>
+      </div>
+      <div id="fido-esposizione-attuale" style="font-size:12px;margin-top:10px;color:var(--text-dim)"></div>
+      <div id="fido-esito" style="font-size:12px;margin-top:6px"></div>
+    </div>
   </div>
 </div>
 {% endblock %}
 {% block scripts %}
+let _fidoFornitoreTimer = null;
+async function _fidoFornitoreRicercaInput(input){
+  const dropdown = document.getElementById('fido-fornitore-dropdown');
+  const q = input.value.trim();
+  clearTimeout(_fidoFornitoreTimer);
+  _fidoFornitoreTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/fornitori_wood/ricerca?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){ dropdown.style.display = 'none'; return; }
+    dropdown.innerHTML = risultati.map(f => `<div class="wms-item" onmousedown="_fidoFornitoreScelto('${f.replace(/'/g,"\\'")}')"><div>${f}</div></div>`).join('');
+    _posizionaDropdown('fido-fornitore-dropdown', input);
+    dropdown.style.display = 'block';
+  }, 200);
+}
+async function _fidoFornitoreScelto(nome){
+  document.getElementById('fido-fornitore').value = nome;
+  document.getElementById('fido-fornitore-dropdown').style.display = 'none';
+  await caricaFidoAttuale(nome);
+}
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('fido-fornitore-dropdown');
+  if(dropdown && dropdown.style.display !== 'none' && e.target !== document.getElementById('fido-fornitore') && !dropdown.contains(e.target)){
+    dropdown.style.display = 'none';
+  }
+});
+
+async function caricaFidoAttuale(nome){
+  const box = document.getElementById('fido-esposizione-attuale');
+  if(!nome){ box.textContent = ''; return; }
+  try{
+    const r = await fetch('/api/fornitori_wood/' + encodeURIComponent(nome) + '/fido');
+    const d = await r.json();
+    document.getElementById('fido-massimo').value = d.fido_massimo != null ? d.fido_massimo : '';
+    document.getElementById('fido-note').value = d.note || '';
+    box.innerHTML = `Esposizione attuale (ordini aperti non ricevuti): <b>€${d.esposizione_attuale.toLocaleString('it-IT')}</b>`;
+  }catch(e){
+    box.textContent = '';
+  }
+}
+
+async function salvaFidoFornitore(){
+  const esito = document.getElementById('fido-esito');
+  const fornitore = document.getElementById('fido-fornitore').value.trim();
+  const fidoMassimo = document.getElementById('fido-massimo').value;
+  const note = document.getElementById('fido-note').value.trim();
+  if(!fornitore){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Indica il fornitore.'; return; }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Salvataggio...';
+  try{
+    const r = await fetch('/api/fornitori_wood/fido', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({fornitore, fido_massimo: fidoMassimo || null, note})});
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ ' + (d.error || 'Errore.'); return; }
+    esito.style.color = '#1a9e5c'; esito.textContent = `✅ Fido salvato per ${fornitore}.`;
+    caricaFidoAttuale(fornitore);
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
+
 async function anteprimaImportPrezzi(){
   const fileInput = document.getElementById('ps-file');
   const esito = document.getElementById('ps-import-esito');
