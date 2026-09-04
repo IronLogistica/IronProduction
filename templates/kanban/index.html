@@ -6,9 +6,18 @@
   <div class="page-title">{{ info.icona }} {{ info.label }}</div>
   <input class="search-box" type="text" placeholder="🔍 Cerca prodotto..." oninput="filterTable(this.value)">
   <button class="btn btn-success" onclick="openModalCreaKanban('{{ sheet_key }}')">➕ Nuovo Kanban</button>
+  <button class="btn btn-ghost" onclick="apriRinominaGruppoCorrente()">✏️ Rinomina gruppo</button>
+  {% if stats.tot == 0 %}
+  <button class="btn btn-ghost" onclick="eliminaGruppoCorrente()">✕ Elimina gruppo</button>
+  {% endif %}
   <button class="btn btn-ghost" id="btn-sync-wms" onclick="sincronizzaWmsTutti()">🔄 Aggiorna stock WMS</button>
   <button class="btn btn-primary" onclick="showToast('💾 Modifiche salvate automaticamente nel DB')">💾 Salvato</button>
 </div>
+<script>
+  const GRUPPO_CORRENTE = {url_key: '{{ sheet_key }}', label: {{ info.label|tojson }}, icona: {{ info.icona|tojson }}, n_prodotti: {{ stats.tot }}};
+  function apriRinominaGruppoCorrente(){ openModalRinominaGruppo(GRUPPO_CORRENTE); }
+  function eliminaGruppoCorrente(){ eliminaGruppoAttivo(GRUPPO_CORRENTE); }
+</script>
 
 {# ══ STATS ══ #}
 <div class="kanban-stats">

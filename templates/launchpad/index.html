@@ -45,7 +45,6 @@
     </div>
     {% endfor %}
 
-    {% if kanban_gruppi %}
     <div class="lp-card">
       <div class="lp-card-header" style="border-top:3px solid #d9a441">
         <span class="icona">🗂️</span>
@@ -60,9 +59,12 @@
           {% if g.n_prodotti > 0 %}<span class="badge">{{ g.n_prodotti }}</span>{% endif %}
         </a>
         {% endfor %}
+        <div class="lp-tile" style="cursor:pointer;color:var(--steel2,#4d9fd6)" onclick="openModalAggiungiGruppo()">
+          <span class="icona">➕</span>
+          <span>Nuovo Gruppo Kanban</span>
+        </div>
       </div>
     </div>
-    {% endif %}
   </div>
 </div>
 {% endblock %}

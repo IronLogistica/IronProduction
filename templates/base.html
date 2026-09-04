@@ -18,11 +18,6 @@
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--text)}
   .app{display:flex;height:100vh;overflow:hidden}
-  /* SIDEBAR */
-  .sidebar{width:224px;min-width:200px;background:var(--dark);display:flex;flex-direction:column;overflow-y:auto;box-shadow:3px 0 16px rgba(0,0,0,.5);border-right:1px solid var(--border)}
-  .sidebar-logo{padding:16px 14px 12px;background:var(--dark2);border-bottom:2px solid var(--accent);font-size:13px;font-weight:700}
-  .sidebar-logo .logo-icon{font-size:22px}
-  .sidebar-logo .logo-title{color:var(--steel2);font-size:11px;margin-top:2px}
   .nav-group{padding:10px 0 4px}
   .nav-group-header{display:flex;align-items:center;justify-content:space-between;padding:0 10px 4px 14px}
   .nav-group-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);font-weight:700}
@@ -182,74 +177,6 @@
 </head>
 <body>
 <div class="app">
-<nav class="sidebar">
-  <div class="sidebar-logo">
-    <div class="logo-icon">🏗️</div>
-    <div style="font-size:13px;margin:4px 0 2px;color:#e0eefc">MES CARPENTERIA</div>
-    <div class="logo-title">MasterProduction v2.0</div>
-  </div>
-  <a class="nav-item {% if active=='launchpad' %}active{% endif %}" href="/launchpad" style="font-weight:700"><span class="nav-icon">🏠</span> Home (tutte le pagine)</a>
-  <div class="nav-group">
-    <div class="nav-group-header"><div class="nav-group-label">Produzione</div></div>
-    <a class="nav-item {% if active=='produzione_pp' %}active{% endif %}" href="/ordini-produzione"><span class="nav-icon">🏭</span> Ordini Produzione</a>
-    <a class="nav-item {% if active=='liste_lavoro' %}active{% endif %}" href="/liste-lavoro"><span class="nav-icon">📋</span> Ordini di Lavoro</a>
-    <a class="nav-item {% if active=='situazione_op' %}active{% endif %}" href="/ordini-produzione/situazione"><span class="nav-icon">🗂️</span> Situazione (card)</a>
-    <a class="nav-item {% if active=='dichiarazione_produzione' %}active{% endif %}" href="/dichiarazione-produzione"><span class="nav-icon">✅</span> Dichiarazione Produzione</a>
-    <a class="nav-item" href="/totem/alessandro"><span class="nav-icon">🖥️</span> Totem Alessandro</a>
-    <a class="nav-item {% if active=='rietichettatura' %}active{% endif %}" href="/rietichettatura"><span class="nav-icon">🏷️</span> Rietichettatura</a>
-    <a class="nav-item {% if active=='documentazione_articolo' %}active{% endif %}" href="/documentazione-articolo"><span class="nav-icon">📚</span> Documentazione Articolo</a>
-    <a class="nav-item {% if active_page=='monitor' %}active{% endif %}" href="/monitor"><span class="nav-icon">⚙️</span> Monitor</a>
-    <a class="nav-item {% if active=='kpi' %}active{% endif %}" href="/kpi"><span class="nav-icon">📈</span> Cruscotto KPI</a>
-    <a class="nav-item {% if active=='impostazioni_contabili' %}active{% endif %}" href="/impostazioni-contabili"><span class="nav-icon">🧾</span> Soglie / Conti Contabili</a>
-    <a class="nav-item {% if active=='alert-scorte' %}active{% endif %}" href="/alert-scorte"><span class="nav-icon">🚨</span> Alert Scorte Codici Padre</a>
-    <a class="nav-item {% if active=='commerciale_disponibilita' %}active{% endif %}" href="/commerciale/disponibilita"><span class="nav-icon">📦</span> Disponibilità (Commerciale)</a>
-    <a class="nav-item {% if active=='commesse' %}active{% endif %}" href="/commesse"><span class="nav-icon">📑</span> Commesse</a>
-    <a class="nav-item" href="/postvendita/situazione"><span class="nav-icon">📋</span> Situazione (Post-Vendita)</a>
-  </div>
-  <div class="nav-group" id="nav-kanban-gruppi">
-    <div class="nav-group-header">
-      <div class="nav-group-label">Kanban Gruppi</div>
-      <div class="nav-group-actions">
-        <button class="nav-group-btn" title="Aggiungi gruppo" onclick="openModalAggiungiGruppo()">＋</button>
-        <button class="nav-group-btn btn-edit" id="btn-edit-group" title="Rinomina gruppo attivo" onclick="openModalRinominaGruppo()">✏️</button>
-        <button class="nav-group-btn btn-del-group" id="btn-del-active-group" title="Elimina gruppo attivo" onclick="eliminaGruppoAttivo()">✕</button>
-      </div>
-    </div>
-    {% for g in kanban_gruppi %}
-    <a class="nav-item {% if active=='kb-'+g.url_key %}active{% endif %}" href="/kanban/{{ g.url_key }}"
-       data-url-key="{{ g.url_key }}" data-label="{{ g.label }}" data-icona="{{ g.icona }}" data-has-prodotti="{{ g.n_prodotti }}">
-      <span class="nav-icon">{{ g.icona }}</span> {{ g.label }}
-      {% if g.n_prodotti > 0 %}<span style="margin-left:auto;font-size:9px;background:rgba(30,111,165,.3);border-radius:8px;padding:1px 5px;color:var(--steel2)">{{ g.n_prodotti }}</span>{% endif %}
-    </a>
-    {% endfor %}
-  </div>
-  <div class="nav-group">
-    <div class="nav-group-header"><div class="nav-group-label">Commesse</div></div>
-        <a class="nav-item {% if active=='terzisti' %}active{% endif %}" href="/terzisti"><span class="nav-icon">🔨</span> Terzisti</a>
-        <a class="nav-item" href="/terzisti/spedizioni"><span class="nav-icon">🚚</span> Spedizioni Terzisti</a>
-        <a class="nav-item {% if active=='manutenzione_sistema' %}active{% endif %}" href="/manutenzione-sistema"><span class="nav-icon">🧹</span> Manutenzioni di Sistema</a>
-        <a class="nav-item {% if active=='terzisti_da_trattare' %}active{% endif %}" href="/terzisti/da-trattare"><span class="nav-icon">📋</span> Materiali da Trattare</a>
-    <a class="nav-item {% if active=='magazzino' %}active{% endif %}" href="/magazzino"><span class="nav-icon">📦</span> Magazzino</a>
-    <a class="nav-item {% if active=='giacenza_wood' %}active{% endif %}" href="/giacenza-wood"><span class="nav-icon">📊</span> Giacenza Iron Wood</a>
-    <a class="nav-item {% if active=='inventario' %}active{% endif %}" href="/inventario"><span class="nav-icon">📋</span> Inventario</a>
-    <a class="nav-item" href="/inventario/kanban"><span class="nav-icon">🗂️</span> Kanban Inventario</a>
-    <a class="nav-item" href="/gantt-centri-costo"><span class="nav-icon">📊</span> Gantt Centri di Costo</a>
-    <a class="nav-item" href="/gantt-generale"><span class="nav-icon">🗓️</span> Pianificazione Generale</a>
-    <a class="nav-item" href="/matrice-competenze"><span class="nav-icon">🧩</span> Matrice Competenze</a>
-    <a class="nav-item {% if active=='centri_costo' %}active{% endif %}" href="/centri-costo-wood"><span class="nav-icon">🏭</span> Centri di Costo</a>
-    <a class="nav-item {% if active=='costo_standard' %}active{% endif %}" href="/costo-standard-wood"><span class="nav-icon">💰</span> Costo Standard</a>
-    <a class="nav-item {% if active=='acquisti_wood' %}active{% endif %}" href="/ordini-acquisto-wood"><span class="nav-icon">🛒</span> Ordini di Acquisto</a>
-    <a class="nav-item" href="/acquisti-da-fabbisogno"><span class="nav-icon">🧮</span> Acquisti da Fabbisogno</a>
-    <a class="nav-item" href="/materiale-in-arrivo"><span class="nav-icon">🚛</span> Materiale in Arrivo</a>
-    <a class="nav-item" href="/anagrafica-azienda-wood"><span class="nav-icon">🏢</span> Anagrafica Iron Wood</a>
-    <a class="nav-item" href="/prezzi-storici-wood"><span class="nav-icon">💰</span> Prezzi Storici</a>
-    <a class="nav-item" href="/acquisti-consumabili"><span class="nav-icon">🧰</span> Acquisti Consumabili</a>
-    <a class="nav-item" href="/acquisti-sicurezza"><span class="nav-icon">🦺</span> Acquisti Sicurezza</a>
-    <a class="nav-item {% if active=='parametri_lavorazione' %}active{% endif %}" href="/parametri-lavorazione-wood"><span class="nav-icon">⚙️</span> Parametri di Lavorazione</a>
-    <a class="nav-item {% if active=='contapieghe' %}active{% endif %}" href="/contapieghe-wood"><span class="nav-icon">🔧</span> Contapieghe</a>
-    <a class="nav-item {% if active=='esploratore_prodotto' %}active{% endif %}" href="/esploratore-prodotto"><span class="nav-icon">🌳</span> Esploratore Prodotto</a>
-  </div>
-</nav>
 
 <!-- ══ MODAL: AGGIUNGI GRUPPO ══ -->
 <div class="modal-overlay" id="modalAggiungi">
@@ -369,6 +296,7 @@
     </div>
     <div style="display:flex;gap:8px;align-items:center">
       <span class="topbar-badge">{{ topbar_badge|default('') }}</span>
+      <a class="btn btn-ghost" href="/launchpad" title="Torna al Launchpad">🏠 Home</a>
       <a class="btn btn-ghost" href="/acquisti-da-fabbisogno">🧮 Acquisti</a>
       <a class="btn btn-ghost" href="/dichiarazione-produzione" style="color:#e8a33d;border-color:#e8a33d">🔒 Area Capo</a>
       <button class="btn btn-ghost" onclick="window.print()">🖨️ Stampa</button>
@@ -391,15 +319,10 @@ function showToast(msg,err){
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 function openModal(id){document.getElementById(id).classList.add('open');}
 
-// ── Stato gruppo attivo ──────────────────────────────────────────────────────
-const activeItem        = document.querySelector('.nav-item.active[data-url-key]');
-const activeUrlKey      = activeItem ? activeItem.dataset.urlKey : null;
-const activeHasProdotti = activeItem ? parseInt(activeItem.dataset.hasProdotti||'0') : 0;
-const activeLabel       = activeItem ? activeItem.dataset.label : '';
-const activeIcona       = activeItem ? activeItem.dataset.icona : '📦';
-
-const btnDel = document.getElementById('btn-del-active-group');
-if(btnDel && (!activeUrlKey || activeHasProdotti > 0)) btnDel.classList.add('disabled');
+// ── Stato gruppo attivo — passato ESPLICITAMENTE da chi apre la modale
+// (dalla pagina del gruppo Kanban stesso, vedi GRUPPO_CORRENTE in
+// kanban/index.html) — non più letto dalla sidebar, che non c'è più.
+let _gruppoPerModale = null;
 
 // ── MODAL: Aggiungi gruppo ───────────────────────────────────────────────────
 function openModalAggiungiGruppo(){
@@ -590,20 +513,21 @@ document.addEventListener('click', e => {
 });
 
 // ── MODAL: Rinomina gruppo (PIN) ─────────────────────────────────────────────
-function openModalRinominaGruppo(){
-  if(!activeUrlKey){showToast('⚠️ Nessun gruppo selezionato',true);return;}
-  document.getElementById('inputRinominaNome').value  = activeLabel;
-  document.getElementById('inputRinominaIcona').value = activeIcona;
+function openModalRinominaGruppo(gruppo){
+  if(!gruppo || !gruppo.url_key){showToast('⚠️ Nessun gruppo selezionato',true);return;}
+  _gruppoPerModale = gruppo;
+  document.getElementById('inputRinominaNome').value  = gruppo.label;
+  document.getElementById('inputRinominaIcona').value = gruppo.icona;
   document.getElementById('pinRinomina').value = '';
   openModal('modalRinomina');
   setTimeout(()=>document.getElementById('inputRinominaNome').focus(),100);
 }
 function confermRinominaGruppo(){
   const label = document.getElementById('inputRinominaNome').value.trim();
-  const icona = document.getElementById('inputRinominaIcona').value.trim() || activeIcona;
+  const icona = document.getElementById('inputRinominaIcona').value.trim() || _gruppoPerModale.icona;
   const pin   = document.getElementById('pinRinomina').value;
   if(!label){showToast('⚠️ Inserisci un nome',true);return;}
-  fetch('/api/kanban-gruppi/'+encodeURIComponent(activeUrlKey),{method:'PUT',
+  fetch('/api/kanban-gruppi/'+encodeURIComponent(_gruppoPerModale.url_key),{method:'PUT',
     headers:{'Content-Type':'application/json'},body:JSON.stringify({label,icona,pin})})
   .then(r=>r.json()).then(d=>{
     if(d.ok){showToast('✅ Rinominato in "'+label+'"');setTimeout(()=>location.reload(),700);}
@@ -613,22 +537,23 @@ function confermRinominaGruppo(){
 }
 
 // ── MODAL: Elimina gruppo ────────────────────────────────────────────────────
-function eliminaGruppoAttivo(){
-  if(!activeUrlKey || activeHasProdotti > 0) return;
-  document.getElementById('nomeGruppoDaEliminare').textContent = activeLabel;
+function eliminaGruppoAttivo(gruppo){
+  if(!gruppo || !gruppo.url_key || gruppo.n_prodotti > 0) return;
+  _gruppoPerModale = gruppo;
+  document.getElementById('nomeGruppoDaEliminare').textContent = gruppo.label;
   openModal('modalElimina');
 }
 function confermEliminaGruppo(){
-  fetch('/api/kanban-gruppi/'+encodeURIComponent(activeUrlKey),{method:'DELETE'})
+  fetch('/api/kanban-gruppi/'+encodeURIComponent(_gruppoPerModale.url_key),{method:'DELETE'})
   .then(r=>r.json()).then(d=>{
-    if(d.ok){showToast('🗑️ Gruppo eliminato');setTimeout(()=>window.location.href='/',900);}
+    if(d.ok){showToast('🗑️ Gruppo eliminato');setTimeout(()=>window.location.href='/launchpad',900);}
     else showToast('❌ '+(d.error||'Errore'),true);
   }).catch(()=>showToast('❌ Errore di rete',true));
 }
 
 // ── MODAL: Crea Kanban (PIN) ─────────────────────────────────────────────────
 function openModalCreaKanban(sheetKey){
-  document.getElementById('creaKanbanSheetKey').value = sheetKey || activeUrlKey || '';
+  document.getElementById('creaKanbanSheetKey').value = sheetKey || '';
   document.getElementById('creaKanbanNome').value    = '';
   document.getElementById('creaKanbanLotto').value   = '0';
   document.getElementById('creaKanbanRiserva').value = '0';
