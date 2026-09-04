@@ -4,6 +4,63 @@ from flask import Flask, redirect, url_for, render_template
 from config import Config
 from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate, assicura_lunghezze_barra_default, assicura_unita_misura_articoli, assicura_finiti_is_kanban, assicura_lead_time_esterno_centri, assicura_ordinato_cliente_wms, assicura_operatore_evento_consuntivo, assicura_contestuale_distinta_base, assicura_event_id_varianza_produzione, assicura_contapieghe_matrici, migra_parametri_lavorazione_flat, assicura_bandiera_stato_op, assicura_import_consumabili_sicurezza, assicura_categoria_acquisto_config, assicura_lotto_trasferimento_minimo, assicura_ddt_carico_confermato, assicura_mappa_mw_fase, assicura_origine_ordine_acquisto_wood, assicura_campi_stampa_ordine_fornitore
 
+LAUNCHPAD_GRUPPI = [
+    {'nome': 'Produzione', 'icona': '🏭', 'colore': '#1e6fa5', 'voci': [
+        {'label': 'Ordini Produzione', 'icona': '🏭', 'url': '/ordini-produzione'},
+        {'label': 'Ordini di Lavoro', 'icona': '📋', 'url': '/liste-lavoro'},
+        {'label': 'Situazione (card)', 'icona': '🗂️', 'url': '/ordini-produzione/situazione'},
+        {'label': 'Dichiarazione Produzione', 'icona': '✅', 'url': '/dichiarazione-produzione'},
+        {'label': 'Totem Alessandro', 'icona': '🖥️', 'url': '/totem/alessandro'},
+        {'label': 'Rietichettatura', 'icona': '🏷️', 'url': '/rietichettatura'},
+        {'label': 'Documentazione Articolo', 'icona': '📚', 'url': '/documentazione-articolo'},
+        {'label': 'Monitor', 'icona': '⚙️', 'url': '/monitor'},
+    ]},
+    {'nome': 'Pianificazione & KPI', 'icona': '📈', 'colore': '#2589c7', 'voci': [
+        {'label': 'Cruscotto KPI', 'icona': '📈', 'url': '/kpi'},
+        {'label': 'Gantt Centri di Costo', 'icona': '📊', 'url': '/gantt-centri-costo'},
+        {'label': 'Pianificazione Generale', 'icona': '🗓️', 'url': '/gantt-generale'},
+        {'label': 'Alert Scorte Codici Padre', 'icona': '🚨', 'url': '/alert-scorte'},
+    ]},
+    {'nome': 'Magazzino', 'icona': '📦', 'colore': '#1a9e5c', 'voci': [
+        {'label': 'Magazzino', 'icona': '📦', 'url': '/magazzino'},
+        {'label': 'Giacenza Iron Wood', 'icona': '📊', 'url': '/giacenza-wood'},
+        {'label': 'Inventario', 'icona': '📋', 'url': '/inventario'},
+        {'label': 'Kanban Inventario', 'icona': '🗂️', 'url': '/inventario/kanban'},
+    ]},
+    {'nome': 'Acquisti', 'icona': '🛒', 'colore': '#e6b800', 'voci': [
+        {'label': 'Ordini di Acquisto', 'icona': '🛒', 'url': '/ordini-acquisto-wood'},
+        {'label': 'Acquisti da Fabbisogno', 'icona': '🧮', 'url': '/acquisti-da-fabbisogno'},
+        {'label': 'Materiale in Arrivo', 'icona': '🚛', 'url': '/materiale-in-arrivo'},
+        {'label': 'Anagrafica Iron Wood', 'icona': '🏢', 'url': '/anagrafica-azienda-wood'},
+        {'label': 'Prezzi Storici', 'icona': '💰', 'url': '/prezzi-storici-wood'},
+        {'label': 'Acquisti Consumabili', 'icona': '🧰', 'url': '/acquisti-consumabili'},
+        {'label': 'Acquisti Sicurezza', 'icona': '🦺', 'url': '/acquisti-sicurezza'},
+        {'label': 'Soglie / Conti Contabili', 'icona': '🧾', 'url': '/impostazioni-contabili'},
+    ]},
+    {'nome': 'Terzisti', 'icona': '🔨', 'colore': '#e8760a', 'voci': [
+        {'label': 'Terzisti', 'icona': '🔨', 'url': '/terzisti'},
+        {'label': 'Spedizioni Terzisti', 'icona': '🚚', 'url': '/terzisti/spedizioni'},
+        {'label': 'Materiali da Trattare', 'icona': '📋', 'url': '/terzisti/da-trattare'},
+    ]},
+    {'nome': 'Ingegneria & Costi', 'icona': '⚙️', 'colore': '#7a58c9', 'voci': [
+        {'label': 'Centri di Costo', 'icona': '🏭', 'url': '/centri-costo-wood'},
+        {'label': 'Costo Standard', 'icona': '💰', 'url': '/costo-standard-wood'},
+        {'label': 'Parametri di Lavorazione', 'icona': '⚙️', 'url': '/parametri-lavorazione-wood'},
+        {'label': 'Contapieghe', 'icona': '🔧', 'url': '/contapieghe-wood'},
+        {'label': 'Esploratore Prodotto', 'icona': '🌳', 'url': '/esploratore-prodotto'},
+        {'label': 'Matrice Competenze', 'icona': '🧩', 'url': '/matrice-competenze'},
+    ]},
+    {'nome': 'Commerciale & Post-Vendita', 'icona': '📋', 'colore': '#c0392b', 'voci': [
+        {'label': 'Commesse', 'icona': '📑', 'url': '/commesse'},
+        {'label': 'Disponibilità (Commerciale)', 'icona': '📦', 'url': '/commerciale/disponibilita'},
+        {'label': 'Situazione (Post-Vendita)', 'icona': '📋', 'url': '/postvendita/situazione'},
+    ]},
+    {'nome': 'Sistema', 'icona': '🧹', 'colore': '#6b8aaa', 'voci': [
+        {'label': 'Manutenzioni di Sistema', 'icona': '🧹', 'url': '/manutenzione-sistema'},
+    ]},
+]
+
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
@@ -37,63 +94,9 @@ def create_app():
             macchine = get_macchine_monitor()
         except Exception:
             macchine = []
-        return {'now': datetime.now().strftime('%d/%m/%y'), 'kanban_gruppi': gruppi, 'macchine_monitor': macchine}
+        return {'now': datetime.now().strftime('%d/%m/%y'), 'kanban_gruppi': gruppi, 'macchine_monitor': macchine,
+                'sidebar_gruppi': LAUNCHPAD_GRUPPI}
 
-    LAUNCHPAD_GRUPPI = [
-        {'nome': 'Produzione', 'icona': '🏭', 'colore': '#1e6fa5', 'voci': [
-            {'label': 'Ordini Produzione', 'icona': '🏭', 'url': '/ordini-produzione'},
-            {'label': 'Ordini di Lavoro', 'icona': '📋', 'url': '/liste-lavoro'},
-            {'label': 'Situazione (card)', 'icona': '🗂️', 'url': '/ordini-produzione/situazione'},
-            {'label': 'Dichiarazione Produzione', 'icona': '✅', 'url': '/dichiarazione-produzione'},
-            {'label': 'Totem Alessandro', 'icona': '🖥️', 'url': '/totem/alessandro'},
-            {'label': 'Rietichettatura', 'icona': '🏷️', 'url': '/rietichettatura'},
-            {'label': 'Documentazione Articolo', 'icona': '📚', 'url': '/documentazione-articolo'},
-            {'label': 'Monitor', 'icona': '⚙️', 'url': '/monitor'},
-        ]},
-        {'nome': 'Pianificazione & KPI', 'icona': '📈', 'colore': '#2589c7', 'voci': [
-            {'label': 'Cruscotto KPI', 'icona': '📈', 'url': '/kpi'},
-            {'label': 'Gantt Centri di Costo', 'icona': '📊', 'url': '/gantt-centri-costo'},
-            {'label': 'Pianificazione Generale', 'icona': '🗓️', 'url': '/gantt-generale'},
-            {'label': 'Alert Scorte Codici Padre', 'icona': '🚨', 'url': '/alert-scorte'},
-        ]},
-        {'nome': 'Magazzino', 'icona': '📦', 'colore': '#1a9e5c', 'voci': [
-            {'label': 'Magazzino', 'icona': '📦', 'url': '/magazzino'},
-            {'label': 'Giacenza Iron Wood', 'icona': '📊', 'url': '/giacenza-wood'},
-            {'label': 'Inventario', 'icona': '📋', 'url': '/inventario'},
-            {'label': 'Kanban Inventario', 'icona': '🗂️', 'url': '/inventario/kanban'},
-        ]},
-        {'nome': 'Acquisti', 'icona': '🛒', 'colore': '#e6b800', 'voci': [
-            {'label': 'Ordini di Acquisto', 'icona': '🛒', 'url': '/ordini-acquisto-wood'},
-            {'label': 'Acquisti da Fabbisogno', 'icona': '🧮', 'url': '/acquisti-da-fabbisogno'},
-            {'label': 'Materiale in Arrivo', 'icona': '🚛', 'url': '/materiale-in-arrivo'},
-            {'label': 'Anagrafica Iron Wood', 'icona': '🏢', 'url': '/anagrafica-azienda-wood'},
-            {'label': 'Prezzi Storici', 'icona': '💰', 'url': '/prezzi-storici-wood'},
-            {'label': 'Acquisti Consumabili', 'icona': '🧰', 'url': '/acquisti-consumabili'},
-            {'label': 'Acquisti Sicurezza', 'icona': '🦺', 'url': '/acquisti-sicurezza'},
-            {'label': 'Soglie / Conti Contabili', 'icona': '🧾', 'url': '/impostazioni-contabili'},
-        ]},
-        {'nome': 'Terzisti', 'icona': '🔨', 'colore': '#e8760a', 'voci': [
-            {'label': 'Terzisti', 'icona': '🔨', 'url': '/terzisti'},
-            {'label': 'Spedizioni Terzisti', 'icona': '🚚', 'url': '/terzisti/spedizioni'},
-            {'label': 'Materiali da Trattare', 'icona': '📋', 'url': '/terzisti/da-trattare'},
-        ]},
-        {'nome': 'Ingegneria & Costi', 'icona': '⚙️', 'colore': '#7a58c9', 'voci': [
-            {'label': 'Centri di Costo', 'icona': '🏭', 'url': '/centri-costo-wood'},
-            {'label': 'Costo Standard', 'icona': '💰', 'url': '/costo-standard-wood'},
-            {'label': 'Parametri di Lavorazione', 'icona': '⚙️', 'url': '/parametri-lavorazione-wood'},
-            {'label': 'Contapieghe', 'icona': '🔧', 'url': '/contapieghe-wood'},
-            {'label': 'Esploratore Prodotto', 'icona': '🌳', 'url': '/esploratore-prodotto'},
-            {'label': 'Matrice Competenze', 'icona': '🧩', 'url': '/matrice-competenze'},
-        ]},
-        {'nome': 'Commerciale & Post-Vendita', 'icona': '📋', 'colore': '#c0392b', 'voci': [
-            {'label': 'Commesse', 'icona': '📑', 'url': '/commesse'},
-            {'label': 'Disponibilità (Commerciale)', 'icona': '📦', 'url': '/commerciale/disponibilita'},
-            {'label': 'Situazione (Post-Vendita)', 'icona': '📋', 'url': '/postvendita/situazione'},
-        ]},
-        {'nome': 'Sistema', 'icona': '🧹', 'colore': '#6b8aaa', 'voci': [
-            {'label': 'Manutenzioni di Sistema', 'icona': '🧹', 'url': '/manutenzione-sistema'},
-        ]},
-    ]
 
     @app.route('/launchpad')
     def launchpad():

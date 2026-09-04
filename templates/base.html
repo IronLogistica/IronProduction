@@ -18,7 +18,26 @@
   *{box-sizing:border-box;margin:0;padding:0}
   body{font-family:'Segoe UI',Arial,sans-serif;background:var(--bg);color:var(--text)}
   .app{display:flex;height:100vh;overflow:hidden}
-  .nav-group{padding:10px 0 4px}
+  /* SIDEBAR — compatta, a gruppi pieghevoli */
+  .sidebar{width:196px;min-width:180px;background:var(--dark);display:flex;flex-direction:column;overflow-y:auto;box-shadow:3px 0 16px rgba(0,0,0,.5);border-right:1px solid var(--border);font-size:12px}
+  .sidebar-logo{padding:12px 12px 10px;background:var(--dark2);border-bottom:2px solid var(--accent);font-size:12px;font-weight:700}
+  .sidebar-logo .logo-icon{font-size:18px}
+  .sidebar-logo .logo-title{color:var(--steel2);font-size:10px;margin-top:2px}
+  .sidebar-home{display:flex;align-items:center;gap:6px;padding:9px 12px;font-weight:700;font-size:12px;color:var(--text);text-decoration:none;border-bottom:1px solid var(--border)}
+  .sidebar-home:hover{background:rgba(255,255,255,.06)}
+  .sb-group{border-bottom:1px solid var(--border)}
+  .sb-group summary{
+    display:flex;align-items:center;gap:6px;padding:8px 12px;cursor:pointer;list-style:none;
+    font-weight:700;font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;user-select:none;
+  }
+  .sb-group summary::-webkit-details-marker{display:none}
+  .sb-group summary .sb-conteggio{margin-left:auto;font-size:9px;font-weight:700;background:rgba(255,255,255,.1);border-radius:8px;padding:1px 6px}
+  .sb-group summary .sb-freccia{font-size:9px;opacity:.6;transition:transform .15s}
+  .sb-group[open] summary .sb-freccia{transform:rotate(90deg)}
+  .sb-item{display:flex;align-items:center;gap:7px;padding:6px 12px 6px 22px;color:var(--text);text-decoration:none;font-size:11.5px;font-weight:500}
+  .sb-item:hover{background:rgba(255,255,255,.06)}
+  .sb-item.active{background:rgba(30,111,165,.22);color:#fff;font-weight:700;border-left:3px solid var(--accent2)}
+  .sb-item .sb-icon{font-size:13px;width:16px;text-align:center;flex-shrink:0}
   .nav-group-header{display:flex;align-items:center;justify-content:space-between;padding:0 10px 4px 14px}
   .nav-group-label{font-size:9px;text-transform:uppercase;letter-spacing:1px;color:var(--text-dim);font-weight:700}
   .nav-group-actions{display:flex;gap:3px;opacity:0;transition:opacity .2s}
@@ -177,6 +196,49 @@
 </head>
 <body>
 <div class="app">
+<nav class="sidebar">
+  <div class="sidebar-logo">
+    <div class="logo-icon">🏗️</div>
+    <div style="font-size:12px;margin:3px 0 1px;color:#e0eefc">MES CARPENTERIA</div>
+    <div class="logo-title">MasterProduction v2.0</div>
+  </div>
+  <a class="sidebar-home" href="/launchpad">🏠 Home / Launchpad</a>
+
+  {% for gruppo in sidebar_gruppi %}
+  <details class="sb-group" open>
+    <summary style="color:{{ gruppo.colore }}">
+      <span class="sb-freccia">▶</span>
+      <span>{{ gruppo.icona }}</span>
+      <span>{{ gruppo.nome }}</span>
+      <span class="sb-conteggio">{{ gruppo.voci|length }}</span>
+    </summary>
+    {% for voce in gruppo.voci %}
+    <a class="sb-item {% if request.path==voce.url %}active{% endif %}" href="{{ voce.url }}">
+      <span class="sb-icon">{{ voce.icona }}</span>
+      <span>{{ voce.label }}</span>
+    </a>
+    {% endfor %}
+  </details>
+  {% endfor %}
+
+  {% if kanban_gruppi %}
+  <details class="sb-group" open>
+    <summary style="color:#d9a441">
+      <span class="sb-freccia">▶</span>
+      <span>🗂️</span>
+      <span>Kanban Gruppi</span>
+      <span class="sb-conteggio">{{ kanban_gruppi|length }}</span>
+    </summary>
+    {% for g in kanban_gruppi %}
+    <a class="sb-item {% if request.path=='/kanban/'+g.url_key %}active{% endif %}" href="/kanban/{{ g.url_key }}">
+      <span class="sb-icon">{{ g.icona }}</span>
+      <span>{{ g.label }}</span>
+      {% if g.n_prodotti > 0 %}<span class="sb-conteggio" style="margin-left:auto">{{ g.n_prodotti }}</span>{% endif %}
+    </a>
+    {% endfor %}
+  </details>
+  {% endif %}
+</nav>
 
 <!-- ══ MODAL: AGGIUNGI GRUPPO ══ -->
 <div class="modal-overlay" id="modalAggiungi">
