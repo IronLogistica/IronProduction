@@ -2361,6 +2361,30 @@ def api_mappa_codici_masterwork_ricerca_catalogo():
         return jsonify({'errore': True, 'messaggio': f'MasterWork irraggiungibile: {e}'}), 502
 
 
+@pp_bp.get('/api/mappa-codici-masterwork/fasi-per-codice')
+def api_mappa_codici_masterwork_fasi_per_codice():
+    """
+    Le fasi REALI di un codice MasterWork esatto — per il menu a tendina
+    'Fase' accanto al campo 'Codice MasterWork': niente testo libero (un
+    errore di battitura romperebbe l'abbinamento in silenzio), solo le
+    fasi in cui quel codice viene davvero lavorato su MasterWork.
+    """
+    codice = (request.args.get('codice') or '').strip()
+    if not codice:
+        return jsonify([])
+    url = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
+    token = current_app.config.get('PP_API_TOKEN', '')
+    if not url or not token:
+        return jsonify({'errore': True, 'messaggio': 'Integrazione MasterWork non configurata (MASTERWORK_URL/PP_API_TOKEN mancanti)'}), 503
+    try:
+        r = requests.get(f'{url}/api/anagrafica_articoli/fasi-per-codice', params={'codice': codice},
+                          headers={'Authorization': f'Bearer {token}'}, timeout=8)
+        r.raise_for_status()
+        return jsonify(r.json())
+    except requests.exceptions.RequestException as e:
+        return jsonify({'errore': True, 'messaggio': f'MasterWork irraggiungibile: {e}'}), 502
+
+
 @pp_bp.get('/api/mappa-codici-masterwork')
 def api_mappa_codici_masterwork_lista():
     righe = MappaCodiceMasterWork.query.order_by(MappaCodiceMasterWork.codice_ironproduction).all()

@@ -296,15 +296,27 @@ def _estrai_articoli(testo):
     Unità di misura supportate: n. / pz. / Nr. / PZ. (case-insensitive partial)
 
     BUG FIX: quantità 80,000 → 80 (non 80000). Vedi _parse_qta().
+
+    BUG REALE TROVATO E CORRETTO: la deduplicazione confrontava ogni riga
+    con TUTTA la cronologia del documento (stesso codice + stessa
+    quantità = scartata) — ma un DDT di rientro può legittimamente
+    contenere PIÙ spedizioni distinte dello stesso codice con la STESSA
+    quantità (es. due lotti da 30 pezzi di T200, riferiti a due DDT di
+    uscita diversi, 506 e 519) — la seconda veniva scartata come se fosse
+    un duplicato, perdendo una riga vera. Ristretta la deduplicazione alle
+    sole righe ADIACENTI (probabile causa originale: un artefatto di
+    estrazione PDF che ripete la riga appena letta) — non più un
+    confronto con l'intero documento.
     """
     testo = _preprocess_righe(testo)
     articoli = []
-    visti = set()
+    ultima_chiave = None
+    ultimo_indice = None
 
     # Pattern UM: n. / pz. / Nr. / PZ. / nr. — con o senza spazio prima del numero
     UM_PAT = r'(?:n|pz|Nr|PZ|nr)\.'
 
-    for riga in testo.split('\n'):
+    for indice, riga in enumerate(testo.split('\n')):
         riga = riga.strip()
         if not riga:
             continue
@@ -325,10 +337,16 @@ def _estrai_articoli(testo):
 
         qta = _parse_qta(m.group(3))
 
-        key = f'{codice}_{qta}'
-        if key in visti:
+        chiave = f'{codice}_{qta}'
+        # 'Adiacente' = riga FISICAMENTE consecutiva nel testo originale
+        # (indice differisce di 1), non solo l'ultima riga che ha dato un
+        # match — due spedizioni vere separate da altre righe (numero DDT,
+        # intestazione magazzino...) non devono mai essere confuse per un
+        # artefatto di estrazione ripetuto.
+        if chiave == ultima_chiave and indice == ultimo_indice + 1:
             continue
-        visti.add(key)
+        ultima_chiave = chiave
+        ultimo_indice = indice
 
         articoli.append({
             'codice': codice,
