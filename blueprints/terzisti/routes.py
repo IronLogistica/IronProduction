@@ -310,61 +310,87 @@ def _estrai_articoli(testo):
     """
 def _estrai_articoli(testo):
     """
-    Estrae lista articoli dal testo DDT.
+    Estrae lista articoli dal testo DDT, insieme al riferimento al DDT DI
+    USCITA specifico di CIASCUNA riga (non uno globale per l'intero
+    documento) — fondamentale per non 'allucinare' un abbinamento: un
+    rientro può contenere più righe con lo stesso codice, ciascuna
+    riferita a una spedizione diversa realmente fatta al fornitore, e
+    l'unico modo di essere SICURI di quale riga appartiene a quale
+    spedizione è leggere il riferimento che il fornitore stesso scrive
+    riga per riga (Vs.doc.(DDTCL) n.:NNN) — non indovinarlo per
+    posizione o per quantità.
 
-    Pattern: CODICE  Descrizione…  UM  QTA[,000]  [Importo]
+    Pattern articolo: CODICE  Descrizione…  UM  QTA[,000]  [Importo]
     Unità di misura supportate: n. / pz. / Nr. / PZ. (case-insensitive partial)
 
     BUG FIX: quantità 80,000 → 80 (non 80000). Vedi _parse_qta().
 
     BUG REALE TROVATO E CORRETTO — deduplicazione rimossa del tutto:
     esisteva un filtro che scartava una riga se stesso codice e stessa
-    quantità erano già comparsi prima nel documento (poi ristretto alle
-    sole righe adiacenti, ma nemmeno quello è una garanzia — TRE
-    consegne vere dello stesso codice, stessa quantità, potrebbero
-    comparire proprio una di fianco all'altra nel testo estratto, e la
-    'adiacenza' da sola non basta a distinguerle da un artefatto). Un
-    DDT di rientro può legittimamente contenere PIÙ spedizioni distinte
-    dello stesso codice con la STESSA quantità, riferite a DDT di uscita
-    diversi (il caso reale segnalato: due lotti da 30 pezzi di T200,
-    riferiti a DDT 506 e 519) — venivano scartate come 'duplicati',
-    perdendo righe vere. Nessuna euristica di deduplicazione qui è
-    davvero sicura: meglio un'eventuale riga doppia visibile e
-    correggibile a mano nell'anteprima, che il rischio silenzioso di
-    perdere una consegna vera.
+    quantità erano già comparsi prima nel documento. Un DDT di rientro
+    può legittimamente contenere PIÙ spedizioni distinte dello stesso
+    codice con la STESSA quantità, riferite a DDT di uscita diversi (il
+    caso reale segnalato: due lotti da 30 pezzi di T200, riferiti a DDT
+    506 e 519) — venivano scartate come 'duplicati', perdendo righe
+    vere. Nessuna euristica di deduplicazione per posizione/adiacenza si
+    è rivelata sicura al 100% (anche 3 consegne vere potrebbero comparire
+    fisicamente una di fianco all'altra) — MEGLIO leggere il riferimento
+    esplicito riga per riga (questa correzione) che indovinare quando
+    scartare: ogni riga ora si abbina alla SUA spedizione reale, non
+    resta più nessun bisogno di 'indovinare' i duplicati.
     """
     testo = _preprocess_righe(testo)
+    righe_testo = testo.split('\n')
     articoli = []
 
     # Pattern UM: n. / pz. / Nr. / PZ. / nr. — con o senza spazio prima del numero
     UM_PAT = r'(?:n|pz|Nr|PZ|nr)\.'
+    RIF_PAT = re.compile(r'Vs\.?\s*doc\.?\s*\(DDTCL\)\D{0,15}(\d+)')
 
-    for riga in testo.split('\n'):
-        riga = riga.strip()
-        if not riga:
+    posizioni_match = []   # (indice_riga, dict_articolo)
+    for indice, riga in enumerate(righe_testo):
+        riga_pulita = riga.strip()
+        if not riga_pulita:
             continue
-
-        # Sicurezza: rimuove eventuali importi residui (2 decimali) a fine riga
-        riga = re.sub(r'\s*\d{1,7},\d{2}\s*$', '', riga)
-
+        riga_pulita = re.sub(r'\s*\d{1,7},\d{2}\s*$', '', riga_pulita)
         m = re.match(
             r'^([A-Za-z][A-Za-z0-9._-]{1,})\s+(.+?)\s+' + UM_PAT + r'\s*([\d\.,]+)(?:\s+[\d\.,]+)?$',
-            riga
+            riga_pulita
         )
         if not m:
             continue
-
         codice = m.group(1)
         if codice in SKIP_TZ or codice.startswith('0') or len(codice) < 2:
             continue
-
-        qta = _parse_qta(m.group(3))
-
-        articoli.append({
+        posizioni_match.append((indice, {
             'codice': codice,
             'desc':   m.group(2).strip(),
-            'qta':    qta,
-        })
+            'qta':    _parse_qta(m.group(3)),
+            'ddt_uscita_riferimento': '',
+        }))
+
+    # Per ogni articolo, cerca il riferimento DDT nel testo compreso tra
+    # QUESTA riga e la PROSSIMA riga articolo (o la fine del documento per
+    # l'ultima) — è lì che il fornitore scrive 'Vs.doc.(DDTCL) n.:NNN'
+    # subito dopo la riga a cui si riferisce.
+    for i, (indice, art) in enumerate(posizioni_match):
+        fine_finestra = posizioni_match[i + 1][0] if i + 1 < len(posizioni_match) else len(righe_testo)
+        finestra = '\n'.join(righe_testo[indice:fine_finestra])
+        m_rif = RIF_PAT.search(finestra)
+        if m_rif:
+            art['ddt_uscita_riferimento'] = m_rif.group(1)
+        elif i == 0:
+            # SOLO per la primissima riga: a volte il riferimento precede il
+            # blocco invece di seguirlo (visto nel PDF reale segnalato) —
+            # cerca anche dall'inizio del documento fino a qui. Non fatto
+            # per le righe successive: rischierebbe di rubare un riferimento
+            # già di competenza della riga precedente (stesso testo, già
+            # cercato nella SUA finestra in avanti).
+            finestra_iniziale = '\n'.join(righe_testo[:indice])
+            m_rif_iniziale = RIF_PAT.search(finestra_iniziale)
+            if m_rif_iniziale:
+                art['ddt_uscita_riferimento'] = m_rif_iniziale.group(1)
+        articoli.append(art)
 
     return articoli
 
@@ -927,8 +953,14 @@ def _abbina_righe_rientro(dati, lav_aperte):
             continue  # nessuna lavorazione aperta per questo codice: riga ignorata (non è un rientro atteso)
 
         scelta = None
-        # Priorità 1: riferimento esplicito al DDT di uscita nel documento.
-        rif = dati.get('ddt_uscita_riferimento') or ''
+        # Priorità 1: riferimento esplicito al DDT di uscita SCRITTO SU
+        # QUESTA RIGA specifica (non un riferimento unico per l'intero
+        # documento — un rientro può avere più righe con lo stesso codice,
+        # ciascuna riferita a una spedizione diversa: usare un riferimento
+        # globale unico per tutte avrebbe abbinato bene al più una riga,
+        # lasciando le altre ambigue anche quando il documento riportava
+        # già la risposta esatta riga per riga).
+        rif = riga.get('ddt_uscita_riferimento') or ''
         if rif:
             per_rif = [c for c in candidati if c['ddt_uscita'] == rif]
             if len(per_rif) == 1:
