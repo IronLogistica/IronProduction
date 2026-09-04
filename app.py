@@ -16,6 +16,7 @@ def create_app():
     from blueprints.magazzino.routes import magazzino_bp
     from blueprints.produzione_pp.routes import pp_bp
     from blueprints.acquisti_wood.routes import acquisti_wood_bp
+    from blueprints.commesse.routes import commesse_bp
 
     app.register_blueprint(monitor_bp)
     app.register_blueprint(kanban_bp)
@@ -24,6 +25,7 @@ def create_app():
     app.register_blueprint(magazzino_bp)
     app.register_blueprint(pp_bp)
     app.register_blueprint(acquisti_wood_bp)
+    app.register_blueprint(commesse_bp)
 
     @app.context_processor
     def inject_globals():
@@ -43,6 +45,7 @@ def create_app():
             {'label': 'Ordini di Lavoro', 'icona': '📋', 'url': '/liste-lavoro'},
             {'label': 'Situazione (card)', 'icona': '🗂️', 'url': '/ordini-produzione/situazione'},
             {'label': 'Dichiarazione Produzione', 'icona': '✅', 'url': '/dichiarazione-produzione'},
+            {'label': 'Totem Alessandro', 'icona': '🖥️', 'url': '/totem/alessandro'},
             {'label': 'Rietichettatura', 'icona': '🏷️', 'url': '/rietichettatura'},
             {'label': 'Documentazione Articolo', 'icona': '📚', 'url': '/documentazione-articolo'},
             {'label': 'Monitor', 'icona': '⚙️', 'url': '/monitor'},
@@ -55,11 +58,14 @@ def create_app():
         ]},
         {'nome': 'Magazzino', 'icona': '📦', 'colore': '#1a9e5c', 'voci': [
             {'label': 'Magazzino', 'icona': '📦', 'url': '/magazzino'},
+            {'label': 'Giacenza Iron Wood', 'icona': '📊', 'url': '/giacenza-wood'},
             {'label': 'Inventario', 'icona': '📋', 'url': '/inventario'},
             {'label': 'Kanban Inventario', 'icona': '🗂️', 'url': '/inventario/kanban'},
         ]},
         {'nome': 'Acquisti', 'icona': '🛒', 'colore': '#e6b800', 'voci': [
             {'label': 'Ordini di Acquisto', 'icona': '🛒', 'url': '/ordini-acquisto-wood'},
+            {'label': 'Acquisti da Fabbisogno', 'icona': '🧮', 'url': '/acquisti-da-fabbisogno'},
+            {'label': 'Materiale in Arrivo', 'icona': '🚛', 'url': '/materiale-in-arrivo'},
             {'label': 'Anagrafica Iron Wood', 'icona': '🏢', 'url': '/anagrafica-azienda-wood'},
             {'label': 'Prezzi Storici', 'icona': '💰', 'url': '/prezzi-storici-wood'},
             {'label': 'Acquisti Consumabili', 'icona': '🧰', 'url': '/acquisti-consumabili'},
@@ -80,6 +86,7 @@ def create_app():
             {'label': 'Matrice Competenze', 'icona': '🧩', 'url': '/matrice-competenze'},
         ]},
         {'nome': 'Commerciale & Post-Vendita', 'icona': '📋', 'colore': '#c0392b', 'voci': [
+            {'label': 'Commesse', 'icona': '📑', 'url': '/commesse'},
             {'label': 'Disponibilità (Commerciale)', 'icona': '📦', 'url': '/commerciale/disponibilita'},
             {'label': 'Situazione (Post-Vendita)', 'icona': '📋', 'url': '/postvendita/situazione'},
         ]},
