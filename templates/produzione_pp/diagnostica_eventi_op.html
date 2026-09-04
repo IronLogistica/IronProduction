@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🔬 Diagnostica Eventi OP — sola lettura</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">
+      Mostra ogni evento consuntivo registrato per un Ordine di Produzione, e cosa succederebbe rivalutandolo ORA
+      con il Ciclo di Lavoro attuale — per capire event per event una differenza tra qta_buona (Kanban) e Fatti
+      (Dichiarazione Produzione/Ordine di Lavoro), invece di indovinare. Nessuna scrittura.
+    </p>
+    <form method="get" style="display:flex;gap:8px;margin-bottom:18px">
+      <input type="text" name="op" value="{{ op_code }}" placeholder="Codice OP, es. OP-2026-000025"
+             style="flex:1;max-width:320px;padding:10px 14px;border-radius:8px;border:1px solid var(--border);background:var(--dark3);color:var(--text)">
+      <button class="btn btn-primary" type="submit">🔍 Cerca</button>
+    </form>
+
+    {% if op_code and not o %}
+    <p style="color:var(--red)">⚠️ Nessun Ordine di Produzione trovato con codice "{{ op_code }}".</p>
+    {% endif %}
+
+    {% if o %}
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px">
+      <div style="background:var(--dark3);border:1px solid var(--border);border-radius:8px;padding:12px 18px">
+        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Codice articolo</div>
+        <div style="font-size:16px;font-weight:800">{{ o.codice_articolo }}</div>
+      </div>
+      <div style="background:var(--dark3);border:1px solid var(--border);border-radius:8px;padding:12px 18px">
+        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">qta_buona ATTUALE (Kanban)</div>
+        <div style="font-size:20px;font-weight:800;color:#2589c7">{{ o.qta_buona }}</div>
+      </div>
+      <div style="background:var(--dark3);border:2px solid {{ '#c0392b' if o.qta_buona != somma_dovrebbe_avanzare else '#1a9e5c' }};border-radius:8px;padding:12px 18px">
+        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Somma eventi che AVREBBERO dovuto avanzare (rivalutati ora)</div>
+        <div style="font-size:20px;font-weight:800;color:{{ '#c0392b' if o.qta_buona != somma_dovrebbe_avanzare else '#1a9e5c' }}">{{ somma_dovrebbe_avanzare }}</div>
+      </div>
+    </div>
+
+    {% if o.qta_buona != somma_dovrebbe_avanzare %}
+    <p style="color:var(--yellow);font-size:13px;margin-bottom:16px">
+      ⚠️ Le due cifre NON coincidono — differenza di {{ somma_dovrebbe_avanzare - o.qta_buona }} pezzi. Questo NON significa
+      automaticamente un bug attuale: se il Ciclo di Lavoro è cambiato dopo che questi eventi sono stati registrati,
+      "cosa avrebbe fatto avanzare l'OP oggi" può differire da cosa lo fece avanzare DAVVERO nel momento in cui
+      l'evento fu approvato (con il ciclo di allora). Guarda la colonna "Avrebbe avanzato ORA" riga per riga.
+    </p>
+    {% endif %}
+
+    <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">Somma "Fatti" per componente (solo eventi approvati):
+      {% for comp, tot in somma_per_componente.items() %}<b style="color:var(--text);margin-left:8px">{{ comp }}: {{ tot }}</b>{% endfor %}
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="text-align:left;border-bottom:1.5px solid var(--border)">
+          <th style="padding:6px 8px">Data/ora</th>
+          <th style="padding:6px 8px">Componente</th>
+          <th style="padding:6px 8px">Fase (testo grezzo)</th>
+          <th style="padding:6px 8px;text-align:right">Buoni</th>
+          <th style="padding:6px 8px;text-align:right">Scarto</th>
+          <th style="padding:6px 8px">Operatore</th>
+          <th style="padding:6px 8px">Approvato</th>
+          <th style="padding:6px 8px">Avrebbe avanzato ORA</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for e in eventi %}
+        <tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+          <td style="padding:6px 8px;color:var(--text-dim)">{{ e.timestamp }}</td>
+          <td style="padding:6px 8px;font-weight:700">{{ e.componente }}</td>
+          <td style="padding:6px 8px">{{ e.fase }}</td>
+          <td style="padding:6px 8px;text-align:right;font-weight:700">{{ e.pezzi_buoni }}</td>
+          <td style="padding:6px 8px;text-align:right;color:var(--red)">{{ e.pezzi_scarto }}</td>
+          <td style="padding:6px 8px;color:var(--text-dim)">{{ e.operatore }}</td>
+          <td style="padding:6px 8px">{{ '✅' if e.approvato else '⏳ in stand-by' }}</td>
+          <td style="padding:6px 8px;font-weight:700;color:{{ '#1a9e5c' if e.avrebbe_avanzato else '#7a828a' }}">{{ '✅ sì' if e.avrebbe_avanzato else '— no' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if not eventi %}
+    <p style="color:var(--text-dim);font-style:italic;margin-top:12px">Nessun evento registrato per questo OP.</p>
+    {% endif %}
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

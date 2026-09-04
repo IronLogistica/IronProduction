@@ -350,6 +350,50 @@ def _calcola_impatto_eliminazione_op(o):
     return {'righe_per_tabella': righe_per_tabella, 'movimenti_giacenza': movimenti_giacenza}
 
 
+@pp_bp.route('/diagnostica-eventi-op')
+def pagina_diagnostica_eventi_op():
+    """
+    Strumento diagnostico di SOLA LETTURA — mostra, per un Ordine di
+    Produzione, ogni singolo evento consuntivo registrato (componente,
+    fase, pezzi, se approvato, quando) affiancato a cosa succederebbe
+    RIVALUTANDOLO ORA con il Ciclo di Lavoro attuale (avrebbe fatto
+    avanzare qta_buona o no) — per capire event per event dove nasce
+    un'eventuale differenza tra qta_buona dell'OP (letto dal Kanban) e
+    quanto mostrato come 'Fatti' in Dichiarazione Produzione/Ordine di
+    Lavoro per un singolo centro, invece di indovinare la causa.
+    Nessuna scrittura: solo lettura e calcolo, zero modifiche ai dati.
+    """
+    op_code = (request.args.get('op') or '').strip()
+    o = None
+    eventi_annotati = []
+    somma_per_componente = {}
+    somma_dovrebbe_avanzare = 0
+    if op_code:
+        o = OrdineProduzione.query.filter_by(codice=op_code).first()
+        if o:
+            eventi = (EventoConsuntivoPP.query.filter_by(op_code=op_code)
+                      .order_by(EventoConsuntivoPP.timestamp_evento).all())
+            for e in eventi:
+                componente_finale = e.componente is None
+                codice_lavorato = o.codice_articolo if componente_finale else e.componente
+                avrebbe_avanzato = componente_finale and _e_ultima_fase_del_ciclo(codice_lavorato, e.fase)
+                if e.approvato_direzione:
+                    chiave = e.componente or o.codice_articolo
+                    somma_per_componente[chiave] = somma_per_componente.get(chiave, 0) + (e.pezzi_buoni or 0)
+                    if avrebbe_avanzato:
+                        somma_dovrebbe_avanzare += (e.pezzi_buoni or 0)
+                eventi_annotati.append({
+                    'id': e.id, 'componente': e.componente or '(prodotto finito)', 'fase': e.fase,
+                    'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto,
+                    'approvato': e.approvato_direzione, 'operatore': e.operatore or '',
+                    'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M') if e.timestamp_evento else '',
+                    'avrebbe_avanzato': avrebbe_avanzato,
+                })
+    return render_template('produzione_pp/diagnostica_eventi_op.html', active='diagnostica_eventi_op',
+                            op_code=op_code, o=o, eventi=eventi_annotati,
+                            somma_per_componente=somma_per_componente, somma_dovrebbe_avanzare=somma_dovrebbe_avanzare)
+
+
 @pp_bp.route('/manutenzione-sistema')
 def pagina_manutenzione_sistema():
     return render_template('produzione_pp/manutenzione_sistema.html', active='manutenzione_sistema')

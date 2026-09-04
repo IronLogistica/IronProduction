@@ -57,6 +57,7 @@ LAUNCHPAD_GRUPPI = [
     ]},
     {'nome': 'Sistema', 'icona': '🧹', 'colore': '#6b8aaa', 'voci': [
         {'label': 'Manutenzioni di Sistema', 'icona': '🧹', 'url': '/manutenzione-sistema'},
+        {'label': 'Diagnostica Eventi OP', 'icona': '🔬', 'url': '/diagnostica-eventi-op'},
     ]},
 ]
 
