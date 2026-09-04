@@ -308,15 +308,38 @@ def _estrai_articoli(testo):
     estrazione PDF che ripete la riga appena letta) — non più un
     confronto con l'intero documento.
     """
+def _estrai_articoli(testo):
+    """
+    Estrae lista articoli dal testo DDT.
+
+    Pattern: CODICE  Descrizione…  UM  QTA[,000]  [Importo]
+    Unità di misura supportate: n. / pz. / Nr. / PZ. (case-insensitive partial)
+
+    BUG FIX: quantità 80,000 → 80 (non 80000). Vedi _parse_qta().
+
+    BUG REALE TROVATO E CORRETTO — deduplicazione rimossa del tutto:
+    esisteva un filtro che scartava una riga se stesso codice e stessa
+    quantità erano già comparsi prima nel documento (poi ristretto alle
+    sole righe adiacenti, ma nemmeno quello è una garanzia — TRE
+    consegne vere dello stesso codice, stessa quantità, potrebbero
+    comparire proprio una di fianco all'altra nel testo estratto, e la
+    'adiacenza' da sola non basta a distinguerle da un artefatto). Un
+    DDT di rientro può legittimamente contenere PIÙ spedizioni distinte
+    dello stesso codice con la STESSA quantità, riferite a DDT di uscita
+    diversi (il caso reale segnalato: due lotti da 30 pezzi di T200,
+    riferiti a DDT 506 e 519) — venivano scartate come 'duplicati',
+    perdendo righe vere. Nessuna euristica di deduplicazione qui è
+    davvero sicura: meglio un'eventuale riga doppia visibile e
+    correggibile a mano nell'anteprima, che il rischio silenzioso di
+    perdere una consegna vera.
+    """
     testo = _preprocess_righe(testo)
     articoli = []
-    ultima_chiave = None
-    ultimo_indice = None
 
     # Pattern UM: n. / pz. / Nr. / PZ. / nr. — con o senza spazio prima del numero
     UM_PAT = r'(?:n|pz|Nr|PZ|nr)\.'
 
-    for indice, riga in enumerate(testo.split('\n')):
+    for riga in testo.split('\n'):
         riga = riga.strip()
         if not riga:
             continue
@@ -336,17 +359,6 @@ def _estrai_articoli(testo):
             continue
 
         qta = _parse_qta(m.group(3))
-
-        chiave = f'{codice}_{qta}'
-        # 'Adiacente' = riga FISICAMENTE consecutiva nel testo originale
-        # (indice differisce di 1), non solo l'ultima riga che ha dato un
-        # match — due spedizioni vere separate da altre righe (numero DDT,
-        # intestazione magazzino...) non devono mai essere confuse per un
-        # artefatto di estrazione ripetuto.
-        if chiave == ultima_chiave and indice == ultimo_indice + 1:
-            continue
-        ultima_chiave = chiave
-        ultimo_indice = indice
 
         articoli.append({
             'codice': codice,
