@@ -868,8 +868,11 @@ function renderRigheRientro(){
                onchange="_rientroRighe[${i}].qta=parseInt(this.value)||0">
       </td>
       <td>
-        <input class="modal-input" style="width:80px" value="${r.ddt_riferimento||''}" placeholder="es. 519"
-               onchange="_rientroRighe[${i}].ddt_riferimento=this.value.trim()">
+        <div style="position:relative">
+          <input class="modal-input" id="rif-input-${i}" style="width:80px" value="${r.ddt_riferimento||''}" placeholder="es. 519" autocomplete="off"
+                 oninput="_rientroRighe[${i}].ddt_riferimento=this.value.trim()" onfocus="_rifRicercaInput(${i}, this)">
+          <div id="rif-dropdown-${i}" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:220px;overflow-y:auto;font-size:.72rem"></div>
+        </div>
       </td>
       <td>
         <button class="btn btn-ghost" style="padding:4px 8px;font-size:.7rem;color:var(--red)" onclick="eliminaRigaRientro(${i})">🗑️</button>
@@ -882,6 +885,46 @@ function eliminaRigaRientro(i){
   _rientroRighe.splice(i,1);
   renderRigheRientro();
 }
+
+let _rifRicercaTimer = null;
+async function _rifRicercaInput(i, input){
+  const dropdown = document.getElementById(`rif-dropdown-${i}`);
+  const codice = (_rientroRighe[i].codice || '').trim();
+  clearTimeout(_rifRicercaTimer);
+  if(!codice){ dropdown.style.display='none'; return; }
+  _rifRicercaTimer = setTimeout(async () => {
+    let candidati;
+    try{
+      const r = await fetch('/api/lavorazioni_aperte_per_codice?codice=' + encodeURIComponent(codice));
+      candidati = await r.json();
+    }catch(e){ dropdown.style.display='none'; return; }
+    if(!candidati || !candidati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessuna lavorazione aperta per questo codice</div>';
+    }else{
+      dropdown.innerHTML = candidati.map(c =>
+        `<div class="wms-item" onmousedown="_rifScelto(${i}, '${c.ddt_uscita}')">
+           <div><b>DDT ${c.ddt_uscita}</b> <span style="color:var(--text-dim)">— spedita:${c.qta_spedita} rientrata:${c.qta_rientrata}</span></div>
+           <div style="color:var(--yellow);font-weight:700">residua: ${c.qta_residua}</div>
+         </div>`
+      ).join('');
+    }
+    const rect = input.getBoundingClientRect();
+    dropdown.style.top = (rect.bottom + 4) + 'px';
+    dropdown.style.left = rect.left + 'px';
+    dropdown.style.minWidth = '220px';
+    dropdown.style.display = 'block';
+  }, 200);
+}
+function _rifScelto(i, ddtUscita){
+  _rientroRighe[i].ddt_riferimento = ddtUscita;
+  document.getElementById(`rif-input-${i}`).value = ddtUscita;
+  document.getElementById(`rif-dropdown-${i}`).style.display = 'none';
+}
+document.addEventListener('click', e => {
+  if(!e.target.closest('[id^="rif-input-"]')){
+    document.querySelectorAll('[id^="rif-dropdown-"]').forEach(dd => dd.style.display = 'none');
+  }
+});
 
 function aggiungiRigaRientro(){
   _rientroRighe.push({codice:'', desc:'', qta:1, ddt_riferimento:'', info:null});

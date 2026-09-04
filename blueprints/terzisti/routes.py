@@ -989,6 +989,38 @@ def _abbina_righe_rientro(dati, lav_aperte):
     return righe_out
 
 
+@terzisti_bp.route('/api/lavorazioni_aperte_per_codice')
+def api_lavorazioni_aperte_per_codice():
+    """
+    Widget di ricerca intelligente per il campo 'DDT Rif.' nella
+    conferma rientro — suggerisce i DDT uscita REALMENTE aperti per il
+    codice della riga, con quanto ne resta ancora da rientrare, invece
+    di doverli ricordare/leggere a mano dal PDF. ?codice=X obbligatorio.
+    """
+    codice = (request.args.get('codice') or '').strip()
+    if not codice:
+        return jsonify([])
+    lav_aperte = LavorazioneTerzista.query.filter(
+        LavorazioneTerzista.stato.in_(['ATTESA_RIENTRO', 'IN_RITARDO', 'PARZIALE'])
+    ).all()
+    risultato = []
+    for lav in lav_aperte:
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            note_j = {}
+        if note_j.get('codice', '') != codice:
+            continue
+        qta_rientrata = int(note_j.get('qta_rientrata', 0))
+        risultato.append({
+            'ddt_uscita': lav.ddt_uscita or '—', 'qta_spedita': lav.qta,
+            'qta_rientrata': qta_rientrata, 'qta_residua': lav.qta - qta_rientrata,
+            'data_uscita': lav.data_uscita or '',
+        })
+    risultato.sort(key=lambda r: -r['qta_residua'])
+    return jsonify(risultato)
+
+
 @terzisti_bp.route('/api/upload_ddt_rientro', methods=['POST'])
 def upload_ddt_rientro():
     f = request.files.get('file')
