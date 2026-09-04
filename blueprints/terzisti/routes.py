@@ -369,27 +369,44 @@ def _estrai_articoli(testo):
             'ddt_uscita_riferimento': '',
         }))
 
-    # Per ogni articolo, cerca il riferimento DDT nel testo compreso tra
-    # QUESTA riga e la PROSSIMA riga articolo (o la fine del documento per
-    # l'ultima) — è lì che il fornitore scrive 'Vs.doc.(DDTCL) n.:NNN'
-    # subito dopo la riga a cui si riferisce.
+    # BUG REALE TROVATO E CORRETTO (con il PDF vero segnalato): il
+    # riferimento 'Vs.doc.(DDTCL) n.:NNN' compare PRIMA della riga
+    # articolo a cui si riferisce, non dopo — il blocco reale è
+    # 'Vs.doc.(DDTCL) n.:500 .../ZINCATURA/Mag. origine.../Mag.
+    # destinazione.../CODICE Descrizione... UM QTA'. Cercare SOLO in
+    # avanti (come prima, tranne che per la primissima riga) prendeva il
+    # riferimento sbagliato — quello della riga SUCCESSIVA, non della
+    # propria — quando c'erano più righe con lo stesso codice: il caso
+    # segnalato aveva 500 attribuito alla riga da 67 invece che a quella
+    # da 30 a cui apparteneva davvero.
+    # Ora cerca PRIMA all'indietro (dalla riga precedente a questa, dove
+    # il fornitore scrive davvero il riferimento), poi in avanti come
+    # ripiego per documenti con il layout opposto (riferimento dopo la
+    # riga) — mai più solo per la prima riga, la stessa identica logica
+    # per ognuna.
+    #
+    # ALTRA SFUMATURA REALE TROVATA: un riferimento può valere per PIÙ
+    # righe consecutive insieme (una spedizione con più codici sotto lo
+    # STESSO 'Vs.doc.(DDTCL) n.:NNN', scritto una volta sola prima del
+    # gruppo — visto nel documento reale: DDT 519 copriva sia T200 sia
+    # PLBT di seguito). Se la finestra all'indietro di QUESTA riga non ha
+    # un riferimento nuovo, eredita quello dell'ULTIMA riga che ne aveva
+    # trovato uno — non lasciarlo vuoto, altrimenti la seconda riga di un
+    # gruppo condiviso perderebbe il riferimento che in realtà ha.
+    ultimo_riferimento_visto = ''
     for i, (indice, art) in enumerate(posizioni_match):
-        fine_finestra = posizioni_match[i + 1][0] if i + 1 < len(posizioni_match) else len(righe_testo)
-        finestra = '\n'.join(righe_testo[indice:fine_finestra])
-        m_rif = RIF_PAT.search(finestra)
+        inizio_finestra_prec = posizioni_match[i - 1][0] if i > 0 else 0
+        finestra_prec = '\n'.join(righe_testo[inizio_finestra_prec:indice])
+        m_rif = RIF_PAT.search(finestra_prec)
+        if not m_rif:
+            fine_finestra_succ = posizioni_match[i + 1][0] if i + 1 < len(posizioni_match) else len(righe_testo)
+            finestra_succ = '\n'.join(righe_testo[indice:fine_finestra_succ])
+            m_rif = RIF_PAT.search(finestra_succ)
         if m_rif:
-            art['ddt_uscita_riferimento'] = m_rif.group(1)
-        elif i == 0:
-            # SOLO per la primissima riga: a volte il riferimento precede il
-            # blocco invece di seguirlo (visto nel PDF reale segnalato) —
-            # cerca anche dall'inizio del documento fino a qui. Non fatto
-            # per le righe successive: rischierebbe di rubare un riferimento
-            # già di competenza della riga precedente (stesso testo, già
-            # cercato nella SUA finestra in avanti).
-            finestra_iniziale = '\n'.join(righe_testo[:indice])
-            m_rif_iniziale = RIF_PAT.search(finestra_iniziale)
-            if m_rif_iniziale:
-                art['ddt_uscita_riferimento'] = m_rif_iniziale.group(1)
+            ultimo_riferimento_visto = m_rif.group(1)
+            art['ddt_uscita_riferimento'] = ultimo_riferimento_visto
+        elif ultimo_riferimento_visto:
+            art['ddt_uscita_riferimento'] = ultimo_riferimento_visto
         articoli.append(art)
 
     return articoli
@@ -916,72 +933,60 @@ def conferma_ddt_uscita():
 
 def _abbina_righe_rientro(dati, lav_aperte):
     """
-    Abbina OGNI riga del DDT di rientro ad AL PIÙ UNA lavorazione aperta —
-    non più "l'intera quantità della riga proposta identica su TUTTE le
-    lavorazioni con lo stesso codice", che era il bug reale: con due
-    spedizioni aperte per lo stesso codice, il capo vedeva la stessa
-    quantità proposta due volte, rischiando di accreditare il doppio di
-    quanto era fisicamente rientrato.
+    Prepara UNA lista unica, una riga per articolo letto dal DDT
+    (stesso ordine), con quantità e riferimento DDT uscita GIÀ
+    proposti — entrambi pensati per essere mostrati in un'unica tabella
+    modificabile (quantità e riferimento liberamente correggibili,
+    righe aggiungibili/eliminabili), non più due sezioni separate
+    (abbinate automaticamente / da scegliere a mano): la conferma vera e
+    propria (vedi conferma_ddt_rientro) rilegge comunque quantità e
+    riferimento FRESCHI da quello che l'utente lascia a schermo, quindi
+    qui basta proporre un punto di partenza sensato, non decidere per
+    sempre.
 
-    Priorità di abbinamento per ogni riga (codice, quantità):
-      1) Il DDT di rientro richiama esplicitamente un numero di DDT uscita
-         (Vs.doc.(DDTCL) NNN) — se c'è una lavorazione aperta con QUEL
-         ddt_uscita e quel codice, è l'abbinamento più certo che esiste:
-         lo scrive il terzista stesso sul documento.
-      2) Altrimenti, tra le lavorazioni aperte con lo stesso codice non
-         ancora assegnate in questo giro, quella con qta_residua ESATTAMENTE
-         uguale alla quantità della riga — chiude perfettamente quella
-         spedizione, difficile sia un caso.
-      3) Se resta comunque ambiguo (0 o più di 1 candidato, nessuno dei
-         criteri sopra decide da solo) — NESSUN abbinamento automatico:
-         la riga resta da scegliere a mano, la scelta manuale come
-         paracadute resta SOLO per questi casi davvero ambigui.
-
-    Ogni lavorazione viene assegnata al più UNA volta in questo giro —
-    così due righe con lo stesso codice non possono mai finire sulla
-    stessa lavorazione.
+    Per ogni riga, cerca tra le lavorazioni aperte con lo stesso codice
+    (non ancora proposte ad un'altra riga in questo stesso giro):
+      1) Quella con lo STESSO riferimento DDT uscita letto sulla riga —
+         se il fornitore lo scrive, è il segnale più forte che esiste.
+      2) Altrimenti, quella con qta_residua ESATTAMENTE uguale alla
+         quantità della riga.
+    In entrambi i casi, solo se il candidato è UNICO — mai indovinare
+    tra più possibilità: la riga resta comunque proposta con quantità e
+    riferimento letti dal PDF, semplicemente senza le info di contesto
+    (spedita/rientrata/residua) da mostrare, e l'utente corregge a mano
+    se serve.
     """
     assegnate_ids = set()
-    auto = []
-    ambigue = []
+    righe_out = []
 
     for riga in dati['articoli']:
         codice_riga, qta_riga = riga['codice'], riga['qta']
+        rif_riga = riga.get('ddt_uscita_riferimento') or ''
         candidati = [lav for lav in lav_aperte
                      if lav['codice'] == codice_riga and lav['lav_id'] not in assegnate_ids]
-        if not candidati:
-            continue  # nessuna lavorazione aperta per questo codice: riga ignorata (non è un rientro atteso)
 
         scelta = None
-        # Priorità 1: riferimento esplicito al DDT di uscita SCRITTO SU
-        # QUESTA RIGA specifica (non un riferimento unico per l'intero
-        # documento — un rientro può avere più righe con lo stesso codice,
-        # ciascuna riferita a una spedizione diversa: usare un riferimento
-        # globale unico per tutte avrebbe abbinato bene al più una riga,
-        # lasciando le altre ambigue anche quando il documento riportava
-        # già la risposta esatta riga per riga).
-        rif = riga.get('ddt_uscita_riferimento') or ''
-        if rif:
-            per_rif = [c for c in candidati if c['ddt_uscita'] == rif]
+        if rif_riga:
+            per_rif = [c for c in candidati if c['ddt_uscita'] == rif_riga]
             if len(per_rif) == 1:
                 scelta = per_rif[0]
-
-        # Priorità 2: quantità residua esattamente uguale alla riga.
         if scelta is None:
             per_qta = [c for c in candidati if c['qta_residua'] == qta_riga]
             if len(per_qta) == 1:
                 scelta = per_qta[0]
 
+        riga_out = {
+            'codice': codice_riga, 'desc': riga.get('desc', ''),
+            'qta': qta_riga, 'ddt_riferimento': rif_riga,
+            'candidati_disponibili': [{'ddt_uscita': c['ddt_uscita'], 'qta_residua': c['qta_residua']} for c in candidati],
+        }
         if scelta is not None:
             assegnate_ids.add(scelta['lav_id'])
-            auto.append({**scelta, 'qta_ddt': qta_riga, 'assegnazione': 'automatica'})
-        else:
-            ambigue.append({
-                'codice': codice_riga, 'desc': riga.get('desc', ''), 'qta_riga': qta_riga,
-                'candidati': candidati,
-            })
+            riga_out['ddt_riferimento'] = scelta['ddt_uscita']  # propone quello vero della lavorazione trovata
+            riga_out['info'] = {'spedita': scelta['qta_spedita'], 'rientrata': scelta['qta_rientrata'], 'residua': scelta['qta_residua']}
+        righe_out.append(riga_out)
 
-    return auto, ambigue
+    return righe_out
 
 
 @terzisti_bp.route('/api/upload_ddt_rientro', methods=['POST'])
@@ -1037,49 +1042,91 @@ def upload_ddt_rientro():
             'qta_residua':   lav.qta - qta_rientrata,
         })
 
-    match_auto, righe_ambigue = _abbina_righe_rientro(dati, lav_aperte)
+    righe_proposte = _abbina_righe_rientro(dati, lav_aperte)
 
     return jsonify({
         'ok': True,
         'anteprima': dati,
         'filename': f.filename,
-        'match_lavorazioni': match_auto,
-        'righe_ambigue': righe_ambigue,
+        'righe': righe_proposte,
     })
 
 
 @terzisti_bp.route('/api/conferma_ddt_rientro', methods=['POST'])
 def conferma_ddt_rientro():
     """
-    Aggiorna il saldo rientri per ogni LavorazioneTerzista selezionata.
+    Aggiorna il saldo rientri per ogni riga confermata — ORA abbina
+    codice+riferimento DDT uscita FRESCHI, letti da quello che c'è a
+    schermo nel momento della conferma (l'utente può aver corretto sia
+    la quantità sia il riferimento rispetto a quanto proposto
+    dall'anteprima) — non più un lav_id già deciso in anteprima: se
+    l'utente cambia il riferimento scritto, la riga deve abbinarsi a
+    QUELLA lavorazione, non a quella indovinata prima.
 
-    Logica saldo parziale:
+    Per ogni riga (codice, qta, ddt_riferimento):
+    1) Se c'è un riferimento, cerca tra le lavorazioni APERTE con quel
+       codice quella con ddt_uscita ESATTAMENTE uguale — è la scelta più
+       certa, lo stesso criterio già in uso in anteprima.
+    2) Se il riferimento è vuoto (mai trovato o cancellato apposta) e
+       c'è UNA SOLA lavorazione aperta per quel codice, va bene anche
+       senza riferimento — nessuna ambiguità possibile.
+    3) Altrimenti (0 o più di 1 candidato) — riga NON abbinata, segnalata
+       chiaramente nella risposta invece di sparire in silenzio: prima
+       una riga senza abbinamento spariva senza che nessuno se ne
+       accorgesse, ora Angelo vede esattamente quali righe non sono
+       state applicate e perché.
+
+    Logica saldo parziale (invariata):
       note_json.qta_rientrata += qta_confermata_da_questo_ddt
       se qta_rientrata >= qta_spedita → stato = 'RIENTRATA'
       altrimenti                      → stato = 'PARZIALE'
-
-    Il campo note_json.ddt_rientri accumula tutti i DDT collegati.
     """
     try:
         d          = request.get_json(force=True)
         filename   = d.get('filename', '')
         numero_ddt = d.get('numero_ddt', '')
         data_ddt   = d.get('data_ddt', '')
-        conferme   = d.get('conferme', [])
-        # conferme = [ { lav_id, qta_confermata } ]
+        righe      = d.get('righe', [])
+        # righe = [ { codice, qta, ddt_riferimento } ]
 
         chiuse = 0
         parziali = 0
+        righe_non_abbinate = []
 
-        for c in conferme:
-            lav_id       = int(c.get('lav_id', 0))
-            qta_conf     = int(c.get('qta_confermata', 0))
-            if qta_conf <= 0:
+        lav_aperte = LavorazioneTerzista.query.filter(
+            LavorazioneTerzista.stato.in_(['ATTESA_RIENTRO', 'IN_RITARDO', 'PARZIALE'])
+        ).all()
+
+        for r in righe:
+            codice = (r.get('codice') or '').strip()
+            try:
+                qta_conf = int(r.get('qta', 0))
+            except (TypeError, ValueError):
+                qta_conf = 0
+            riferimento = (r.get('ddt_riferimento') or '').strip()
+            if not codice or qta_conf <= 0:
                 continue
 
-            lav = LavorazioneTerzista.query.get(lav_id)
-            if not lav:
+            candidati = [lav for lav in lav_aperte
+                         if json.loads(lav.note or '{}').get('codice', '') == codice]
+
+            lav = None
+            if riferimento:
+                per_rif = [c for c in candidati if c.ddt_uscita == riferimento]
+                if len(per_rif) == 1:
+                    lav = per_rif[0]
+            elif len(candidati) == 1:
+                lav = candidati[0]
+
+            if lav is None:
+                righe_non_abbinate.append({
+                    'codice': codice, 'qta': qta_conf, 'ddt_riferimento': riferimento,
+                    'motivo': 'Nessuna lavorazione aperta trovata con questo riferimento' if riferimento
+                              else f'{len(candidati)} lavorazioni aperte per questo codice — serve indicare il riferimento DDT uscita',
+                })
                 continue
+
+            lav_aperte.remove(lav)  # non riassegnabile due volte nello stesso giro
 
             try:
                 note_j = json.loads(lav.note or '{}')
@@ -1126,9 +1173,9 @@ def conferma_ddt_rientro():
         except Exception:
             pass
 
-        log(f'DDT RIENTRO terzista: {filename} — chiuse:{chiuse} parziali:{parziali}')
+        log(f'DDT RIENTRO terzista: {filename} — chiuse:{chiuse} parziali:{parziali} non_abbinate:{len(righe_non_abbinate)}')
         db.session.commit()
-        return jsonify({'ok': True, 'chiuse': chiuse, 'parziali': parziali})
+        return jsonify({'ok': True, 'chiuse': chiuse, 'parziali': parziali, 'righe_non_abbinate': righe_non_abbinate})
     except Exception as e:
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500

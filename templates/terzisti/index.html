@@ -448,25 +448,18 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
 
 <!-- ══ MODALE DDT RIENTRO ═════════════════════════════════════════════════ -->
 <div class="modal-overlay" id="m-rientro">
-  <div class="modal-box" style="width:640px;max-width:96vw">
+  <div class="modal-box" style="width:720px;max-width:96vw">
     <h3>📥 Anteprima DDT Rientro — Collegamento lavorazioni</h3>
     <div class="mi-grid" id="mi-r"></div>
+    <div class="side-lbl" style="color:var(--steel2);margin-bottom:8px">
+      🔗 Righe da confermare — quantità e riferimento DDT uscita modificabili
+    </div>
     <table class="art-t">
-      <thead><tr><th>Codice</th><th>Descrizione</th><th>Qtà DDT</th></tr></thead>
-      <tbody id="at-r"></tbody>
+      <thead><tr><th>Codice</th><th>Descrizione</th><th>Qtà</th><th>DDT Rif.</th><th></th></tr></thead>
+      <tbody id="rientro-righe"></tbody>
     </table>
-    <div id="match-section" style="display:none;margin-bottom:12px">
-      <div class="side-lbl" style="color:var(--steel2);margin-bottom:8px">
-        🔗 LAVORAZIONI COLLEGATE — conferma quantità rientrata
-      </div>
-      <div id="match-list"></div>
-    </div>
-    <div id="ambigue-section" style="display:none;margin-bottom:12px">
-      <div class="side-lbl" style="color:var(--yellow);margin-bottom:8px">
-        ⚠️ RIGHE DA ABBINARE A MANO — più spedizioni aperte, non riesco a capire da sola quale
-      </div>
-      <div id="ambigue-list"></div>
-    </div>
+    <button class="btn btn-ghost" style="margin-top:8px;font-size:.75rem" onclick="aggiungiRigaRientro()">➕ Aggiungi riga</button>
+    <div id="rientro-avviso" style="display:none;margin-top:10px;padding:8px 10px;background:rgba(230,184,0,.1);border-left:3px solid var(--yellow);border-radius:4px;font-size:.75rem;color:var(--yellow)"></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('m-rientro')">Annulla</button>
       <button class="btn btn-primary" onclick="confermaRientro()">✅ CONFERMA RIENTRO</button>
@@ -841,82 +834,85 @@ window.apriRientro = function apriRientro(js){
     <div class="mi-cell"><div class="ml">Terzista</div><div class="mv">${d.terzista||'—'}</div></div>
     <div class="mi-cell"><div class="ml">N° DDT</div><div class="mv c">${d.numero_ddt||'—'}</div></div>
     <div class="mi-cell"><div class="ml">Data</div><div class="mv">${d.data_ddt||'—'}</div></div>`;
-  document.getElementById('at-r').innerHTML=(d.articoli||[]).map(a=>
-    `<tr><td class="cod">${a.codice}</td><td style="color:var(--text-dim)">${a.desc}</td>
-     <td><span class="qta q-in">${a.qta}</span></td></tr>`
-  ).join('')||'<tr><td colspan="3" style="color:var(--text-dim);text-align:center">Nessun articolo</td></tr>';
-  const ml=js.match_lavorazioni||[];
-  if(ml.length){
-    document.getElementById('match-section').style.display='block';
-    document.getElementById('match-list').innerHTML=ml.map(m=>{
-      const pct=m.qta_spedita>0?Math.round(m.qta_rientrata/m.qta_spedita*100):0;
-      return`<div class="match-row">
-        <input type="checkbox" id="chk-${m.lav_id}" value="${m.lav_id}" checked
-               style="accent-color:var(--steel2);width:16px;height:16px;flex-shrink:0">
-        <div style="flex:1">
-          <div class="mr-cod">${m.codice} — <small style="color:var(--text-dim)">${m.desc}</small></div>
-          <div class="mr-sub">DDT uscita: <b style="color:var(--orange)">${m.ddt_uscita||'—'}</b>
-            · Spedita:<b>${m.qta_spedita}</b> · Rientrata:<b style="color:var(--steel2)">${m.qta_rientrata}</b>
-            · Residua:<b style="color:var(--yellow)">${m.qta_residua}</b></div>
-          <div class="prog-mini"><div class="bar"><div class="fill" style="width:${pct}%"></div></div>
-            <span style="font-size:.6rem;color:var(--text-dim)">${pct}%</span></div>
-        </div>
-        <div>
-          <label class="f-lbl">Qta confermata</label>
-          <input class="modal-input" type="number" id="qta-${m.lav_id}"
-                 value="${m.qta_ddt}" min="1" max="${m.qta_residua}" style="width:75px;text-align:right">
-        </div>
-      </div>`;}).join('');
-  }else{
-    document.getElementById('match-section').style.display='none';
-  }
-  const amb=js.righe_ambigue||[];
-  if(amb.length){
-    document.getElementById('ambigue-section').style.display='block';
-    document.getElementById('ambigue-list').innerHTML=amb.map((r,i)=>{
-      const opzioni=r.candidati.map(c=>
-        `<option value="${c.lav_id}" data-residua="${c.qta_residua}">DDT uscita ${c.ddt_uscita||'—'} — residua ${c.qta_residua}</option>`
-      ).join('');
-      return`<div class="match-row">
-        <div style="flex:1">
-          <div class="mr-cod">${r.codice} — <small style="color:var(--text-dim)">${r.desc}</small></div>
-          <div class="mr-sub">Quantità su questa riga del DDT: <b style="color:var(--yellow)">${r.qta_riga}</b> —
-            ${r.candidati.length} spedizioni aperte per questo codice, scegli quella giusta:</div>
-          <select id="amb-lav-${i}" class="modal-input" style="margin-top:6px;width:100%">
-            <option value="">— nessuna (ignora questa riga) —</option>
-            ${opzioni}
-          </select>
-        </div>
-      </div>`;}).join('');
-  }else{
-    document.getElementById('ambigue-section').style.display='none';
-  }
+  _rientroRighe = (js.righe||[]).map(r=>({codice:r.codice, desc:r.desc, qta:r.qta,
+                                           ddt_riferimento:r.ddt_riferimento||'', info:r.info||null}));
+  renderRigheRientro();
+  document.getElementById('rientro-avviso').style.display='none';
   openModal('m-rientro');
 }
+
+let _rientroRighe = [];
+
+function renderRigheRientro(){
+  const tbody = document.getElementById('rientro-righe');
+  if(!_rientroRighe.length){
+    tbody.innerHTML = '<tr><td colspan="5" style="color:var(--text-dim);text-align:center">Nessuna riga — usa "Aggiungi riga" per inserirne una a mano</td></tr>';
+    return;
+  }
+  tbody.innerHTML = _rientroRighe.map((r,i) => {
+    const info = r.info
+      ? `<div style="font-size:.62rem;color:var(--text-dim);margin-top:2px">Spedita:${r.info.spedita} · Rientrata:${r.info.rientrata} · Residua:<b style="color:var(--yellow)">${r.info.residua}</b></div>`
+      : '';
+    return `<tr>
+      <td class="cod">
+        <input class="modal-input" style="width:80px;font-weight:700" value="${r.codice}"
+               onchange="_rientroRighe[${i}].codice=this.value.trim()">
+      </td>
+      <td style="color:var(--text-dim)">
+        <input class="modal-input" style="width:100%" value="${r.desc||''}"
+               onchange="_rientroRighe[${i}].desc=this.value">
+        ${info}
+      </td>
+      <td>
+        <input class="modal-input" type="number" min="1" style="width:70px;text-align:right" value="${r.qta}"
+               onchange="_rientroRighe[${i}].qta=parseInt(this.value)||0">
+      </td>
+      <td>
+        <input class="modal-input" style="width:80px" value="${r.ddt_riferimento||''}" placeholder="es. 519"
+               onchange="_rientroRighe[${i}].ddt_riferimento=this.value.trim()">
+      </td>
+      <td>
+        <button class="btn btn-ghost" style="padding:4px 8px;font-size:.7rem;color:var(--red)" onclick="eliminaRigaRientro(${i})">🗑️</button>
+      </td>
+    </tr>`;
+  }).join('');
+}
+
+function eliminaRigaRientro(i){
+  _rientroRighe.splice(i,1);
+  renderRigheRientro();
+}
+
+function aggiungiRigaRientro(){
+  _rientroRighe.push({codice:'', desc:'', qta:1, ddt_riferimento:'', info:null});
+  renderRigheRientro();
+}
+
 window.confermaRientro = async function confermaRientro(){
   if(!_pR) return; const d=_pR.anteprima;
-  const ml=_pR.match_lavorazioni||[];
-  const conferme=ml
-    .filter(m=>document.getElementById(`chk-${m.lav_id}`)?.checked)
-    .map(m=>({lav_id:m.lav_id,
-              qta_confermata:parseInt(document.getElementById(`qta-${m.lav_id}`)?.value||0)}))
-    .filter(c=>c.qta_confermata>0);
-  const amb=_pR.righe_ambigue||[];
-  amb.forEach((r,i)=>{
-    const sel=document.getElementById(`amb-lav-${i}`);
-    const lavId=sel?.value;
-    if(lavId){
-      conferme.push({lav_id:parseInt(lavId), qta_confermata:r.qta_riga});
-    }
-  });
+  const righe = _rientroRighe
+    .filter(r=>r.codice && r.qta>0)
+    .map(r=>({codice:r.codice, qta:r.qta, ddt_riferimento:r.ddt_riferimento}));
+  if(!righe.length){showToast('⚠️ Nessuna riga valida da confermare',true);return;}
   try{
     const r=await fetch('/api/conferma_ddt_rientro',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({filename:_pR.filename,numero_ddt:d.numero_ddt,
-        data_ddt:d.data_ddt,conferme})});
+        data_ddt:d.data_ddt,righe})});
     const js=await r.json();
-    if(js.ok){showToast(`✅ Rientro OK — chiuse:${js.chiuse} parziali:${js.parziali}`);
-              closeModal('m-rientro'); carica();}
+    if(js.ok){
+      const nonAbb = js.righe_non_abbinate||[];
+      if(nonAbb.length){
+        const avviso = document.getElementById('rientro-avviso');
+        avviso.style.display='block';
+        avviso.innerHTML = '⚠️ '+nonAbb.length+' riga/e NON abbinata/e (nessuna lavorazione trovata) — correggi il riferimento e riprova:<br>'+
+          nonAbb.map(r=>`• ${r.codice} (qtà ${r.qta}): ${r.motivo}`).join('<br>');
+        showToast(`⚠️ Rientro parziale — chiuse:${js.chiuse} parziali:${js.parziali} · ${nonAbb.length} righe da correggere`,true);
+      }else{
+        showToast(`✅ Rientro OK — chiuse:${js.chiuse} parziali:${js.parziali}`);
+        closeModal('m-rientro'); carica();
+      }
+    }
     else showToast(js.error||'Errore',true);
   }catch(e){showToast('Errore di rete',true);}
 }
