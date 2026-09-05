@@ -2358,10 +2358,22 @@ def api_evento_correggi():
         componente = _traduci_componente_masterwork(componente_raw, str(d['fase']).strip())
 
         nuovo_event_id = str(d['nuovo_event_id']).strip()
+        # BUG REALE TROVATO E CORRETTO: qui approvato_direzione non veniva
+        # mai passato — restava sul default (False) della funzione,
+        # quindi OGNI correzione nasceva SEMPRE in stand-by, anche quando
+        # l'evento che stava sostituendo era già stato approvato e aveva
+        # già mosso OP e magazzino. Una correzione doveva restare ferma
+        # SOLO se l'originale lo era — non doveva mai retrocedere da
+        # "già valido" a "da riapprovare" solo perché la si corregge:
+        # se nessuno se ne accorgeva e la riapprovava a parte, quei pezzi
+        # restavano fantasma per sempre (contati come "Fatti" ovunque
+        # tollera la fase, mai arrivati a qta_buona) — verificato nella
+        # Diagnostica Eventi OP su PINX110 (OP-2026-000025).
         avviso_magazzino = _registra_evento_consuntivo(
             o, str(d['fase']).strip(), ts, good, scrap, tempo, nuovo_event_id,
             componente=componente,
-            operatore=(str(d['operatore']).strip() if d.get('operatore') else None))
+            operatore=(str(d['operatore']).strip() if d.get('operatore') else None),
+            approvato_direzione=e_originale.approvato_direzione)
         db.session.commit()
         log(f"Correzione da MasterWork applicata: OP {o.codice}, evento originale {event_id_orig} "
             f"stornato e sostituito da {nuovo_event_id} ({good} buoni, {scrap} scarto, {tempo} min)")
