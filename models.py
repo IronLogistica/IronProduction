@@ -211,6 +211,17 @@ class GiacenzaWood(db.Model):
     # refresh-su-richiesta di ordinato_cliente_wms sopra.
     scorta_minima_wms               = db.Column(db.Float, nullable=True)
     scorta_minima_wms_aggiornato_il = db.Column(db.DateTime, nullable=True)
+    # BUG REALE CORRETTO: Alert Scorte Codici Padre calcolava il fabbisogno
+    # senza mai contare i "Finiti IS" (prodotto già pronto presso Iron
+    # Segnaletica, letto da WMS) — un codice con 0 Grezzi/Finiti IW ma
+    # qualche pezzo già a IS risultava comunque in allarme anche quando
+    # quei pezzi coprivano parte del bisogno, disallineando il totale
+    # IW+IS dalla realtà. Stessa fonte già interrogata per
+    # scorta_minima_wms/ordinato_cliente_wms (ottieni_scheda_kanban,
+    # UNA sola chiamata restituisce tutto insieme) — nessuna chiamata
+    # WMS aggiuntiva, solo un campo in più salvato da quella stessa risposta.
+    finiti_is_wms               = db.Column(db.Float, nullable=True)
+    finiti_is_wms_aggiornato_il = db.Column(db.DateTime, nullable=True)
 
 
 class CodicePadreManuale(db.Model):
@@ -1507,6 +1518,36 @@ def assicura_ordinato_cliente_wms():
             ('ordinato_cliente_wms_aggiornato_il', "ALTER TABLE giacenza_wood ADD COLUMN ordinato_cliente_wms_aggiornato_il TIMESTAMP"),
             ('scorta_minima_wms', "ALTER TABLE giacenza_wood ADD COLUMN scorta_minima_wms FLOAT"),
             ('scorta_minima_wms_aggiornato_il', "ALTER TABLE giacenza_wood ADD COLUMN scorta_minima_wms_aggiornato_il TIMESTAMP"),
+        ]:
+            if nome not in colonne:
+                db.session.execute(text(stmt))
+                db.session.commit()
+
+
+def assicura_finiti_is_wms():
+    """
+    Migrazione compatibile con DB già esistenti: aggiunge
+    giacenza_wood.finiti_is_wms (+ timestamp) — il 'Finiti IS' letto da
+    MasterLogistic-WMS (stock_verniciati della scheda), mancante dal
+    calcolo del Fabbisogno in Alert Scorte Codici Padre: un codice con
+    tutto zero tranne qualche pezzo già pronto presso Iron Segnaletica
+    risultava comunque in fabbisogno pieno, senza mai contare quei pezzi
+    già disponibili nell'insieme IW+IS.
+    """
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        for stmt in ["ALTER TABLE giacenza_wood ADD COLUMN IF NOT EXISTS finiti_is_wms FLOAT",
+                     "ALTER TABLE giacenza_wood ADD COLUMN IF NOT EXISTS finiti_is_wms_aggiornato_il TIMESTAMP"]:
+            try:
+                db.session.execute(text(stmt))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('giacenza_wood')}
+        for nome, stmt in [
+            ('finiti_is_wms', "ALTER TABLE giacenza_wood ADD COLUMN finiti_is_wms FLOAT"),
+            ('finiti_is_wms_aggiornato_il', "ALTER TABLE giacenza_wood ADD COLUMN finiti_is_wms_aggiornato_il TIMESTAMP"),
         ]:
             if nome not in colonne:
                 db.session.execute(text(stmt))

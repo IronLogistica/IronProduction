@@ -7,13 +7,15 @@
   <button class="btn btn-ghost" onclick="location.reload()">🔄 Aggiorna</button>
 </div>
 
-<!-- ══ TABELLA 1 — CODICI PADRE CON FABBISOGNO ══ -->
+<!-- ══ TABELLA 1 — ALERT SCORTE PADRE ══ -->
 <div class="mon-section" style="margin-bottom:24px">
-  <div class="section-hdr" style="background:linear-gradient(135deg,#791f1f,#c0392b)">📦 Codici Padre — Fabbisogno &gt; 0</div>
+  <div class="section-hdr" style="background:linear-gradient(135deg,#791f1f,#c0392b)">📦 Codici Padre — Alert Scorte Padre &gt; 0</div>
   <p style="font-size:12px;color:var(--text-dim);padding:12px 14px 0">
-    Prodotti finiti/assiemi (codici padre) il cui Fabbisogno (Scorta Minima da WMS + Ordinato da Cliente (WMS) meno
-    Disponibilità Contabile Allargata — stock + grezzo IW − impegnato + ordinato fornitori + ordinato in produzione)
-    è diverso da zero: qui ci finiscono quando serve intervenire.
+    Prodotti finiti/assiemi (codici padre) il cui Alert Scorte Padre (Scorta Minima da WMS + Ordinato da Cliente (WMS)
+    meno Disponibilità Contabile Allargata — stock + grezzo IW + in trattamento esterno + Finiti IS − impegnato +
+    ordinato fornitori + ordinato in produzione) è diverso da zero: qui ci finiscono quando serve intervenire.
+    Nota: questo è un indicatore INTERNO a IronProduction — non è, e non va confuso con, il "Fabbisogno" calcolato
+    dentro MasterLogistic-WMS, che segue una logica propria e separata.
   </p>
   <div style="padding:0 14px 8px">
     <button class="btn btn-ghost" style="font-size:11px" onclick="sincronizzaTuttiOrdinatoClienteWMS()">🔄 Aggiorna Ordinato da Cliente (WMS)</button>
@@ -23,8 +25,9 @@
     <table class="kanban-table">
       <thead><tr>
         <th style="text-align:left">Codice</th><th style="text-align:left">Descrizione</th>
-        <th>Stock</th><th>Grezzo IW</th><th>Ordinato Produzione</th><th>Ordinato Fornitori</th>
-        <th>Scorta Minima</th><th>Ordinato da Cliente (WMS)</th><th>Disp. Allargata*</th><th>Fabbisogno</th>
+        <th>Stock</th><th>Grezzo IW</th><th>In Trattamento</th><th>Finiti IS</th>
+        <th>Ordinato Produzione</th><th>Ordinato Fornitori</th>
+        <th>Scorta Minima</th><th>Ordinato da Cliente (WMS)</th><th>Disp. Allargata*</th><th>Alert Scorte Padre</th>
       </tr></thead>
       <tbody>
         {% for r in righe_fabbisogno %}
@@ -33,6 +36,8 @@
           <td style="text-align:left">{{ r.descrizione or '—' }}</td>
           <td class="num">{{ r.quantita }}</td>
           <td class="num">{{ r.grezzo_iw }}</td>
+          <td class="num">{{ r.in_trattamento }}</td>
+          <td class="num">{{ r.finiti_is_wms if r.finiti_is_wms is not none else '—' }}</td>
           <td class="num">{{ r.ordinato_produzione }}</td>
           <td class="num">{{ r.ordinato }}</td>
           <td class="num">{{ r.scorta_minima }}</td>
@@ -44,7 +49,7 @@
       </tbody>
     </table>
     {% else %}
-    <p style="color:var(--text-dim);font-style:italic">Nessun codice padre con fabbisogno al momento.</p>
+    <p style="color:var(--text-dim);font-style:italic">Nessun codice padre in allarme al momento.</p>
     {% endif %}
   </div>
 </div>

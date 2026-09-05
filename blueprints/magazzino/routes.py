@@ -1076,6 +1076,14 @@ def _aggiorna_dati_wms(g, forza=False):
     if scorta_min is not None:
         g.scorta_minima_wms = scorta_min
         g.scorta_minima_wms_aggiornato_il = ora
+    # 'stock_verniciati' — lo stesso campo che il Kanban rilegge come
+    # 'Finiti IS' (prodotto pronto presso Iron Segnaletica): mancava dal
+    # calcolo del Fabbisogno di Alert Scorte Codici Padre, facendo
+    # apparire in allarme anche codici con pezzi già disponibili là.
+    finiti_is = scheda.get('stock_verniciati')
+    if finiti_is is not None:
+        g.finiti_is_wms = finiti_is
+        g.finiti_is_wms_aggiornato_il = ora
 
 
 
@@ -1443,8 +1451,17 @@ def _calcola_campi_giacenza(righe):
             scorta_min = 0
             scorta_fonte = 'non_prevista'
         ord_cliente_wms = getattr(g, 'ordinato_cliente_wms', None) or 0
+        # BUG REALE CORRETTO: 'in trattamento esterno' (già calcolato sopra,
+        # in_trattamento) e 'Finiti IS' (presso Iron Segnaletica, letto da
+        # WMS) non entravano MAI nel calcolo — un codice padre con 0
+        # Grezzi/Finiti IW ma con pezzi già in lavorazione esterna o già
+        # pronti a IS risultava comunque in fabbisogno pieno, come se quei
+        # pezzi non esistessero. Segnalato con un caso preciso (T200: 300
+        # a saldo produzione + 217 in trattamento + 3 Finiti IS, scorta
+        # minima 600, impegni 140 → fabbisogno atteso 220, non 440).
+        finiti_is = getattr(g, 'finiti_is_wms', None) or 0
         disp_contabile = round((g.quantita or 0) - imp + ord_, 4)
-        disp_allargata = round((g.quantita or 0) + grz - imp + ord_ + ord_prod, 4)
+        disp_allargata = round((g.quantita or 0) + grz + in_tratt + finiti_is - imp + ord_ + ord_prod, 4)
         # Fabbisogno = MAX(Scorta Minima + Ordinato da Cliente (WMS) −
         # Disp. Contabile Allargata, 0): un ordine cliente reale letto da
         # WMS pesa di più della sola scorta di sicurezza — non la
@@ -1459,6 +1476,9 @@ def _calcola_campi_giacenza(righe):
             'codice_padre_manuale': g.codice in codici_padre_manuali,
             'impegnato': imp, 'ordinato': ord_, 'disponibile_contabile': disp_contabile,
             'grezzo_iw': grz, 'in_trattamento': in_tratt, 'ordinato_produzione': ord_prod, 'disponibile_allargata': disp_allargata,
+            'finiti_is_wms': getattr(g, 'finiti_is_wms', None),
+            'finiti_is_wms_aggiornato_il': (g.finiti_is_wms_aggiornato_il.strftime('%d/%m/%Y %H:%M')
+                if getattr(g, 'finiti_is_wms_aggiornato_il', None) else None),
             'scorta_minima': scorta_min,
             'scorta_minima_fonte': scorta_fonte,
             'scorta_minima_wms_aggiornato_il': (g.scorta_minima_wms_aggiornato_il.strftime('%d/%m/%Y %H:%M')
