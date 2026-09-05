@@ -1,7 +1,7 @@
 import os
 import uuid
 import requests
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from flask import Blueprint, current_app, jsonify, render_template, request, Response
 from sqlalchemy.exc import IntegrityError
 from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
@@ -18,14 +18,14 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     MatriceWood, ContromatriceWood, MappaCodiceMasterWork, RettificaGrezzoIW,
                     ParametriLavorazioneWood, OperatoreWood, CompetenzaOperatoreWood,
                     AssegnazioneOperatoreCentroWood, SequenzaMonitorMacchina, SequenzaAvanzamentoKPI,
-                    SessioneLavoroMacchina, FotoLavorazioneMacchina)
+                    SessioneLavoroMacchina, FotoLavorazioneMacchina, LavorazioneTerzista)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
                     _grezzo_iw_per_codici,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
                     _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
-                    _contestuale_attivo_per_op, _saldo_materiale_op)
+                    _contestuale_attivo_per_op, _saldo_materiale_op, calcola_alert_fabbisogno_codici_padre)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 from blueprints.produzione_pp.avanzamento import (calcola_avanzamento_commesse,
@@ -507,6 +507,112 @@ def api_diagnostica_correggi_qta_buona():
 @pp_bp.route('/manutenzione-sistema')
 def pagina_manutenzione_sistema():
     return render_template('produzione_pp/manutenzione_sistema.html', active='manutenzione_sistema')
+
+
+@pp_bp.route('/api/analytics/cruscotto')
+def api_analytics_cruscotto():
+    """
+    Indicatori operativi aggregati di IronProduction, pensati per essere
+    letti da un sistema esterno (MasterAnalytics) che li combina con
+    quelli di MasterWork e MasterLogistic-WMS in un cruscotto generale
+    trasversale ai 3 programmi. Stesso principio dell'integrazione già
+    esistente lato MasterWork (/api/analytics/*): un endpoint di sola
+    lettura, nessuna scrittura, pensato per essere interrogato
+    periodicamente (non per ogni apertura pagina di IronProduction
+    stesso — questo endpoint non alimenta nessuna vista interna).
+
+    Nessuna autenticazione qui di proposito (stesso schema già usato
+    dagli endpoint /api/analytics/* di MasterWork) — se in futuro serve
+    restringerlo, aggiungere lo stesso controllo token già in uso per le
+    chiamate IN INGRESSO da MasterWork (_verifica_token_ironproduction),
+    qui invertito.
+    """
+    oggi = date.today()
+
+    # ── Ordini di Produzione ────────────────────────────────────────────
+    op_aperti = OrdineProduzione.query.filter(OrdineProduzione.stato != 'Chiuso CO').all()
+    per_stato = {}
+    op_in_ritardo = 0
+    for o in op_aperti:
+        per_stato[o.stato] = per_stato.get(o.stato, 0) + 1
+        if o.data_prevista and o.data_prevista < oggi and o.stato != 'Tecnicamente completato':
+            op_in_ritardo += 1
+
+    # Lead time medio (giorni) degli OP completati negli ultimi 90 giorni
+    # con sia data_rilascio sia data_completamento valorizzate — solo su
+    # quelli con un percorso pulito, per non sporcare la media con OP
+    # rilasciati prima che questi due campi esistessero.
+    limite_90gg = datetime.utcnow() - timedelta(days=90)
+    op_completati_recenti = (OrdineProduzione.query
+                              .filter(OrdineProduzione.data_completamento.isnot(None),
+                                      OrdineProduzione.data_rilascio.isnot(None),
+                                      OrdineProduzione.data_completamento >= limite_90gg).all())
+    lead_time_medio_giorni = None
+    if op_completati_recenti:
+        durate = [(o.data_completamento - o.data_rilascio).total_seconds() / 86400 for o in op_completati_recenti]
+        lead_time_medio_giorni = round(sum(durate) / len(durate), 1)
+
+    # ── Alert Scorte Codici Padre ────────────────────────────────────────
+    try:
+        n_alert_scorte_padre = len(calcola_alert_fabbisogno_codici_padre())
+    except Exception:
+        n_alert_scorte_padre = None
+
+    # ── Ordini Fornitore ─────────────────────────────────────────────────
+    oa_aperti = OrdineAcquistoWood.query.filter(OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all()
+    oa_in_ritardo = sum(1 for o in oa_aperti if o.data_consegna and o.data_consegna < oggi)
+
+    # ── DDT Terzisti (zincatura/verniciatura) ───────────────────────────
+    lav_aperte = LavorazioneTerzista.query.filter(LavorazioneTerzista.stato != 'RIENTRATO').all()
+    ddt_terzisti_in_ritardo = 0
+    for lav in lav_aperte:
+        if not lav.data_rientro_prev:
+            continue
+        try:
+            data_prevista = datetime.strptime(lav.data_rientro_prev.strip(), '%d/%m/%Y').date()
+        except ValueError:
+            continue
+        if data_prevista < oggi:
+            ddt_terzisti_in_ritardo += 1
+
+    # ── Saturazione Centri di Costo (i più carichi, dal Gantt) ──────────
+    centri_saturi = []
+    try:
+        risultati, segmenti_per_centro = calcola_avanzamento_commesse()
+        for centro_id, segmenti in (segmenti_per_centro or {}).items():
+            if not segmenti:
+                continue
+            centro = CentroCostoWood.query.get(centro_id)
+            if not centro:
+                continue
+            giorni_di_carico = len({s.get('data') for s in segmenti if s.get('data')})
+            centri_saturi.append({'nome': centro.nome, 'giorni_di_carico': giorni_di_carico})
+        centri_saturi.sort(key=lambda c: -c['giorni_di_carico'])
+        centri_saturi = centri_saturi[:5]
+    except Exception:
+        centri_saturi = []
+
+    return jsonify({
+        'aggiornato_il': datetime.utcnow().isoformat(),
+        'ordini_produzione': {
+            'totale_aperti': len(op_aperti),
+            'in_ritardo': op_in_ritardo,
+            'per_stato': per_stato,
+            'lead_time_medio_giorni': lead_time_medio_giorni,
+        },
+        'alert_scorte_codici_padre': {
+            'n_codici_in_allarme': n_alert_scorte_padre,
+        },
+        'ordini_fornitore': {
+            'totale_aperti': len(oa_aperti),
+            'in_ritardo': oa_in_ritardo,
+        },
+        'ddt_terzisti': {
+            'totale_aperti': len(lav_aperte),
+            'in_ritardo': ddt_terzisti_in_ritardo,
+        },
+        'centri_costo_piu_carichi': centri_saturi,
+    })
 
 
 @pp_bp.route('/api/manutenzione-sistema/ordini')
