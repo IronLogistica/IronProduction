@@ -350,20 +350,13 @@ def _calcola_impatto_eliminazione_op(o):
     return {'righe_per_tabella': righe_per_tabella, 'movimenti_giacenza': movimenti_giacenza}
 
 
-@pp_bp.route('/diagnostica-eventi-op')
-def pagina_diagnostica_eventi_op():
+def _raccogli_diagnostica_op(op_code):
     """
-    Strumento diagnostico di SOLA LETTURA — mostra, per un Ordine di
-    Produzione, ogni singolo evento consuntivo registrato (componente,
-    fase, pezzi, se approvato, quando) affiancato a cosa succederebbe
-    RIVALUTANDOLO ORA con il Ciclo di Lavoro attuale (avrebbe fatto
-    avanzare qta_buona o no) — per capire event per event dove nasce
-    un'eventuale differenza tra qta_buona dell'OP (letto dal Kanban) e
-    quanto mostrato come 'Fatti' in Dichiarazione Produzione/Ordine di
-    Lavoro per un singolo centro, invece di indovinare la causa.
-    Nessuna scrittura: solo lettura e calcolo, zero modifiche ai dati.
+    Raccoglie tutti i dati della Diagnostica Eventi OP per un codice OP —
+    condivisa tra la pagina (rendering HTML) e l'esportazione testuale
+    (per non ricalcolare la stessa cosa due volte in due posti diversi
+    che potrebbero disallinearsi). Nessuna scrittura, sola lettura.
     """
-    op_code = (request.args.get('op') or '').strip()
     o = None
     eventi_annotati = []
     somma_per_componente = {}
@@ -396,10 +389,70 @@ def pagina_diagnostica_eventi_op():
                 'quando': a.creato_il.strftime('%d/%m/%Y %H:%M') if a.creato_il else '',
                 'azione': a.azione, 'dettaglio': a.dettaglio, 'event_id': a.event_id,
             } for a in audit_rows]
+    return o, eventi_annotati, somma_per_componente, somma_dovrebbe_avanzare, audit_log
+
+
+@pp_bp.route('/diagnostica-eventi-op')
+def pagina_diagnostica_eventi_op():
+    """
+    Strumento diagnostico di SOLA LETTURA — mostra, per un Ordine di
+    Produzione, ogni singolo evento consuntivo registrato (componente,
+    fase, pezzi, se approvato, quando) affiancato a cosa succederebbe
+    RIVALUTANDOLO ORA con il Ciclo di Lavoro attuale (avrebbe fatto
+    avanzare qta_buona o no) — per capire event per event dove nasce
+    un'eventuale differenza tra qta_buona dell'OP (letto dal Kanban) e
+    quanto mostrato come 'Fatti' in Dichiarazione Produzione/Ordine di
+    Lavoro per un singolo centro, invece di indovinare la causa.
+    Nessuna scrittura: solo lettura e calcolo, zero modifiche ai dati.
+    """
+    op_code = (request.args.get('op') or '').strip()
+    o, eventi_annotati, somma_per_componente, somma_dovrebbe_avanzare, audit_log = _raccogli_diagnostica_op(op_code)
     return render_template('produzione_pp/diagnostica_eventi_op.html', active='diagnostica_eventi_op',
                             op_code=op_code, o=o, eventi=eventi_annotati,
                             somma_per_componente=somma_per_componente, somma_dovrebbe_avanzare=somma_dovrebbe_avanzare,
                             audit_log=audit_log)
+
+
+@pp_bp.get('/api/diagnostica-eventi-op/esporta')
+def api_diagnostica_esporta():
+    """
+    Stessa Diagnostica Eventi OP, in un file di testo semplice scaricabile
+    — più comodo da leggere/incollare di uno screenshot lungo, e senza
+    perdere righe per il taglio dello schermo. Stessa funzione di raccolta
+    dati della pagina, nessun calcolo diverso: quello che vedi qui è
+    identico a quello che vedresti aprendo la pagina.
+    """
+    op_code = (request.args.get('op') or '').strip()
+    o, eventi_annotati, somma_per_componente, somma_dovrebbe_avanzare, audit_log = _raccogli_diagnostica_op(op_code)
+    righe = [f"DIAGNOSTICA EVENTI OP — {op_code}", '=' * 60, '']
+    if not o:
+        righe.append(f'Nessun Ordine di Produzione trovato con codice "{op_code}".')
+    else:
+        righe += [
+            f"Codice articolo: {o.codice_articolo}",
+            f"qta_buona ATTUALE (Kanban): {o.qta_buona}",
+            f"Somma eventi che AVREBBERO dovuto avanzare (rivalutati ora): {somma_dovrebbe_avanzare}",
+            f"Differenza: {somma_dovrebbe_avanzare - o.qta_buona}",
+            '',
+            "Somma 'Fatti' per componente (solo eventi approvati):",
+        ]
+        for comp, tot in somma_per_componente.items():
+            righe.append(f"  {comp}: {tot}")
+        righe += ['', '-' * 60, 'EVENTI CONSUNTIVI (in ordine cronologico)', '-' * 60]
+        for e in eventi_annotati:
+            righe.append(
+                f"{e['timestamp']} | {e['componente']:20} | {e['fase']:40} | "
+                f"buoni={e['pezzi_buoni']:>5} scarto={e['pezzi_scarto']:>3} | "
+                f"operatore={e['operatore'] or '—':15} | approvato={'sì' if e['approvato'] else 'STAND-BY'} | "
+                f"avrebbe_avanzato_ora={'sì' if e['avrebbe_avanzato'] else 'no'}"
+            )
+        righe += ['', '-' * 60, 'TRACCIA AUDIT', '-' * 60]
+        for a in audit_log:
+            righe.append(f"{a['quando']} | {a['azione']:30} | {a['dettaglio']}")
+    testo = '\n'.join(righe)
+    nome_file = f"diagnostica_{op_code or 'op'}.txt".replace('/', '_')
+    return Response(testo, mimetype='text/plain',
+                     headers={'Content-Disposition': f'attachment; filename="{nome_file}"'})
 
 
 @pp_bp.post('/api/diagnostica-eventi-op/correggi-qta-buona')
