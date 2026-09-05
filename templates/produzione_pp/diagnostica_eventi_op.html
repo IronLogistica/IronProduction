@@ -44,6 +44,32 @@
       "cosa avrebbe fatto avanzare l'OP oggi" può differire da cosa lo fece avanzare DAVVERO nel momento in cui
       l'evento fu approvato (con il ciclo di allora). Guarda la colonna "Avrebbe avanzato ORA" riga per riga.
     </p>
+
+    <div style="border:1.5px solid var(--red);border-radius:10px;padding:16px;margin-bottom:18px">
+      <div style="font-weight:700;margin-bottom:8px;color:var(--red)">✏️ Correggi qta_buona manualmente</div>
+      <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+        Tocca SOLO il numero letto dal Kanban — MAI magazzino o varianza. Da usare solo dopo aver verificato,
+        con questa pagina e la traccia audit, che il valore corretto è davvero quello che stai per inserire.
+      </p>
+      <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+        <div>
+          <label class="modal-label" style="margin-top:0">Nuovo valore qta_buona</label>
+          <input type="number" id="correggi-nuovo-valore" value="{{ somma_dovrebbe_avanzare }}" min="0"
+                 style="width:120px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <div style="flex:1;min-width:220px">
+          <label class="modal-label" style="margin-top:0">Motivo (obbligatorio)</label>
+          <input type="text" id="correggi-motivo" placeholder="es. eventi corretti rimasti in stand-by per bug del 03/09, ora risolto"
+                 style="width:100%;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <div>
+          <label class="modal-label" style="margin-top:0">PIN Direzione</label>
+          <input type="password" id="correggi-pin" style="width:100px;padding:9px 10px;border-radius:6px;border:1px solid var(--border)">
+        </div>
+        <button class="btn btn-primary" style="background:var(--red);border-color:var(--red)" onclick="correggiQtaBuona('{{ o.codice }}')">💾 Applica correzione</button>
+      </div>
+      <div id="correggi-esito" style="font-size:12px;margin-top:10px"></div>
+    </div>
     {% endif %}
 
     <div style="font-size:11px;color:var(--text-dim);margin-bottom:8px">Somma "Fatti" per componente (solo eventi approvati):
@@ -110,4 +136,28 @@
     {% endif %}
   </div>
 </div>
+{% endblock %}
+{% block scripts %}
+async function correggiQtaBuona(opCode){
+  const esito = document.getElementById('correggi-esito');
+  const nuovoValore = document.getElementById('correggi-nuovo-valore').value;
+  const motivo = document.getElementById('correggi-motivo').value.trim();
+  const pin = document.getElementById('correggi-pin').value;
+  if(!motivo){ esito.style.color='#c0392b'; esito.textContent='⚠️ Il motivo è obbligatorio.'; return; }
+  if(!confirm(`Confermi di voler cambiare qta_buona di ${opCode} a ${nuovoValore}?\n\nMotivo: ${motivo}\n\nQuesta azione tocca solo il numero letto dal Kanban, non il magazzino.`)) return;
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Applicazione in corso...';
+  try{
+    const r = await fetch('/api/diagnostica-eventi-op/correggi-qta-buona', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({op_code: opCode, nuovo_valore: nuovoValore, motivo, pin})
+    });
+    const d = await r.json();
+    if(!d.ok){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ ' + d.error; return; }
+    esito.style.color = '#1a9e5c';
+    esito.textContent = `✅ Corretto: ${d.valore_precedente} → ${d.nuovo_valore}. Ricarico la pagina...`;
+    setTimeout(() => location.reload(), 1200);
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
 {% endblock %}

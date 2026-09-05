@@ -402,6 +402,55 @@ def pagina_diagnostica_eventi_op():
                             audit_log=audit_log)
 
 
+@pp_bp.post('/api/diagnostica-eventi-op/correggi-qta-buona')
+def api_diagnostica_correggi_qta_buona():
+    """
+    Correzione MANUALE di qta_buona — SOLO per allineare un OP dopo aver
+    verificato con la Diagnostica Eventi OP che il numero salvato non
+    corrisponde a quello che gli eventi approvati avrebbero davvero
+    fatto avanzare (es. eventi corretti che restarono fantasma in
+    stand-by per un bug oggi risolto — vedi api_evento_correggi).
+
+    Tocca SOLO qta_buona — MAI magazzino, varianza o altro: quegli
+    effetti, per ogni singolo evento storico coinvolto, potrebbero già
+    essere stati applicati correttamente o no a seconda del caso
+    specifico (dipende da COME quell'evento arrivò a esistere), e non
+    c'è modo sicuro di ricostruirlo in automatico per l'intera storia di
+    un OP — serve occhio umano caso per caso su quello, questa
+    correzione risolve solo il numero che il Kanban legge.
+
+    Richiede il PIN Direzione e un motivo scritto — mai un'azione
+    silenziosa: lascia una voce di audit con il valore vecchio, il
+    nuovo, e il motivo dato, così resta rintracciabile per sempre chi
+    ha corretto cosa e perché.
+    """
+    d = request.get_json(force=True)
+    if not _verifica_pin_direzione(d):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    op_code = (d.get('op_code') or '').strip()
+    motivo = (d.get('motivo') or '').strip()
+    if not motivo:
+        return jsonify(ok=False, error='Il motivo è obbligatorio — questa è una correzione manuale, deve restare tracciato il perché'), 400
+    try:
+        nuovo_valore = int(d.get('nuovo_valore'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Nuovo valore non valido'), 400
+    if nuovo_valore < 0:
+        return jsonify(ok=False, error='Il valore non può essere negativo'), 400
+
+    o = OrdineProduzione.query.filter_by(codice=op_code).with_for_update().first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+
+    valore_precedente = o.qta_buona
+    o.qta_buona = nuovo_valore
+    db.session.add(AuditPP(op_code=op_code, azione='CORREZIONE_MANUALE_QTA_BUONA',
+                            dettaglio=f'qta_buona corretta da {valore_precedente} a {nuovo_valore} — motivo: {motivo}'))
+    db.session.commit()
+    log(f"Correzione manuale qta_buona: OP {op_code} da {valore_precedente} a {nuovo_valore} — {motivo}")
+    return jsonify(ok=True, valore_precedente=valore_precedente, nuovo_valore=nuovo_valore)
+
+
 @pp_bp.route('/manutenzione-sistema')
 def pagina_manutenzione_sistema():
     return render_template('produzione_pp/manutenzione_sistema.html', active='manutenzione_sistema')
