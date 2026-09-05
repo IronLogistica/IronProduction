@@ -2407,22 +2407,28 @@ def api_evento_correggi():
         componente = _traduci_componente_masterwork(componente_raw, str(d['fase']).strip())
 
         nuovo_event_id = str(d['nuovo_event_id']).strip()
-        # BUG REALE TROVATO E CORRETTO: qui approvato_direzione non veniva
-        # mai passato — restava sul default (False) della funzione,
-        # quindi OGNI correzione nasceva SEMPRE in stand-by, anche quando
-        # l'evento che stava sostituendo era già stato approvato e aveva
-        # già mosso OP e magazzino. Una correzione doveva restare ferma
-        # SOLO se l'originale lo era — non doveva mai retrocedere da
-        # "già valido" a "da riapprovare" solo perché la si corregge:
-        # se nessuno se ne accorgeva e la riapprovava a parte, quei pezzi
-        # restavano fantasma per sempre (contati come "Fatti" ovunque
-        # tollera la fase, mai arrivati a qta_buona) — verificato nella
-        # Diagnostica Eventi OP su PINX110 (OP-2026-000025).
+        # CORREZIONE VOLUTA: ogni dichiarazione corretta resta SEMPRE in
+        # stand-by, senza eccezioni — anche quando quella che sostituisce
+        # era già approvata. Il bug reale trovato prima (correggere una
+        # dichiarazione la retrocedeva sempre in stand-by, facendo
+        # sparire pezzi già mossi) sembrava suggerire "eredita
+        # l'approvazione dall'originale" — ma quello sarebbe SBAGLIATO
+        # nell'altro verso: se il numero corretto è ESSO STESSO
+        # sbagliato (es. scritto 120 al posto di 20), ereditare
+        # l'approvazione vorrebbe dire applicarlo SUBITO senza che
+        # Angelo veda mai il nuovo numero — perderebbe proprio la
+        # possibilità di non approvarlo. Una correzione È un nuovo
+        # numero: merita SEMPRE un occhio umano fresco, non l'eredità di
+        # un'approvazione data su un numero diverso. Il problema del
+        # "pezzi persi in stand-by dimenticato" si risolve rendendo
+        # affidabile la SINCRONIZZAZIONE (fatta ora in automatico da
+        # MasterWork, non più un pulsante manuale da ricordarsi) — non
+        # saltando la revisione della Direzione.
         avviso_magazzino = _registra_evento_consuntivo(
             o, str(d['fase']).strip(), ts, good, scrap, tempo, nuovo_event_id,
             componente=componente,
             operatore=(str(d['operatore']).strip() if d.get('operatore') else None),
-            approvato_direzione=e_originale.approvato_direzione)
+            approvato_direzione=False)
         db.session.commit()
         log(f"Correzione da MasterWork applicata: OP {o.codice}, evento originale {event_id_orig} "
             f"stornato e sostituito da {nuovo_event_id} ({good} buoni, {scrap} scarto, {tempo} min)")
