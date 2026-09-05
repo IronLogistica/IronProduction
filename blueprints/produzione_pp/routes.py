@@ -368,6 +368,7 @@ def pagina_diagnostica_eventi_op():
     eventi_annotati = []
     somma_per_componente = {}
     somma_dovrebbe_avanzare = 0
+    audit_log = []
     if op_code:
         o = OrdineProduzione.query.filter_by(codice=op_code).first()
         if o:
@@ -389,9 +390,16 @@ def pagina_diagnostica_eventi_op():
                     'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M') if e.timestamp_evento else '',
                     'avrebbe_avanzato': avrebbe_avanzato,
                 })
+            audit_rows = (AuditPP.query.filter_by(op_code=op_code)
+                          .order_by(AuditPP.creato_il).all())
+            audit_log = [{
+                'quando': a.creato_il.strftime('%d/%m/%Y %H:%M') if a.creato_il else '',
+                'azione': a.azione, 'dettaglio': a.dettaglio, 'event_id': a.event_id,
+            } for a in audit_rows]
     return render_template('produzione_pp/diagnostica_eventi_op.html', active='diagnostica_eventi_op',
                             op_code=op_code, o=o, eventi=eventi_annotati,
-                            somma_per_componente=somma_per_componente, somma_dovrebbe_avanzare=somma_dovrebbe_avanzare)
+                            somma_per_componente=somma_per_componente, somma_dovrebbe_avanzare=somma_dovrebbe_avanzare,
+                            audit_log=audit_log)
 
 
 @pp_bp.route('/manutenzione-sistema')

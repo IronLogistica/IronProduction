@@ -81,6 +81,32 @@
     {% if not eventi %}
     <p style="color:var(--text-dim);font-style:italic;margin-top:12px">Nessun evento registrato per questo OP.</p>
     {% endif %}
+
+    <div style="margin-top:24px">
+      <div style="font-weight:700;margin-bottom:8px;color:var(--steel2)">📜 Traccia Audit di questo OP</div>
+      {% if audit_log %}
+      <table style="width:100%;border-collapse:collapse;font-size:11px">
+        <thead>
+          <tr style="text-align:left;border-bottom:1.5px solid var(--border)">
+            <th style="padding:5px 8px">Quando</th>
+            <th style="padding:5px 8px">Azione</th>
+            <th style="padding:5px 8px">Dettaglio</th>
+          </tr>
+        </thead>
+        <tbody>
+          {% for a in audit_log %}
+          <tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+            <td style="padding:5px 8px;color:var(--text-dim);white-space:nowrap">{{ a.quando }}</td>
+            <td style="padding:5px 8px;font-weight:700">{{ a.azione }}</td>
+            <td style="padding:5px 8px;color:var(--text-dim)">{{ a.dettaglio }}</td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      {% else %}
+      <p style="color:var(--text-dim);font-style:italic">Nessuna voce di audit per questo OP.</p>
+      {% endif %}
+    </div>
     {% endif %}
   </div>
 </div>
