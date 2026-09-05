@@ -4,7 +4,7 @@ import json
 import os
 import io
 import pandas as pd
-from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError
+from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError, _kanban_stock_grezzo
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
                     TIPI_APPROVVIGIONAMENTO, GiacenzaWood, MovimentoGiacenzaWood, OrdineProduzione,
@@ -1085,6 +1085,36 @@ def _aggiorna_dati_wms(g, forza=False):
         g.finiti_is_wms = finiti_is
         g.finiti_is_wms_aggiornato_il = ora
 
+
+
+@magazzino_bp.route('/api/giacenza_wood/<path:codice>/diagnostica-wms')
+def api_diagnostica_wms_codice(codice):
+    """
+    ENDPOINT DIAGNOSTICO TEMPORANEO — mostra la risposta GREZZA di
+    MasterLogistic-WMS per UN codice specifico, senza nessuna
+    interpretazione sopra: per capire perché 'Finiti IS' (o altri campi)
+    restano vuoti/'-' per alcuni codici (es. ZT, T250DT, T250) mentre per
+    altri arrivano correttamente — se il problema è di rete/configurazione
+    (eccezione sollevata) o se WMS risponde ma con quel campo esplicitamente
+    nullo per quel codice specifico (il codice esiste ma senza quel dato,
+    diverso da 'non lo trovo affatto').
+    """
+    try:
+        grezzo = _kanban_stock_grezzo(codice)
+    except MasterLogisticError as e:
+        return jsonify({'ok': False, 'errore_di_rete_o_configurazione': str(e)})
+    g = GiacenzaWood.query.get(codice)
+    return jsonify({
+        'ok': True,
+        'risposta_grezza_wms': grezzo,
+        'valori_attualmente_salvati_in_ironproduction': {
+            'finiti_is_wms': g.finiti_is_wms if g else None,
+            'finiti_is_wms_aggiornato_il': g.finiti_is_wms_aggiornato_il.isoformat() if (g and g.finiti_is_wms_aggiornato_il) else None,
+            'scorta_minima_wms': g.scorta_minima_wms if g else None,
+            'scorta_minima_wms_aggiornato_il': g.scorta_minima_wms_aggiornato_il.isoformat() if (g and g.scorta_minima_wms_aggiornato_il) else None,
+            'ordinato_cliente_wms': g.ordinato_cliente_wms if g else None,
+        } if g else 'Nessuna riga GiacenzaWood per questo codice',
+    })
 
 
 @magazzino_bp.route('/api/giacenza_wood/sincronizza-ordinato-cliente-wms', methods=['POST'])
