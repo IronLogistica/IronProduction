@@ -1090,15 +1090,28 @@ def _aggiorna_dati_wms(g, forza=False):
 @magazzino_bp.route('/api/giacenza_wood/sincronizza-ordinato-cliente-wms', methods=['POST'])
 def api_sincronizza_ordinato_cliente_wms():
     """
-    Aggiorna 'Ordinato da Cliente (WMS)' e 'Scorta Minima (WMS)' per un
-    elenco di codici passato nel body (JSON: {"codici": [...]}), o per
-    TUTTI i codici padre (quelli con almeno un Ordine di Produzione) se
-    non specificato — azione ESPLICITA dal pulsante dedicato, mai automatica.
+    Aggiorna 'Ordinato da Cliente (WMS)', 'Scorta Minima (WMS)' e 'Finiti
+    IS (WMS)' per un elenco di codici passato nel body (JSON: {"codici":
+    [...]}), o per TUTTI i codici padre se non specificato — azione
+    ESPLICITA dal pulsante dedicato, mai automatica.
+
+    BUG REALE TROVATO E CORRETTO (segnalato con screenshot, ZT sempre a
+    zero/vuoto anche dopo aver premuto il pulsante): 'tutti i codici
+    padre' qui considerava SOLO quelli con almeno un Ordine di Produzione
+    — un codice marcato come padre SOLO manualmente (CodicePadreManuale:
+    venduto ma non ancora messo in produzione dentro IronProduction, es.
+    ZT) non aveva mai un OP, quindi restava fuori da questa lista e non
+    veniva MAI sincronizzato, pur comparendo regolarmente in Alert Scorte
+    Padre (che invece unisce ENTRAMBE le fonti, vedi
+    calcola_alert_fabbisogno_codici_padre) — le due liste di 'codici
+    padre' erano diverse, disallineando il pulsante dalla pagina che
+    dovrebbe alimentare. Ora usa la STESSA identica unione.
     """
     d = request.get_json(silent=True) or {}
     codici = d.get('codici')
     if not codici:
-        codici = [r[0] for r in db.session.query(OrdineProduzione.codice_articolo).distinct().all()]
+        codici = sorted({r[0] for r in db.session.query(OrdineProduzione.codice_articolo).distinct().all()}
+                         | {r[0] for r in db.session.query(CodicePadreManuale.codice).distinct().all()})
     if not codici:
         return jsonify({'ok': True, 'totale': 0, 'aggiornati': 0})
 
