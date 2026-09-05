@@ -12,6 +12,11 @@
       OP cancella anche le sue dichiarazioni/movimenti e RIPORTA la giacenza al valore che avrebbe avuto se quell'OP
       non fosse mai esistito — non solo cancella lo storico.
     </p>
+    <p style="font-size:11px;color:#e6b8b8;background:rgba(220,53,69,.12);border:1px solid rgba(220,53,69,.35);border-radius:6px;padding:8px 10px;margin-bottom:14px">
+      ⚠️ Le righe evidenziate in rosso hanno "TEST", "DEMO", "PROVA" o simili nel codice/cliente/commessa/descrizione — sono
+      messe per prime, per aiutarti a riconoscerle a colpo d'occhio. È solo un suggerimento visivo: verifica sempre
+      l'anteprima prima di eliminare, la decisione finale resta sempre tua.
+    </p>
     <table style="width:100%;border-collapse:collapse;font-size:13px">
       <thead>
         <tr style="text-align:left;font-size:10px;color:var(--text-dim);text-transform:uppercase">
@@ -68,8 +73,8 @@ function render(){
     return;
   }
   corpo.innerHTML = ORDINI.map(o => `
-    <tr style="border-bottom:1px solid rgba(255,255,255,.05)">
-      <td style="padding:6px 8px;font-weight:700">${o.codice}</td>
+    <tr style="border-bottom:1px solid rgba(255,255,255,.05);${o.sospetto_test ? 'background:rgba(220,53,69,.12)' : ''}">
+      <td style="padding:6px 8px;font-weight:700">${o.sospetto_test ? '⚠️ ' : ''}${o.codice}</td>
       <td style="padding:6px 8px">${o.codice_articolo}<div style="font-size:10px;color:var(--text-dim)">${o.descrizione||''}</div></td>
       <td style="padding:6px 8px;font-size:11px">${o.cliente||'—'}${o.commessa ? '<br>'+o.commessa : ''}</td>
       <td style="padding:6px 8px;font-size:11px">${o.stato}</td>

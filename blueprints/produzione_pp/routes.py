@@ -639,14 +639,27 @@ def api_manutenzione_sistema_ordini():
                          .group_by(MovimentoGiacenzaWood.riferimento).all()):
             n_movimenti_per_op[rif] = tot
 
-    return jsonify([{
+    parole_sospette = ('TEST', 'DEMO', 'PROVA', 'FINTO', 'FITTIZIO', 'FAKE')
+    def _sospetto(o):
+        campi = f"{o.codice} {o.codice_articolo} {o.cliente or ''} {o.commessa or ''} {o.descrizione or ''}".upper()
+        return any(p in campi for p in parole_sospette)
+
+    risultato = [{
         'codice': o.codice, 'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
         'cliente': o.cliente or '', 'commessa': o.commessa or '', 'stato': o.stato,
         'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona,
         'creato_il': o.creato_il.strftime('%d/%m/%Y %H:%M') if o.creato_il else '',
         'n_dichiarazioni': n_eventi_per_op.get(o.codice, 0),
         'n_movimenti_giacenza': n_movimenti_per_op.get(o.codice, 0),
-    } for o in ordini])
+        # Cerca TEST/DEMO/PROVA/ecc. in codice, cliente, commessa, descrizione —
+        # solo un SUGGERIMENTO visivo per aiutare Angelo a riconoscerle a
+        # colpo d'occhio, non una cancellazione automatica: la decisione
+        # finale (e l'anteprima prima di eliminare) restano sempre sue.
+        'sospetto_test': _sospetto(o),
+    } for o in ordini]
+    # Le sospette per prime — altrimenti si perdono in mezzo a decine di OP veri.
+    risultato.sort(key=lambda r: not r['sospetto_test'])
+    return jsonify(risultato)
 
 
 @pp_bp.route('/api/manutenzione-sistema/ordini/<path:op_code>/anteprima')
