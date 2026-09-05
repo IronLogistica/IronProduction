@@ -4617,11 +4617,35 @@ def api_dichiarazione_approva(eid):
 def _storna_evento_consuntivo(e, o):
     """
     Nucleo dello storno di UNA dichiarazione — condiviso dallo storno
-    singolo (api_dichiarazione_annulla) e dallo storno di massa per periodo
-    (api_dichiarazione_annulla_periodo). Non fa commit: il chiamante decide
-    quando. Solleva eccezione se il ripristino giacenza fallisce — il
-    chiamante deve rollback, mai lasciare uno storno a metà.
+    singolo (api_dichiarazione_annulla), dallo storno di massa per periodo
+    (api_dichiarazione_annulla_periodo) e dalla correzione da MasterWork
+    (api_evento_correggi, che storna l'originale prima di registrare la
+    versione corretta). Non fa commit: il chiamante decide quando.
+    Solleva eccezione se il ripristino giacenza fallisce — il chiamante
+    deve rollback, mai lasciare uno storno a metà.
+
+    BUG REALE TROVATO E CORRETTO (segnalato con un caso preciso: 15 pezzi
+    dichiarati da MasterWork ancora in stand-by, poi corretti a 30 —
+    qta_buona è scesa comunque di 15, pur non avendo MAI ricevuto quei 15
+    pezzi): questa funzione invertiva SEMPRE gli effetti (qta_buona,
+    magazzino, varianza), anche per un evento MAI approvato — che quindi
+    non aveva MAI applicato nulla di quegli effetti in primo luogo (vedi
+    lo stand-by in _registra_evento_consuntivo). api_dichiarazione_annulla
+    aveva già il controllo giusto PRIMA di chiamare questa funzione, ma
+    api_evento_correggi (la correzione da MasterWork) la chiamava diretta,
+    senza quel controllo — nessuno se n'era accorto perché normalmente le
+    correzioni riguardano eventi già approvati. Ora il controllo vive QUI,
+    nel nucleo condiviso: protegge ogni chiamante, presente e futuro,
+    invece di doverlo ricordare in ognuno separatamente.
     """
+    if not e.approvato_direzione:
+        # Mai approvato: non ha mai mosso nulla (qta_buona, magazzino,
+        # varianza) — stornarlo significa solo cancellare la riga, un
+        # NO-OP su tutto il resto, esattamente come annullare una
+        # dichiarazione ancora in stand-by dalla coda di approvazione.
+        db.session.delete(e)
+        return
+
     componente_finale = not e.componente or e.componente == o.codice_articolo
     codice_lavorato = o.codice_articolo if componente_finale else e.componente
     # Stesso bug corretto in _registra_evento_consuntivo: solo l'identità di
