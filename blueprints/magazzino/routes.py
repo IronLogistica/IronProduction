@@ -1111,9 +1111,9 @@ def api_sincronizza_ordinato_cliente_wms():
 
     aggiornati = 0
     for g in righe_gz:
-        prima = (g.ordinato_cliente_wms, g.scorta_minima_wms)
+        prima = (g.ordinato_cliente_wms, g.scorta_minima_wms, g.finiti_is_wms)
         _aggiorna_dati_wms(g, forza=True)
-        if (g.ordinato_cliente_wms, g.scorta_minima_wms) != prima:
+        if (g.ordinato_cliente_wms, g.scorta_minima_wms, g.finiti_is_wms) != prima:
             aggiornati += 1
     db.session.commit()
     return jsonify({'ok': True, 'totale': len(righe_gz), 'aggiornati': aggiornati})
