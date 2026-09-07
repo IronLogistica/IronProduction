@@ -289,7 +289,7 @@ function selezionaFiltroOrdini(stato){
 function renderFiltriOrdini(){
   const box = document.getElementById('oa-filtri');
   box.innerHTML = FILTRI_ORDINI.map(f => {
-    const n = f.stato === 'TUTTI' ? ORDINI_ACQUISTO.length : ORDINI_ACQUISTO.filter(o => o.stato_label === f.stato).length;
+    const n = f.stato === 'TUTTI' ? ORDINI_ACQUISTO.filter(o => o.stato_label !== 'ORDINE_RICEVUTO').length : ORDINI_ACQUISTO.filter(o => o.stato_label === f.stato).length;
     const attivo = FILTRO_STATO_ORDINI === f.stato;
     return `<button onclick="selezionaFiltroOrdini('${f.stato}')" class="btn ${attivo ? 'btn-primary' : 'btn-ghost'}" style="font-size:11px;padding:6px 12px">
       ${f.label} <span style="opacity:.75">(${n})</span>
@@ -313,7 +313,7 @@ async function caricaListaOrdini(){
 function renderListaOrdini(){
   const box = document.getElementById('oa-lista');
   if(!ORDINI_ACQUISTO.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di acquisto caricato ancora.</p>'; return; }
-  const ordini = (FILTRO_STATO_ORDINI === 'TUTTI' ? ORDINI_ACQUISTO : ORDINI_ACQUISTO.filter(o => o.stato_label === FILTRO_STATO_ORDINI)).slice();
+  const ordini = (FILTRO_STATO_ORDINI === 'TUTTI' ? ORDINI_ACQUISTO.filter(o => o.stato_label !== 'ORDINE_RICEVUTO') : ORDINI_ACQUISTO.filter(o => o.stato_label === FILTRO_STATO_ORDINI)).slice();
   if(!ordini.length){ box.innerHTML = `<p style="color:#aaa;font-style:italic">Nessun ordine in questo stato.</p>`; return; }
   // Le letture ancora da verificare vengono prima di tutto — non devono passare inosservate
   ordini.sort((a,b) => (a.stato_label === 'LETTURA_DA_VERIFICARE') === (b.stato_label === 'LETTURA_DA_VERIFICARE') ? 0 : (a.stato_label === 'LETTURA_DA_VERIFICARE' ? -1 : 1));
