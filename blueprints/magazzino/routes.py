@@ -1590,8 +1590,21 @@ def api_giacenza_lista():
     tipo_filtro = (request.args.get('tipo') or '').strip()
     query = GiacenzaWood.query
     if solo_bom:
+        # BUG REALE TROVATO E CORRETTO: il pool includeva SOLO i codici che
+        # compaiono davvero nella Distinta Base (come padre o figlio) — un
+        # codice appena creato con 'Nuovo Codice' (caricamento manuale
+        # anagrafica, PRIMA di essere usato in qualunque distinta) non vi
+        # comparirà mai finché qualcuno non lo assegna a una distinta —
+        # restava invisibile alla ricerca anche subito dopo averlo creato
+        # sulla STESSA pagina, un caso reale segnalato ('10201 creato come
+        # scritto ma se lo cerco non lo vedo'). Un codice registrato in
+        # ArticoloApprovvigionamento è una scelta DELIBERATA e recente
+        # (l'opposto di 'un codice estraneo rimasto da un vecchio import',
+        # il caso che questo filtro voleva davvero escludere) — va incluso
+        # nel pool esattamente come i codici di distinta.
         codici_bom = {r[0] for r in db.session.query(DistintaBaseWood.codice_padre).distinct().all()} | \
-                     {r[0] for r in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()}
+                     {r[0] for r in db.session.query(DistintaBaseWood.codice_figlio).distinct().all()} | \
+                     {r[0] for r in db.session.query(ArticoloApprovvigionamento.codice).distinct().all()}
         query = query.filter(GiacenzaWood.codice.in_(codici_bom))
     # Filtro per tipologia (Codice Padre / Materia Prima / Materiale in
     # Acquisto / Semilavorato / ecc.) — applicato QUI, PRIMA del limite di
