@@ -22,6 +22,21 @@
       <div id="oa-upload-esito" style="font-size:12px;margin-top:8px"></div>
     </div>
 
+    <div style="border:1px dashed var(--border);border-radius:8px;padding:12px;margin-bottom:16px">
+      <div style="font-weight:700;margin-bottom:8px">✍️ Nuovo ordine SENZA PDF (compilazione manuale)</div>
+      <p style="font-size:11px;color:var(--text-dim);margin-bottom:10px">
+        Per un ordine fatto per telefono, di persona, o quando non c'è un PDF da caricare — genera comunque un numero
+        d'ordine vero (IW-AAAAMMGG-NN) e una stampa da mandare al fornitore, esattamente come un ordine da PDF.
+      </p>
+      <input type="text" id="oam-fornitore" placeholder="Fornitore *" style="width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);margin-bottom:8px">
+      <div id="oam-righe"></div>
+      <button class="btn btn-ghost" style="font-size:12px;margin-top:4px" onclick="aggiungiRigaManuale()">➕ Aggiungi riga</button>
+      <div style="margin-top:10px">
+        <button class="btn btn-primary" onclick="creaOrdineManuale()">✅ Crea ordine</button>
+      </div>
+      <div id="oam-esito" style="font-size:12px;margin-top:8px"></div>
+    </div>
+
     <div id="oa-lista" style="font-size:13px;color:#666">Caricamento...</div>
   </div>
 </div>
@@ -77,6 +92,60 @@
 {% endblock %}
 {% block scripts %}
 let _oaCorrente = null;
+
+let RIGHE_MANUALI = [];
+
+function aggiungiRigaManuale(){
+  const i = RIGHE_MANUALI.length;
+  RIGHE_MANUALI.push({codice: '', descrizione: '', unita_misura: '', qta: '', prezzo_unitario: ''});
+  renderRigheManuali();
+  document.getElementById(`oam-codice-${i}`)?.focus();
+}
+
+function rimuoviRigaManuale(i){
+  RIGHE_MANUALI.splice(i, 1);
+  renderRigheManuali();
+}
+
+function renderRigheManuali(){
+  const box = document.getElementById('oam-righe');
+  if(!RIGHE_MANUALI.length){
+    box.innerHTML = '<p style="font-size:11px;color:var(--text-dim);font-style:italic">Nessuna riga — premi "Aggiungi riga".</p>';
+    return;
+  }
+  box.innerHTML = RIGHE_MANUALI.map((r, i) => `
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
+      <input id="oam-codice-${i}" type="text" placeholder="Codice *" value="${r.codice}" style="width:110px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].codice=this.value.trim()">
+      <input type="text" placeholder="Descrizione" value="${r.descrizione}" style="flex:1;min-width:160px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].descrizione=this.value.trim()">
+      <input type="text" placeholder="U.M." value="${r.unita_misura}" style="width:60px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].unita_misura=this.value.trim()">
+      <input type="number" step="0.01" min="0" placeholder="Qtà *" value="${r.qta}" style="width:80px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].qta=parseFloat(this.value)||0">
+      <input type="number" step="0.0001" min="0" placeholder="Prezzo €" value="${r.prezzo_unitario}" style="width:90px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].prezzo_unitario=parseFloat(this.value)||null">
+      <button onclick="rimuoviRigaManuale(${i})" title="Rimuovi riga" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px">🗑️</button>
+    </div>`).join('');
+}
+renderRigheManuali();
+
+async function creaOrdineManuale(){
+  const esito = document.getElementById('oam-esito');
+  const fornitore = document.getElementById('oam-fornitore').value.trim();
+  if(!fornitore){ esito.style.color='#c0392b'; esito.textContent='⚠️ Indica il fornitore.'; return; }
+  const righe = RIGHE_MANUALI.filter(r => r.codice && r.qta > 0);
+  if(!righe.length){ esito.style.color='#c0392b'; esito.textContent='⚠️ Aggiungi almeno una riga con codice e quantità.'; return; }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Creazione in corso...';
+  try{
+    const r = await fetch('/api/ordini_acquisto_wood/manuale', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fornitore, righe})});
+    const d = await r.json();
+    if(d.errore){ esito.style.color='#c0392b'; esito.textContent='⚠️ '+d.messaggio; return; }
+    esito.style.color = '#2a9d5c';
+    esito.innerHTML = `✅ Ordine <b>${d.ordine_n}</b> creato — <a href="/ordini_acquisto_wood/${d.id}/stampa" target="_blank" style="color:#00d2ff">🖨️ Stampa ordine</a>`;
+    document.getElementById('oam-fornitore').value = '';
+    RIGHE_MANUALI = [];
+    renderRigheManuali();
+    caricaListaOrdini();
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
+  }
+}
 
 async function caricaPdfOrdine(){
   const fileInput = document.getElementById('oa-file');
