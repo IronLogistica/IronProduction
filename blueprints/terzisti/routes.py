@@ -1129,7 +1129,30 @@ def conferma_ddt_rientro():
             LavorazioneTerzista.stato.in_(['ATTESA_RIENTRO', 'IN_RITARDO', 'PARZIALE'])
         ).all()
 
-        for r in righe:
+        # BUG REALE TROVATO E CORRETTO: un DDT di rientro può avere PIÙ
+        # righe che si riferiscono ALLA STESSA lavorazione (es. una riga
+        # con il riferimento letto automaticamente dal PDF, un'altra
+        # ambigua che Angelo ha risolto A MANO scegliendo LO STESSO
+        # riferimento — succede quando il rientro reale di una spedizione
+        # è stato scritto dal fornitore su più righe). Prima si toglieva
+        # la lavorazione dai candidati dopo il PRIMO abbinamento ('non
+        # riassegnabile due volte nello stesso giro') — la seconda riga
+        # restava senza nessun candidato disponibile e finiva scartata in
+        # silenzio (righe_non_abbinate), perdendo la sua quantità: Finiti
+        # IW risultava sotto-conteggiato esattamente di quella riga (il
+        # caso reale segnalato: T200 rientrato per 127 pezzi, ma il
+        # kanban ne registrava solo una parte).
+        # FIX in due passaggi: PRIMA le righe con un riferimento ESPLICITO
+        # (possono legittimamente condividere la stessa lavorazione —
+        # nessuna rimozione tra loro); POI le righe SENZA riferimento
+        # (restano a restringersi sulle sole lavorazioni non ancora
+        # reclamate dal passaggio precedente — stesso comportamento di
+        # prima per il caso 'unica lavorazione rimasta', non cambiato).
+        gruppi = {}   # lav.id -> {'lav': lav, 'qta_totale': int}
+        righe_con_riferimento = [r for r in righe if (r.get('ddt_riferimento') or '').strip()]
+        righe_senza_riferimento = [r for r in righe if not (r.get('ddt_riferimento') or '').strip()]
+
+        for r in righe_con_riferimento:
             codice = (r.get('codice') or '').strip()
             try:
                 qta_conf = int(r.get('qta', 0))
@@ -1138,36 +1161,50 @@ def conferma_ddt_rientro():
             riferimento = (r.get('ddt_riferimento') or '').strip()
             if not codice or qta_conf <= 0:
                 continue
-
-            candidati = [lav for lav in lav_aperte
-                         if json.loads(lav.note or '{}').get('codice', '') == codice]
-
-            lav = None
-            if riferimento:
-                per_rif = [c for c in candidati if c.ddt_uscita == riferimento]
-                if len(per_rif) == 1:
-                    lav = per_rif[0]
-            elif len(candidati) == 1:
-                lav = candidati[0]
-
-            if lav is None:
+            per_rif = [lav for lav in lav_aperte
+                       if json.loads(lav.note or '{}').get('codice', '') == codice and lav.ddt_uscita == riferimento]
+            if len(per_rif) != 1:
                 righe_non_abbinate.append({
                     'codice': codice, 'qta': qta_conf, 'ddt_riferimento': riferimento,
-                    'motivo': 'Nessuna lavorazione aperta trovata con questo riferimento' if riferimento
-                              else f'{len(candidati)} lavorazioni aperte per questo codice — serve indicare il riferimento DDT uscita',
+                    'motivo': 'Nessuna lavorazione aperta trovata con questo riferimento',
                 })
                 continue
+            gr = gruppi.setdefault(per_rif[0].id, {'lav': per_rif[0], 'qta_totale': 0})
+            gr['qta_totale'] += qta_conf
 
-            lav_aperte.remove(lav)  # non riassegnabile due volte nello stesso giro
+        lav_ids_reclamate = set(gruppi.keys())
+        for r in righe_senza_riferimento:
+            codice = (r.get('codice') or '').strip()
+            try:
+                qta_conf = int(r.get('qta', 0))
+            except (TypeError, ValueError):
+                qta_conf = 0
+            if not codice or qta_conf <= 0:
+                continue
+            candidati = [lav for lav in lav_aperte
+                         if json.loads(lav.note or '{}').get('codice', '') == codice
+                         and lav.id not in lav_ids_reclamate]
+            if len(candidati) != 1:
+                righe_non_abbinate.append({
+                    'codice': codice, 'qta': qta_conf, 'ddt_riferimento': '',
+                    'motivo': f'{len(candidati)} lavorazioni aperte per questo codice — serve indicare il riferimento DDT uscita',
+                })
+                continue
+            gr = gruppi.setdefault(candidati[0].id, {'lav': candidati[0], 'qta_totale': 0})
+            gr['qta_totale'] += qta_conf
 
+        for gr in gruppi.values():
+            lav = gr['lav']
+            qta_totale_riga = gr['qta_totale']
             try:
                 note_j = json.loads(lav.note or '{}')
             except Exception:
                 note_j = {}
 
-            # Aggiorna saldo
+            # Aggiorna saldo — con la SOMMA di tutte le righe di questo DDT
+            # abbinate a questa stessa lavorazione, non solo l'ultima.
             qta_rientrata_prec = int(note_j.get('qta_rientrata', 0))
-            nuova_rientrata    = qta_rientrata_prec + qta_conf
+            nuova_rientrata    = qta_rientrata_prec + qta_totale_riga
             ddt_list           = note_j.get('ddt_rientri', [])
             if numero_ddt and numero_ddt not in ddt_list:
                 ddt_list.append(numero_ddt)
@@ -1178,7 +1215,11 @@ def conferma_ddt_rientro():
 
             # Aggancio automatico Kanban Gruppi: questo rientro alza "Finiti
             # IW" del codice corrispondente, se ha una scheda (vedi sopra).
-            _aggiorna_kanban_da_rientro_ddt(note_j.get('codice', ''), qta_conf)
+            # Una sola chiamata con il TOTALE di questa lavorazione — non
+            # una per riga — altrimenti un codice con più righe verso la
+            # stessa lavorazione (raro ma possibile) rischierebbe comunque
+            # di essere gestito in modo incoerente rispetto al saldo sopra.
+            _aggiorna_kanban_da_rientro_ddt(note_j.get('codice', ''), qta_totale_riga)
 
             # Aggiorna stato
             if nuova_rientrata >= lav.qta:
@@ -1216,6 +1257,37 @@ def conferma_ddt_rientro():
 # ══════════════════════════════════════════════════════════════════════════════
 #  API DASHBOARD — spedizioni con saldo parziale
 # ══════════════════════════════════════════════════════════════════════════════
+
+@terzisti_bp.route('/api/diagnostica-lavorazioni/<codice>')
+def api_diagnostica_lavorazioni_codice(codice):
+    """
+    ENDPOINT DIAGNOSTICO TEMPORANEO — mostra TUTTE le lavorazioni terziste
+    (aperte E chiuse) per un codice specifico, con lo stato REALE del
+    saldo rientri — per capire perché un rientro confermato non risulta
+    applicato correttamente (es. Finiti IW non corrisponde a quanto
+    realmente rientrato): se una riga del DDT non ha trovato un
+    abbinamento (es. il riferimento scelto a mano in anteprima confligge
+    con quello automatico di un'altra riga dello stesso codice), qui si
+    vede quale lavorazione è rimasta ferma con la quantità sbagliata.
+    """
+    lavorazioni = LavorazioneTerzista.query.join(Terzista, isouter=True).all()
+    risultato = []
+    for lav in lavorazioni:
+        try:
+            note_j = json.loads(lav.note or '{}')
+        except Exception:
+            note_j = {}
+        if note_j.get('codice', '') != codice:
+            continue
+        qta_rientrata = int(note_j.get('qta_rientrata', 0))
+        risultato.append({
+            'lavorazione_id': lav.id, 'ddt_uscita': lav.ddt_uscita, 'stato': lav.stato,
+            'qta_spedita': lav.qta, 'qta_rientrata': qta_rientrata, 'qta_residua': max(0, lav.qta - qta_rientrata),
+            'ddt_rientri': note_j.get('ddt_rientri', []), 'data_uscita': lav.data_uscita, 'data_rientro': lav.data_rientro,
+        })
+    risultato.sort(key=lambda r: r['ddt_uscita'] or '')
+    return jsonify(risultato)
+
 
 @terzisti_bp.route('/api/spedizioni_terzisti')
 def api_spedizioni_terzisti():
