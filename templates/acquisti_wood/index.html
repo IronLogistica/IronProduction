@@ -42,6 +42,8 @@
       <div id="oam-esito" style="font-size:12px;margin-top:8px"></div>
     </div>
 
+    <div id="oa-filtri" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px"></div>
+
     <div id="oa-lista" style="font-size:13px;color:#666">Caricamento...</div>
   </div>
 </div>
@@ -262,17 +264,61 @@ const STATO_LABEL = {
   ORDINE_RICEVUTO: {testo:'📦 Ricevuto', colore:'#888'},
 };
 
+let ORDINI_ACQUISTO = [];
+let FILTRO_STATO_ORDINI = 'TUTTI';
+
+// Stessa idea delle schede di separazione già in uso in MasterLogistic-WMS
+// (Da Confermare / Confermato / In Arrivo / Da Ritirare / Evasi) — qui
+// applicata agli stessi stati già esistenti per gli Ordini di Acquisto.
+const FILTRI_ORDINI = [
+  {stato: 'TUTTI', label: '📋 Tutti'},
+  {stato: 'LETTURA_DA_VERIFICARE', label: STATO_LABEL.LETTURA_DA_VERIFICARE.testo},
+  {stato: 'DA_CONFERMARE', label: STATO_LABEL.DA_CONFERMARE.testo},
+  {stato: 'ORDINE_CONFERMATO', label: STATO_LABEL.ORDINE_CONFERMATO.testo},
+  {stato: 'ORDINE_IN_ARRIVO', label: STATO_LABEL.ORDINE_IN_ARRIVO.testo},
+  {stato: 'ORDINE_DA_RITIRARE', label: STATO_LABEL.ORDINE_DA_RITIRARE.testo},
+  {stato: 'ORDINE_RICEVUTO', label: '✔️ Evasi'},
+];
+
+function selezionaFiltroOrdini(stato){
+  FILTRO_STATO_ORDINI = stato;
+  renderFiltriOrdini();
+  renderListaOrdini();
+}
+
+function renderFiltriOrdini(){
+  const box = document.getElementById('oa-filtri');
+  box.innerHTML = FILTRI_ORDINI.map(f => {
+    const n = f.stato === 'TUTTI' ? ORDINI_ACQUISTO.length : ORDINI_ACQUISTO.filter(o => o.stato_label === f.stato).length;
+    const attivo = FILTRO_STATO_ORDINI === f.stato;
+    return `<button onclick="selezionaFiltroOrdini('${f.stato}')" class="btn ${attivo ? 'btn-primary' : 'btn-ghost'}" style="font-size:11px;padding:6px 12px">
+      ${f.label} <span style="opacity:.75">(${n})</span>
+    </button>`;
+  }).join('');
+}
+
 async function caricaListaOrdini(){
   const box = document.getElementById('oa-lista');
   box.innerHTML = 'Caricamento...';
   try{
     const r = await fetch('/api/ordini_acquisto_wood');
-    const ordini = await r.json();
-    if(!ordini.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di acquisto caricato ancora.</p>'; return; }
-    // Le letture ancora da verificare vengono prima di tutto — non devono passare inosservate
-    ordini.sort((a,b) => (a.stato_label === 'LETTURA_DA_VERIFICARE') === (b.stato_label === 'LETTURA_DA_VERIFICARE') ? 0 : (a.stato_label === 'LETTURA_DA_VERIFICARE' ? -1 : 1));
-    let html = '<div style="display:flex;flex-wrap:wrap;gap:12px">';
-    ordini.forEach(o=>{
+    ORDINI_ACQUISTO = await r.json();
+    renderFiltriOrdini();
+    renderListaOrdini();
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+function renderListaOrdini(){
+  const box = document.getElementById('oa-lista');
+  if(!ORDINI_ACQUISTO.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun ordine di acquisto caricato ancora.</p>'; return; }
+  const ordini = (FILTRO_STATO_ORDINI === 'TUTTI' ? ORDINI_ACQUISTO : ORDINI_ACQUISTO.filter(o => o.stato_label === FILTRO_STATO_ORDINI)).slice();
+  if(!ordini.length){ box.innerHTML = `<p style="color:#aaa;font-style:italic">Nessun ordine in questo stato.</p>`; return; }
+  // Le letture ancora da verificare vengono prima di tutto — non devono passare inosservate
+  ordini.sort((a,b) => (a.stato_label === 'LETTURA_DA_VERIFICARE') === (b.stato_label === 'LETTURA_DA_VERIFICARE') ? 0 : (a.stato_label === 'LETTURA_DA_VERIFICARE' ? -1 : 1));
+  let html = '<div style="display:flex;flex-wrap:wrap;gap:12px">';
+  ordini.forEach(o=>{
       const daVerificare = o.stato_label === 'LETTURA_DA_VERIFICARE';
       const totRighe = o.articoli.length;
       const ricevute = o.articoli.filter(a => a.qta_ricevuta >= a.qta_originale && a.qta_originale > 0).length;
@@ -313,12 +359,9 @@ async function caricaListaOrdini(){
           <button onclick="event.stopPropagation(); eliminaOrdineAcquisto(${o.id}, '${o.fornitore.replace(/'/g,"\\'")}')" class="btn btn-ghost" style="padding:6px 10px;font-size:11px;color:#e07a6e;border-color:#c0392b55">🗑️ ELIMINA</button>
         </div>
       </div>`;
-    });
-    html += '</div>';
-    box.innerHTML = html;
-  }catch(e){
-    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
-  }
+  });
+  html += '</div>';
+  box.innerHTML = html;
 }
 
 async function eliminaOrdineAcquisto(id, fornitore){
