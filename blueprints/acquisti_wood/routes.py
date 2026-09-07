@@ -231,6 +231,7 @@ def _ordine_dict(o):
         'data_consegna': o.data_consegna.isoformat() if o.data_consegna else None,
         'ritiro_proprio': o.ritiro_proprio, 'confermato': o.confermato, 'stato_label': o.stato_label,
         'nota_interna': o.nota_interna, 'caricato_il': o.caricato_il.isoformat() if o.caricato_il else None,
+        'responsabile_verifica': o.responsabile_verifica or '',
         'articoli': [{
             'id': r.id, 'codice': r.codice, 'descrizione': r.descrizione, 'unita_misura': r.unita_misura,
             'qta_originale': r.qta_originale, 'qta_ricevuta': r.qta_ricevuta, 'data_evasione': r.data_evasione,
@@ -387,6 +388,7 @@ def api_modifica_ordine_acquisto(oid):
     if 'fornitore' in d: o.fornitore = (d.get('fornitore') or '').strip()
     if 'ordine_n' in d: o.ordine_n = (d.get('ordine_n') or 'N/D').strip()
     if 'nota_interna' in d: o.nota_interna = (d.get('nota_interna') or '').strip()
+    if 'responsabile_verifica' in d: o.responsabile_verifica = (d.get('responsabile_verifica') or '').strip()
     if 'ritiro_proprio' in d: o.ritiro_proprio = bool(d.get('ritiro_proprio'))
     if 'confermato' in d:
         o.confermato = bool(d.get('confermato'))
@@ -568,9 +570,13 @@ def _ddt_dict(d):
         'id': d.id, 'filename': d.filename, 'fornitore': d.fornitore, 'numero_ddt': d.numero_ddt,
         'data_ddt': d.data_ddt, 'caricato_il': d.caricato_il.isoformat() if d.caricato_il else None,
         'confermato': d.confermato,
+        'responsabile_verifica': d.responsabile_verifica or '',
+        'modulo_verifica_stampato_il': d.modulo_verifica_stampato_il.isoformat() if d.modulo_verifica_stampato_il else None,
+        'firmato_da': d.firmato_da or '',
+        'link_modulo_verifica': f'/ddt_carico_wood/{d.id}/modulo_verifica',
         'righe': [{
             'id': r.id, 'codice': r.codice, 'descrizione': r.descrizione, 'quantita': r.quantita,
-            'quantita_verificata': r.quantita_verificata,
+            'quantita_verificata': r.quantita_verificata, 'ubicazione_allocata': r.ubicazione_allocata or '',
             'ordine_n_riferimento': r.ordine_n_riferimento, 'abbinata': r.abbinata,
             'ordine_acquisto_id': r.ordine_acquisto_id,
         } for r in d.righe],
@@ -621,6 +627,7 @@ def api_upload_ddt_carico():
     tutte_le_righe = [(sez['ordine_n'], art) for sez in dati['sezioni'] for art in sez['articoli']]
     tutte_le_righe += [('', art) for art in dati.get('articoli_senza_sezione', [])]
 
+    responsabile_ereditato = ''
     for ordine_n_rif, art in tutte_le_righe:
         try:
             qta = float(art['quantita'])
@@ -637,10 +644,18 @@ def api_upload_ddt_carico():
             descrizione=art['descrizione'], quantita=qta,
             ordine_acquisto_id=oa.id if (oa and riga_oa) else None, abbinata=bool(oa and riga_oa),
         ))
+        # Il responsabile di verifica è deciso già in fase d'ordine (vedi
+        # OrdineAcquistoWood.responsabile_verifica) — il DDT lo eredita dal
+        # primo ordine abbinato che ne ha uno assegnato, così il modulo
+        # stampato subito dopo sa già a chi consegnarlo.
+        if not responsabile_ereditato and oa and oa.responsabile_verifica:
+            responsabile_ereditato = oa.responsabile_verifica
 
+    ddt.responsabile_verifica = responsabile_ereditato
     db.session.commit()
     return jsonify({'ok': True, 'ddt': _ddt_dict(ddt), 'n_righe_totali': len(tutte_le_righe),
-                    'n_righe_abbinate': sum(1 for r in ddt.righe if r.abbinata)})
+                    'n_righe_abbinate': sum(1 for r in ddt.righe if r.abbinata),
+                    'link_modulo_verifica': f'/ddt_carico_wood/{ddt.id}/modulo_verifica'})
 
 
 @acquisti_wood_bp.route('/api/ddt_carico_wood/<int:did>/conferma', methods=['POST'])
@@ -652,8 +667,17 @@ def api_conferma_ddt_carico(did):
     completi. Rifiuta una seconda conferma sullo stesso DDT — questi
     effetti (in particolare il carico di giacenza) non sono pensati per
     essere applicati due volte.
+
+    Questo è anche il momento in cui si registra l'esito della verifica
+    fisica firmata sul modulo cartaceo (vedi pagina_modulo_verifica_ddt):
+    'firmato_da' (facoltativo, dal body JSON) e le ubicazioni allocate per
+    riga (già salvate a mano mano tramite api_modifica_riga_ddt mentre si
+    rivede la bozza) — non un passaggio separato.
     """
     ddt = DDTCaricoWood.query.get_or_404(did)
+    d = request.get_json(silent=True) or {}
+    if d.get('firmato_da'):
+        ddt.firmato_da = str(d.get('firmato_da')).strip()
     if ddt.confermato:
         return jsonify({'errore': True, 'messaggio': 'Questo DDT è già stato confermato in precedenza — non si conferma due volte.'}), 409
 
@@ -735,6 +759,8 @@ def api_modifica_riga_ddt(rid):
                 r.quantita_verificata = float(val)
             except (TypeError, ValueError):
                 return jsonify({'errore': True, 'messaggio': 'Quantità verificata non valida'}), 400
+    if 'ubicazione_allocata' in d:
+        r.ubicazione_allocata = (d.get('ubicazione_allocata') or '').strip()
     if 'codice' in d or 'ordine_n_riferimento' in d:
         oa = OrdineAcquistoWood.query.filter_by(ordine_n=r.ordine_n_riferimento).first() if r.ordine_n_riferimento else None
         riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=r.codice).first() if oa else None
@@ -1337,7 +1363,8 @@ def api_crea_ordine_acquisto_manuale():
                             fornitore_piva=(d.get('fornitore_piva') or '').strip(),
                             destinazione_consegna=(d.get('destinazione_consegna') or '').strip(),
                             condizioni_pagamento=(d.get('condizioni_pagamento') or '').strip(),
-                            note_ordine=(d.get('note_ordine') or '').strip())
+                            note_ordine=(d.get('note_ordine') or '').strip(),
+                            responsabile_verifica=(d.get('responsabile_verifica') or '').strip())
     db.session.add(o)
     db.session.flush()
     totale_ordine = 0.0
@@ -1391,6 +1418,29 @@ def pagina_stampa_ordine_acquisto(oid):
     o = OrdineAcquistoWood.query.get_or_404(oid)
     azienda = AnagraficaAziendaWood.query.first()
     return render_template('acquisti_wood/ordine_stampa.html', o=o, azienda=azienda)
+
+
+@acquisti_wood_bp.route('/ddt_carico_wood/<int:did>/modulo_verifica')
+def pagina_modulo_verifica_ddt(did):
+    """
+    Modulo di Verifica Ingresso Merci — foglio stampabile generato subito
+    dopo la registrazione di un DDT (vedi api_upload_ddt_carico, che lo
+    apre in automatico), da consegnare al responsabile designato
+    (ereditato dall'Ordine di Acquisto abbinato). Il responsabile lo
+    controlla fisicamente, scrive a mano la quantità verificata e
+    l'ubicazione allocata per ogni riga, firma — quei valori si inseriscono
+    poi nel sistema alla conferma del DDT (vedi api_conferma_ddt_carico).
+
+    Segna il timestamp di stampa alla PRIMA apertura di questa pagina (non
+    alla registrazione del DDT): è quando il modulo viene davvero generato
+    per la stampa, non quando il DDT è stato solo letto dal PDF.
+    """
+    ddt = DDTCaricoWood.query.get_or_404(did)
+    if not ddt.modulo_verifica_stampato_il:
+        ddt.modulo_verifica_stampato_il = datetime.utcnow()
+        db.session.commit()
+    azienda = AnagraficaAziendaWood.query.first()
+    return render_template('acquisti_wood/modulo_verifica.html', ddt=ddt, azienda=azienda)
 
 
 

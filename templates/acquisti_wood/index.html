@@ -36,6 +36,9 @@
       </div>
       <div id="oam-righe"></div>
       <button class="btn btn-ghost" style="font-size:12px;margin-top:4px" onclick="aggiungiRigaManuale()">➕ Aggiungi riga</button>
+      <div style="margin-top:8px">
+        <input type="text" id="oam-responsabile-verifica" placeholder="👤 Responsabile verifica ingresso merci (facoltativo)" style="width:100%;max-width:400px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      </div>
       <div style="margin-top:10px">
         <button class="btn btn-primary" onclick="creaOrdineManuale()">✅ Crea ordine</button>
       </div>
@@ -220,14 +223,16 @@ async function creaOrdineManuale(){
   if(!fornitore){ esito.style.color='#c0392b'; esito.textContent='⚠️ Indica il fornitore.'; return; }
   const righe = RIGHE_MANUALI.filter(r => r.codice && r.qta > 0);
   if(!righe.length){ esito.style.color='#c0392b'; esito.textContent='⚠️ Aggiungi almeno una riga con codice e quantità.'; return; }
+  const responsabileVerifica = document.getElementById('oam-responsabile-verifica').value.trim();
   esito.style.color = 'var(--text-dim)'; esito.textContent = 'Creazione in corso...';
   try{
-    const r = await fetch('/api/ordini_acquisto_wood/manuale', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fornitore, righe})});
+    const r = await fetch('/api/ordini_acquisto_wood/manuale', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({fornitore, righe, responsabile_verifica: responsabileVerifica})});
     const d = await r.json();
     if(d.errore){ esito.style.color='#c0392b'; esito.textContent='⚠️ '+d.messaggio; return; }
     esito.style.color = '#2a9d5c';
     esito.innerHTML = `✅ Ordine <b>${d.ordine_n}</b> creato — <a href="/ordini_acquisto_wood/${d.id}/stampa" target="_blank" style="color:#00d2ff">🖨️ Stampa ordine</a>`;
     document.getElementById('oam-fornitore').value = '';
+    document.getElementById('oam-responsabile-verifica').value = '';
     RIGHE_MANUALI = [];
     renderRigheManuali();
     caricaListaOrdini();
@@ -400,6 +405,7 @@ async function apriOrdine(id){
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
       <label style="font-size:12px">Consegna: <input type="date" id="oa-data-consegna" value="${o.data_consegna||''}" onchange="cambiaDataConsegna()"></label>
       <input type="text" id="oa-nota" placeholder="Nota interna" value="${(o.nota_interna||'').replace(/"/g,'&quot;')}" onblur="cambiaNota()" style="flex:1;min-width:150px;padding:5px 8px;border-radius:5px;border:1px solid var(--border)">
+      <input type="text" id="oa-responsabile-verifica" placeholder="👤 Responsabile verifica ingresso merci" value="${(o.responsabile_verifica||'').replace(/"/g,'&quot;')}" onblur="cambiaResponsabileVerifica()" style="flex:1;min-width:200px;padding:5px 8px;border-radius:5px;border:1px solid var(--border)">
     </div>`;
 
   let righe = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>Qtà ordinata</th><th>Qtà ricevuta</th><th>Prezzo unit. €</th><th>Evasione</th><th></th></tr></thead><tbody>';
@@ -442,6 +448,9 @@ async function cambiaDataConsegna(){
 async function cambiaNota(){
   await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({nota_interna: document.getElementById('oa-nota').value})});
 }
+async function cambiaResponsabileVerifica(){
+  await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({responsabile_verifica: document.getElementById('oa-responsabile-verifica').value})});
+}
 async function aggiornaCampoRiga(rigaId, campo, valore){
   await fetch('/api/ordini_acquisto_wood/righe/' + rigaId, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({[campo]: valore})});
   caricaListaOrdini();
@@ -468,6 +477,9 @@ async function caricaPdfDdt(){
     if(d.errore){ esito.innerHTML = '<span style="color:#c0392b">⚠️ ' + d.messaggio + '</span>'; return; }
     esito.innerHTML = `<span style="color:#e6b800">📋 PDF letto — ${d.n_righe_abbinate}/${d.n_righe_totali} righe abbinate a un Ordine di Acquisto. ` +
       `<b>Rivedi qui sotto e premi "✅ CONFERMA LETTURA"</b> per applicare davvero il carico di magazzino — finché non confermi, giacenza e ordini restano invariati.</span>`;
+    // Apre subito il Modulo di Verifica Ingresso Merci da stampare e dare
+    // al responsabile designato — appena il DDT è registrato, come richiesto.
+    if(d.link_modulo_verifica) window.open(d.link_modulo_verifica, '_blank');
     fileInput.value = '';
     caricaListaDdt();
   }catch(e){
@@ -494,7 +506,9 @@ async function caricaListaDdt(){
           <div style="display:flex;gap:6px;align-items:center">
             ${d.confermato
               ? '<span class="badge" style="background:#1a9e5c22;color:#1a9e5c;border:1px solid #1a9e5c55;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">✅ CONFERMATO</span>'
-              : '<span class="badge" style="background:#e6b80022;color:#e6b800;border:1px solid #e6b80055;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">⚠️ BOZZA — DA CONFERMARE</span>'}
+              : '<span class="badge" style="background:#e6b80022;color:#e6b800;border:1px solid #e6b80055;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">⏳ IN ATTESA DI VERIFICA</span>'}
+            ${d.responsabile_verifica && !d.confermato ? `<span style="font-size:10px;color:var(--text-dim)">👤 ${d.responsabile_verifica}</span>` : ''}
+            <a href="${d.link_modulo_verifica}" target="_blank" class="btn btn-ghost" style="padding:4px 8px;font-size:11px">📋 Modulo</a>
             <a href="/ddt_carico_wood/${d.id}/pdf" target="_blank" class="btn btn-ghost" style="padding:4px 8px;font-size:11px">📄 PDF</a>
             ${!d.confermato ? `<button onclick="eliminaDdtBozza(${d.id})" class="btn btn-ghost" style="padding:4px 8px;font-size:11px;color:#e07a6e">🗑️ Elimina bozza</button>` : ''}
           </div>
@@ -508,7 +522,7 @@ async function caricaListaDdt(){
         });
       }else{
         // Bozza: righe modificabili, come nell'anteprima di MasterLogistic-WMS
-        html += '<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr style="color:var(--text-dim)"><th style="text-align:left">Codice</th><th style="text-align:left">Descrizione</th><th>Qtà dichiarata</th><th>Qtà verificata*</th><th>Rif. OA</th><th></th></tr></thead><tbody>';
+        html += '<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr style="color:var(--text-dim)"><th style="text-align:left">Codice</th><th style="text-align:left">Descrizione</th><th>Qtà dichiarata</th><th>Qtà verificata*</th><th>Ubicazione**</th><th>Rif. OA</th><th></th></tr></thead><tbody>';
         d.righe.forEach(r=>{
           const scarto = (r.quantita_verificata !== null && r.quantita_verificata !== undefined && r.quantita_verificata != r.quantita);
           html += `<tr>
@@ -516,12 +530,19 @@ async function caricaListaDdt(){
             <td><input type="text" value="${(r.descrizione||'').replace(/"/g,'&quot;')}" style="width:100%;min-width:120px;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;padding:2px 4px" onchange="modificaRigaDdt(${r.id}, 'descrizione', this.value)"></td>
             <td><input type="number" step="0.01" value="${r.quantita}" style="width:70px;text-align:center" onchange="modificaRigaDdt(${r.id}, 'quantita', this.value)"></td>
             <td><input type="number" step="0.01" value="${r.quantita_verificata !== null && r.quantita_verificata !== undefined ? r.quantita_verificata : ''}" placeholder="=dichiarata" style="width:80px;text-align:center;${scarto?'border:2px solid #e67e22;font-weight:700':''}" onchange="modificaRigaDdt(${r.id}, 'quantita_verificata', this.value)"></td>
+            <td><input type="text" value="${r.ubicazione_allocata||''}" placeholder="03-02-05-01-F" style="width:100px;text-align:center;font-family:monospace" onchange="modificaRigaDdt(${r.id}, 'ubicazione_allocata', this.value)"></td>
             <td><input type="text" value="${r.ordine_n_riferimento||''}" style="width:60px;text-align:center;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;padding:2px 4px" onchange="modificaRigaDdt(${r.id}, 'ordine_n_riferimento', this.value)"></td>
             <td><button onclick="eliminaRigaDdt(${r.id}, ${d.id})" title="Elimina questa riga" style="background:none;border:none;color:#c0392b;cursor:pointer">🗑️</button></td>
           </tr>`;
         });
         html += '</tbody></table>';
-        html += '<p style="font-size:10px;color:var(--text-dim);margin-top:4px">* Quantità pesata/misurata fisicamente allo scarico del camion — se diversa da quella dichiarata, la Giacenza si carica con quella VERA e la differenza va a Scarto Fornitore (mai al costo di produzione). Lasciare vuoto = si fida della quantità dichiarata.</p>';
+        html += '<p style="font-size:10px;color:var(--text-dim);margin-top:4px">* Quantità pesata/misurata fisicamente allo scarico del camion — se diversa da quella dichiarata, la Giacenza si carica con quella VERA e la differenza va a Scarto Fornitore (mai al costo di produzione). ** Formato ZZ-CC-SS-RR-X (es. 03-02-05-01-F), scritta a mano sul modulo durante la verifica. Lasciare vuoto = si fida della quantità dichiarata / nessuna ubicazione registrata.</p>';
+        if(d.responsabile_verifica){
+          html += `<p style="font-size:11px;color:var(--steel2);margin-top:4px">👤 Responsabile verifica: <b>${d.responsabile_verifica}</b> — <a href="${d.link_modulo_verifica}" target="_blank" style="color:var(--steel2)">📄 riapri il modulo di verifica</a></p>`;
+        }
+        html += `<div style="display:flex;gap:8px;align-items:center;margin-top:10px">
+          <input type="text" id="firmato-da-${d.id}" placeholder="Firmato da (chi ha verificato)" style="flex:1;padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)">
+        </div>`;
         html += `<button onclick="confermaDdt(${d.id})" class="btn btn-primary" style="margin-top:10px;width:100%">✅ CONFERMA LETTURA — applica il carico di magazzino</button>`;
       }
       html += '</div>';
@@ -548,8 +569,9 @@ async function eliminaRigaDdt(rigaId, ddtId){
 }
 async function confermaDdt(ddtId){
   if(!confirm('Confermare questo DDT? Verrà caricata la Giacenza reale e aggiornati gli Ordini di Acquisto abbinati — non è reversibile da qui.')) return;
+  const firmatoDa = document.getElementById(`firmato-da-${ddtId}`)?.value.trim() || '';
   try{
-    const r = await fetch('/api/ddt_carico_wood/' + ddtId + '/conferma', {method:'POST'});
+    const r = await fetch('/api/ddt_carico_wood/' + ddtId + '/conferma', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({firmato_da: firmatoDa})});
     const d = await r.json();
     if(d.errore){ alert('❌ ' + d.messaggio); return; }
     alert(`✅ DDT confermato — giacenza aggiornata` + (d.n_ordini_completati ? `, ${d.n_ordini_completati} ordine/i segnato/i come ricevuto/i` : '') + '.');

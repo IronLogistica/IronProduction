@@ -1575,6 +1575,42 @@ def assicura_quantita_verificata_ddt():
             db.session.commit()
 
 
+def assicura_verifica_ingresso_merci():
+    """
+    Migrazione compatibile con DB già esistenti: aggiunge i campi per il
+    flusso 'Verifica Ingresso Merci' — responsabile_verifica su
+    OrdineAcquistoWood (chi controllerà, assegnato già in fase d'ordine);
+    responsabile_verifica/modulo_verifica_stampato_il/firmato_da su
+    DDTCaricoWood (il modulo stampato alla registrazione e chi firma dopo
+    il controllo fisico); ubicazione_allocata su RigaDDTCaricoWood
+    (dove è stata allocata la merce, scritta sul modulo durante la
+    verifica e registrata qui alla conferma).
+    """
+    db_url = os.environ.get('DATABASE_URL', '')
+    tabelle_colonne = [
+        ('ordini_acquisto_wood', [('responsabile_verifica', 'VARCHAR(100)')]),
+        ('ddt_carico_wood', [('responsabile_verifica', 'VARCHAR(100)'),
+                              ('modulo_verifica_stampato_il', 'TIMESTAMP'),
+                              ('firmato_da', 'VARCHAR(100)')]),
+        ('righe_ddt_carico_wood', [('ubicazione_allocata', 'VARCHAR(20)')]),
+    ]
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        for tabella, colonne_da_aggiungere in tabelle_colonne:
+            for nome_col, tipo_col in colonne_da_aggiungere:
+                try:
+                    db.session.execute(text(f"ALTER TABLE {tabella} ADD COLUMN IF NOT EXISTS {nome_col} {tipo_col}"))
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+    else:
+        for tabella, colonne_da_aggiungere in tabelle_colonne:
+            colonne_esistenti = {c['name'] for c in inspect(db.engine).get_columns(tabella)}
+            for nome_col, tipo_col in colonne_da_aggiungere:
+                if nome_col not in colonne_esistenti:
+                    db.session.execute(text(f"ALTER TABLE {tabella} ADD COLUMN {nome_col} {tipo_col}"))
+                    db.session.commit()
+
+
 def assicura_operatore_evento_consuntivo():
     """Migrazione compatibile con DB già esistenti: aggiunge
     pp_eventi_consuntivi.operatore (chi ha inviato la dichiarazione,
@@ -2862,6 +2898,11 @@ class OrdineAcquistoWood(db.Model):
     destinazione_consegna = db.Column(db.String(300), default='')  # dove va consegnata la merce, se diverso dalla sede
     condizioni_pagamento  = db.Column(db.String(200), default='')  # es. "Bonifico a 60 gg df fm"
     note_ordine           = db.Column(db.Text, default='')          # es. "CONSEGNE DA CONCORDARE", note libere
+    # Chi controllerà la merce quando arriva — assegnato già in fase
+    # d'ordine, non quando arriva il DDT: così è già deciso PRIMA che la
+    # merce sia fisicamente qui, e compare subito sul modulo di verifica
+    # stampato al momento della registrazione del DDT.
+    responsabile_verifica = db.Column(db.String(100), default='')
     caricato_il       = db.Column(db.DateTime, default=datetime.utcnow)
     aggiornato_il     = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -2942,6 +2983,15 @@ class DDTCaricoWood(db.Model):
     data_ddt         = db.Column(db.String(20), default='')   # gg/mm/aaaa come estratta dal PDF
     testo_grezzo_pdf = db.Column(db.Text, default='')
     confermato       = db.Column(db.Boolean, default=False)   # False = bozza appena letta, giacenza/ordini NON ancora toccati
+    # Verifica ingresso merci — chi controllerà fisicamente (di norma
+    # ereditato dall'Ordine di Acquisto abbinato, compilabile a mano se
+    # non c'è un ordine collegato), il modulo cartaceo stampato per lui, e
+    # chi/quando ha firmato dopo il controllo fisico. La CONFERMA del DDT
+    # (che tocca giacenza/ordini) è il momento in cui si registra anche il
+    # risultato della verifica firmata — non un passaggio separato.
+    responsabile_verifica       = db.Column(db.String(100), default='')
+    modulo_verifica_stampato_il = db.Column(db.DateTime, nullable=True)
+    firmato_da                  = db.Column(db.String(100), default='')
     caricato_il      = db.Column(db.DateTime, default=datetime.utcnow)
 
 
@@ -2955,6 +3005,16 @@ class RigaDDTCaricoWood(db.Model):
     codice                = db.Column(db.String(100), nullable=False)
     descrizione           = db.Column(db.String(300), default='')
     quantita              = db.Column(db.Float, default=0)
+    # Ubicazione di magazzino allocata durante la verifica fisica — scritta
+    # a mano sul modulo cartaceo mentre si controlla la merce, inserita qui
+    # quando si conferma il DDT. Formato: ZZ-CC-SS-RR-X — Zona (2 cifre,
+    # QUALE magazzino fisico: sono sparsi in più punti della fabbrica),
+    # Corsia (2 cifre), Scaffale (2 cifre), Ripiano (2 cifre), F/D (fronte
+    # o dietro dello scaffale). Es. '03-02-05-01-F'. Nessuna validazione
+    # rigida qui: solo un promemoria del formato nel placeholder del campo
+    # — un'ubicazione mancante o in formato diverso non deve MAI bloccare
+    # una conferma.
+    ubicazione_allocata   = db.Column(db.String(20), default='')
     # Quantità VERIFICATA fisicamente allo scarico (pesata/misurata da chi
     # scarica il camion) — SEPARATA dalla 'quantita' dichiarata sul DDT.
     # Se compilata e diversa dalla dichiarata, la CONFERMA carica in
