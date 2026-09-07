@@ -1439,11 +1439,26 @@ def _calcola_campi_giacenza(righe):
         if residuo > 0:
             ordinato_produzione[cod] = ordinato_produzione.get(cod, 0) + residuo
 
+    # BUG REALE TROVATO E CORRETTO: la descrizione veniva letta SOLO dalle
+    # righe storiche degli Ordini di Acquisto (RigaOrdineAcquistoWood) — un
+    # codice appena creato con 'Nuovo Codice' (Giacenza Iron Wood) salva la
+    # sua descrizione in DescrizioneCodiceWood, la tabella CANONICA delle
+    # descrizioni usata ovunque nel resto del programma — ma non avendo
+    # ancora nessun ordine d'acquisto dietro, la descrizione scritta a mano
+    # restava invisibile qui (e in Magazzino, stessa funzione condivisa),
+    # anche se salvata correttamente. DescrizioneCodiceWood ha ora la
+    # PRIORITÀ; la descrizione dall'ultimo ordine d'acquisto resta come
+    # riserva solo per i codici (tipicamente materie prime) senza una
+    # descrizione canonica propria.
     descrizioni = {}
     for cod, descr in (db.session.query(RigaOrdineAcquistoWood.codice, RigaOrdineAcquistoWood.descrizione)
                         .filter(RigaOrdineAcquistoWood.codice.in_(codici))
                         .order_by(RigaOrdineAcquistoWood.id.desc()).all()):
         descrizioni.setdefault(cod, descr)
+    for cod, descr in (db.session.query(DescrizioneCodiceWood.codice, DescrizioneCodiceWood.descrizione)
+                        .filter(DescrizioneCodiceWood.codice.in_(codici)).all()):
+        if descr:
+            descrizioni[cod] = descr
 
     approvvigionamenti = {a.codice: a for a in ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()}
 
