@@ -508,17 +508,20 @@ async function caricaListaDdt(){
         });
       }else{
         // Bozza: righe modificabili, come nell'anteprima di MasterLogistic-WMS
-        html += '<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr style="color:var(--text-dim)"><th style="text-align:left">Codice</th><th style="text-align:left">Descrizione</th><th>Qtà</th><th>Rif. OA</th><th></th></tr></thead><tbody>';
+        html += '<table style="width:100%;font-size:11px;border-collapse:collapse"><thead><tr style="color:var(--text-dim)"><th style="text-align:left">Codice</th><th style="text-align:left">Descrizione</th><th>Qtà dichiarata</th><th>Qtà verificata*</th><th>Rif. OA</th><th></th></tr></thead><tbody>';
         d.righe.forEach(r=>{
+          const scarto = (r.quantita_verificata !== null && r.quantita_verificata !== undefined && r.quantita_verificata != r.quantita);
           html += `<tr>
             <td><input type="text" value="${r.codice}" style="width:90px;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;font-family:monospace;padding:2px 4px" onchange="modificaRigaDdt(${r.id}, 'codice', this.value)"></td>
             <td><input type="text" value="${(r.descrizione||'').replace(/"/g,'&quot;')}" style="width:100%;min-width:120px;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;padding:2px 4px" onchange="modificaRigaDdt(${r.id}, 'descrizione', this.value)"></td>
             <td><input type="number" step="0.01" value="${r.quantita}" style="width:70px;text-align:center" onchange="modificaRigaDdt(${r.id}, 'quantita', this.value)"></td>
+            <td><input type="number" step="0.01" value="${r.quantita_verificata !== null && r.quantita_verificata !== undefined ? r.quantita_verificata : ''}" placeholder="=dichiarata" style="width:80px;text-align:center;${scarto?'border:2px solid #e67e22;font-weight:700':''}" onchange="modificaRigaDdt(${r.id}, 'quantita_verificata', this.value)"></td>
             <td><input type="text" value="${r.ordine_n_riferimento||''}" style="width:60px;text-align:center;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;padding:2px 4px" onchange="modificaRigaDdt(${r.id}, 'ordine_n_riferimento', this.value)"></td>
             <td><button onclick="eliminaRigaDdt(${r.id}, ${d.id})" title="Elimina questa riga" style="background:none;border:none;color:#c0392b;cursor:pointer">🗑️</button></td>
           </tr>`;
         });
         html += '</tbody></table>';
+        html += '<p style="font-size:10px;color:var(--text-dim);margin-top:4px">* Quantità pesata/misurata fisicamente allo scarico del camion — se diversa da quella dichiarata, la Giacenza si carica con quella VERA e la differenza va a Scarto Fornitore (mai al costo di produzione). Lasciare vuoto = si fida della quantità dichiarata.</p>';
         html += `<button onclick="confermaDdt(${d.id})" class="btn btn-primary" style="margin-top:10px;width:100%">✅ CONFERMA LETTURA — applica il carico di magazzino</button>`;
       }
       html += '</div>';

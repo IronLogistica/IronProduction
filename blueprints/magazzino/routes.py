@@ -17,7 +17,8 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
                     EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log,
                     KanbanProdotto, MappaCodiceMasterWork, ParametriLavorazioneWood, CategoriaAcquistoConfig,
-                    GruppoInventarioWood, SottogruppoInventarioWood, CodiceInventarioWood)
+                    GruppoInventarioWood, SottogruppoInventarioWood, CodiceInventarioWood,
+                    ScartoFornitoreWood, VarianzaMaterialeWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -27,6 +28,156 @@ STATI_CHIUSI_COMMESSA = {"COMPLETATA", "SPEDITA", "ANNULLATA"}
 @magazzino_bp.route('/magazzino')
 def index():
     return render_template('magazzino/index.html', active='magazzino')
+
+
+@magazzino_bp.route('/scheda-magazzino')
+def pagina_scheda_magazzino():
+    """
+    Scheda di Magazzino per articolo — stessa struttura del ledger già in
+    uso in Zucchetti (data, causale, documento, carichi, scarichi, saldo
+    progressivo): ogni riga di MovimentoGiacenzaWood per il codice
+    scelto, in ordine cronologico, con saldo che si accumula riga per
+    riga a partire dal saldo di apertura del periodo — non un nuovo
+    registro, una VISTA su dati già tutti presenti (i movimenti sono
+    registrati da tempo, semplicemente non esisteva ancora un modo di
+    vederli in fila per un singolo articolo).
+    """
+    codice = (request.args.get('codice') or '').strip()
+    da_data = (request.args.get('da_data') or '').strip()
+    a_data = (request.args.get('a_data') or '').strip()
+    righe_out = []
+    saldo_apertura = 0.0
+    totale_carichi = 0.0
+    totale_scarichi = 0.0
+
+    if codice:
+        query_base = MovimentoGiacenzaWood.query.filter_by(codice=codice)
+
+        # Saldo di apertura: somma di TUTTI i movimenti PRIMA di "da_data"
+        # (se specificata) — così il saldo progressivo parte dal punto
+        # giusto, non da zero, esattamente come "Saldo al gg/mm/aaaa" di
+        # Zucchetti.
+        if da_data:
+            try:
+                da_data_dt = datetime.strptime(da_data, '%Y-%m-%d')
+                saldo_apertura = (db.session.query(db.func.coalesce(db.func.sum(MovimentoGiacenzaWood.quantita), 0.0))
+                                  .filter(MovimentoGiacenzaWood.codice == codice,
+                                          MovimentoGiacenzaWood.creato_il < da_data_dt).scalar()) or 0.0
+                query_base = query_base.filter(MovimentoGiacenzaWood.creato_il >= da_data_dt)
+            except ValueError:
+                pass
+        if a_data:
+            try:
+                a_data_dt = datetime.strptime(a_data, '%Y-%m-%d')
+                a_data_dt = a_data_dt.replace(hour=23, minute=59, second=59)
+                query_base = query_base.filter(MovimentoGiacenzaWood.creato_il <= a_data_dt)
+            except ValueError:
+                pass
+
+        movimenti = query_base.order_by(MovimentoGiacenzaWood.creato_il).all()
+        saldo_prog = saldo_apertura
+        for m in movimenti:
+            carico = m.quantita if m.quantita > 0 else 0
+            scarico = -m.quantita if m.quantita < 0 else 0
+            saldo_prog += m.quantita
+            totale_carichi += carico
+            totale_scarichi += scarico
+            righe_out.append({
+                'data': m.creato_il.strftime('%d/%m/%Y') if m.creato_il else '',
+                'causale': m.tipo, 'riferimento': m.riferimento or '', 'note': m.note or '',
+                'carico': carico, 'scarico': scarico, 'saldo_progressivo': round(saldo_prog, 4),
+                'costo_unitario': m.costo_unitario, 'valore': m.valore,
+            })
+
+    articolo_descr = DescrizioneCodiceWood.query.get(codice) if codice else None
+    return render_template('magazzino/scheda_magazzino.html', active='scheda_magazzino',
+                            codice=codice, da_data=da_data, a_data=a_data,
+                            descrizione=(articolo_descr.descrizione if articolo_descr else ''),
+                            righe=righe_out, saldo_apertura=round(saldo_apertura, 4),
+                            saldo_finale=round(saldo_apertura + totale_carichi - totale_scarichi, 4),
+                            totale_carichi=round(totale_carichi, 4), totale_scarichi=round(totale_scarichi, 4))
+
+
+@magazzino_bp.route('/varianza-materiale')
+def pagina_varianza_materiale():
+    """
+    Registrazione della varianza di IMPIEGO materiale — quando chi ha
+    tagliato/lavorato SA che il consumo reale è stato superiore allo
+    standard calcolato dalla distinta (es. ha contato le barre
+    fisicamente usate ed erano di più) può dichiararlo qui: il sistema
+    NON tocca lo scarico già fatto (resta lo standard, è la base del
+    costo di produzione) — registra SOLO l'eccedenza come varianza di
+    costo del venduto per materiale (vedi VarianzaMaterialeWood).
+
+    Se la quantità reale dichiarata è uguale o inferiore allo standard,
+    nessuna varianza viene creata — questo strumento serve a
+    intercettare SOLO i casi di consumo maggiore del previsto.
+    """
+    op_code = (request.args.get('op') or '').strip()
+    codice_materiale = (request.args.get('materiale') or '').strip()
+    qta_standard = None
+    o = None
+    if op_code and codice_materiale:
+        o = OrdineProduzione.query.filter_by(codice=op_code).first()
+        if o:
+            qta_standard = (db.session.query(db.func.coalesce(db.func.sum(-MovimentoGiacenzaWood.quantita), 0.0))
+                             .filter(MovimentoGiacenzaWood.riferimento == op_code,
+                                     MovimentoGiacenzaWood.tipo == 'scarico_produzione',
+                                     MovimentoGiacenzaWood.codice == codice_materiale).scalar()) or 0.0
+
+    varianze_recenti = VarianzaMaterialeWood.query.order_by(VarianzaMaterialeWood.creato_il.desc()).limit(30).all()
+    return render_template('magazzino/varianza_materiale.html', active='varianza_materiale',
+                            op_code=op_code, codice_materiale=codice_materiale, o=o,
+                            qta_standard=round(qta_standard, 4) if qta_standard is not None else None,
+                            varianze_recenti=varianze_recenti)
+
+
+@magazzino_bp.post('/api/varianza-materiale/registra')
+def api_registra_varianza_materiale():
+    d = request.get_json(force=True)
+    op_code = (d.get('op_code') or '').strip()
+    codice_materiale = (d.get('codice_materiale') or '').strip()
+    dichiarato_da = (d.get('dichiarato_da') or '').strip()
+    note = (d.get('note') or '').strip()
+    if not op_code or not codice_materiale:
+        return jsonify(ok=False, error='OP e codice materiale sono obbligatori'), 400
+    try:
+        qta_reale = float(d.get('qta_reale'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Quantità reale non valida'), 400
+    if qta_reale < 0:
+        return jsonify(ok=False, error='La quantità non può essere negativa'), 400
+
+    o = OrdineProduzione.query.filter_by(codice=op_code).first()
+    if not o:
+        return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
+
+    qta_standard = (db.session.query(db.func.coalesce(db.func.sum(-MovimentoGiacenzaWood.quantita), 0.0))
+                    .filter(MovimentoGiacenzaWood.riferimento == op_code,
+                            MovimentoGiacenzaWood.tipo == 'scarico_produzione',
+                            MovimentoGiacenzaWood.codice == codice_materiale).scalar()) or 0.0
+
+    differenza_eccedente = max(0.0, qta_reale - qta_standard)
+    if differenza_eccedente <= 0:
+        return jsonify(ok=True, registrata=False,
+                        messaggio=f'Quantità reale ({qta_reale}) non supera lo standard già scaricato ({qta_standard}) — nessuna varianza da registrare.')
+
+    try:
+        costo_unit = _calcola_costo_standard(codice_materiale)['costo_totale']
+    except Exception:
+        costo_unit = None
+
+    v = VarianzaMaterialeWood(
+        op_code=op_code, codice_articolo=o.codice_articolo, codice_materiale=codice_materiale,
+        qta_standard=round(qta_standard, 4), qta_reale=qta_reale, differenza_eccedente=round(differenza_eccedente, 4),
+        costo_unitario=costo_unit, varianza_costo_venduto=(differenza_eccedente * costo_unit) if costo_unit is not None else None,
+        dichiarato_da=dichiarato_da, note=note,
+    )
+    db.session.add(v)
+    db.session.commit()
+    log(f"Varianza materiale registrata: OP {op_code} — {codice_materiale} — eccedenza {differenza_eccedente}")
+    return jsonify(ok=True, registrata=True, differenza_eccedente=round(differenza_eccedente, 4),
+                   varianza_costo_venduto=v.varianza_costo_venduto)
 
 
 @magazzino_bp.route('/centri-costo-wood')

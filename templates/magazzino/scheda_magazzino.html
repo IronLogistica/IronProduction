@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">📒 Scheda di Magazzino</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px">
+    <form method="get" style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:18px">
+      <div>
+        <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px">Codice articolo</label>
+        <input type="text" name="codice" value="{{ codice }}" placeholder="es. P503"
+               style="padding:9px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);width:160px">
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px">Da data</label>
+        <input type="date" name="da_data" value="{{ da_data }}"
+               style="padding:9px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)">
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px">A data</label>
+        <input type="date" name="a_data" value="{{ a_data }}"
+               style="padding:9px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)">
+      </div>
+      <button class="btn btn-primary" type="submit">🔍 Cerca</button>
+    </form>
+
+    {% if codice and not righe and saldo_apertura == 0 %}
+    <p style="color:var(--text-dim);font-style:italic">Nessun movimento trovato per "{{ codice }}" nel periodo indicato.</p>
+    {% endif %}
+
+    {% if codice %}
+    <div style="display:flex;gap:14px;flex-wrap:wrap;margin-bottom:18px">
+      <div style="background:var(--dark3);border:1px solid var(--border);border-radius:8px;padding:12px 18px">
+        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Codice</div>
+        <div style="font-size:16px;font-weight:800">{{ codice }}{% if descrizione %} — {{ descrizione }}{% endif %}</div>
+      </div>
+      <div style="background:var(--dark3);border:1px solid var(--border);border-radius:8px;padding:12px 18px">
+        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Saldo apertura periodo</div>
+        <div style="font-size:16px;font-weight:800">{{ saldo_apertura }}</div>
+      </div>
+      <div style="background:var(--dark3);border:1px solid var(--border);border-radius:8px;padding:12px 18px">
+        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Totale carichi</div>
+        <div style="font-size:16px;font-weight:800;color:#1a9e5c">+{{ totale_carichi }}</div>
+      </div>
+      <div style="background:var(--dark3);border:1px solid var(--border);border-radius:8px;padding:12px 18px">
+        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Totale scarichi</div>
+        <div style="font-size:16px;font-weight:800;color:#c0392b">−{{ totale_scarichi }}</div>
+      </div>
+      <div style="background:var(--dark3);border:2px solid #2589c7;border-radius:8px;padding:12px 18px">
+        <div style="font-size:10px;color:var(--text-dim);text-transform:uppercase">Saldo finale</div>
+        <div style="font-size:18px;font-weight:800;color:#2589c7">{{ saldo_finale }}</div>
+      </div>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead>
+        <tr style="text-align:left;border-bottom:1.5px solid var(--border)">
+          <th style="padding:6px 8px">Data</th>
+          <th style="padding:6px 8px">Causale</th>
+          <th style="padding:6px 8px">Riferimento</th>
+          <th style="padding:6px 8px">Note</th>
+          <th style="padding:6px 8px;text-align:right">Carico</th>
+          <th style="padding:6px 8px;text-align:right">Scarico</th>
+          <th style="padding:6px 8px;text-align:right">Saldo prog.</th>
+          <th style="padding:6px 8px;text-align:right">Costo unit.</th>
+          <th style="padding:6px 8px;text-align:right">Valore</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in righe %}
+        <tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+          <td style="padding:6px 8px;color:var(--text-dim);white-space:nowrap">{{ r.data }}</td>
+          <td style="padding:6px 8px;font-weight:700">{{ r.causale }}</td>
+          <td style="padding:6px 8px;color:var(--text-dim)">{{ r.riferimento }}</td>
+          <td style="padding:6px 8px;color:var(--text-dim);font-size:11px">{{ r.note }}</td>
+          <td style="padding:6px 8px;text-align:right;color:#1a9e5c;font-weight:700">{{ r.carico if r.carico else '' }}</td>
+          <td style="padding:6px 8px;text-align:right;color:#c0392b;font-weight:700">{{ r.scarico if r.scarico else '' }}</td>
+          <td style="padding:6px 8px;text-align:right;font-weight:800">{{ r.saldo_progressivo }}</td>
+          <td style="padding:6px 8px;text-align:right;color:var(--text-dim)">{{ '%.5f'|format(r.costo_unitario) if r.costo_unitario is not none else '—' }}</td>
+          <td style="padding:6px 8px;text-align:right;color:var(--text-dim)">{{ '%.2f'|format(r.valore) if r.valore is not none else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

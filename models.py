@@ -1554,6 +1554,27 @@ def assicura_finiti_is_wms():
                 db.session.commit()
 
 
+def assicura_quantita_verificata_ddt():
+    """
+    Migrazione compatibile con DB già esistenti: aggiunge
+    righe_ddt_carico_wood.quantita_verificata — la quantità fisicamente
+    verificata allo scarico del camion, separata dalla quantità dichiarata
+    sul DDT (vedi ScartoFornitoreWood). NULL = non ancora verificata.
+    """
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE righe_ddt_carico_wood ADD COLUMN IF NOT EXISTS quantita_verificata FLOAT"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('righe_ddt_carico_wood')}
+        if 'quantita_verificata' not in colonne:
+            db.session.execute(text("ALTER TABLE righe_ddt_carico_wood ADD COLUMN quantita_verificata FLOAT"))
+            db.session.commit()
+
+
 def assicura_operatore_evento_consuntivo():
     """Migrazione compatibile con DB già esistenti: aggiunge
     pp_eventi_consuntivi.operatore (chi ha inviato la dichiarazione,
@@ -2934,9 +2955,78 @@ class RigaDDTCaricoWood(db.Model):
     codice                = db.Column(db.String(100), nullable=False)
     descrizione           = db.Column(db.String(300), default='')
     quantita              = db.Column(db.Float, default=0)
+    # Quantità VERIFICATA fisicamente allo scarico (pesata/misurata da chi
+    # scarica il camion) — SEPARATA dalla 'quantita' dichiarata sul DDT.
+    # Se compilata e diversa dalla dichiarata, la CONFERMA carica in
+    # Giacenza la quantità VERIFICATA (quella davvero arrivata), non
+    # quella scritta sulla carta — e la differenza va in ScartoFornitoreWood,
+    # MAI mescolata al costo di produzione: è un problema di consegna, non
+    # di reparto. NULL = non ancora verificata, o verificata=dichiarata
+    # (nessuna differenza, comportamento invariato).
+    quantita_verificata   = db.Column(db.Float, nullable=True)
     abbinata              = db.Column(db.Boolean, default=False)   # True = trovata una riga OA corrispondente, aggiornata
     ddt = db.relationship('DDTCaricoWood', backref=db.backref('righe', cascade='all, delete-orphan'))
     ordine_acquisto = db.relationship('OrdineAcquistoWood')
+
+
+class ScartoFornitoreWood(db.Model):
+    """
+    Differenza tra quanto un fornitore DICHIARA sul DDT e quanto arriva
+    DAVVERO (verificato fisicamente allo scarico) — MAI mescolata al
+    costo di produzione: è un problema di consegna/fornitore, non di
+    reparto. Una riga per ogni riga DDT dove le due quantità non
+    coincidono, creata al momento della conferma. Solo lettura/audit —
+    da qui parte l'eventuale contestazione al fornitore.
+    """
+    __tablename__ = 'scarti_fornitore_wood'
+    id                  = db.Column(db.Integer, primary_key=True)
+    ddt_id              = db.Column(db.Integer, db.ForeignKey('ddt_carico_wood.id'), nullable=True)
+    riga_ddt_id         = db.Column(db.Integer, db.ForeignKey('righe_ddt_carico_wood.id'), nullable=True)
+    fornitore           = db.Column(db.String(200), default='')
+    codice              = db.Column(db.String(100), nullable=False, index=True)
+    numero_ddt          = db.Column(db.String(50), default='')
+    data_ddt            = db.Column(db.String(20), default='')
+    quantita_dichiarata = db.Column(db.Float, default=0)
+    quantita_verificata = db.Column(db.Float, default=0)
+    differenza          = db.Column(db.Float, default=0)   # verificata - dichiarata (negativo = consegnato meno)
+    costo_unitario      = db.Column(db.Float, nullable=True)
+    valore_differenza   = db.Column(db.Float, nullable=True)
+    note                = db.Column(db.String(300), default='')
+    creato_il           = db.Column(db.DateTime, default=datetime.utcnow)
+
+
+class VarianzaMaterialeWood(db.Model):
+    """
+    Varianza di IMPIEGO materiale in produzione — quanto materiale è
+    stato DAVVERO usato (dichiarato a mano da chi ha tagliato/lavorato,
+    quando lo sa con certezza — es. barre realmente impiegate) rispetto
+    allo STANDARD calcolato dalla distinta base per gli stessi pezzi.
+
+    Registrata SOLO quando la quantità reale dichiarata supera quella
+    standard (si è usato PIÙ materiale del previsto) — quella eccedenza
+    va a Varianza di Costo del Venduto per Materiale, come richiesto:
+    lo scarico verso Giacenza resta comunque quello STANDARD (invariato,
+    è la base del costo di produzione) — questa riga è SOLO il conto a
+    parte della differenza in eccesso, mai un secondo scarico.
+
+    Se la quantità reale è invece uguale o inferiore allo standard,
+    nessuna riga viene creata: non è questo il caso che si vuole
+    intercettare (il sospetto è sempre nella direzione "si consuma di
+    più", mai "di meno" qui).
+    """
+    __tablename__ = 'varianze_materiale_wood'
+    id                     = db.Column(db.Integer, primary_key=True)
+    op_code                = db.Column(db.String(20), nullable=False, index=True)
+    codice_articolo        = db.Column(db.String(50), default='')   # il prodotto/componente in lavorazione
+    codice_materiale       = db.Column(db.String(100), nullable=False)  # la materia prima (es. la barra di ferro)
+    qta_standard           = db.Column(db.Float, default=0)
+    qta_reale              = db.Column(db.Float, default=0)
+    differenza_eccedente   = db.Column(db.Float, default=0)   # sempre positiva: qta_reale - qta_standard
+    costo_unitario         = db.Column(db.Float, nullable=True)
+    varianza_costo_venduto = db.Column(db.Float, nullable=True)   # differenza_eccedente × costo_unitario
+    dichiarato_da          = db.Column(db.String(100), default='')
+    note                   = db.Column(db.String(300), default='')
+    creato_il              = db.Column(db.DateTime, default=datetime.utcnow)
 
 
 class SequenzaCommessa(db.Model):

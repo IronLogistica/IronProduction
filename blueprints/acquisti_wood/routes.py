@@ -8,10 +8,12 @@ from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
                     OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento, ScortaMinimaWood,
-                    AnagraficaAziendaWood, AnagraficaFornitoreWood, CatalogoFornitoreWood, Terzista)
+                    AnagraficaAziendaWood, AnagraficaFornitoreWood, CatalogoFornitoreWood, Terzista,
+                    ScartoFornitoreWood)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
                     _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
-                    _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO, _leggi_file_tabellare_tollerante)
+                    _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO, _leggi_file_tabellare_tollerante,
+                    _calcola_costo_standard)
 
 acquisti_wood_bp = Blueprint('acquisti_wood', __name__)
 
@@ -568,6 +570,7 @@ def _ddt_dict(d):
         'confermato': d.confermato,
         'righe': [{
             'id': r.id, 'codice': r.codice, 'descrizione': r.descrizione, 'quantita': r.quantita,
+            'quantita_verificata': r.quantita_verificata,
             'ordine_n_riferimento': r.ordine_n_riferimento, 'abbinata': r.abbinata,
             'ordine_acquisto_id': r.ordine_acquisto_id,
         } for r in d.righe],
@@ -655,16 +658,42 @@ def api_conferma_ddt_carico(did):
         return jsonify({'errore': True, 'messaggio': 'Questo DDT è già stato confermato in precedenza — non si conferma due volte.'}), 409
 
     for riga_ddt in ddt.righe:
-        if riga_ddt.quantita > 0 and riga_ddt.codice:
-            _registra_movimento_giacenza(riga_ddt.codice, riga_ddt.quantita, 'carico_acquisto',
+        # Quantità VERIFICATA fisicamente allo scarico, se inserita — la
+        # Giacenza si carica con quella DAVVERO arrivata, non con quella
+        # scritta sul DDT: altrimenti il magazzino risulterebbe più pieno
+        # di quanto sia in realtà, e la differenza si scoprirebbe solo
+        # molto più tardi (a produzione, mescolata a tutt'altro). Se non
+        # è stata verificata (NULL), si comporta come sempre: si fida
+        # della quantità dichiarata.
+        qta_da_caricare = riga_ddt.quantita_verificata if riga_ddt.quantita_verificata is not None else riga_ddt.quantita
+        if qta_da_caricare > 0 and riga_ddt.codice:
+            _registra_movimento_giacenza(riga_ddt.codice, qta_da_caricare, 'carico_acquisto',
                                           riferimento=ddt.filename,
                                           note=f'DDT {ddt.numero_ddt or ddt.filename}' +
-                                               (f' — rif. OA {riga_ddt.ordine_n_riferimento}' if riga_ddt.ordine_n_riferimento else ''))
+                                               (f' — rif. OA {riga_ddt.ordine_n_riferimento}' if riga_ddt.ordine_n_riferimento else '') +
+                                               (f' — quantità VERIFICATA (dichiarate {riga_ddt.quantita})' if riga_ddt.quantita_verificata is not None and riga_ddt.quantita_verificata != riga_ddt.quantita else ''))
         if riga_ddt.ordine_acquisto_id:
             riga_oa = RigaOrdineAcquistoWood.query.filter_by(
                 ordine_id=riga_ddt.ordine_acquisto_id, codice=riga_ddt.codice).first()
             if riga_oa:
-                riga_oa.qta_ricevuta = (riga_oa.qta_ricevuta or 0) + riga_ddt.quantita
+                riga_oa.qta_ricevuta = (riga_oa.qta_ricevuta or 0) + qta_da_caricare
+
+        # SCARTO FORNITORE: se la quantità verificata differisce da quella
+        # dichiarata, registra la differenza a parte — MAI mescolata al
+        # costo di produzione, è un problema di consegna/fornitore.
+        if riga_ddt.quantita_verificata is not None and riga_ddt.quantita_verificata != riga_ddt.quantita:
+            differenza = riga_ddt.quantita_verificata - riga_ddt.quantita
+            try:
+                costo_unit = _calcola_costo_standard(riga_ddt.codice)['costo_totale']
+            except Exception:
+                costo_unit = None
+            db.session.add(ScartoFornitoreWood(
+                ddt_id=ddt.id, riga_ddt_id=riga_ddt.id, fornitore=ddt.fornitore,
+                codice=riga_ddt.codice, numero_ddt=ddt.numero_ddt, data_ddt=ddt.data_ddt,
+                quantita_dichiarata=riga_ddt.quantita, quantita_verificata=riga_ddt.quantita_verificata,
+                differenza=differenza, costo_unitario=costo_unit,
+                valore_differenza=(differenza * costo_unit) if costo_unit is not None else None,
+            ))
 
     n_ordini_completati = 0
     ordini_toccati = {r.ordine_acquisto_id for r in ddt.righe if r.ordine_acquisto_id}
@@ -697,6 +726,15 @@ def api_modifica_riga_ddt(rid):
             r.quantita = float(d.get('quantita') or 0)
         except (TypeError, ValueError):
             return jsonify({'errore': True, 'messaggio': 'Quantità non valida'}), 400
+    if 'quantita_verificata' in d:
+        val = d.get('quantita_verificata')
+        if val in (None, ''):
+            r.quantita_verificata = None  # tornato vuoto: si fida di nuovo della dichiarata
+        else:
+            try:
+                r.quantita_verificata = float(val)
+            except (TypeError, ValueError):
+                return jsonify({'errore': True, 'messaggio': 'Quantità verificata non valida'}), 400
     if 'codice' in d or 'ordine_n_riferimento' in d:
         oa = OrdineAcquistoWood.query.filter_by(ordine_n=r.ordine_n_riferimento).first() if r.ordine_n_riferimento else None
         riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=r.codice).first() if oa else None
