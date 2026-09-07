@@ -114,14 +114,66 @@ function renderRigheManuali(){
     return;
   }
   box.innerHTML = RIGHE_MANUALI.map((r, i) => `
-    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px">
-      <input id="oam-codice-${i}" type="text" placeholder="Codice *" value="${r.codice}" style="width:110px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].codice=this.value.trim()">
-      <input type="text" placeholder="Descrizione" value="${r.descrizione}" style="flex:1;min-width:160px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].descrizione=this.value.trim()">
-      <input type="text" placeholder="U.M." value="${r.unita_misura}" style="width:60px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].unita_misura=this.value.trim()">
+    <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:6px;position:relative">
+      <input id="oam-codice-${i}" type="text" placeholder="Codice *" value="${r.codice}" autocomplete="off"
+             style="width:110px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)"
+             oninput="_oamRicercaCodice(${i}, this.value)" onfocus="_oamRicercaCodice(${i}, this.value)"
+             onblur="setTimeout(()=>_oamChiudiDropdown(${i}), 200)"
+             onchange="RIGHE_MANUALI[${i}].codice=this.value.trim()">
+      <div id="oam-dropdown-${i}" style="display:none;position:absolute;top:100%;left:0;z-index:50;background:var(--dark3);border:1px solid var(--border);border-radius:6px;max-height:220px;overflow-y:auto;min-width:280px;box-shadow:var(--shadow)"></div>
+      <input type="text" placeholder="Descrizione" id="oam-descrizione-${i}" value="${r.descrizione}" style="flex:1;min-width:160px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].descrizione=this.value.trim()">
+      <input type="text" placeholder="U.M." id="oam-um-${i}" value="${r.unita_misura}" style="width:60px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].unita_misura=this.value.trim()">
       <input type="number" step="0.01" min="0" placeholder="Qtà *" value="${r.qta}" style="width:80px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].qta=parseFloat(this.value)||0">
       <input type="number" step="0.0001" min="0" placeholder="Prezzo €" value="${r.prezzo_unitario}" style="width:90px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)" onchange="RIGHE_MANUALI[${i}].prezzo_unitario=parseFloat(this.value)||null">
       <button onclick="rimuoviRigaManuale(${i})" title="Rimuovi riga" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px">🗑️</button>
     </div>`).join('');
+}
+
+let _oamRicercaTimeout = null;
+async function _oamRicercaCodice(i, testo){
+  testo = testo.trim();
+  clearTimeout(_oamRicercaTimeout);
+  const dropdown = document.getElementById(`oam-dropdown-${i}`);
+  if(testo.length < 2){ dropdown.style.display = 'none'; return; }
+  _oamRicercaTimeout = setTimeout(async () => {
+    try{
+      // Cerca SOLO tra i codici già a magazzino (stesso filtro della pagina
+      // Giacenza Iron Wood — codici in distinta o registrati in anagrafica,
+      // mai testo libero indovinato) — così l'ordine si riferisce sempre a
+      // un codice vero, mai a un refuso di battitura.
+      const r = await fetch('/api/giacenza_wood?solo_bom=1&q=' + encodeURIComponent(testo));
+      const d = await r.json();
+      const righe = (d.righe || []).slice(0, 15);
+      if(!righe.length){
+        dropdown.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text-dim)">Nessun codice trovato a magazzino</div>';
+      }else{
+        dropdown.innerHTML = righe.map(rg => `
+          <div style="padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px"
+               onmousedown="_oamScegliCodice(${i}, '${rg.codice.replace(/'/g, "\\'")}', '${(rg.descrizione||'').replace(/'/g, "\\'").replace(/"/g,'&quot;')}', '${(rg.unita_misura||'').replace(/'/g, "\\'")}')"
+               onmouseover="this.style.background='rgba(42,157,92,.12)'" onmouseout="this.style.background=''">
+            <b class="codice">${rg.codice}</b>${rg.descrizione ? ' — ' + rg.descrizione : ''}
+          </div>`).join('');
+      }
+      dropdown.style.display = 'block';
+    }catch(e){
+      dropdown.style.display = 'none';
+    }
+  }, 220);
+}
+
+function _oamScegliCodice(i, codice, descrizione, unita_misura){
+  RIGHE_MANUALI[i].codice = codice;
+  RIGHE_MANUALI[i].descrizione = descrizione;
+  RIGHE_MANUALI[i].unita_misura = unita_misura;
+  document.getElementById(`oam-codice-${i}`).value = codice;
+  document.getElementById(`oam-descrizione-${i}`).value = descrizione;
+  document.getElementById(`oam-um-${i}`).value = unita_misura;
+  _oamChiudiDropdown(i);
+}
+
+function _oamChiudiDropdown(i){
+  const dropdown = document.getElementById(`oam-dropdown-${i}`);
+  if(dropdown) dropdown.style.display = 'none';
 }
 renderRigheManuali();
 
