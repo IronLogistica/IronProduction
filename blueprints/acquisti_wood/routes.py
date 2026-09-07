@@ -743,17 +743,22 @@ def api_elimina_ddt_carico(did):
 @acquisti_wood_bp.route('/api/fornitori_wood/ricerca')
 def api_ricerca_fornitori_wood():
     """
-    Widget di ricerca intelligente per il campo Fornitore — unisce DUE
+    Widget di ricerca intelligente per il campo Fornitore — unisce TRE
     fonti, non solo una: i nomi fornitore già usati in Ordini di
-    Acquisto PASSATI (caricati o emessi da qui) E i Terzisti già
-    censiti (zincatura, verniciatura — tabella Terzista, completamente
-    separata: sono fornitori di LAVORAZIONE esterna, non di materiale,
-    ma restano comunque fornitori con cui si ha un rapporto commerciale
-    reale — mancavano dal widget, un vuoto reale segnalato).
+    Acquisto PASSATI (caricati o emessi da qui), i Terzisti già censiti
+    (zincatura, verniciatura — tabella Terzista, completamente separata:
+    sono fornitori di LAVORAZIONE esterna, non di materiale, ma restano
+    comunque fornitori con cui si ha un rapporto commerciale reale — un
+    vuoto reale segnalato in passato), e AnagraficaFornitoreWood (chi ha
+    un fido impostato ma magari ancora nessun ordine — mancava, un altro
+    vuoto reale: senza questa terza fonte, un fornitore appena registrato
+    solo per il fido non compariva nella ricerca finché non gli si
+    faceva il primo ordine).
     """
     q = (request.args.get('q') or '').strip().lower()
     fornitori = {f[0] for f in db.session.query(OrdineAcquistoWood.fornitore).distinct().all() if f[0]}
     fornitori |= {t[0] for t in db.session.query(Terzista.nome).distinct().all() if t[0]}
+    fornitori |= {a[0] for a in db.session.query(AnagraficaFornitoreWood.nome).distinct().all() if a[0]}
     if q:
         fornitori = {f for f in fornitori if q in f.lower()}
     return jsonify(sorted(fornitori)[:20])

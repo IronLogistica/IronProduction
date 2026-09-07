@@ -28,7 +28,12 @@
         Per un ordine fatto per telefono, di persona, o quando non c'è un PDF da caricare — genera comunque un numero
         d'ordine vero (IW-AAAAMMGG-NN) e una stampa da mandare al fornitore, esattamente come un ordine da PDF.
       </p>
-      <input type="text" id="oam-fornitore" placeholder="Fornitore *" style="width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);margin-bottom:8px">
+      <div style="position:relative;display:inline-block">
+        <input type="text" id="oam-fornitore" placeholder="Fornitore *" autocomplete="off" style="width:220px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);margin-bottom:8px"
+               oninput="_oamRicercaFornitore(this.value)" onfocus="_oamRicercaFornitore(this.value)"
+               onblur="setTimeout(()=>{document.getElementById('oam-fornitore-dropdown').style.display='none'}, 200)">
+        <div id="oam-fornitore-dropdown" style="display:none;position:absolute;top:100%;left:0;z-index:50;background:var(--dark3);border:1px solid var(--border);border-radius:6px;max-height:220px;overflow-y:auto;min-width:240px;box-shadow:var(--shadow)"></div>
+      </div>
       <div id="oam-righe"></div>
       <button class="btn btn-ghost" style="font-size:12px;margin-top:4px" onclick="aggiungiRigaManuale()">➕ Aggiungi riga</button>
       <div style="margin-top:10px">
@@ -92,6 +97,36 @@
 {% endblock %}
 {% block scripts %}
 let _oaCorrente = null;
+
+let _oamRicercaFornitoreTimeout = null;
+async function _oamRicercaFornitore(testo){
+  testo = testo.trim();
+  clearTimeout(_oamRicercaFornitoreTimeout);
+  const dropdown = document.getElementById('oam-fornitore-dropdown');
+  if(testo.length < 2){ dropdown.style.display = 'none'; return; }
+  _oamRicercaFornitoreTimeout = setTimeout(async () => {
+    try{
+      const r = await fetch('/api/fornitori_wood/ricerca?q=' + encodeURIComponent(testo));
+      const nomi = await r.json();
+      if(!nomi.length){
+        dropdown.innerHTML = '<div style="padding:8px 10px;font-size:11px;color:var(--text-dim)">Nessun fornitore già conosciuto — puoi comunque scriverlo</div>';
+      }else{
+        dropdown.innerHTML = nomi.map(n => `
+          <div style="padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px"
+               onmousedown="_oamSceltaFornitore('${n.replace(/'/g, "\\'")}')"
+               onmouseover="this.style.background='rgba(42,157,92,.12)'" onmouseout="this.style.background=''">${n}</div>`).join('');
+      }
+      dropdown.style.display = 'block';
+    }catch(e){
+      dropdown.style.display = 'none';
+    }
+  }, 220);
+}
+
+function _oamSceltaFornitore(nome){
+  document.getElementById('oam-fornitore').value = nome;
+  document.getElementById('oam-fornitore-dropdown').style.display = 'none';
+}
 
 let RIGHE_MANUALI = [];
 
