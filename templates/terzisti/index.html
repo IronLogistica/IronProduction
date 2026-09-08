@@ -418,9 +418,10 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
     <h3>📤 Anteprima DDT Uscita — Lavorazione Esterna</h3>
     <div class="mi-grid" id="mi-u"></div>
     <table class="art-t">
-      <thead><tr><th>Codice</th><th>Descrizione</th><th>Qtà</th></tr></thead>
+      <thead><tr><th>Codice</th><th>Descrizione</th><th>Qtà</th><th></th></tr></thead>
       <tbody id="at-u"></tbody>
     </table>
+    <button class="btn btn-ghost" style="margin-top:8px;font-size:.75rem" onclick="aggiungiRigaUscita()">➕ Aggiungi riga</button>
     <div class="form-2col">
       <div>
         <label class="f-lbl">Tipo trattamento</label>
@@ -799,25 +800,107 @@ window.upload = async function(file,tipo){
 }
 
 // ── Modale Uscita ─────────────────────────────────────────────────────────────
+let _uscitaArticoli = [];
+
 window.apriUscita = function apriUscita(js){
   _pU=js; const d=js.anteprima;
   document.getElementById('mi-u').innerHTML=`
     <div class="mi-cell"><div class="ml">Terzista</div><div class="mv">${d.terzista||'—'}</div></div>
     <div class="mi-cell"><div class="ml">N° DDT</div><div class="mv o">${d.numero_ddt||'—'}</div></div>
     <div class="mi-cell"><div class="ml">Data</div><div class="mv">${d.data_ddt||'—'}</div></div>`;
-  document.getElementById('at-u').innerHTML=(d.articoli||[]).map(a=>
-    `<tr><td class="cod">${a.codice}</td><td style="color:var(--text-dim)">${a.desc}</td>
-     <td><span class="qta q-out">${a.qta}</span></td></tr>`
-  ).join('')||'<tr><td colspan="3" style="color:var(--text-dim);text-align:center">Nessun articolo rilevato</td></tr>';
+  // Righe MODIFICABILI (prima erano di sola lettura) — stesso principio già
+  // in uso per il Rientro: se il PDF non legge bene o salta una riga, si
+  // corregge o si aggiunge qui, invece di dover ricaricare tutto da capo.
+  _uscitaArticoli = (d.articoli||[]).map(a => ({codice:a.codice, desc:a.desc, qta:a.qta}));
+  renderRigheUscita();
   if(d.trattamento) document.getElementById('sel-tratt').value=d.trattamento;
   openModal('m-uscita');
 }
+
+function renderRigheUscita(){
+  const tbody = document.getElementById('at-u');
+  if(!_uscitaArticoli.length){
+    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--text-dim);text-align:center">Nessun articolo rilevato — usa "Aggiungi riga" per inserirne uno a mano</td></tr>';
+    return;
+  }
+  tbody.innerHTML = _uscitaArticoli.map((a,i) => `
+    <tr>
+      <td class="cod" style="position:relative">
+        <input class="modal-input" id="usc-codice-${i}" style="width:90px;font-weight:700" value="${a.codice}" autocomplete="off"
+               oninput="_uscRicercaCodice(${i}, this.value)" onfocus="_uscRicercaCodice(${i}, this.value)"
+               onblur="setTimeout(()=>{const dd=document.getElementById('usc-dropdown-${i}'); if(dd) dd.style.display='none'}, 200)"
+               onchange="_uscitaArticoli[${i}].codice=this.value.trim()">
+        <div id="usc-dropdown-${i}" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:220px;overflow-y:auto;font-size:.72rem;min-width:220px"></div>
+      </td>
+      <td style="color:var(--text-dim)">
+        <input class="modal-input" id="usc-desc-${i}" style="width:100%" value="${(a.desc||'').replace(/"/g,'&quot;')}"
+               onchange="_uscitaArticoli[${i}].desc=this.value">
+      </td>
+      <td>
+        <input class="modal-input" type="number" min="1" style="width:70px;text-align:right" value="${a.qta}"
+               onchange="_uscitaArticoli[${i}].qta=parseInt(this.value)||0">
+      </td>
+      <td>
+        <button class="btn btn-ghost" style="padding:4px 8px;font-size:.7rem;color:var(--red)" onclick="eliminaRigaUscita(${i})">🗑️</button>
+      </td>
+    </tr>`).join('');
+}
+
+let _uscRicercaTimeout = null;
+async function _uscRicercaCodice(i, testo){
+  testo = testo.trim();
+  clearTimeout(_uscRicercaTimeout);
+  const dropdown = document.getElementById(`usc-dropdown-${i}`);
+  if(testo.length < 2){ dropdown.style.display = 'none'; return; }
+  _uscRicercaTimeout = setTimeout(async () => {
+    try{
+      // Stessa ricerca già in uso altrove — solo codici già a magazzino,
+      // mai testo indovinato: un DDT di uscita verso un terzista deve
+      // sempre riferirsi a un codice vero.
+      const r = await fetch('/api/giacenza_wood?solo_bom=1&q=' + encodeURIComponent(testo));
+      const d = await r.json();
+      const righe = (d.righe || []).slice(0, 15);
+      const input = document.getElementById(`usc-codice-${i}`);
+      const rect = input.getBoundingClientRect();
+      dropdown.style.top = (rect.bottom + 2) + 'px';
+      dropdown.style.left = rect.left + 'px';
+      dropdown.innerHTML = righe.length
+        ? righe.map(rg => `<div style="padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--border)"
+             onmousedown="_uscSceltaCodice(${i}, '${rg.codice.replace(/'/g,"\\'")}', '${(rg.descrizione||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}')"
+             onmouseover="this.style.background='rgba(42,157,92,.12)'" onmouseout="this.style.background=''">
+             <b class="cod">${rg.codice}</b>${rg.descrizione ? ' — ' + rg.descrizione : ''}</div>`).join('')
+        : '<div style="padding:8px 10px;color:var(--text-dim)">Nessun codice trovato a magazzino</div>';
+      dropdown.style.display = 'block';
+    }catch(e){ dropdown.style.display = 'none'; }
+  }, 220);
+}
+
+function _uscSceltaCodice(i, codice, descrizione){
+  _uscitaArticoli[i].codice = codice;
+  _uscitaArticoli[i].desc = descrizione;
+  document.getElementById(`usc-codice-${i}`).value = codice;
+  document.getElementById(`usc-desc-${i}`).value = descrizione;
+  document.getElementById(`usc-dropdown-${i}`).style.display = 'none';
+}
+
+function aggiungiRigaUscita(){
+  _uscitaArticoli.push({codice:'', desc:'', qta:1});
+  renderRigheUscita();
+}
+
+function eliminaRigaUscita(i){
+  _uscitaArticoli.splice(i,1);
+  renderRigheUscita();
+}
+
 window.confermaUscita = async function confermaUscita(){
   if(!_pU) return; const d=_pU.anteprima;
+  const articoliValidi = _uscitaArticoli.filter(a => a.codice && a.qta > 0);
+  if(!articoliValidi.length){ showToast('⚠️ Aggiungi almeno una riga con codice e quantità', true); return; }
   const body={filename:_pU.filename,terzista:d.terzista,numero_ddt:d.numero_ddt,
     data_ddt:d.data_ddt,trattamento:document.getElementById('sel-tratt').value||d.trattamento,
     data_rientro_prev:document.getElementById('inp-prev').value,
-    articoli:d.articoli,riga_id:0};
+    articoli:articoliValidi,riga_id:0};
   try{
     const r=await fetch('/api/conferma_ddt_uscita',{method:'POST',
       headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
