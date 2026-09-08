@@ -250,7 +250,32 @@ def _preprocess_righe(testo):
     testo = re.sub(r'([A-Za-z])(?=(?:n|pz|Nr)\.)', r'\1 ', testo)
 
     # ── 2. Rimuove 'Mag. di origine/destinazione: ...' incollati sulla riga
-    testo = re.sub(r'\s*Mag\.?\s*di\s+(?:origine|destinazione):[^\n]+', '', testo)
+    #
+    # BUG REALE TROVATO E CORRETTO (col PDF vero segnalato — DDT uscita
+    # verso terzista con VERNICIATURA): quando la destinazione è il NOME
+    # di un terzista (es. 'Nuova Plastic Metal') anziché il generico
+    # 'Magazzino Generico', l'estrazione PDF a volte non rileva un vero
+    # a-capo tra il nome e la riga articolo che segue — risultato:
+    # 'Mag. di destinazione: Nuova Plastic MetalA601210CT   ARCHETTO...'
+    # tutto su un'unica riga di testo. Il vecchio regex ('[^\n]+', avido,
+    # fino a fine riga) si portava via l'INTERA riga articolo insieme
+    # all'etichetta — il codice spariva del tutto dalla lettura, non solo
+    # veniva letto male.
+    #
+    # FIX: invece di cancellare ciecamente tutto fino a fine riga, cerca
+    # DENTRO il contenuto di questa etichetta il punto preciso in cui una
+    # parola minuscola risulta incollata a un token che sembra un vero
+    # codice articolo (maiuscola + almeno una cifra, es. 'A601210CT') — se
+    # lo trova, taglia esattamente lì, salvando la riga articolo rimasta
+    # attaccata per errore. '[ \t]*' (non '\s*') davanti all'etichetta:
+    # non deve mangiarsi l'a-capo della riga PRIMA (es. 'VERNICIATURA
+    # BIANCO'), altrimenti quella si incollerebbe al codice a sua volta.
+    def _rimuovi_mag_origine_destinazione(m):
+        contenuto = m.group(1)
+        taglio = re.search(r'[a-z](?=[A-Z][A-Za-z0-9._-]*\d)', contenuto)
+        return '' if not taglio else contenuto[taglio.end():]
+    testo = re.sub(r'[ \t]*Mag\.?\s*di\s+(?:origine|destinazione):([^\n]*)',
+                   _rimuovi_mag_origine_destinazione, testo)
 
     # ── 3. BUG FIX #1: rimuove importi finali (esattamente 2 cifre decimali
     #       dopo virgola = centesimi euro).  Le quantità hanno 3 zeri → sicuro.

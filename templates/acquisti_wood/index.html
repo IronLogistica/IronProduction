@@ -536,6 +536,22 @@ async function caricaListaDdt(){
           </tr>`;
         });
         html += '</tbody></table>';
+        html += `<div style="margin-top:8px">
+          <button onclick="mostraFormAggiungiRiga(${d.id})" id="btn-mostra-agg-${d.id}" class="btn btn-ghost" style="font-size:11px">➕ Aggiungi riga mancante</button>
+          <div id="form-agg-riga-${d.id}" style="display:none;margin-top:8px;padding:10px;border:1px dashed var(--border);border-radius:6px;position:relative">
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center">
+              <input id="agg-codice-${d.id}" type="text" placeholder="Codice *" autocomplete="off" style="width:110px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)"
+                     oninput="_aggRicercaCodice(${d.id}, this.value)" onfocus="_aggRicercaCodice(${d.id}, this.value)"
+                     onblur="setTimeout(()=>{const dd=document.getElementById('agg-dropdown-${d.id}'); if(dd) dd.style.display='none'}, 200)">
+              <div id="agg-dropdown-${d.id}" style="display:none;position:absolute;top:38px;left:10px;z-index:50;background:var(--dark3);border:1px solid var(--border);border-radius:6px;max-height:200px;overflow-y:auto;min-width:260px;box-shadow:var(--shadow)"></div>
+              <input id="agg-descrizione-${d.id}" type="text" placeholder="Descrizione" style="flex:1;min-width:140px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)">
+              <input id="agg-qta-${d.id}" type="number" step="0.01" min="0" placeholder="Quantità *" style="width:90px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)">
+              <input id="agg-rif-${d.id}" type="text" placeholder="Rif. OA" style="width:70px;padding:6px 8px;border-radius:5px;border:1px solid var(--border)">
+              <button onclick="confermaAggiungiRiga(${d.id})" class="btn btn-primary" style="font-size:11px">✅ Aggiungi</button>
+            </div>
+            <div id="agg-esito-${d.id}" style="font-size:11px;margin-top:6px"></div>
+          </div>
+        </div>`;
         html += '<p style="font-size:10px;color:var(--text-dim);margin-top:4px">* Quantità pesata/misurata fisicamente allo scarico del camion — se diversa da quella dichiarata, la Giacenza si carica con quella VERA e la differenza va a Scarto Fornitore (mai al costo di produzione). ** Formato ZZ-CC-SS-RR-X (es. 03-02-05-01-F), scritta a mano sul modulo durante la verifica. Lasciare vuoto = si fida della quantità dichiarata / nessuna ubicazione registrata.</p>';
         if(d.responsabile_verifica){
           html += `<p style="font-size:11px;color:var(--steel2);margin-top:4px">👤 Responsabile verifica: <b>${d.responsabile_verifica}</b> — <a href="${d.link_modulo_verifica}" target="_blank" style="color:var(--steel2)">📄 riapri il modulo di verifica</a></p>`;
@@ -551,6 +567,63 @@ async function caricaListaDdt(){
     box.innerHTML = html;
   }catch(e){
     box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+
+function mostraFormAggiungiRiga(ddtId){
+  document.getElementById(`btn-mostra-agg-${ddtId}`).style.display = 'none';
+  document.getElementById(`form-agg-riga-${ddtId}`).style.display = 'block';
+  document.getElementById(`agg-codice-${ddtId}`).focus();
+}
+
+let _aggRicercaTimeout = null;
+async function _aggRicercaCodice(ddtId, testo){
+  testo = testo.trim();
+  clearTimeout(_aggRicercaTimeout);
+  const dropdown = document.getElementById(`agg-dropdown-${ddtId}`);
+  if(testo.length < 2){ dropdown.style.display = 'none'; return; }
+  _aggRicercaTimeout = setTimeout(async () => {
+    try{
+      // Stessa ricerca già in uso nel Nuovo Ordine Manuale — solo codici
+      // già a magazzino, mai testo indovinato.
+      const r = await fetch('/api/giacenza_wood?solo_bom=1&q=' + encodeURIComponent(testo));
+      const d = await r.json();
+      const righe = (d.righe || []).slice(0, 15);
+      dropdown.innerHTML = righe.length
+        ? righe.map(rg => `<div style="padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--border);font-size:12px"
+             onmousedown="_aggSceltaCodice(${ddtId}, '${rg.codice.replace(/'/g,"\\'")}', '${(rg.descrizione||'').replace(/'/g,"\\'").replace(/"/g,'&quot;')}')"
+             onmouseover="this.style.background='rgba(42,157,92,.12)'" onmouseout="this.style.background=''">
+             <b class="codice">${rg.codice}</b>${rg.descrizione ? ' — ' + rg.descrizione : ''}</div>`).join('')
+        : '<div style="padding:8px 10px;font-size:11px;color:var(--text-dim)">Nessun codice trovato a magazzino</div>';
+      dropdown.style.display = 'block';
+    }catch(e){ dropdown.style.display = 'none'; }
+  }, 220);
+}
+
+function _aggSceltaCodice(ddtId, codice, descrizione){
+  document.getElementById(`agg-codice-${ddtId}`).value = codice;
+  document.getElementById(`agg-descrizione-${ddtId}`).value = descrizione;
+  document.getElementById(`agg-dropdown-${ddtId}`).style.display = 'none';
+}
+
+async function confermaAggiungiRiga(ddtId){
+  const esito = document.getElementById(`agg-esito-${ddtId}`);
+  const codice = document.getElementById(`agg-codice-${ddtId}`).value.trim();
+  const descrizione = document.getElementById(`agg-descrizione-${ddtId}`).value.trim();
+  const qta = document.getElementById(`agg-qta-${ddtId}`).value;
+  const rif = document.getElementById(`agg-rif-${ddtId}`).value.trim();
+  if(!codice || !qta || parseFloat(qta) <= 0){
+    esito.style.color = '#c0392b'; esito.textContent = '⚠️ Codice e quantità (maggiore di zero) sono obbligatori.'; return;
+  }
+  esito.style.color = 'var(--text-dim)'; esito.textContent = 'Aggiunta in corso...';
+  try{
+    const r = await fetch(`/api/ddt_carico_wood/${ddtId}/righe`, {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice, descrizione, quantita: parseFloat(qta), ordine_n_riferimento: rif})});
+    const d = await r.json();
+    if(d.errore){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ ' + d.messaggio; return; }
+    caricaListaDdt();
+  }catch(e){
+    esito.style.color = '#c0392b'; esito.textContent = '❌ Errore di rete.';
   }
 }
 

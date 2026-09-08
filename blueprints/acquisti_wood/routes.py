@@ -541,7 +541,17 @@ def _estrai_dati_ddt_carico(testo):
             dati['fornitore'] = ll[1] if ll[0].isdigit() else ll[0]
 
     RE_ORDFO = re.compile(r'Ns\.\s*doc\.\(ORDFO\)\s*n\.:\s*(\d+)')
-    RE_ART = re.compile(r'([A-Za-z0-9][A-Za-z0-9./_-]+)\s+(.*?)\s+([a-z]{1,3})\s*\.\s+([\d\.]+)(?:,\d+)?')
+    # BUG REALE TROVATO E CORRETTO: '[a-z]{1,3}' per l'unità di misura
+    # escludeva 'conf' (confezioni, 4 caratteri) — una riga con questa
+    # unità falliva silenziosamente il match ed era SALTATA per intero,
+    # anche se il resto della riga (codice, descrizione, quantità) era
+    # perfettamente leggibile. Caso reale segnalato: RV4816 — RIVETTI
+    # 4,8x16 (confezioni) — 'conf' 4,000 — mancante dall'importazione.
+    # Passato a un elenco chiuso (come già fatto per il parser Ordini di
+    # Acquisto) invece di allargare semplicemente il limite di caratteri:
+    # un limite più ampio rischierebbe di far matchare per sbaglio
+    # parole della descrizione che iniziano subito prima dell'unità vera.
+    RE_ART = re.compile(r'([A-Za-z0-9][A-Za-z0-9./_-]+)\s+(.*?)\s+((?:m|mq|ml|pz|kg|nr|cad|lt|mt|n|conf|cf))\s*\.\s+([\d\.]+)(?:,\d+)?')
     sezione_corrente = None
     for riga in linee:
         m_ordfo = RE_ORDFO.search(riga)
@@ -730,6 +740,44 @@ def api_conferma_ddt_carico(did):
     ddt.confermato = True
     db.session.commit()
     return jsonify({'ok': True, 'ddt': _ddt_dict(ddt), 'n_ordini_completati': n_ordini_completati})
+
+
+@acquisti_wood_bp.route('/api/ddt_carico_wood/<int:did>/righe', methods=['POST'])
+def api_aggiungi_riga_ddt(did):
+    """
+    Aggiunge una riga MANCANTE a una BOZZA — per quando la lettura del PDF
+    salta una riga (es. un'unità di misura non riconosciuta, o una riga
+    con un layout insolito) e serve inserirla a mano prima di confermare,
+    invece di dover ricaricare tutto il DDT da capo. Stessa possibilità
+    già presente in MasterLogistic-WMS per l'importazione DDT.
+    """
+    ddt = DDTCaricoWood.query.get_or_404(did)
+    if ddt.confermato:
+        return jsonify({'errore': True, 'messaggio': 'DDT già confermato — non più modificabile da qui.'}), 409
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip()
+    if not codice:
+        return jsonify({'errore': True, 'messaggio': 'Il codice è obbligatorio.'}), 400
+    try:
+        quantita = float(d.get('quantita') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Quantità non valida'}), 400
+    if quantita <= 0:
+        return jsonify({'errore': True, 'messaggio': 'La quantità deve essere maggiore di zero.'}), 400
+
+    ordine_n_riferimento = (d.get('ordine_n_riferimento') or '').strip()
+    oa = OrdineAcquistoWood.query.filter_by(ordine_n=ordine_n_riferimento).first() if ordine_n_riferimento else None
+    riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=codice).first() if oa else None
+
+    r = RigaDDTCaricoWood(
+        ddt_id=did, codice=codice, descrizione=(d.get('descrizione') or '').strip(),
+        quantita=quantita, ordine_n_riferimento=ordine_n_riferimento,
+        ordine_acquisto_id=(oa.id if (oa and riga_oa) else None),
+        abbinata=bool(oa and riga_oa),
+    )
+    db.session.add(r)
+    db.session.commit()
+    return jsonify({'ok': True, 'id': r.id, 'abbinata': r.abbinata})
 
 
 @acquisti_wood_bp.route('/api/ddt_carico_wood/righe/<int:rid>', methods=['PUT'])
