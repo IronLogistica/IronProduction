@@ -7,7 +7,7 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     GiacenzaWood, OrdineProduzione, LavorazioneTerzista)
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, ottieni_stock_kanban, ottieni_scheda_kanban, MasterLogisticError
 from masterledgerlight_client import cerca_articolo, MasterLedgerLightError
-from blueprints.magazzino.routes import _grezzo_iw_per_codici, _in_trattamento_per_codici, _calcola_campi_giacenza
+from blueprints.magazzino.routes import _grezzo_iw_per_codici
 from datetime import datetime, timedelta
 import re, json
 
@@ -1348,52 +1348,42 @@ def pagina_kanban_hpi():
 @kanban_bp.route('/api/kanban-hpi/dati')
 def api_kanban_hpi_dati():
     """
-    Un prodotto Kanban alla volta, raggruppato per categoria — abbinato al
-    suo codice Giacenza Iron Wood tramite lo stesso SKU già usato dal resto
-    del Kanban (sku_da_nome_prodotto), poi arricchito con la STESSA
-    _calcola_campi_giacenza già in uso da Magazzino e Alert Scorte Codici
-    Padre — mai un secondo calcolo che potrebbe disallinearsi da quelle
-    due pagine per lo stesso codice.
+    Un prodotto Kanban alla volta, raggruppato per categoria — TUTTI i
+    valori letti DIRETTAMENTE dai campi propri di KanbanProdotto (mai
+    un secondo calcolo via GiacenzaWood/SKU-matching): la stessa fonte
+    già usata dalla scheda dettaglio del prodotto e dal tabellone
+    Kanban stesso (KanbanProdotto.saldo_contabile — 'SALDO LT Post-
+    Produzione' — è definita esattamente così), per garantire che
+    questa pagina mostri sempre gli stessi numeri che Angelo vede
+    già aprendo la scheda di un prodotto, mai un valore diverso per
+    lo stesso prodotto.
+
+    Corrispondenza confermata dall'utente sui dati reali:
+    - Riservato a Clienti  = impegni clienti (KanbanProdotto.riservato)
+    - Saldo Contabile      = SALDO LT Post-Produzione (proprietà del modello)
+    - Pronti a Magazzino   = Finiti IS + Finiti IW (finiti_is + verniciati)
+    - In Verniciatura      = in lavorazione esterna (in_vern)
+    - Da Verniciare        = Grezzi IW (grezzi)
+    - In Produzione        = saldo residuo da produrre (in_prod)
     """
     prodotti = KanbanProdotto.query.order_by(KanbanProdotto.categoria, KanbanProdotto.sort_order).all()
-    sku_per_prodotto = {p.id: sku_da_nome_prodotto(p.prodotto) for p in prodotti}
-    codici = sorted({s for s in sku_per_prodotto.values() if s})
-
-    campi_per_codice = {}
-    if codici:
-        righe_gz = GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici)).all()
-        presenti = {g.codice for g in righe_gz}
-        righe_gz = list(righe_gz) + [GiacenzaWood(codice=c, quantita=0) for c in sorted(set(codici) - presenti)]
-        for riga in _calcola_campi_giacenza(righe_gz):
-            campi_per_codice[riga['codice']] = riga
 
     gruppi = {}
     for p in prodotti:
-        sku = sku_per_prodotto.get(p.id)
-        campi = campi_per_codice.get(sku, {})
-
-        riservato = campi.get('ordinato_cliente_wms') or 0
-        saldo_contabile = campi.get('disponibile_contabile', 0)
-        grezzo_iw = campi.get('grezzo_iw', 0)
-        in_trattamento = campi.get('in_trattamento', 0)
-        ordinato_produzione = campi.get('ordinato_produzione', 0)
-        finiti_is = campi.get('finiti_is_wms') or 0
-        # 'Pronti a Magazzino' = stock reale pronto ORA — Finiti IW (kanban)
-        # + Finiti IS (WMS), coerente con come le altre pagine già
-        # distinguono 'pronto e disponibile' da 'ancora da lavorare'.
-        pronti_a_magazzino = (p.verniciati or 0) + finiti_is
+        riservato = p.riservato or 0
+        pronti_a_magazzino = (p.verniciati or 0) + (p.finiti_is or 0)
 
         codice_stato, label_stato, colore_stato = _stato_evasione(
-            pronti_a_magazzino, riservato, in_trattamento, grezzo_iw, ordinato_produzione)
+            pronti_a_magazzino, riservato, p.in_vern or 0, p.grezzi or 0, p.in_prod or 0)
 
         riga = {
-            'nome': p.prodotto, 'icona': p.icona, 'sku': sku,
+            'nome': p.prodotto, 'icona': p.icona,
             'riservato_clienti': riservato,
-            'saldo_contabile': saldo_contabile,
+            'saldo_contabile': p.saldo_contabile,
             'pronti_a_magazzino': pronti_a_magazzino,
-            'in_verniciatura': in_trattamento,
-            'da_verniciare': grezzo_iw,
-            'in_produzione': ordinato_produzione,
+            'in_verniciatura': p.in_vern or 0,
+            'da_verniciare': p.grezzi or 0,
+            'in_produzione': p.in_prod or 0,
             'stato_codice': codice_stato, 'stato_label': label_stato, 'stato_colore': colore_stato,
         }
         gruppi.setdefault(p.categoria, []).append(riga)
