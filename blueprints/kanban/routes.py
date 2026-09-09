@@ -1365,8 +1365,35 @@ def api_kanban_hpi_dati():
     - In Verniciatura      = in lavorazione esterna (in_vern)
     - Da Verniciare        = Grezzi IW (grezzi)
     - In Produzione        = saldo residuo da produrre (in_prod)
+
+    BUG REALE TROVATO E CORRETTO (segnalato: BC60 mostrava 165 come 'Da
+    Verniciare' invece dei veri 40, con 'In Verniciatura' che avrebbe
+    dovuto essere 125): il tabellone Kanban principale RICALCOLA questi
+    campi ogni volta che una board viene aperta (vedi
+    _aggiorna_grezzi_e_trattamento/_aggiorna_residuo_produzione/
+    _sincronizza_finiti_iw_da_magazzino, chiamate a ogni apertura) — ma
+    questa pagina si limitava a RILEGGERE i campi così come stavano
+    salvati nel DB, senza mai ricalcolarli: se erano rimasti indietro
+    rispetto all'ultima volta che qualcuno aveva aperto la board di
+    quel prodotto specifico, questa pagina mostrava numeri vecchi,
+    anche se la FORMULA in sé era sempre stata corretta. Ora ricalcola
+    dal vivo anche qui, con la stessa identica logica (e lo stesso
+    precalcolo batch, una query sola per tutta la pagina — non N+1 per
+    prodotto) usata dal tabellone principale.
     """
     prodotti = KanbanProdotto.query.order_by(KanbanProdotto.categoria, KanbanProdotto.sort_order).all()
+    prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
+
+    op_per_sku = _mappa_op_per_sku()
+    lav_per_sku = _mappa_lavorazioni_terzisti_per_sku()
+    giacenza_per_sku = _mappa_giacenza_per_sku()
+    skus_pagina = list({sku_da_nome_prodotto(p.prodotto) for p in prodotti if sku_da_nome_prodotto(p.prodotto)})
+    grezzo_iw_per_sku = _grezzo_iw_per_codici(skus_pagina) if skus_pagina else {}
+    for p in prodotti:
+        _aggiorna_residuo_produzione(p, op_per_sku)
+        _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku, grezzo_iw_per_sku)
+        _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
+    db.session.commit()
 
     gruppi = {}
     for p in prodotti:
@@ -1377,7 +1404,7 @@ def api_kanban_hpi_dati():
             pronti_a_magazzino, riservato, p.in_vern or 0, p.grezzi or 0, p.in_prod or 0)
 
         riga = {
-            'nome': p.prodotto, 'icona': p.icona,
+            'id': p.id, 'nome': p.prodotto, 'icona': p.icona, 'sheet_key': p.sheet_key,
             'riservato_clienti': riservato,
             'saldo_contabile': p.saldo_contabile,
             'pronti_a_magazzino': pronti_a_magazzino,

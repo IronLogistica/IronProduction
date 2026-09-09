@@ -20,7 +20,7 @@
 
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:12px">
   <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
-    <input type="checkbox" id="hpi-solo-riservati" onchange="renderKanbanHpi()">
+    <input type="checkbox" id="hpi-solo-riservati" checked onchange="renderKanbanHpi()">
     Mostra solo prodotti con riservato a clienti maggiore di 0
   </label>
 </div>
@@ -67,26 +67,30 @@ function renderKanbanHpi(){
       <table class="mon-table" style="width:100%">
         <thead><tr>
           <th style="text-align:left">Prodotto</th>
-          <th>Stato</th>
-          <th>Riservato a Clienti</th>
-          <th>Saldo Contabile</th>
-          <th>Pronti a Magazzino</th>
-          <th>In Verniciatura</th>
-          <th>Da Verniciare</th>
-          <th>In Produzione</th>
+          <th style="text-align:center">Stato</th>
+          <th style="text-align:center">Riservato a Clienti</th>
+          <th style="text-align:center">Saldo Contabile</th>
+          <th style="text-align:center">Pronti a Magazzino</th>
+          <th style="text-align:center">In Verniciatura</th>
+          <th style="text-align:center">Da Verniciare</th>
+          <th style="text-align:center">In Produzione</th>
         </tr></thead>
         <tbody>`;
     prodottiFiltrati.forEach(p => {
       const badge = coloriBadge[p.stato_colore] || coloriBadge.grey;
       html += `<tr>
-        <td style="text-align:left;font-weight:700">${p.icona||''} ${p.nome}</td>
-        <td><span style="${badge};border-radius:6px;padding:3px 8px;font-size:10.5px;font-weight:700;white-space:nowrap">${p.stato_label}</span></td>
-        <td style="font-weight:700">${p.riservato_clienti}</td>
-        <td style="color:${p.saldo_contabile < 0 ? 'var(--red)' : 'var(--text-dim)'}">${p.saldo_contabile}</td>
-        <td style="font-weight:700">${p.pronti_a_magazzino}</td>
-        <td style="color:var(--text-dim)">${p.in_verniciatura || '—'}</td>
-        <td style="color:var(--text-dim)">${p.da_verniciare || '—'}</td>
-        <td style="color:var(--text-dim)">${p.in_produzione || '—'}</td>
+        <td style="text-align:left;font-weight:700;display:flex;align-items:center;gap:8px">
+          <button title="Apri scheda gruppo Kanban di questo prodotto" onclick="window.open('/kanban/${p.sheet_key}', '_blank')"
+                  style="background:none;border:1px solid var(--border);border-radius:6px;padding:2px 6px;cursor:pointer;color:var(--accent2);font-size:12px">🔍</button>
+          ${p.nome}
+        </td>
+        <td style="text-align:center"><span style="${badge};border-radius:6px;padding:3px 8px;font-size:10.5px;font-weight:700;white-space:nowrap">${p.stato_label}</span></td>
+        <td style="text-align:center;font-weight:700">${p.riservato_clienti}</td>
+        <td style="text-align:center;color:${p.saldo_contabile < 0 ? 'var(--red)' : 'var(--text-dim)'}">${p.saldo_contabile}</td>
+        <td style="text-align:center;font-weight:700">${p.pronti_a_magazzino}</td>
+        <td style="text-align:center;color:var(--text-dim)">${p.in_verniciatura || '—'}</td>
+        <td style="text-align:center;color:var(--text-dim)">${p.da_verniciare || '—'}</td>
+        <td style="text-align:center;color:var(--text-dim)">${p.in_produzione || '—'}</td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
