@@ -237,6 +237,10 @@
     </a>
     {% endfor %}
   </details>
+  <a class="sb-item {% if request.path=='/kanban-hpi' %}active{% endif %}" href="/kanban-hpi" style="border-bottom:1px solid var(--border)">
+    <span class="sb-icon">🚦</span>
+    <span>Kanban HPI</span>
+  </a>
   {% endif %}
 </nav>
 

@@ -7,7 +7,7 @@ from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     GiacenzaWood, OrdineProduzione, LavorazioneTerzista)
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, ottieni_stock_kanban, ottieni_scheda_kanban, MasterLogisticError
 from masterledgerlight_client import cerca_articolo, MasterLedgerLightError
-from blueprints.magazzino.routes import _grezzo_iw_per_codici
+from blueprints.magazzino.routes import _grezzo_iw_per_codici, _in_trattamento_per_codici, _calcola_campi_giacenza
 from datetime import datetime, timedelta
 import re, json
 
@@ -1312,3 +1312,91 @@ def api_wms_articoli():
     if isinstance(dati, dict) and dati.get('error'):
         return jsonify(articoli=[], errore=f'MasterLogistic-WMS: {dati["error"]}')
     return jsonify(articoli=dati if isinstance(dati, list) else [], errore=None)
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# KANBAN HPI — Evasione Ordini per gruppo di prodotto
+# ═══════════════════════════════════════════════════════════════════════════
+# Cruscotto richiesto su modello di uno schema Excel già in uso — per ogni
+# prodotto Kanban, a colpo d'occhio: quanto è riservato ai clienti, quanto è
+# pronto a magazzino ORA, e — se non basta — se basta aggiungendo quello in
+# verniciatura/grezzo/produzione, con un semaforo di stato.
+
+def _stato_evasione(pronti, riservato, in_trattamento, grezzo, ordinato_produzione):
+    """
+    Semaforo di evadibilità — stessa logica dedotta dallo schema originale:
+    confronta via via 'Pronti a Magazzino' con quanto si aggiunge nelle fasi
+    successive (verniciatura, grezzo in attesa, produzione), fermandosi alla
+    prima soglia che copre il Riservato a Clienti.
+    """
+    if riservato <= 0:
+        return ('nessun_ordine', '— Nessun ordine', 'grey')
+    if pronti >= riservato:
+        return ('evadibile', 'ORDINI EVADIBILI', 'green')
+    if (pronti + in_trattamento + grezzo) >= riservato:
+        return ('dopo_verniciatura', 'EVADIBILE DOPO VERNICIATURA', 'yellow')
+    if (pronti + in_trattamento + grezzo + ordinato_produzione) >= riservato:
+        return ('dopo_produzione', 'EVADIBILE DOPO PRODUZIONE', 'blue')
+    return ('fare_produzione', '⚠ FARE PRODUZIONE', 'red')
+
+
+@kanban_bp.route('/kanban-hpi')
+def pagina_kanban_hpi():
+    return render_template('kanban/kanban_hpi.html', active='kanban_hpi')
+
+
+@kanban_bp.route('/api/kanban-hpi/dati')
+def api_kanban_hpi_dati():
+    """
+    Un prodotto Kanban alla volta, raggruppato per categoria — abbinato al
+    suo codice Giacenza Iron Wood tramite lo stesso SKU già usato dal resto
+    del Kanban (sku_da_nome_prodotto), poi arricchito con la STESSA
+    _calcola_campi_giacenza già in uso da Magazzino e Alert Scorte Codici
+    Padre — mai un secondo calcolo che potrebbe disallinearsi da quelle
+    due pagine per lo stesso codice.
+    """
+    prodotti = KanbanProdotto.query.order_by(KanbanProdotto.categoria, KanbanProdotto.sort_order).all()
+    sku_per_prodotto = {p.id: sku_da_nome_prodotto(p.prodotto) for p in prodotti}
+    codici = sorted({s for s in sku_per_prodotto.values() if s})
+
+    campi_per_codice = {}
+    if codici:
+        righe_gz = GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici)).all()
+        presenti = {g.codice for g in righe_gz}
+        righe_gz = list(righe_gz) + [GiacenzaWood(codice=c, quantita=0) for c in sorted(set(codici) - presenti)]
+        for riga in _calcola_campi_giacenza(righe_gz):
+            campi_per_codice[riga['codice']] = riga
+
+    gruppi = {}
+    for p in prodotti:
+        sku = sku_per_prodotto.get(p.id)
+        campi = campi_per_codice.get(sku, {})
+
+        riservato = campi.get('ordinato_cliente_wms') or 0
+        saldo_contabile = campi.get('disponibile_contabile', 0)
+        grezzo_iw = campi.get('grezzo_iw', 0)
+        in_trattamento = campi.get('in_trattamento', 0)
+        ordinato_produzione = campi.get('ordinato_produzione', 0)
+        finiti_is = campi.get('finiti_is_wms') or 0
+        # 'Pronti a Magazzino' = stock reale pronto ORA — Finiti IW (kanban)
+        # + Finiti IS (WMS), coerente con come le altre pagine già
+        # distinguono 'pronto e disponibile' da 'ancora da lavorare'.
+        pronti_a_magazzino = (p.verniciati or 0) + finiti_is
+
+        codice_stato, label_stato, colore_stato = _stato_evasione(
+            pronti_a_magazzino, riservato, in_trattamento, grezzo_iw, ordinato_produzione)
+
+        riga = {
+            'nome': p.prodotto, 'icona': p.icona, 'sku': sku,
+            'riservato_clienti': riservato,
+            'saldo_contabile': saldo_contabile,
+            'pronti_a_magazzino': pronti_a_magazzino,
+            'in_verniciatura': in_trattamento,
+            'da_verniciare': grezzo_iw,
+            'in_produzione': ordinato_produzione,
+            'stato_codice': codice_stato, 'stato_label': label_stato, 'stato_colore': colore_stato,
+        }
+        gruppi.setdefault(p.categoria, []).append(riga)
+
+    risultato = [{'categoria': cat, 'prodotti': righe} for cat, righe in gruppi.items()]
+    return jsonify(risultato)
