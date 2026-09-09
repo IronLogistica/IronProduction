@@ -623,28 +623,104 @@ async function dichiaraInline(g, c, idInput){
       + notaScarto;
 
     const box = document.getElementById('ant-componenti');
-    if(!anteprima.componenti.length){
-      box.innerHTML = '<p class="muted" style="font-style:italic;font-size:13px">Nessun componente da scaricare (distinta base non trovata per questo codice).</p>';
-    } else {
-      box.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed"><colgroup><col style="width:22%"><col style="width:53%"><col style="width:25%"></colgroup>' +
-        '<thead><tr><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Codice</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Descrizione</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Quantità</th></tr></thead><tbody>' +
-        anteprima.componenti.map((comp, k) =>
-          `<tr><td class="codice" style="padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${comp.codice}</td>` +
-          `<td style="padding:4px 6px;color:var(--text-dim);overflow-wrap:break-word">${comp.descrizione||'—'}</td>` +
-          `<td style="padding:4px 6px"><input id="ant-qta-${k}" type="number" step="0.01" min="0" value="${comp.quantita}" data-codice="${comp.codice}" style="width:80px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);font-size:13px"></td></tr>`
-        ).join('') + '</tbody></table>';
-    }
+    box.innerHTML = '<table style="width:100%;border-collapse:collapse;font-size:13px;table-layout:fixed"><colgroup><col style="width:26%"><col style="width:42%"><col style="width:20%"><col style="width:12%"></colgroup>' +
+      '<thead><tr><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Codice</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Descrizione</th><th style="text-align:left;padding:5px 6px;color:var(--text-dim);font-weight:600">Quantità</th><th></th></tr></thead><tbody id="ant-righe-componenti">' +
+      (anteprima.componenti.length ? anteprima.componenti.map((comp, k) =>
+        `<tr data-riga-materiale>${_antCellaCodiceHTML(comp.codice)}` +
+        `<td class="ant-desc-riga" style="padding:4px 6px;color:var(--text-dim);overflow-wrap:break-word">${comp.descrizione||'—'}</td>` +
+        `<td style="padding:4px 6px"><input type="number" step="0.01" min="0" value="${comp.quantita}" style="width:85px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);font-size:13px"></td>` +
+        `<td style="padding:4px 6px"><button type="button" class="btn btn-ghost" style="color:#f07070;padding:4px 10px;font-size:16px" onclick="this.closest('tr').remove()" title="Rimuovi questa riga">✕</button></td></tr>`
+      ).join('') : '') + '</tbody></table>' +
+      (anteprima.componenti.length ? '' : '<p class="muted" style="font-style:italic;font-size:13px;margin-top:6px">Nessun componente da distinta base — aggiungi manualmente il materiale usato.</p>') +
+      `<div style="margin-top:10px"><button type="button" class="btn btn-ghost" onclick="_antAggiungiRigaMateriale()">➕ Aggiungi materiale (es. sostituzione spessore/codice)</button></div>` +
+      `<div style="font-size:11.5px;color:var(--text-dim);margin-top:4px;font-style:italic">Tocca il codice per correggerlo (es. era finito il ferro sp.3, hai usato lo sp.4) — lo scarico avverrà sul codice indicato qui.</div>`;
   }
   document.getElementById('ant-esito').textContent = '';
   openModal('modal-anteprima');
 }
 
+function _antCellaCodiceHTML(codiceIniziale){
+  const val = (codiceIniziale || '').replace(/"/g, '&quot;');
+  return `<td style="padding:4px 6px;position:relative">` +
+    `<input type="text" value="${val}" placeholder="cerca codice o descrizione..." autocomplete="off" ` +
+    `style="width:100%;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);font-size:13px;font-family:monospace" ` +
+    `oninput="_antRicercaMaterialeInput(this)" onfocus="_antRicercaMaterialeInput(this)">` +
+    `<div class="ant-materiale-dropdown" style="display:none;position:absolute;top:100%;left:6px;right:6px;z-index:30;background:var(--dark2,#1c2733);border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.45);max-height:240px;overflow-y:auto"></div>` +
+    `</td>`;
+}
+
+let _antRicercaTimer = null;
+async function _antRicercaMaterialeInput(input){
+  const dropdown = input.nextElementSibling;
+  const q = input.value.trim();
+  clearTimeout(_antRicercaTimer);
+  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  _antRicercaTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/ricerca_materiale_wood?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim);padding:8px">Nessun codice trovato</div>';
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = risultati.map(x => {
+      const stockTxt = (x.stock !== null && x.stock !== undefined) ? ` <span style="font-size:11px;color:${x.stock<=0?'#f07070':'#5debb0'}">(stock ${x.stock})</span>` : '';
+      const cod = String(x.codice).replace(/"/g, '&quot;');
+      const desc = String(x.descrizione || '').replace(/"/g, '&quot;');
+      return `<div class="wms-item" style="padding:8px;cursor:pointer" onmousedown="_antSceltaMateriale(this, '${cod}', '${desc}')">` +
+        `<div><b class="codice">${x.codice}</b>${stockTxt}${x.descrizione ? `<br><span style="font-size:11px;color:var(--text-dim)">${x.descrizione}</span>` : ''}</div></div>`;
+    }).join('');
+    dropdown.style.display = 'block';
+  }, 220);
+}
+
+function _antSceltaMateriale(el, codice, descrizione){
+  const dropdown = el.closest('.ant-materiale-dropdown');
+  const input = dropdown.previousElementSibling;
+  input.value = codice;
+  const tr = input.closest('tr');
+  const cellaDesc = tr.querySelector('.ant-desc-riga');
+  if(cellaDesc) cellaDesc.textContent = descrizione || '—';
+  dropdown.style.display = 'none';
+  dropdown.innerHTML = '';
+}
+document.addEventListener('click', e => {
+  document.querySelectorAll('.ant-materiale-dropdown').forEach(dd => {
+    if(dd.style.display !== 'none' && !e.target.closest('td')?.contains(dd)) dd.style.display = 'none';
+  });
+});
+
+function _antAggiungiRigaMateriale(){
+  const tbody = document.getElementById('ant-righe-componenti');
+  if(!tbody) return;
+  const tr = document.createElement('tr');
+  tr.setAttribute('data-riga-materiale', '');
+  tr.innerHTML =
+    _antCellaCodiceHTML('') +
+    `<td class="ant-desc-riga" style="padding:4px 6px;color:var(--text-dim)">—</td>` +
+    `<td style="padding:4px 6px"><input type="number" step="0.01" min="0" value="0" style="width:85px;padding:6px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);font-size:13px"></td>` +
+    `<td style="padding:4px 6px"><button type="button" class="btn btn-ghost" style="color:#f07070;padding:4px 10px;font-size:16px" onclick="this.closest('tr').remove()" title="Rimuovi questa riga">✕</button></td>`;
+  tbody.appendChild(tr);
+  tr.querySelector('input[type="text"]').focus();
+}
+
 async function confermaAnteprima(){
   const esito = document.getElementById('ant-esito');
   document.getElementById('ant-blocco-8d').style.display = 'none';
-  const inputsQta = document.querySelectorAll('#ant-componenti input[data-codice]');
+  // Legge codice+quantità riga per riga (non più campi fissi): il codice è
+  // modificabile — permette di sostituire un materiale finito (es. ferro
+  // sp.3 → sp.4 usato al suo posto) o aggiungere righe extra non previste
+  // dalla distinta base, tramite il pulsante "Aggiungi materiale".
+  const righe = document.querySelectorAll('#ant-righe-componenti tr[data-riga-materiale]');
   const consumi = {};
-  inputsQta.forEach(inp => { consumi[inp.dataset.codice] = parseFloat(inp.value) || 0; });
+  righe.forEach(tr => {
+    const codice = (tr.querySelector('input[type="text"]')?.value || '').trim().toUpperCase();
+    const qta = parseFloat(tr.querySelector('input[type="number"]')?.value) || 0;
+    if(codice && qta > 0) consumi[codice] = (consumi[codice] || 0) + qta;
+  });
 
   const payload = { ..._anteprimaCorrente, tempo_minuti: 0, consumi };
   try{
