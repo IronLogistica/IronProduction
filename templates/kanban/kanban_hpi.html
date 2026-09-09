@@ -18,60 +18,83 @@
   <span style="background:rgba(192,57,43,.15);color:var(--red);border:1px solid var(--red);border-radius:6px;padding:3px 10px">🔴 Fare Produzione</span>
 </div>
 
+<div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:12px">
+  <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+    <input type="checkbox" id="hpi-solo-riservati" onchange="renderKanbanHpi()">
+    Mostra solo prodotti con riservato a clienti maggiore di 0
+  </label>
+</div>
+
 <div id="hpi-contenuto">Caricamento...</div>
 
 <script>
+let _hpiGruppi = [];
+
 async function caricaKanbanHpi(){
   const box = document.getElementById('hpi-contenuto');
   box.innerHTML = 'Caricamento...';
   try{
     const r = await fetch('/api/kanban-hpi/dati');
-    const gruppi = await r.json();
-    if(!gruppi.length){ box.innerHTML = '<p style="color:var(--text-dim);font-style:italic">Nessun prodotto Kanban trovato.</p>'; return; }
-
-    const coloriBadge = {
-      green:  'background:rgba(26,158,92,.18);color:var(--green);border:1px solid var(--green)',
-      yellow: 'background:rgba(230,184,0,.18);color:var(--yellow);border:1px solid var(--yellow)',
-      blue:   'background:rgba(30,111,165,.18);color:var(--accent2);border:1px solid var(--accent2)',
-      red:    'background:rgba(192,57,43,.18);color:var(--red);border:1px solid var(--red)',
-      grey:   'background:rgba(127,140,141,.18);color:var(--grey);border:1px solid var(--grey)',
-    };
-
-    let html = '';
-    gruppi.forEach(g => {
-      html += `<div class="mon-section" style="margin-bottom:16px">
-        <div style="padding:10px 14px;font-weight:700;font-size:13px;background:var(--dark3);border-bottom:1px solid var(--border)">${g.categoria}</div>
-        <table class="mon-table" style="width:100%">
-          <thead><tr>
-            <th style="text-align:left">Prodotto</th>
-            <th>Stato</th>
-            <th>Riservato a Clienti</th>
-            <th>Saldo Contabile</th>
-            <th>Pronti a Magazzino</th>
-            <th>In Verniciatura</th>
-            <th>Da Verniciare</th>
-            <th>In Produzione</th>
-          </tr></thead>
-          <tbody>`;
-      g.prodotti.forEach(p => {
-        const badge = coloriBadge[p.stato_colore] || coloriBadge.grey;
-        html += `<tr>
-          <td style="text-align:left;font-weight:700">${p.icona||''} ${p.nome}</td>
-          <td><span style="${badge};border-radius:6px;padding:3px 8px;font-size:10.5px;font-weight:700;white-space:nowrap">${p.stato_label}</span></td>
-          <td style="font-weight:700">${p.riservato_clienti}</td>
-          <td style="color:${p.saldo_contabile < 0 ? 'var(--red)' : 'var(--text-dim)'}">${p.saldo_contabile}</td>
-          <td style="font-weight:700">${p.pronti_a_magazzino}</td>
-          <td style="color:var(--text-dim)">${p.in_verniciatura || '—'}</td>
-          <td style="color:var(--text-dim)">${p.da_verniciare || '—'}</td>
-          <td style="color:var(--text-dim)">${p.in_produzione || '—'}</td>
-        </tr>`;
-      });
-      html += `</tbody></table></div>`;
-    });
-    box.innerHTML = html;
+    _hpiGruppi = await r.json();
+    renderKanbanHpi();
   }catch(e){
     box.innerHTML = '<p style="color:var(--red)">❌ Errore di rete durante il caricamento.</p>';
   }
+}
+
+function renderKanbanHpi(){
+  const box = document.getElementById('hpi-contenuto');
+  if(!_hpiGruppi.length){ box.innerHTML = '<p style="color:var(--text-dim);font-style:italic">Nessun prodotto Kanban trovato.</p>'; return; }
+
+  const soloRiservati = document.getElementById('hpi-solo-riservati').checked;
+
+  const coloriBadge = {
+    green:  'background:rgba(26,158,92,.18);color:var(--green);border:1px solid var(--green)',
+    yellow: 'background:rgba(230,184,0,.18);color:var(--yellow);border:1px solid var(--yellow)',
+    blue:   'background:rgba(30,111,165,.18);color:var(--accent2);border:1px solid var(--accent2)',
+    red:    'background:rgba(192,57,43,.18);color:var(--red);border:1px solid var(--red)',
+    grey:   'background:rgba(127,140,141,.18);color:var(--grey);border:1px solid var(--grey)',
+  };
+
+  let html = '';
+  let almenoUnGruppoMostrato = false;
+  _hpiGruppi.forEach(g => {
+    const prodottiFiltrati = soloRiservati ? g.prodotti.filter(p => p.riservato_clienti > 0) : g.prodotti;
+    if(!prodottiFiltrati.length) return;  // gruppo interamente filtrato: niente tabella vuota
+    almenoUnGruppoMostrato = true;
+    html += `<div class="mon-section" style="margin-bottom:16px">
+      <div style="padding:10px 14px;font-weight:700;font-size:13px;background:var(--dark3);border-bottom:1px solid var(--border)">${g.categoria}</div>
+      <table class="mon-table" style="width:100%">
+        <thead><tr>
+          <th style="text-align:left">Prodotto</th>
+          <th>Stato</th>
+          <th>Riservato a Clienti</th>
+          <th>Saldo Contabile</th>
+          <th>Pronti a Magazzino</th>
+          <th>In Verniciatura</th>
+          <th>Da Verniciare</th>
+          <th>In Produzione</th>
+        </tr></thead>
+        <tbody>`;
+    prodottiFiltrati.forEach(p => {
+      const badge = coloriBadge[p.stato_colore] || coloriBadge.grey;
+      html += `<tr>
+        <td style="text-align:left;font-weight:700">${p.icona||''} ${p.nome}</td>
+        <td><span style="${badge};border-radius:6px;padding:3px 8px;font-size:10.5px;font-weight:700;white-space:nowrap">${p.stato_label}</span></td>
+        <td style="font-weight:700">${p.riservato_clienti}</td>
+        <td style="color:${p.saldo_contabile < 0 ? 'var(--red)' : 'var(--text-dim)'}">${p.saldo_contabile}</td>
+        <td style="font-weight:700">${p.pronti_a_magazzino}</td>
+        <td style="color:var(--text-dim)">${p.in_verniciatura || '—'}</td>
+        <td style="color:var(--text-dim)">${p.da_verniciare || '—'}</td>
+        <td style="color:var(--text-dim)">${p.in_produzione || '—'}</td>
+      </tr>`;
+    });
+    html += `</tbody></table></div>`;
+  });
+  if(!almenoUnGruppoMostrato){
+    html = '<p style="color:var(--text-dim);font-style:italic">Nessun prodotto con riservato a clienti maggiore di 0.</p>';
+  }
+  box.innerHTML = html;
 }
 caricaKanbanHpi();
 </script>
