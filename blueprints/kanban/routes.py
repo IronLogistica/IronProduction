@@ -1322,21 +1322,64 @@ def api_wms_articoli():
 # pronto a magazzino ORA, e — se non basta — se basta aggiungendo quello in
 # verniciatura/grezzo/produzione, con un semaforo di stato.
 
-def _stato_evasione(pronti, riservato, in_trattamento, grezzo, ordinato_produzione):
+def _stato_evasione(pronti, riservato, in_trattamento, grezzo, ordinato_produzione, saldo_scorta=None):
     """
-    Semaforo di evadibilità — stessa logica dedotta dallo schema originale:
-    confronta via via 'Pronti a Magazzino' con quanto si aggiunge nelle fasi
-    successive (verniciatura, grezzo in attesa, produzione), fermandosi alla
-    prima soglia che copre il Riservato a Clienti.
+    Semaforo di evadibilità — schema a 7 stati (+1 di sfondo), studiato e
+    concordato con l'utente (confrontato anche con un'analisi di Gemini),
+    in ordine di priorità dal più favorevole al meno:
+
+    1. ORDINI EVADIBILI — Pronti copre da solo tutto il Riservato, subito.
+    2. EVADIBILE DOPO VERNICIATURA — non basta oggi, ma Pronti + Da
+       Verniciare + In Verniciatura sì: aspetta il rientro/la verniciatura.
+    3/5. PARZIALMENTE EVADIBILE — IN PRODUZIONE / EVADIBILE DOPO
+       PRODUZIONE — la verniciatura da sola non basta, ma sommandoci
+       anche la produzione in corso sì. Si dividono SOLO su un punto,
+       confermato dall'utente: Pronti > 0 (parte qualcosa OGGI, stato 3)
+       o no (nulla parte oggi, tutto dopo, stato 5) — stessa urgenza di
+       fondo (aspetta la produzione), diversa urgenza operativa
+       (spedire subito una parte o no).
+    4/6. PARZIALMENTE EVADIBILE — PIANIFICARE PRODUZIONE / FARE
+       PRODUZIONE — nemmeno sommando la produzione già in corso si
+       copre: serve aprire/allargare una commessa. Stessa distinzione
+       Pronti>0 di sopra.
+    7. PIANIFICARE PRODUZIONE (scorta) — nessun impegno cliente, ma il
+       Saldo C/Scorta (che include GIÀ produzione in corso nella sua
+       somma) resta negativo: sotto-scorta, non un ordine cliente in
+       attesa. La stessa somma cumulativa assorbe da sola il caso
+       "produzione già aperta ma non basta" (se bastasse, il saldo non
+       sarebbe più negativo) — nessuna gestione speciale necessaria,
+       stessa logica di 3/5 applicata al ramo scorta invece che al
+       ramo cliente.
+    8. NESSUN ORDINE — Riservato<=0 e nessun problema di scorta (o
+       scorta mai sincronizzata): stato di sfondo, nessuna azione.
+
+    Il "copre" è SEMPRE una somma cumulativa (Pronti + Da Verniciare +
+    In Verniciatura [+ In Produzione]) — mai una fase da sola. Da
+    Verniciare (grezzo) può essere NEGATIVO apposta (spedito al
+    terzista più di quanto risulti prodotto: uno sbilancio reale) — mai
+    clampato a zero: la somma cumulativa lo assorbe naturalmente,
+    riducendo la copertura come deve, senza nascondere il segnale.
     """
     if riservato <= 0:
+        if saldo_scorta is not None and saldo_scorta < 0:
+            return ('pianifica_scorta', '📐 PIANIFICARE PRODUZIONE (sotto scorta)', 'orange')
         return ('nessun_ordine', '— Nessun ordine', 'grey')
+
     if pronti >= riservato:
         return ('evadibile', 'ORDINI EVADIBILI', 'green')
-    if (pronti + in_trattamento + grezzo) >= riservato:
+
+    copertura_verniciatura = pronti + grezzo + in_trattamento
+    if copertura_verniciatura >= riservato:
         return ('dopo_verniciatura', 'EVADIBILE DOPO VERNICIATURA', 'yellow')
-    if (pronti + in_trattamento + grezzo + ordinato_produzione) >= riservato:
+
+    copertura_produzione = copertura_verniciatura + ordinato_produzione
+    if copertura_produzione >= riservato:
+        if pronti > 0:
+            return ('parziale_in_produzione', '⏳ PARZIALMENTE EVADIBILE — IN PRODUZIONE', 'blue')
         return ('dopo_produzione', 'EVADIBILE DOPO PRODUZIONE', 'blue')
+
+    if pronti > 0:
+        return ('parziale_pianifica', '⏳ PARZIALMENTE EVADIBILE — PIANIFICARE PRODUZIONE', 'red')
     return ('fare_produzione', '⚠ FARE PRODUZIONE', 'red')
 
 
@@ -1421,7 +1464,8 @@ def api_kanban_hpi_dati():
         sotto_scorta = saldo_c_scorta is not None and saldo_c_scorta < 0
 
         codice_stato, label_stato, colore_stato = _stato_evasione(
-            pronti_a_magazzino, riservato, p.in_vern or 0, p.grezzi or 0, p.in_prod or 0)
+            pronti_a_magazzino, riservato, p.in_vern or 0, p.grezzi or 0, p.in_prod or 0,
+            saldo_scorta=saldo_c_scorta)
 
         riga = {
             'id': p.id, 'nome': p.prodotto, 'icona': p.icona, 'sheet_key': p.sheet_key,

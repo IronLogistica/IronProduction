@@ -33,8 +33,12 @@
 <div id="hpi-legenda" style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px;font-size:11px">
   <span style="background:rgba(26,158,92,.15);color:var(--green);border:1px solid var(--green);border-radius:6px;padding:3px 10px">🟢 Ordini Evadibili</span>
   <span style="background:rgba(230,184,0,.15);color:var(--yellow);border:1px solid var(--yellow);border-radius:6px;padding:3px 10px">🟡 Evadibile dopo Verniciatura</span>
-  <span style="background:rgba(30,111,165,.15);color:var(--accent2);border:1px solid var(--accent2);border-radius:6px;padding:3px 10px">🔵 Evadibile dopo Produzione</span>
-  <span style="background:rgba(192,57,43,.15);color:var(--red);border:1px solid var(--red);border-radius:6px;padding:3px 10px">🔴 Fare Produzione</span>
+  <span style="background:rgba(30,111,165,.15);color:var(--accent2);border:1px solid var(--accent2);border-radius:6px;padding:3px 10px">🔵 Parz. Evadibile — In Produzione / Evadibile dopo Produzione</span>
+  <span style="background:rgba(192,57,43,.15);color:var(--red);border:1px solid var(--red);border-radius:6px;padding:3px 10px">🔴 Parz. Evadibile — Pianificare / Fare Produzione</span>
+  <span style="background:rgba(230,126,34,.15);color:#e67e22;border:1px solid #e67e22;border-radius:6px;padding:3px 10px">🟠 Pianificare Produzione (sotto scorta)</span>
+</div>
+<div style="font-size:10.5px;color:var(--text-dim);margin:-10px 0 14px">
+  🔵/🔴 doppi: si dividono se parte già qualcosa OGGI (Pronti a Magazzino &gt; 0) o se bisogna aspettare comunque.
 </div>
 
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:12px">
@@ -271,6 +275,7 @@ function renderKanbanHpi(){
     blue:   'background:rgba(30,111,165,.18);color:var(--accent2);border:1px solid var(--accent2)',
     red:    'background:rgba(192,57,43,.18);color:var(--red);border:1px solid var(--red)',
     grey:   'background:rgba(127,140,141,.18);color:var(--grey);border:1px solid var(--grey)',
+    orange: 'background:rgba(230,126,34,.18);color:#e67e22;border:1px solid #e67e22',
   };
 
   let html = '';
