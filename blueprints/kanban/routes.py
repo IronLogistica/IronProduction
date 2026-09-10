@@ -1,3 +1,4 @@
+import concurrent.futures
 from flask import Blueprint, render_template, jsonify, request, redirect
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
@@ -1395,34 +1396,47 @@ def api_kanban_hpi_dati():
         _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
     db.session.commit()
 
+    # BUG REALE TROVATO E CORRETTO (segnalato in produzione — la pagina non
+    # si caricava più affatto, poi mostrava 'nessun prodotto trovato'):
+    # interrogare WMS in TEMPO REALE per ogni prodotto, uno alla volta, con
+    # un timeout di 8s ciascuno, con molti prodotti Kanban può facilmente
+    # superare qualunque timeout ragionevole della richiesta web (Railway/
+    # gunicorn) — la correttezza introdotta nel fix precedente (stessa
+    # interrogazione live della scheda dettaglio, invece dei soli campi
+    # memorizzati) era giusta, ma fatta in sequenza è troppo lenta con più
+    # di una manciata di prodotti.
+    # FIX: stesse interrogazioni, ma tutte IN PARALLELO (stesso numero di
+    # chiamate a WMS di prima, il tempo totale però è quello della più
+    # lenta, non la somma di tutte) — timeout più stretto per singola
+    # chiamata (3s invece di 8s): con molti prodotti da controllare in una
+    # sola pagina, meglio far scadere presto una chiamata lenta e usare il
+    # valore memorizzato per QUEL prodotto, piuttosto che rallentare
+    # l'intera pagina in attesa di una sola risposta.
+    skus_da_interrogare = sorted({sku_da_nome_prodotto(p.prodotto) for p in prodotti if sku_da_nome_prodotto(p.prodotto)})
+    wms_per_sku = {}
+    if skus_da_interrogare:
+        def _interroga(sku):
+            try:
+                return sku, ottieni_scheda_kanban(sku, timeout=3)
+            except MasterLogisticError:
+                return sku, None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+            for sku, dati in pool.map(_interroga, skus_da_interrogare):
+                if dati is not None:
+                    wms_per_sku[sku] = dati
+
     gruppi = {}
     for p in prodotti:
         sku = sku_da_nome_prodotto(p.prodotto)
-        # BUG REALE TROVATO E CORRETTO (segnalato con screenshot — C10
-        # mostrava Riservato=100 invece di 80, Saldo Contabile e Pronti a
-        # Magazzino sbagliati di conseguenza): KanbanProdotto.riservato e
-        # .finiti_is sono campi MEMORIZZATI, aggiornati solo saltuariamente
-        # — la scheda dettaglio dello stesso prodotto (api_kanban_scheda)
-        # li SCARTA apposta, sostituendoli con un'interrogazione LIVE a
-        # MasterLogistic-WMS (ottieni_scheda_kanban) per avere sempre il
-        # dato vero del momento. Questa lista usava invece i campi
-        # memorizzati direttamente — stessa NOMINALE fonte di dati, ma
-        # potenzialmente disallineata da quanto WMS dice ORA, con il
-        # rischio di mostrare due numeri diversi per lo stesso prodotto a
-        # seconda di quale pagina si guarda.
-        # FIX: stessa interrogazione LIVE della scheda, per ogni prodotto
-        # — un fallimento WMS su un singolo codice non blocca gli altri
-        # (resta il valore memorizzato solo per QUEL prodotto, non l'intera
-        # pagina) né il resto della pagina.
-        riservato = p.riservato or 0
-        finiti_is = p.finiti_is or 0
-        if sku:
-            try:
-                wms = ottieni_scheda_kanban(sku)
-                riservato = wms['riservato_clienti']
-                finiti_is = wms['stock_verniciati']  # nomenclatura WMS: 'stock_verniciati' = Finiti IS da WMS
-            except MasterLogisticError:
-                pass  # WMS irraggiungibile per questo SKU — resta il valore memorizzato, solo per questo prodotto
+        wms = wms_per_sku.get(sku)
+        if wms is not None:
+            riservato = wms['riservato_clienti']
+            finiti_is = wms['stock_verniciati']  # nomenclatura WMS: 'stock_verniciati' = Finiti IS da WMS
+        else:
+            # WMS irraggiungibile/scaduto per questo SKU — resta il valore
+            # memorizzato, solo per questo prodotto, non per l'intera pagina.
+            riservato = p.riservato or 0
+            finiti_is = p.finiti_is or 0
 
         pronti_a_magazzino = (p.verniciati or 0) + finiti_is
         saldo_contabile = p.grezzi + p.in_vern + p.verniciati + finiti_is + p.in_prod - riservato
