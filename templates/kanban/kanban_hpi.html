@@ -1,6 +1,25 @@
 {% extends "base.html" %}
 {% block content %}
 
+<style>
+.wms-saldo-box{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;text-align:center;border-top:3px solid var(--grey)}
+.freccia-urgenti{position:absolute;top:-40px;left:50%;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;z-index:5;animation:freccia-lampeggio 1s infinite;pointer-events:none}
+.freccia-testo{font-size:8px;font-weight:800;text-align:center;line-height:1.25;color:#ff3b3b;text-transform:uppercase;letter-spacing:.2px;white-space:nowrap;background:rgba(255,59,59,.15);border:1px solid #ff3b3b;border-radius:4px;padding:3px 6px}
+.freccia-arrow{font-size:18px;line-height:1;color:#ff3b3b;margin-top:1px}
+@keyframes freccia-lampeggio{0%,100%{opacity:1}50%{opacity:.2}}
+.wms-saldo-lbl{font-size:9px;text-transform:uppercase;letter-spacing:.4px;color:var(--text-dim);margin-bottom:4px}
+.wms-saldo-val{font-size:22px;font-weight:900;color:#5debb0}
+.wms-saldo-val.neg{color:#f07070}
+.scheda-tbl{width:100%;border-collapse:collapse;font-size:12px}
+.scheda-tbl th{background:var(--dark2);color:var(--steel2);font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.4px;padding:8px 10px;border-bottom:2px solid var(--border);text-align:center}
+.scheda-tbl td{padding:7px 10px;border-bottom:1px solid var(--border);color:var(--text);text-align:center;vertical-align:middle}
+.scheda-tbl tr:hover td{background:rgba(30,111,165,.06)}
+.scheda-tbl tfoot td{background:rgba(255,255,255,.03);font-weight:700;color:#e0eefc;border-top:2px solid var(--border)}
+.scheda-sec-title{font-size:11px;text-transform:uppercase;letter-spacing:1px;font-weight:700;margin-bottom:8px;padding:5px 10px;border-radius:4px;border-left:3px solid;display:flex;align-items:center;gap:8px;background:rgba(255,255,255,.03)}
+.scheda-empty{text-align:center;color:var(--text-dim);padding:12px;font-style:italic}
+.scheda-foot td{padding:7px 10px;font-weight:700;color:#e0eefc;border-top:2px solid var(--border)}
+</style>
+
 <div class="page-toolbar">
   <div class="page-title">🚦 KANBAN HPI — Evasione Ordini</div>
   <button class="btn btn-ghost" onclick="caricaKanbanHpi()">🔄 Aggiorna</button>
@@ -27,8 +46,206 @@
 
 <div id="hpi-contenuto">Caricamento...</div>
 
+{# ══ MODAL: SCHEDA PRODOTTO — stessa identica modale già in uso nel
+   tabellone Kanban (templates/kanban/index.html), copiata qui apposta:
+   la lente di ingrandimento deve aprire QUI la scheda, non portare via
+   dalla pagina Evasione Ordini. ══ #}
+<div class="modal-overlay" id="modalWmsScheda">
+<div class="modal-box" style="width:820px;max-height:92vh;overflow-y:auto">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;padding-bottom:12px;border-bottom:1px solid var(--border)">
+    <div>
+      <div style="font-size:16px;font-weight:800;color:#e0eefc" id="wmsSchedaTitolo">—</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-top:2px" id="wmsSchedaSku"></div>
+    </div>
+    <button class="btn btn-ghost" style="padding:3px 12px;font-size:16px" onclick="closeModal('modalWmsScheda')">✕</button>
+  </div>
+
+  <div id="wmsLoading" style="text-align:center;padding:40px;color:var(--text-dim)">
+    <div style="font-size:26px;margin-bottom:8px">⏳</div>Caricamento scheda...
+  </div>
+
+  <div id="wmsErrore" style="display:none;padding:14px;background:rgba(192,57,43,.12);border-radius:8px;color:#f07070;margin-bottom:12px"></div>
+
+  <div id="wmsContent" style="display:none">
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:10px;margin-top:38px">
+      <div class="wms-saldo-box" id="boxGrezziIW" style="border-top-color:#c9a227">
+        <div class="wms-saldo-lbl">🔧 GREZZI IW</div>
+        <div class="wms-saldo-val" style="color:#e0c14a" id="wsGrezziIW">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Da Magazzino (Saldatura approvata)</div>
+        <div id="avvisoGrezziNegativo" style="display:none;font-size:9px;font-weight:800;color:#ff3b3b;margin-top:5px;padding:3px 5px;background:rgba(255,59,59,.12);border-radius:4px">
+          ⚠️ Spedito al terzista più di quanto risulti prodotto
+        </div>
+      </div>
+      <div class="wms-saldo-box" style="border-top-color:#f0c040">
+        <div class="wms-saldo-lbl">🚚 IN TRATTAMENTO</div>
+        <div class="wms-saldo-val" style="color:#f0c040" id="wsInVern">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Presso verniciatore/zincatore esterno</div>
+      </div>
+      <div class="wms-saldo-box" style="border-top-color:#e6b800">
+        <div class="wms-saldo-lbl">🎨 FINITI IW</div>
+        <div class="wms-saldo-val" style="color:#f0c040" id="wsStockVern">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">A magazzino verniciati</div>
+      </div>
+      <div class="wms-saldo-box" style="border-top-color:var(--green)">
+        <div class="wms-saldo-lbl">📦 FINITI IS</div>
+        <div class="wms-saldo-val" style="color:#5debb0" id="wsStockIS">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px">Da IronLogistic (WMS)</div>
+      </div>
+    </div>
+
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:8px;margin-bottom:16px">
+      <div class="wms-saldo-box" style="border-top-color:var(--accent)">
+        <div class="wms-saldo-lbl">SALDO LT</div>
+        <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;margin-top:-2px;margin-bottom:2px">Post-Produzione</div>
+        <div class="wms-saldo-val" id="wsSaldo1">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px" title="+ Saldo commesse produzione residuo&#10;+ Grezzi IW&#10;+ In Trattamento&#10;+ Finiti IW&#10;+ Finiti IS (da WMS)&#10;− Impegni Clienti (da WMS)">Resid.+Grezzi+Tratt.+IW+IS−Imp.</div>
+      </div>
+      <div class="wms-saldo-box" style="border-top-color:#4a9fd6">
+        <div class="wms-saldo-lbl">SALDO C/SCORTA</div>
+        <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;margin-top:-2px;margin-bottom:2px">Scorta Minima</div>
+        <div class="wms-saldo-val" id="wsSaldoScorta">—</div>
+        <div style="font-size:10px;color:#4a9fd6;margin-top:2px">Scorta min. WMS: <b id="wsScortaMinimaValore">—</b></div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px" title="+ SALDO LT&#10;− Scorta Minima (da WMS)">SALDO LT − Scorta Min. (WMS)</div>
+      </div>
+      <div class="wms-saldo-box" style="border-top-color:#8a6fd6">
+        <div class="wms-saldo-lbl">SALDO BT</div>
+        <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;margin-top:-2px;margin-bottom:2px">Pronti Breve Termine</div>
+        <div class="wms-saldo-val" id="wsSaldoBT">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px" title="+ Finiti IS (da WMS)&#10;+ Finiti IW&#10;+ In Trattamento&#10;− Impegni Clienti (da WMS)">IS+IW+Tratt.−Imp. (no Grezzi)</div>
+      </div>
+      <div class="wms-saldo-box" id="boxSaldoDisp" style="border-top-color:var(--steel2);position:relative;overflow:visible">
+        <div class="freccia-urgenti">
+          <div class="freccia-testo">DISPONIBILE PER<br>RICHIESTE URGENTI /<br>PRONTA CONSEGNA</div>
+          <div class="freccia-arrow">⬇</div>
+        </div>
+        <div class="wms-saldo-lbl">SALDO DISPONIBILE</div>
+        <div style="font-size:9px;color:var(--text-dim);text-transform:uppercase;margin-top:-2px;margin-bottom:2px">Pronti da Impegnare Subito</div>
+        <div class="wms-saldo-val" id="wsSaldo2">—</div>
+        <div style="font-size:9px;color:var(--text-dim);margin-top:4px" title="+ Finiti IS (da WMS)&#10;+ Finiti IW&#10;− Impegni Clienti (da WMS)">IS+IW−Imp.</div>
+        <div id="avvisoContraddizione" style="display:none;font-size:9px;font-weight:800;color:#ff3b3b;margin-top:5px;padding:3px 5px;background:rgba(255,59,59,.12);border-radius:4px">
+          ⚠️ Il Saldo LT è positivo ma NON è pronto alla consegna
+        </div>
+      </div>
+    </div>
+
+    <div class="scheda-sec-title" style="color:var(--steel2);border-left-color:var(--accent)">
+      🏭 Commesse di Produzione Aperte
+    </div>
+    <div style="overflow-x:auto;margin-bottom:16px">
+    <table class="scheda-tbl" id="wsTblCommesse">
+      <thead><tr>
+        <th style="text-align:left">Nr. Commessa</th>
+        <th>Totale Ordinato</th>
+        <th>Evasi / Prodotti</th>
+        <th style="color:#f07070">Saldo Residuo</th>
+        <th>Stato</th>
+        <th>Consegna</th>
+      </tr></thead>
+      <tbody id="wsTblCommesseBody">
+        <tr><td colspan="6" class="scheda-empty">Nessuna commessa aperta</td></tr>
+      </tbody>
+      <tfoot>
+        <tr class="scheda-foot">
+          <td style="font-weight:700;padding:7px 10px">Totale residuo</td>
+          <td class="num" id="totCommOrd">—</td>
+          <td class="num" id="totCommEvasi">—</td>
+          <td class="num num-neg" id="totCommSaldo" style="font-weight:900;font-size:14px">—</td>
+          <td colspan="2"></td>
+        </tr>
+      </tfoot>
+    </table>
+    </div>
+
+    <div class="scheda-sec-title" style="color:#e6b800;border-left-color:#e6b800">
+      📊 Storico Produzione
+      <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
+        <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px" onclick="apriImportStorico()">📥 Import CSV</button>
+        <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px;color:#f07070" onclick="apriResetStorico()">🗑️ Reset</button>
+      </span>
+    </div>
+
+    <div id="storicoContent">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
+        <div style="font-size:11px;font-weight:700;color:#e0eefc" id="storicoAnnoLabel">Anno —</div>
+        <div style="font-size:13px;font-weight:900;color:#e6b800" id="storicoTotAnno">— pz</div>
+      </div>
+      <div id="storicoBarre" style="display:flex;gap:3px;align-items:flex-end;height:80px;margin-bottom:4px"></div>
+      <div id="storicoMesiLabel" style="display:flex;gap:3px"></div>
+
+      <div style="margin-top:12px;padding:10px 12px;background:rgba(255,255,255,.03);border-radius:6px;border:1px solid var(--border)">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+          <div style="font-size:10px;color:var(--text-dim)" id="storicoAnnoPrecLabel">Anno precedente —</div>
+          <div style="font-size:13px;font-weight:900;color:var(--text-dim)" id="storicoTotAnnoPrec">— pz</div>
+        </div>
+        <div id="storicopBarrePrec" style="display:flex;gap:3px;align-items:flex-end;height:40px;margin-bottom:3px"></div>
+        <div id="storicoMesiLabelPrec" style="display:flex;gap:3px"></div>
+      </div>
+    </div>
+
+    <div id="storicoImportBox" style="display:none;margin-top:12px;padding:14px;background:rgba(230,184,0,.07);border:1px solid rgba(230,184,0,.25);border-radius:8px">
+      <div style="font-size:12px;font-weight:700;color:#e6b800;margin-bottom:10px">📥 Import CSV Storico Produzione</div>
+      <div style="font-size:11px;color:var(--text-dim);margin-bottom:10px;line-height:1.6">
+        Formato CSV: <code style="background:rgba(255,255,255,.08);padding:1px 5px;border-radius:3px">codice_articolo,anno,mese,qta</code><br>
+        Header obbligatorio. Separatore: virgola o punto e virgola.<br>
+        I valori si <strong>sommano</strong> a quelli esistenti. Per azzerare prima usa Reset.
+      </div>
+      <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+        <div>
+          <label class="modal-label">File CSV</label>
+          <input type="file" id="storicoFileInput" accept=".csv,.txt" style="color:var(--text);font-size:12px">
+        </div>
+        <div>
+          <label class="modal-label">🔐 PIN</label>
+          <input type="password" id="storicoPinImport" maxlength="6" placeholder="••••" class="modal-input" style="width:80px">
+        </div>
+        <button class="btn btn-primary" onclick="eseguiImportStorico()">📤 Importa</button>
+        <button class="btn btn-ghost" onclick="document.getElementById('storicoImportBox').style.display='none'">Annulla</button>
+      </div>
+      <div id="storicoImportEsito" style="margin-top:10px;font-size:12px;display:none"></div>
+    </div>
+
+    <div style="height:1px;background:var(--border);margin:16px 0"></div>
+
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:var(--steel2);font-weight:700;margin-bottom:8px;padding:5px 10px;background:rgba(30,111,165,.1);border-radius:4px;border-left:3px solid var(--accent)">
+      👥 Riservato a Clienti
+    </div>
+    <div style="overflow-x:auto;margin-bottom:16px">
+    <table class="scheda-tbl" id="wsTblClienti">
+      <thead><tr>
+        <th>Cliente</th><th>Qta Ord.</th><th>Evasi</th><th>Da Evadere</th>
+        <th>Rif. Ordine</th><th>Ultima Partenza</th>
+      </tr></thead>
+      <tbody id="wsTblClientiBody">
+        <tr><td colspan="6" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessun ordine aperto</td></tr>
+      </tbody>
+      <tfoot>
+        <tr><td colspan="3" style="font-weight:700;padding:7px 10px">Totale Riservato</td>
+        <td class="num num-neg" id="wsTotRiservato" style="font-weight:900;font-size:14px">0</td>
+        <td colspan="2"></td></tr>
+      </tfoot>
+    </table>
+    </div>
+
+    <div style="font-size:11px;text-transform:uppercase;letter-spacing:1px;color:#5debb0;font-weight:700;margin-bottom:8px;padding:5px 10px;background:rgba(26,158,92,.08);border-radius:4px;border-left:3px solid var(--green)">
+      ✅ Ultimi Evasi
+    </div>
+    <table class="scheda-tbl" id="wsTblEvasi">
+      <thead><tr>
+        <th>Data Evasione</th><th>Cliente</th><th>Rif. Ordine</th><th>Qta Evasa</th>
+      </tr></thead>
+      <tbody id="wsTblEvasiBody">
+        <tr><td colspan="4" style="text-align:center;color:var(--text-dim);padding:12px;font-style:italic">Nessuna evasione registrata</td></tr>
+      </tbody>
+    </table>
+
+  </div>{# /wmsContent #}
+</div>
+</div>
+
 <script>
 let _hpiGruppi = [];
+let _wmsPid = null;
 
 async function caricaKanbanHpi(){
   const box = document.getElementById('hpi-contenuto');
@@ -60,7 +277,7 @@ function renderKanbanHpi(){
   let almenoUnGruppoMostrato = false;
   _hpiGruppi.forEach(g => {
     const prodottiFiltrati = soloRiservati ? g.prodotti.filter(p => p.riservato_clienti > 0) : g.prodotti;
-    if(!prodottiFiltrati.length) return;  // gruppo interamente filtrato: niente tabella vuota
+    if(!prodottiFiltrati.length) return;
     almenoUnGruppoMostrato = true;
     html += `<div class="mon-section" style="margin-bottom:16px">
       <div style="padding:10px 14px;font-weight:700;font-size:13px;background:var(--dark3);border-bottom:1px solid var(--border)">${g.categoria}</div>
@@ -78,9 +295,10 @@ function renderKanbanHpi(){
         <tbody>`;
     prodottiFiltrati.forEach(p => {
       const badge = coloriBadge[p.stato_colore] || coloriBadge.grey;
+      const nomePulito = p.nome.replace(/'/g, "\\'");
       html += `<tr>
         <td style="text-align:left;font-weight:700;display:flex;align-items:center;gap:8px">
-          <button title="Apri scheda gruppo Kanban di questo prodotto" onclick="window.open('/kanban/${p.sheet_key}', '_blank')"
+          <button title="Apri scheda dettaglio di questo prodotto" onclick="apriSchedaWms(${p.id}, '${nomePulito}')"
                   style="background:none;border:1px solid var(--border);border-radius:6px;padding:2px 6px;cursor:pointer;color:var(--accent2);font-size:12px">🔍</button>
           ${p.nome}
         </td>
@@ -101,6 +319,227 @@ function renderKanbanHpi(){
   box.innerHTML = html;
 }
 caricaKanbanHpi();
+
+// ══ SCHEDA PRODOTTO — stessa identica logica del tabellone Kanban ══════════
+function apriSchedaWms(pid, nome) {
+  _wmsPid = pid;
+  document.getElementById('wmsSchedaTitolo').textContent = nome;
+  document.getElementById('wmsSchedaSku').textContent = 'Caricamento...';
+  document.getElementById('wmsLoading').style.display = 'block';
+  document.getElementById('wmsContent').style.display = 'none';
+  document.getElementById('wmsErrore').style.display = 'none';
+  openModal('modalWmsScheda');
+  _caricaSchedaWms(pid);
+}
+
+function _caricaSchedaWms(pid) {
+  const p1 = fetch(`/api/kanban-scheda/${pid}`).then(r => r.json()).catch(() => null);
+  const p2 = fetch(`/api/kanban/${pid}/storico`).then(r => r.json()).catch(() => null);
+
+  Promise.all([p1, p2]).then(([d, storico]) => {
+    document.getElementById('wmsLoading').style.display = 'none';
+    document.getElementById('wmsContent').style.display = 'block';
+
+    const wsGrezziIW = document.getElementById('wsGrezziIW');
+    if (wsGrezziIW) {
+      const valGrezzi = (d && d.grezzi_iw != null) ? d.grezzi_iw : null;
+      wsGrezziIW.textContent = (valGrezzi != null) ? valGrezzi : '—';
+      const boxGrezzi = document.getElementById('boxGrezziIW');
+      const avvisoGrezzi = document.getElementById('avvisoGrezziNegativo');
+      const negativo = valGrezzi != null && valGrezzi < 0;
+      if (boxGrezzi) boxGrezzi.style.borderTopColor = negativo ? '#ff3b3b' : '#c9a227';
+      wsGrezziIW.style.color = negativo ? '#ff3b3b' : '#e0c14a';
+      if (avvisoGrezzi) avvisoGrezzi.style.display = negativo ? 'block' : 'none';
+    }
+
+    if (d && !d.wms_errore) {
+      document.getElementById('wsStockVern').textContent   = d.stock_verniciati ?? '—';
+      document.getElementById('wsInVern').textContent      = d.in_vern          ?? '—';
+      const wsIS = document.getElementById('wsStockIS');
+      if (wsIS) wsIS.textContent = d.stock_is ?? d.finiti_is ?? '—';
+      const setSaldo = (id, val) => {
+        const el = document.getElementById(id); if (!el) return;
+        el.textContent = val ?? '—';
+        if (val != null) el.className = 'wms-saldo-val' + (val < 0 ? ' neg' : '');
+      };
+      setSaldo('wsSaldo1', d.saldo_contabile);
+      setSaldo('wsSaldoScorta', d.saldo_scorta);
+      const wsScortaMinima = document.getElementById('wsScortaMinimaValore');
+      if (wsScortaMinima) wsScortaMinima.textContent = (d.scorta_minima != null) ? d.scorta_minima : '—';
+      setSaldo('wsSaldoBT', d.saldo_contabile_breve_termine);
+      setSaldo('wsSaldo2', d.saldo_disponibile);
+      const avviso = document.getElementById('avvisoContraddizione');
+      if (avviso) {
+        avviso.style.display = (d.saldo_contabile > 0 && d.saldo_disponibile < 0) ? 'block' : 'none';
+      }
+    } else {
+      ['wsStockVern','wsInVern','wsStockIS'].forEach(id => {
+        const el = document.getElementById(id); if (el) el.textContent = '—';
+      });
+    }
+
+    const commesse = (d && d.commesse_produzione) || [];
+    const bodyComm = document.getElementById('wsTblCommesseBody');
+    if (!commesse.length) {
+      bodyComm.innerHTML = '<tr><td colspan="6" class="scheda-empty">Nessuna commessa aperta su questo codice</td></tr>';
+      ['totCommOrd','totCommEvasi','totCommSaldo'].forEach(id => {
+        const el = document.getElementById(id); if(el) el.textContent = '—';
+      });
+    } else {
+      let totOrd=0, totEv=0, totSaldo=0;
+      bodyComm.innerHTML = commesse.map(c => {
+        totOrd   += c.qta_tot   || 0;
+        totEv    += c.qta_prod  || 0;
+        totSaldo += c.saldo     || 0;
+        const statoColor = c.stato === 'COMPLETATA' ? '#5debb0' : c.stato === 'IN_PRODUZIONE' ? '#e6b800' : 'var(--text-dim)';
+        return `<tr>
+          <td style="font-weight:700;text-align:left;font-family:monospace;font-size:12px">${c.numero||'—'}</td>
+          <td class="num">${c.qta_tot||0}</td>
+          <td class="num" style="color:#5debb0">${c.qta_prod||0}</td>
+          <td class="num num-neg" style="font-weight:800;font-size:13px">${c.saldo||0}</td>
+          <td><span style="font-size:10px;color:${statoColor}">${c.stato||'—'}</span></td>
+          <td style="font-size:10px;color:var(--text-dim)">${c.data_consegna||'—'}</td>
+        </tr>`;
+      }).join('');
+      document.getElementById('totCommOrd').textContent   = totOrd;
+      document.getElementById('totCommEvasi').textContent = totEv;
+      document.getElementById('totCommSaldo').textContent = totSaldo;
+    }
+
+    const ordini = (d && d.ordini_clienti) || [];
+    const bodyC = document.getElementById('wsTblClientiBody');
+    bodyC.innerHTML = !ordini.length
+      ? '<tr><td colspan="6" class="scheda-empty">Nessun ordine cliente aperto</td></tr>'
+      : ordini.map(o => `<tr>
+          <td style="font-weight:600;text-align:left">${o.cliente||'—'}</td>
+          <td class="num">${o.qta_ord||0}</td>
+          <td class="num">${o.qta_evasa||0}</td>
+          <td class="num num-neg" style="font-weight:700">${o.qta_residua||0}</td>
+          <td style="font-size:10px">${o.conferma||'—'}</td>
+          <td style="font-size:11px;color:var(--text-dim)">${o.data_consegna||'—'}</td>
+        </tr>`).join('');
+    const totRis = document.getElementById('wsTotRiservato');
+    if (totRis) totRis.textContent = (d && d.riservato_clienti) || 0;
+
+    const evasi = (d && d.ultimi_evasi) || [];
+    const bodyE = document.getElementById('wsTblEvasiBody');
+    bodyE.innerHTML = !evasi.length
+      ? '<tr><td colspan="4" class="scheda-empty">Nessuna evasione registrata</td></tr>'
+      : evasi.map(e => `<tr style="background:rgba(26,158,92,.04)">
+          <td style="color:#5debb0;font-weight:600">${e.data||'—'}</td>
+          <td style="font-weight:600">${e.cliente||'—'}</td>
+          <td style="font-size:10px;color:var(--text-dim)">${e.conferma||'—'}</td>
+          <td class="num" style="color:#5debb0;font-weight:700">${e.qta||0}</td>
+        </tr>`).join('');
+
+    if (storico) _renderStorico(storico);
+  })
+  .catch(err => {
+    document.getElementById('wmsLoading').style.display = 'none';
+    const el = document.getElementById('wmsErrore');
+    el.style.display = 'block';
+    el.textContent = '❌ Errore caricamento: ' + err;
+    document.getElementById('wmsContent').style.display = 'block';
+  });
+}
+
+function _renderStorico(s) {
+  document.getElementById('storicoAnnoLabel').textContent = `Anno ${s.anno_corrente}`;
+  document.getElementById('storicoTotAnno').textContent   = `${s.tot_corrente} pz`;
+
+  const maxC = Math.max(...s.mesi_corrente.map(m => m.qta), 1);
+  const barre = document.getElementById('storicoBarre');
+  const labMesi = document.getElementById('storicoMesiLabel');
+  const oggi = new Date();
+  const meseCorrente = oggi.getMonth() + 1;
+
+  barre.innerHTML = s.mesi_corrente.map(m => {
+    const h = Math.max(4, Math.round((m.qta / maxC) * 72));
+    const isCurr = m.mese === meseCorrente;
+    const isFut  = m.mese > meseCorrente;
+    const col    = isFut ? 'rgba(255,255,255,.08)' : isCurr ? '#e6b800' : 'var(--accent)';
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:2px" title="${m.label}: ${m.qta} pz">
+      <div style="font-size:8px;color:var(--text-dim)">${m.qta||''}</div>
+      <div style="width:100%;height:${h}px;background:${col};border-radius:3px 3px 0 0;transition:height .4s"></div>
+    </div>`;
+  }).join('');
+
+  labMesi.innerHTML = s.mesi_corrente.map(m =>
+    `<div style="flex:1;text-align:center;font-size:8px;color:var(--text-dim);margin-top:2px">${m.label}</div>`
+  ).join('');
+
+  document.getElementById('storicoAnnoPrecLabel').textContent = `Anno ${s.anno_precedente}`;
+  document.getElementById('storicoTotAnnoPrec').textContent   = `${s.tot_precedente} pz`;
+
+  const maxP = Math.max(...s.mesi_precedente.map(m => m.qta), 1);
+  document.getElementById('storicopBarrePrec').innerHTML = s.mesi_precedente.map(m => {
+    const h = Math.max(2, Math.round((m.qta / maxP) * 34));
+    return `<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end" title="${m.label}: ${m.qta} pz">
+      <div style="width:100%;height:${h}px;background:rgba(255,255,255,.2);border-radius:2px 2px 0 0"></div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('storicoMesiLabelPrec').innerHTML = s.mesi_precedente.map(m =>
+    `<div style="flex:1;text-align:center;font-size:7px;color:var(--text-dim)">${m.label}</div>`
+  ).join('');
+}
+
+function apriImportStorico() {
+  document.getElementById('storicoImportBox').style.display = 'block';
+  document.getElementById('storicoImportEsito').style.display = 'none';
+}
+
+function eseguiImportStorico() {
+  const fileInput = document.getElementById('storicoFileInput');
+  const pin       = document.getElementById('storicoPinImport').value;
+  const esito     = document.getElementById('storicoImportEsito');
+
+  if (!fileInput.files.length) { showToast('⚠️ Seleziona un file CSV', true); return; }
+
+  const formData = new FormData();
+  formData.append('file', fileInput.files[0]);
+  formData.append('pin', pin);
+
+  esito.style.display = 'block';
+  esito.style.color = 'var(--text-dim)';
+  esito.textContent = '⏳ Importazione in corso...';
+
+  fetch('/api/storico/upload-csv', { method: 'POST', body: formData })
+  .then(r => r.json())
+  .then(d => {
+    if (d.ok) {
+      esito.style.color = '#5debb0';
+      esito.textContent = `✅ ${d.n_ok} righe importate${d.n_err > 0 ? `, ${d.n_err} errori` : ''}`;
+      if (d.errori && d.errori.length) {
+        esito.innerHTML += '<br><small style="color:#f07070">' + d.errori.join('<br>') + '</small>';
+      }
+      fetch(`/api/kanban/${_wmsPid}/storico`).then(r=>r.json()).then(_renderStorico);
+      showToast(`✅ Importate ${d.n_ok} righe`);
+    } else if (d.pin_error) {
+      showToast('🔐 PIN errato', true);
+      esito.style.display = 'none';
+    } else {
+      esito.style.color = '#f07070';
+      esito.textContent = '❌ ' + (d.error || 'Errore');
+    }
+  }).catch(() => { esito.style.color = '#f07070'; esito.textContent = '❌ Errore di rete'; });
+}
+
+function apriResetStorico() {
+  const pin = prompt('PIN per azzerare lo storico:');
+  if (!pin) return;
+  fetch(`/api/kanban/${_wmsPid}/storico/reset`, {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pin})
+  }).then(r=>r.json()).then(d => {
+    if (d.ok) {
+      showToast('🗑️ Storico azzerato');
+      fetch(`/api/kanban/${_wmsPid}/storico`).then(r=>r.json()).then(_renderStorico);
+    } else if (d.pin_error) showToast('🔐 PIN errato', true);
+    else showToast('❌ ' + (d.error||'Errore'), true);
+  });
+}
 </script>
 
 {% endblock %}
