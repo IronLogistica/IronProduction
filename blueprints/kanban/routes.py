@@ -1397,8 +1397,35 @@ def api_kanban_hpi_dati():
 
     gruppi = {}
     for p in prodotti:
+        sku = sku_da_nome_prodotto(p.prodotto)
+        # BUG REALE TROVATO E CORRETTO (segnalato con screenshot — C10
+        # mostrava Riservato=100 invece di 80, Saldo Contabile e Pronti a
+        # Magazzino sbagliati di conseguenza): KanbanProdotto.riservato e
+        # .finiti_is sono campi MEMORIZZATI, aggiornati solo saltuariamente
+        # — la scheda dettaglio dello stesso prodotto (api_kanban_scheda)
+        # li SCARTA apposta, sostituendoli con un'interrogazione LIVE a
+        # MasterLogistic-WMS (ottieni_scheda_kanban) per avere sempre il
+        # dato vero del momento. Questa lista usava invece i campi
+        # memorizzati direttamente — stessa NOMINALE fonte di dati, ma
+        # potenzialmente disallineata da quanto WMS dice ORA, con il
+        # rischio di mostrare due numeri diversi per lo stesso prodotto a
+        # seconda di quale pagina si guarda.
+        # FIX: stessa interrogazione LIVE della scheda, per ogni prodotto
+        # — un fallimento WMS su un singolo codice non blocca gli altri
+        # (resta il valore memorizzato solo per QUEL prodotto, non l'intera
+        # pagina) né il resto della pagina.
         riservato = p.riservato or 0
-        pronti_a_magazzino = (p.verniciati or 0) + (p.finiti_is or 0)
+        finiti_is = p.finiti_is or 0
+        if sku:
+            try:
+                wms = ottieni_scheda_kanban(sku)
+                riservato = wms['riservato_clienti']
+                finiti_is = wms['stock_verniciati']  # nomenclatura WMS: 'stock_verniciati' = Finiti IS da WMS
+            except MasterLogisticError:
+                pass  # WMS irraggiungibile per questo SKU — resta il valore memorizzato, solo per questo prodotto
+
+        pronti_a_magazzino = (p.verniciati or 0) + finiti_is
+        saldo_contabile = p.grezzi + p.in_vern + p.verniciati + finiti_is + p.in_prod - riservato
 
         codice_stato, label_stato, colore_stato = _stato_evasione(
             pronti_a_magazzino, riservato, p.in_vern or 0, p.grezzi or 0, p.in_prod or 0)
@@ -1406,7 +1433,7 @@ def api_kanban_hpi_dati():
         riga = {
             'id': p.id, 'nome': p.prodotto, 'icona': p.icona, 'sheet_key': p.sheet_key,
             'riservato_clienti': riservato,
-            'saldo_contabile': p.saldo_contabile,
+            'saldo_contabile': saldo_contabile,
             'pronti_a_magazzino': pronti_a_magazzino,
             'in_verniciatura': p.in_vern or 0,
             'da_verniciare': p.grezzi or 0,
