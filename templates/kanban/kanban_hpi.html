@@ -40,7 +40,7 @@
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:12px">
   <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
     <input type="checkbox" id="hpi-solo-riservati" checked onchange="renderKanbanHpi()">
-    Mostra solo prodotti con riservato a clienti maggiore di 0
+    Mostra solo prodotti con riservato a clienti o sotto scorta minima
   </label>
 </div>
 
@@ -276,21 +276,25 @@ function renderKanbanHpi(){
   let html = '';
   let almenoUnGruppoMostrato = false;
   _hpiGruppi.forEach(g => {
-    const prodottiFiltrati = soloRiservati ? g.prodotti.filter(p => p.riservato_clienti > 0) : g.prodotti;
+    // Mostra il prodotto se ha impegni clienti O se è sotto scorta minima
+    // (anche senza nessun ordine in corso — serve comunque pianificare
+    // produzione per rifornire la scorta di sicurezza).
+    const prodottiFiltrati = soloRiservati ? g.prodotti.filter(p => p.riservato_clienti > 0 || p.sotto_scorta) : g.prodotti;
     if(!prodottiFiltrati.length) return;
     almenoUnGruppoMostrato = true;
     html += `<div class="mon-section" style="margin-bottom:16px">
       <div style="padding:10px 14px;font-weight:700;font-size:13px;background:var(--dark3);border-bottom:1px solid var(--border)">${g.categoria}</div>
       <table class="mon-table" style="width:100%;table-layout:fixed">
         <colgroup>
-          <col style="width:24%"><col style="width:13%"><col style="width:10.5%"><col style="width:10.5%">
-          <col style="width:10.5%"><col style="width:10.5%"><col style="width:10.5%"><col style="width:10.5%">
+          <col style="width:20%"><col style="width:11%"><col style="width:10%"><col style="width:10%"><col style="width:10%">
+          <col style="width:10%"><col style="width:10%"><col style="width:10%"><col style="width:9%">
         </colgroup>
         <thead><tr>
           <th style="text-align:left">Prodotto</th>
           <th style="text-align:center">Stato</th>
           <th style="text-align:center">Riservato a Clienti</th>
           <th style="text-align:center">Saldo Contabile</th>
+          <th style="text-align:center" title="Saldo Contabile meno la Scorta Minima configurata su WMS — segnala anche i codici SENZA ordini clienti ma sotto la scorta di sicurezza">Saldo C/Scorta</th>
           <th style="text-align:center">Pronti a Magazzino</th>
           <th style="text-align:center">In Verniciatura</th>
           <th style="text-align:center">Da Verniciare</th>
@@ -300,7 +304,9 @@ function renderKanbanHpi(){
     prodottiFiltrati.forEach(p => {
       const badge = coloriBadge[p.stato_colore] || coloriBadge.grey;
       const nomePulito = p.nome.replace(/'/g, "\\'");
-      html += `<tr>
+      const saldoScortaVal = (p.saldo_c_scorta === null || p.saldo_c_scorta === undefined) ? '—' : p.saldo_c_scorta;
+      const saldoScortaColor = (p.saldo_c_scorta !== null && p.saldo_c_scorta !== undefined && p.saldo_c_scorta < 0) ? 'var(--red)' : 'var(--text-dim)';
+      html += `<tr${p.sotto_scorta ? ' style="background:rgba(192,57,43,.05)"' : ''}>
         <td style="text-align:left;font-weight:700;display:flex;align-items:center;gap:8px">
           <button title="Apri scheda dettaglio di questo prodotto" onclick="apriSchedaWms(${p.id}, '${nomePulito}')"
                   style="background:none;border:1px solid var(--border);border-radius:6px;padding:2px 6px;cursor:pointer;color:var(--accent2);font-size:12px">🔍</button>
@@ -309,6 +315,7 @@ function renderKanbanHpi(){
         <td style="text-align:center"><span style="${badge};border-radius:6px;padding:3px 8px;font-size:10.5px;font-weight:700;white-space:nowrap">${p.stato_label}</span></td>
         <td style="text-align:center;font-weight:700">${p.riservato_clienti}</td>
         <td style="text-align:center;color:${p.saldo_contabile < 0 ? 'var(--red)' : 'var(--text-dim)'}">${p.saldo_contabile}</td>
+        <td style="text-align:center;font-weight:700;color:${saldoScortaColor}">${saldoScortaVal}${p.sotto_scorta ? ' ⚠️' : ''}</td>
         <td style="text-align:center;font-weight:700">${p.pronti_a_magazzino}</td>
         <td style="text-align:center;color:var(--text-dim)">${p.in_verniciatura || '—'}</td>
         <td style="text-align:center;color:var(--text-dim)">${p.da_verniciare || '—'}</td>

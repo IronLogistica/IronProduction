@@ -1395,26 +1395,30 @@ def api_kanban_hpi_dati():
         _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
     db.session.commit()
 
-    # Fatto un tentativo di interrogare WMS in tempo reale per ogni
-    # prodotto (anche in parallelo) per allinearsi sempre alla scheda
-    # dettaglio — causava però 'Errore di rete' in produzione: con
-    # abbastanza prodotti Kanban, anche in parallelo, il carico verso
-    # WMS resta troppo alto per questa pagina, che deve caricarsi sempre
-    # in modo affidabile. TOLTO DEL TUTTO: questa lista torna a leggere
-    # solo i campi già sincronizzati sopra (locali, mai un'interrogazione
-    # di rete) — la scheda dettaglio del singolo prodotto (aperta con la
-    # lente) resta l'unica a interrogare WMS dal vivo, dove il costo di
-    # UNA sola chiamata è sempre accettabile. Può quindi capitare che
-    # Riservato/Pronti qui siano leggermente indietro rispetto a un
-    # cambiamento appena fatto su WMS — per il dato sempre aggiornato al
-    # secondo, aprire la scheda del prodotto specifico con la lente.
+    # Scorta minima — stessa fonte già sincronizzata periodicamente per
+    # Alert Scorte Codici Padre (GiacenzaWood.scorta_minima_wms, aggiornata
+    # dal pulsante 'Aggiorna da WMS' su quella pagina) — riusa la funzione
+    # già esistente per questo (_mappa_scorta_minima_per_sku), MAI una
+    # nuova interrogazione dal vivo a WMS qui.
+    scorta_minima_per_sku = _mappa_scorta_minima_per_sku()
+
     gruppi = {}
     for p in prodotti:
+        sku = sku_da_nome_prodotto(p.prodotto)
         riservato = p.riservato or 0
         finiti_is = p.finiti_is or 0
 
         pronti_a_magazzino = (p.verniciati or 0) + finiti_is
         saldo_contabile = p.grezzi + p.in_vern + p.verniciati + finiti_is + p.in_prod - riservato
+
+        # Saldo C/Scorta = Saldo Contabile − Scorta Minima (stessa formula
+        # della scheda dettaglio) — a differenza di Riservato a Clienti,
+        # conta anche i codici SENZA impegni cliente ma sotto la scorta di
+        # sicurezza configurata su WMS, dove serve comunque pianificare
+        # produzione anche se nessun cliente lo sta aspettando oggi.
+        scorta_minima = scorta_minima_per_sku.get(sku.upper()) if sku else None
+        saldo_c_scorta = (saldo_contabile - scorta_minima) if scorta_minima is not None else None
+        sotto_scorta = saldo_c_scorta is not None and saldo_c_scorta < 0
 
         codice_stato, label_stato, colore_stato = _stato_evasione(
             pronti_a_magazzino, riservato, p.in_vern or 0, p.grezzi or 0, p.in_prod or 0)
@@ -1423,6 +1427,9 @@ def api_kanban_hpi_dati():
             'id': p.id, 'nome': p.prodotto, 'icona': p.icona, 'sheet_key': p.sheet_key,
             'riservato_clienti': riservato,
             'saldo_contabile': saldo_contabile,
+            'scorta_minima': scorta_minima,
+            'saldo_c_scorta': saldo_c_scorta,
+            'sotto_scorta': sotto_scorta,
             'pronti_a_magazzino': pronti_a_magazzino,
             'in_verniciatura': p.in_vern or 0,
             'da_verniciare': p.grezzi or 0,
