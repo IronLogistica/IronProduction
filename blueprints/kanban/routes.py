@@ -1,4 +1,3 @@
-import concurrent.futures
 from flask import Blueprint, render_template, jsonify, request, redirect
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
@@ -1396,47 +1395,23 @@ def api_kanban_hpi_dati():
         _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
     db.session.commit()
 
-    # BUG REALE TROVATO E CORRETTO (segnalato in produzione — la pagina non
-    # si caricava più affatto, poi mostrava 'nessun prodotto trovato'):
-    # interrogare WMS in TEMPO REALE per ogni prodotto, uno alla volta, con
-    # un timeout di 8s ciascuno, con molti prodotti Kanban può facilmente
-    # superare qualunque timeout ragionevole della richiesta web (Railway/
-    # gunicorn) — la correttezza introdotta nel fix precedente (stessa
-    # interrogazione live della scheda dettaglio, invece dei soli campi
-    # memorizzati) era giusta, ma fatta in sequenza è troppo lenta con più
-    # di una manciata di prodotti.
-    # FIX: stesse interrogazioni, ma tutte IN PARALLELO (stesso numero di
-    # chiamate a WMS di prima, il tempo totale però è quello della più
-    # lenta, non la somma di tutte) — timeout più stretto per singola
-    # chiamata (3s invece di 8s): con molti prodotti da controllare in una
-    # sola pagina, meglio far scadere presto una chiamata lenta e usare il
-    # valore memorizzato per QUEL prodotto, piuttosto che rallentare
-    # l'intera pagina in attesa di una sola risposta.
-    skus_da_interrogare = sorted({sku_da_nome_prodotto(p.prodotto) for p in prodotti if sku_da_nome_prodotto(p.prodotto)})
-    wms_per_sku = {}
-    if skus_da_interrogare:
-        def _interroga(sku):
-            try:
-                return sku, ottieni_scheda_kanban(sku, timeout=3)
-            except MasterLogisticError:
-                return sku, None
-        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
-            for sku, dati in pool.map(_interroga, skus_da_interrogare):
-                if dati is not None:
-                    wms_per_sku[sku] = dati
-
+    # Fatto un tentativo di interrogare WMS in tempo reale per ogni
+    # prodotto (anche in parallelo) per allinearsi sempre alla scheda
+    # dettaglio — causava però 'Errore di rete' in produzione: con
+    # abbastanza prodotti Kanban, anche in parallelo, il carico verso
+    # WMS resta troppo alto per questa pagina, che deve caricarsi sempre
+    # in modo affidabile. TOLTO DEL TUTTO: questa lista torna a leggere
+    # solo i campi già sincronizzati sopra (locali, mai un'interrogazione
+    # di rete) — la scheda dettaglio del singolo prodotto (aperta con la
+    # lente) resta l'unica a interrogare WMS dal vivo, dove il costo di
+    # UNA sola chiamata è sempre accettabile. Può quindi capitare che
+    # Riservato/Pronti qui siano leggermente indietro rispetto a un
+    # cambiamento appena fatto su WMS — per il dato sempre aggiornato al
+    # secondo, aprire la scheda del prodotto specifico con la lente.
     gruppi = {}
     for p in prodotti:
-        sku = sku_da_nome_prodotto(p.prodotto)
-        wms = wms_per_sku.get(sku)
-        if wms is not None:
-            riservato = wms['riservato_clienti']
-            finiti_is = wms['stock_verniciati']  # nomenclatura WMS: 'stock_verniciati' = Finiti IS da WMS
-        else:
-            # WMS irraggiungibile/scaduto per questo SKU — resta il valore
-            # memorizzato, solo per questo prodotto, non per l'intera pagina.
-            riservato = p.riservato or 0
-            finiti_is = p.finiti_is or 0
+        riservato = p.riservato or 0
+        finiti_is = p.finiti_is or 0
 
         pronti_a_magazzino = (p.verniciati or 0) + finiti_is
         saldo_contabile = p.grezzi + p.in_vern + p.verniciati + finiti_is + p.in_prod - riservato
