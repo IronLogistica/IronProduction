@@ -48,6 +48,20 @@
   </label>
 </div>
 
+<div style="margin-bottom:16px;font-size:11px">
+  <div style="color:var(--text-dim);margin-bottom:6px">Filtra per stato:</div>
+  <div id="hpi-filtro-stati" style="display:flex;gap:12px;flex-wrap:wrap">
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="evadibile" checked onchange="renderKanbanHpi()"> 🟢 Ordini Evadibili</label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="dopo_verniciatura" checked onchange="renderKanbanHpi()"> 🟡 Evadibile dopo Verniciatura</label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="parziale_in_produzione" checked onchange="renderKanbanHpi()"> 🔵 Parz. Evadibile — In Produzione</label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="dopo_produzione" checked onchange="renderKanbanHpi()"> 🔵 Evadibile dopo Produzione</label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="parziale_pianifica" checked onchange="renderKanbanHpi()"> 🔴 Parz. Evadibile — Pianificare</label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="fare_produzione" checked onchange="renderKanbanHpi()"> 🔴 Fare Produzione</label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="pianifica_scorta" checked onchange="renderKanbanHpi()"> 🟠 Pianificare (sotto scorta)</label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="nessun_ordine" checked onchange="renderKanbanHpi()"> ⚪ Nessun ordine</label>
+  </div>
+</div>
+
 <div id="hpi-contenuto">Caricamento...</div>
 
 {# ══ MODAL: SCHEDA PRODOTTO — stessa identica modale già in uso nel
@@ -268,6 +282,7 @@ function renderKanbanHpi(){
   if(!_hpiGruppi.length){ box.innerHTML = '<p style="color:var(--text-dim);font-style:italic">Nessun prodotto Kanban trovato.</p>'; return; }
 
   const soloRiservati = document.getElementById('hpi-solo-riservati').checked;
+  const statiSelezionati = new Set(Array.from(document.querySelectorAll('.hpi-stato-check:checked')).map(el => el.value));
 
   const coloriBadge = {
     green:  'background:rgba(26,158,92,.18);color:var(--green);border:1px solid var(--green)',
@@ -284,7 +299,8 @@ function renderKanbanHpi(){
     // Mostra il prodotto se ha impegni clienti O se è sotto scorta minima
     // (anche senza nessun ordine in corso — serve comunque pianificare
     // produzione per rifornire la scorta di sicurezza).
-    const prodottiFiltrati = soloRiservati ? g.prodotti.filter(p => p.riservato_clienti > 0 || p.sotto_scorta) : g.prodotti;
+    const prodottiFiltrati = (soloRiservati ? g.prodotti.filter(p => p.riservato_clienti > 0 || p.sotto_scorta) : g.prodotti)
+      .filter(p => statiSelezionati.has(p.stato_codice));
     if(!prodottiFiltrati.length) return;
     almenoUnGruppoMostrato = true;
     html += `<div class="mon-section" style="margin-bottom:16px">
@@ -296,7 +312,7 @@ function renderKanbanHpi(){
         </colgroup>
         <thead><tr>
           <th style="text-align:left">Prodotto</th>
-          <th style="text-align:center">Stato</th>
+          <th style="text-align:center;width:150px">Stato</th>
           <th style="text-align:center">Riservato a Clienti</th>
           <th style="text-align:center">Saldo Contabile</th>
           <th style="text-align:center" title="Saldo Contabile meno la Scorta Minima configurata su WMS — segnala anche i codici SENZA ordini clienti ma sotto la scorta di sicurezza">Saldo C/Scorta</th>
@@ -317,7 +333,7 @@ function renderKanbanHpi(){
                   style="background:none;border:1px solid var(--border);border-radius:6px;padding:2px 6px;cursor:pointer;color:var(--accent2);font-size:12px">🔍</button>
           ${p.nome}
         </td>
-        <td style="text-align:center"><span style="${badge};border-radius:6px;padding:3px 8px;font-size:10.5px;font-weight:700;white-space:nowrap">${p.stato_label}</span></td>
+        <td style="text-align:center;width:150px"><span style="${badge};border-radius:6px;padding:4px 8px;font-size:10px;font-weight:700;white-space:normal;overflow-wrap:break-word;display:inline-block;line-height:1.3;width:100%">${p.stato_label}</span></td>
         <td style="text-align:center;font-weight:700">${p.riservato_clienti}</td>
         <td style="text-align:center;color:${p.saldo_contabile < 0 ? 'var(--red)' : 'var(--text-dim)'}">${p.saldo_contabile}</td>
         <td style="text-align:center;font-weight:700;color:${saldoScortaColor}">${saldoScortaVal}${p.sotto_scorta ? ' ⚠️' : ''}</td>
@@ -330,7 +346,7 @@ function renderKanbanHpi(){
     html += `</tbody></table></div>`;
   });
   if(!almenoUnGruppoMostrato){
-    html = '<p style="color:var(--text-dim);font-style:italic">Nessun prodotto con riservato a clienti maggiore di 0.</p>';
+    html = '<p style="color:var(--text-dim);font-style:italic">Nessun prodotto corrisponde ai filtri attivi (riservato/scorta e stati selezionati).</p>';
   }
   box.innerHTML = html;
 }
