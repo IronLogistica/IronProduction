@@ -156,10 +156,11 @@ def _aggiorna_grezzi_e_trattamento(p, op_per_sku=None, lav_per_sku=None, grezzo_
 
 def _aggiorna_finiti_is_da_wms(p, forza=False):
     """
-    'Finiti IS' — stock reale che MasterLogistic-WMS ha per questo SKU
-    (stesso dato di 'stock_verniciati' dell'endpoint /api/kanban-stock),
-    scritto sul campo DEDICATO KanbanProdotto.finiti_is (mai su 'riserva',
-    che è il buffer di sicurezza del Kanban — vedi models.py).
+    'Finiti IS' e 'Riservato a Clienti' — dati reali che MasterLogistic-WMS
+    ha per questo SKU (stesso dato di 'stock_verniciati'/'riservato_clienti'
+    dell'endpoint /api/kanban-stock), scritti sui campi DEDICATI
+    KanbanProdotto.finiti_is e .riservato (mai su 'riserva', che è il
+    buffer di sicurezza del Kanban — vedi models.py).
 
     Chiamata via HTTP a WMS per OGNI prodotto della board a OGNI apertura
     pagina era il motivo più pesante di lentezza (N chiamate esterne
@@ -167,7 +168,15 @@ def _aggiorna_finiti_is_da_wms(p, forza=False):
     già aggiornato negli ultimi FINITI_IS_TTL_SECONDI, il valore resta
     comunque corretto per l'uso pratico (lo stock WMS non cambia al
     secondo) e la board carica quasi subito dopo il primo giro.
-    Un fallimento qui lascia il valore precedente invariato, non lo azzera.
+    Un fallimento qui lascia i valori precedenti invariati, non li azzera.
+
+    BUG REALE TROVATO E CORRETTO (segnalato: Kanban HPI mostrava
+    'Riservato a Clienti' vecchio anche subito dopo aver premuto
+    'Aggiorna stock WMS' — T200 restava a 120 invece di 110): questa
+    funzione chiamava già WMS e riceveva ANCHE 'riservato_clienti' nella
+    risposta, ma salvava solo 'stock_verniciati' — il dato sul riservato
+    veniva scaricato e poi scartato, mai persistito. Ora salva entrambi
+    dalla stessa identica chiamata, nessuna chiamata WMS aggiuntiva.
     """
     ora = datetime.utcnow()
     if not forza and p.finiti_is_aggiornato_il and (ora - p.finiti_is_aggiornato_il).total_seconds() < FINITI_IS_TTL_SECONDI:
@@ -180,6 +189,8 @@ def _aggiorna_finiti_is_da_wms(p, forza=False):
     except MasterLogisticError:
         return
     p.finiti_is = int(wms.get('stock_verniciati') or 0)
+    if 'riservato_clienti' in wms:
+        p.riservato = int(wms.get('riservato_clienti') or 0)
     p.finiti_is_aggiornato_il = ora
 
 

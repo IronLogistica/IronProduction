@@ -22,7 +22,13 @@
 
 <div class="page-toolbar">
   <div class="page-title">🚦 KANBAN HPI — Evasione Ordini</div>
-  <button class="btn btn-ghost" onclick="caricaKanbanHpi()">🔄 Aggiorna</button>
+  <div style="display:flex;gap:8px">
+    <button class="btn btn-ghost" id="btn-sync-wms-hpi" onclick="sincronizzaWmsTuttiHpi()"
+            title="Aggiorna Riservato a Clienti e Finiti IS dal vivo da WMS per tutti i prodotti — azione volontaria, può richiedere qualche secondo. Mai automatico al semplice apertura pagina.">
+      🔄 Aggiorna stock WMS
+    </button>
+    <button class="btn btn-ghost" onclick="caricaKanbanHpi()">↻ Ricarica</button>
+  </div>
 </div>
 
 <div style="font-size:12px;color:var(--text-dim);margin:-6px 0 14px">
@@ -353,6 +359,33 @@ function renderKanbanHpi(){
   box.innerHTML = html;
 }
 caricaKanbanHpi();
+
+// Riusa ESATTAMENTE lo stesso endpoint già in uso sul tabellone Kanban
+// principale (pulsante '🔄 Aggiorna stock WMS' lì) — azione VOLONTARIA
+// dell'utente, mai richiamata automaticamente al caricamento pagina
+// (stesso principio di sicurezza già validato altrove: WMS non deve mai
+// bloccare la normale apertura di una pagina). Senza sheet_key, aggiorna
+// tutti i prodotti di tutte le categorie (Kanban HPI le mostra insieme).
+async function sincronizzaWmsTuttiHpi(){
+  const btn = document.getElementById('btn-sync-wms-hpi');
+  const testoOrig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Aggiorno da WMS...';
+  try{
+    const r = await fetch('/api/kanban/sincronizza-wms-tutti', {method: 'POST'});
+    const d = await r.json();
+    if(d.ok){
+      showToast(`✅ Stock aggiornato — ${d.aggiornati}/${d.totale} prodotti cambiati`);
+      await caricaKanbanHpi();
+    }else{
+      showToast('❌ Errore durante la sincronizzazione', true);
+    }
+  }catch(e){
+    showToast('❌ Errore di rete', true);
+  }finally{
+    btn.disabled = false; btn.textContent = testoOrig;
+  }
+}
 
 // ══ SCHEDA PRODOTTO — stessa identica logica del tabellone Kanban ══════════
 function apriSchedaWms(pid, nome) {
