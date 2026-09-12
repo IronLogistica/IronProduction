@@ -1439,7 +1439,7 @@ def _stato_evasione(pronti, riservato, in_trattamento, grezzo, ordinato_produzio
     """
     if riservato <= 0:
         if saldo_scorta is not None and saldo_scorta < 0:
-            return ('pianifica_scorta', '📐 PIANIFICARE PRODUZIONE (sotto riserva Kanban)', 'orange')
+            return ('pianifica_scorta', '📐 PIANIFICARE PRODUZIONE (sotto scorta)', 'orange')
         return ('nessun_ordine', '— Nessun ordine', 'grey')
 
     if pronti >= riservato:
@@ -1547,4 +1547,46 @@ def api_kanban_hpi_dati():
         key=lambda x: ordine_gruppi.get(x['categoria'], 9999)
     )
     return jsonify(risultato)
+
+
+@kanban_bp.route('/api/kanban-hpi/dato-live/<int:pid>')
+def api_kanban_hpi_dato_live(pid):
+    """Riga HPI ottenuta dalla stessa funzione della Scheda Kanban completa.
+
+    Una richiesta tratta un solo codice: il browser la usa progressivamente
+    soltanto per le righe attive, evitando il timeout dell'intera pagina.
+    """
+    # Chiamata diretta: stessa funzione, stesse formule e stesse sorgenti
+    # della modal mostrata nello screenshot, senza copie della sua logica.
+    risposta_scheda = api_kanban_scheda(pid)
+    scheda = risposta_scheda.get_json()
+    if scheda.get('wms_errore'):
+        return jsonify({'ok': False, 'id': pid, 'error': scheda['wms_errore']}), 502
+
+    riservato = scheda['riservato_clienti'] or 0
+    pronti = (scheda['stock_verniciati'] or 0) + (scheda['stock_is'] or 0)
+    in_vern = scheda['in_vern'] or 0
+    grezzi = scheda['stock_grezzi'] or 0
+    in_prod = sum(c.get('saldo') or 0 for c in scheda.get('commesse_produzione', []))
+    saldo_contabile = scheda['saldo_contabile']
+    saldo_scorta = scheda['saldo_scorta']
+    sotto_scorta = saldo_scorta is not None and saldo_scorta < 0
+    codice_stato, label_stato, colore_stato = _stato_evasione(
+        pronti, riservato, in_vern, grezzi, in_prod, saldo_scorta=saldo_scorta)
+
+    return jsonify({
+        'ok': True, 'id': pid, 'live': True,
+        'riservato_clienti': riservato,
+        'saldo_contabile': saldo_contabile,
+        'scorta_minima': scheda['scorta_minima'],
+        'saldo_c_scorta': saldo_scorta,
+        'sotto_scorta': sotto_scorta,
+        'pronti_a_magazzino': pronti,
+        'in_verniciatura': in_vern,
+        'da_verniciare': grezzi,
+        'in_produzione': in_prod,
+        'stato_codice': codice_stato,
+        'stato_label': label_stato,
+        'stato_colore': colore_stato,
+    })
 
