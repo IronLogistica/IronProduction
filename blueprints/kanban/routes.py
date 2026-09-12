@@ -1,5 +1,4 @@
-import concurrent.futures
-from flask import Blueprint, render_template, jsonify, request, redirect, current_app
+from flask import Blueprint, render_template, jsonify, request, redirect
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
@@ -1438,60 +1437,21 @@ def api_kanban_hpi_dati():
         _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku, grezzo_iw_per_sku)
         _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
 
-    # BUG REALE TROVATO E CORRETTO (segnalato: 'Pronti a Magazzino'
-    # sballati): mancava la chiamata a _aggiorna_finiti_is_da_wms — l'unica
-    # funzione che aggiorna KanbanProdotto.finiti_is (usato da 'Pronti a
-    # Magazzino' = verniciati + finiti_is). Senza chiamarla, questo campo
-    # restava fermo a qualunque valore l'ultima apertura della board o
-    # della scheda dettaglio di QUEL prodotto specifico avesse lasciato —
-    # anche giorni prima. La funzione ha già una cache con scadenza
-    # (180s, FINITI_IS_TTL_SECONDI): salta la chiamata WMS se già
-    # aggiornata di recente — qui filtro PRIMA i soli prodotti scaduti
-    # (economico, nessuna rete), poi interrogo WMS SOLO per quelli, in
-    # PARALLELO (stesso principio già imparato: mai più N chiamate di
-    # rete in sequenza su questa pagina) — la scrittura vera e propria sul
-    # modello resta nel thread principale, mai da un thread parallelo, per
-    # non toccare la sessione SQLAlchemy da più thread insieme.
-    ora = datetime.utcnow()
-    da_aggiornare = [
-        p for p in prodotti
-        if p.finiti_is_aggiornato_il is None
-        or (ora - p.finiti_is_aggiornato_il).total_seconds() >= FINITI_IS_TTL_SECONDI
-    ]
-    if da_aggiornare:
-        # BUG REALE TROVATO E CORRETTO (causa esatta di 'Errore di rete'
-        # appena segnalato): dentro un ThreadPoolExecutor, un worker gira
-        # in un thread SENZA il contesto applicativo di Flask — le funzioni
-        # WMS leggono la configurazione (URL, token) tramite 'current_app',
-        # che FUORI dal contesto applicativo solleva un RuntimeError
-        # ('working outside of application context'), non un
-        # MasterLogisticError — il mio 'except MasterLogisticError' non lo
-        # catturava affatto, e quell'eccezione, risalendo da pool.map(),
-        # faceva crashare l'INTERA richiesta (500 → 'Errore di rete' visto
-        # sul frontend), invece di limitarsi a saltare quel singolo
-        # prodotto. Serve PASSARE esplicitamente il contesto app al thread:
-        # si cattura l'oggetto app reale nel thread principale (unico posto
-        # dove current_app funziona) e lo si spinge dentro ciascun worker.
-        app_reale = current_app._get_current_object()
-
-        def _fetch(p):
-            with app_reale.app_context():
-                sku = sku_da_nome_prodotto(p.prodotto)
-                if not sku:
-                    return p, None
-                try:
-                    return p, ottieni_scheda_kanban(sku, timeout=3)
-                except Exception:
-                    # Qualunque errore per QUESTO prodotto (WMS giù, SKU
-                    # strano, timeout...) non deve mai far cadere l'intera
-                    # pagina — solo quel prodotto resta al valore precedente.
-                    return p, None
-        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
-            for p, wms in pool.map(_fetch, da_aggiornare):
-                if wms is not None:
-                    p.finiti_is = int(wms.get('stock_verniciati') or 0)
-                    p.finiti_is_aggiornato_il = ora
-
+    # TERZO TENTATIVO FALLITO SU QUESTO STESSO FRONTE — rimosso del tutto.
+    # Dopo tre correzioni in fila (chiamate live in sequenza → in
+    # parallelo → in parallelo con contesto Flask propagato), ognuna con
+    # un problema diverso e sempre più difficile da prevedere (rete
+    # lenta, poi contesto Flask nei thread, e infine — probabilmente —
+    # troppe richieste simultanee verso WMS che hanno interferito con
+    # ALTRE pagine aperte nello stesso momento, come la scheda dettaglio
+    # di un prodotto mostrata vuota subito dopo) — la decisione più
+    # sicura è FERMARSI: questa lista non fa più NESSUNA chiamata WMS,
+    # né in sequenza né in parallelo, per nessun motivo. 'Finiti IS' (e
+    # quindi 'Pronti a Magazzino') qui riflette il valore già
+    # sincronizzato l'ultima volta che qualcuno ha aperto la board
+    # Kanban o la scheda dettaglio di QUEL prodotto specifico — può
+    # restare indietro, ma la pagina (e le ALTRE pagine aperte insieme)
+    # non deve mai più rischiare di rompersi per colpa di questa.
     db.session.commit()
 
     # Scorta minima — stessa fonte già sincronizzata periodicamente per
