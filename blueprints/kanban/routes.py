@@ -1,3 +1,4 @@
+import concurrent.futures
 from flask import Blueprint, render_template, jsonify, request, redirect
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
@@ -1436,6 +1437,42 @@ def api_kanban_hpi_dati():
         _aggiorna_residuo_produzione(p, op_per_sku)
         _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku, grezzo_iw_per_sku)
         _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
+
+    # BUG REALE TROVATO E CORRETTO (segnalato: 'Pronti a Magazzino'
+    # sballati): mancava la chiamata a _aggiorna_finiti_is_da_wms — l'unica
+    # funzione che aggiorna KanbanProdotto.finiti_is (usato da 'Pronti a
+    # Magazzino' = verniciati + finiti_is). Senza chiamarla, questo campo
+    # restava fermo a qualunque valore l'ultima apertura della board o
+    # della scheda dettaglio di QUEL prodotto specifico avesse lasciato —
+    # anche giorni prima. La funzione ha già una cache con scadenza
+    # (180s, FINITI_IS_TTL_SECONDI): salta la chiamata WMS se già
+    # aggiornata di recente — qui filtro PRIMA i soli prodotti scaduti
+    # (economico, nessuna rete), poi interrogo WMS SOLO per quelli, in
+    # PARALLELO (stesso principio già imparato: mai più N chiamate di
+    # rete in sequenza su questa pagina) — la scrittura vera e propria sul
+    # modello resta nel thread principale, mai da un thread parallelo, per
+    # non toccare la sessione SQLAlchemy da più thread insieme.
+    ora = datetime.utcnow()
+    da_aggiornare = [
+        p for p in prodotti
+        if p.finiti_is_aggiornato_il is None
+        or (ora - p.finiti_is_aggiornato_il).total_seconds() >= FINITI_IS_TTL_SECONDI
+    ]
+    if da_aggiornare:
+        def _fetch(p):
+            sku = sku_da_nome_prodotto(p.prodotto)
+            if not sku:
+                return p, None
+            try:
+                return p, ottieni_scheda_kanban(sku, timeout=3)
+            except MasterLogisticError:
+                return p, None
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+            for p, wms in pool.map(_fetch, da_aggiornare):
+                if wms is not None:
+                    p.finiti_is = int(wms.get('stock_verniciati') or 0)
+                    p.finiti_is_aggiornato_il = ora
+
     db.session.commit()
 
     # Scorta minima — stessa fonte già sincronizzata periodicamente per
