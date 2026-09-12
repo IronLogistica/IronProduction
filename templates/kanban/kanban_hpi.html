@@ -35,7 +35,7 @@
   <span style="background:rgba(230,184,0,.15);color:var(--yellow);border:1px solid var(--yellow);border-radius:6px;padding:3px 10px">🟡 Evadibile dopo Verniciatura</span>
   <span style="background:rgba(30,111,165,.15);color:var(--accent2);border:1px solid var(--accent2);border-radius:6px;padding:3px 10px">🔵 Parz. Evadibile — In Produzione / Evadibile dopo Produzione</span>
   <span style="background:rgba(192,57,43,.15);color:var(--red);border:1px solid var(--red);border-radius:6px;padding:3px 10px">🔴 Parz. Evadibile — Pianificare / Fare Produzione</span>
-  <span style="background:rgba(230,126,34,.15);color:#e67e22;border:1px solid #e67e22;border-radius:6px;padding:3px 10px">🟠 Pianificare Produzione (sotto scorta)</span>
+  <span style="background:rgba(230,126,34,.15);color:#e67e22;border:1px solid #e67e22;border-radius:6px;padding:3px 10px">🟠 Pianificare Produzione (sotto riserva Kanban)</span>
 </div>
 <div style="font-size:10.5px;color:var(--text-dim);margin:-10px 0 14px">
   🔵/🔴 doppi: si dividono se parte già qualcosa OGGI (Pronti a Magazzino &gt; 0) o se bisogna aspettare comunque.
@@ -44,7 +44,7 @@
 <div style="display:flex;align-items:center;gap:8px;margin-bottom:14px;font-size:12px">
   <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
     <input type="checkbox" id="hpi-solo-riservati" checked onchange="renderKanbanHpi()">
-    Mostra solo prodotti con riservato a clienti o sotto scorta minima
+    Mostra solo prodotti con riservato a clienti o sotto riserva Kanban
   </label>
 </div>
 
@@ -57,7 +57,7 @@
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="dopo_produzione" checked onchange="renderKanbanHpi()"> 🔵 Evadibile dopo Produzione</label>
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="parziale_pianifica" checked onchange="renderKanbanHpi()"> 🔴 Parz. Evadibile — Pianificare</label>
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="fare_produzione" checked onchange="renderKanbanHpi()"> 🔴 Fare Produzione</label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="pianifica_scorta" checked onchange="renderKanbanHpi()"> 🟠 Pianificare (sotto scorta)</label>
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="pianifica_scorta" checked onchange="renderKanbanHpi()"> 🟠 Pianificare (sotto riserva Kanban)</label>
     <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="nessun_ordine" checked onchange="renderKanbanHpi()"> ⚪ Nessun ordine</label>
   </div>
 </div>
@@ -317,7 +317,7 @@ function renderKanbanHpi(){
           <th style="text-align:center;width:150px">Stato</th>
           <th style="text-align:center">Riservato a Clienti</th>
           <th style="text-align:center">Saldo Contabile</th>
-          <th style="text-align:center" title="Saldo Contabile meno la Scorta Minima configurata su WMS — segnala anche i codici SENZA ordini clienti ma sotto la scorta di sicurezza">Saldo C/Scorta</th>
+          <th style="text-align:center" title="Saldo Contabile meno la Riserva configurata nella scheda Kanban principale">Saldo C/Riserva</th>
           <th style="text-align:center">Pronti a Magazzino</th>
           <th style="text-align:center">In Verniciatura</th>
           <th style="text-align:center">Da Verniciare</th>

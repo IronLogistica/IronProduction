@@ -1,4 +1,4 @@
-from flask import Blueprint, render_template, jsonify, request, redirect, current_app
+from flask import Blueprint, render_template, jsonify, request, redirect
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
@@ -9,7 +9,6 @@ from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, ottie
 from masterledgerlight_client import cerca_articolo, MasterLedgerLightError
 from blueprints.magazzino.routes import _grezzo_iw_per_codici
 from datetime import datetime, timedelta
-from concurrent.futures import ThreadPoolExecutor, as_completed
 import re, json
 
 kanban_bp = Blueprint('kanban', __name__)
@@ -366,37 +365,6 @@ def _calcola_alert_scorte():
     return risultati
 
 
-
-def _snapshot_wms_live(skus):
-    """Legge in parallelo gli stessi dati WMS live usati dalla modal
-    "Scheda WMS completa" del Kanban principale.
-
-    Ritorna {SKU_UPPER: dati}; una singola risposta non disponibile viene
-    omessa e il chiamante conserva i valori locali come fallback. Nessuna
-    scrittura sul database.
-    """
-    unici = sorted({sku for sku in skus if sku})
-    if not unici:
-        return {}
-
-    app_obj = current_app._get_current_object()
-
-    def carica(sku):
-        # current_app non attraversa automaticamente i thread.
-        with app_obj.app_context():
-            try:
-                return sku.upper(), ottieni_scheda_kanban(sku, timeout=8)
-            except MasterLogisticError:
-                return sku.upper(), None
-
-    risultato = {}
-    with ThreadPoolExecutor(max_workers=min(6, len(unici))) as executor:
-        futures = [executor.submit(carica, sku) for sku in unici]
-        for future in as_completed(futures):
-            sku_upper, dati = future.result()
-            if dati is not None:
-                risultato[sku_upper] = dati
-    return risultato
 
 
 def _snapshot_campi_kanban_principale(prodotti):
@@ -1471,7 +1439,7 @@ def _stato_evasione(pronti, riservato, in_trattamento, grezzo, ordinato_produzio
     """
     if riservato <= 0:
         if saldo_scorta is not None and saldo_scorta < 0:
-            return ('pianifica_scorta', '📐 PIANIFICARE PRODUZIONE (sotto scorta)', 'orange')
+            return ('pianifica_scorta', '📐 PIANIFICARE PRODUZIONE (sotto riserva Kanban)', 'orange')
         return ('nessun_ordine', '— Nessun ordine', 'grey')
 
     if pronti >= riservato:
@@ -1502,37 +1470,17 @@ def api_kanban_hpi_dati():
     """
     Un prodotto Kanban alla volta, raggruppato per categoria.
 
-    Usa lo stesso snapshot calcolato dalla scheda Kanban principale e,
-    per i soli codici HPI attivi, la stessa lettura WMS live della modal
-    "Scheda WMS completa". Il calcolo resta in SOLA LETTURA: non scrive e
-    non esegue commit sul database.
+    Legge esclusivamente i valori già presenti nelle schede del Kanban
+    principale (KanbanProdotto) e li raggruppa con KanbanGruppo. Non usa
+    dati o funzioni della pagina Lead Time Rifornimento, non chiama WMS e
+    non scrive sul database: il caricamento è immediato.
     """
     prodotti = KanbanProdotto.query.order_by(KanbanProdotto.sheet_key, KanbanProdotto.sort_order).all()
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
 
-    # Stesso snapshot della scheda Kanban principale per i campi locali.
-    snapshot = _snapshot_campi_kanban_principale(prodotti)
-
-    # WMS live SOLO per i codici attivi nel cruscotto HPI, cioè quelli che
-    # il filtro predefinito mostra: con Riservato a clienti > 0 oppure sotto
-    # la Scorta minima. Prima venivano interrogati tutti i KanbanProdotto e
-    # il reverse proxy poteva scadere prima della risposta, mostrando un
-    # falso "Errore di rete". La preselezione usa lo snapshot locale; la
-    # lettura WMS live successiva aggiorna i valori effettivi dei soli attivi.
-    prodotti_attivi = []
-    for p in prodotti:
-        dati = snapshot[p.id]
-        riservato_locale = p.riservato or 0
-        saldo_locale = (dati['grezzi'] + dati['in_vern'] + dati['verniciati'] +
-                        (p.finiti_is or 0) + dati['in_prod'] - riservato_locale)
-        scorta_locale = dati['scorta_minima']
-        sotto_scorta_locale = (scorta_locale is not None and
-                               saldo_locale - scorta_locale < 0)
-        if riservato_locale > 0 or sotto_scorta_locale:
-            prodotti_attivi.append(p)
-
-    sku_attivi = [sku_da_nome_prodotto(p.prodotto) for p in prodotti_attivi]
-    wms_live_per_sku = _snapshot_wms_live(sku_attivi)
+    # Nessuna sincronizzazione automatica: HPI è una vista diretta e veloce
+    # delle schede Kanban principali. Gli eventuali aggiornamenti si fanno
+    # nel Kanban, e HPI li riflette al successivo caricamento.
 
     # Raggruppamento per i VERI Kanban Gruppi (KanbanGruppo — gli stessi
     # nomi puliti già usati nella sidebar/Launchpad: Cavalletti, Transenne,
@@ -1552,27 +1500,22 @@ def api_kanban_hpi_dati():
     gruppi = {}
     ordine_gruppi = {}
     for p in prodotti:
-        sku = sku_da_nome_prodotto(p.prodotto)
-        dati = snapshot[p.id]
-        wms_live = wms_live_per_sku.get(sku.upper()) if sku else None
-        # Questi due valori erano la causa della differenza visibile: HPI
-        # leggeva la copia locale, mentre la scheda Kanban mostra WMS live.
-        riservato = int(wms_live.get('riservato_clienti') or 0) if wms_live else (p.riservato or 0)
-        finiti_is = int(wms_live.get('stock_verniciati') or 0) if wms_live else (p.finiti_is or 0)
-        verniciati = dati['verniciati']
-        grezzi = dati['grezzi']
-        in_vern = dati['in_vern']
-        in_prod = dati['in_prod']
+        riservato = p.riservato or 0
+        finiti_is = p.finiti_is or 0
+        verniciati = p.verniciati or 0
+        grezzi = p.grezzi or 0
+        in_vern = p.in_vern or 0
+        in_prod = p.in_prod or 0
 
         pronti_a_magazzino = verniciati + finiti_is
-        saldo_contabile = grezzi + in_vern + verniciati + finiti_is + in_prod - riservato
+        saldo_contabile = p.saldo_contabile
 
         # Saldo C/Scorta = Saldo Contabile − Scorta Minima (stessa formula
         # della scheda dettaglio) — a differenza di Riservato a Clienti,
         # conta anche i codici SENZA impegni cliente ma sotto la scorta di
         # sicurezza configurata su WMS, dove serve comunque pianificare
         # produzione anche se nessun cliente lo sta aspettando oggi.
-        scorta_minima = wms_live.get('scorta_minima') if wms_live else dati['scorta_minima']
+        scorta_minima = p.riserva or 0  # buffer/scorta della scheda Kanban principale
         saldo_c_scorta = (saldo_contabile - scorta_minima) if scorta_minima is not None else None
         sotto_scorta = saldo_c_scorta is not None and saldo_c_scorta < 0
 
