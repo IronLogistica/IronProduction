@@ -365,7 +365,61 @@ def _calcola_alert_scorte():
     return risultati
 
 
-# ── PAGINA ALERT SCORTE ──────────────────────────────────────────────────────
+
+
+def _snapshot_campi_kanban_principale(prodotti):
+    """Calcola in sola lettura i campi automatici mostrati dal Kanban
+    principale per una lista di prodotti.
+
+    Questa è la fonte condivisa tra la board principale e Kanban HPI:
+    entrambe vedono gli stessi valori di Finiti IW, Grezzi, In Trattamento,
+    Residuo da produrre e Scorta minima. La funzione non modifica il database;
+    sarà la board principale, e solo lei, a salvare lo snapshot sulle schede.
+    """
+    op_per_sku = _mappa_op_per_sku()
+    lav_per_sku = _mappa_lavorazioni_terzisti_per_sku()
+    giacenza_per_sku = _mappa_giacenza_per_sku()
+    scorta_minima_per_sku = _mappa_scorta_minima_per_sku()
+    sku_per_prodotto = {p.id: sku_da_nome_prodotto(p.prodotto) for p in prodotti}
+    skus = list({sku for sku in sku_per_prodotto.values() if sku})
+    grezzo_iw_per_sku = _grezzo_iw_per_codici(skus) if skus else {}
+
+    risultato = {}
+    for p in prodotti:
+        sku = sku_per_prodotto[p.id]
+        if not sku:
+            risultato[p.id] = {
+                'grezzi': p.grezzi or 0,
+                'in_vern': p.in_vern or 0,
+                'verniciati': p.verniciati or 0,
+                'in_prod': p.in_prod or 0,
+                'scorta_minima': None,
+            }
+            continue
+
+        sku_upper = sku.upper()
+        op_aperti = [o for o in op_per_sku.get(sku_upper, [])
+                     if o.stato in ('Creato', 'Rilasciato', 'In esecuzione')]
+        in_prod = int(sum(max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0)
+                          for o in op_aperti))
+
+        in_vern = 0
+        for lav, note_j in lav_per_sku.get(sku_upper, []):
+            if lav.stato != 'RIENTRATA':
+                in_vern += max((lav.qta or 0) - int(note_j.get('qta_rientrata', 0)), 0)
+
+        risultato[p.id] = {
+            'grezzi': grezzo_iw_per_sku.get(sku, 0),
+            'in_vern': in_vern,
+            'verniciati': int(round(giacenza_per_sku[sku_upper]))
+                           if sku_upper in giacenza_per_sku else (p.verniciati or 0),
+            'in_prod': in_prod,
+            'scorta_minima': scorta_minima_per_sku.get(sku_upper),
+        }
+    return risultato
+
+
+# ── PAGINA LEAD TIME RIFORNIMENTO ────────────────────────────────────────────
 @kanban_bp.route('/commerciale/disponibilita')
 def pagina_commerciale_disponibilita():
     """
@@ -411,8 +465,10 @@ def api_commerciale_disponibilita():
 
 @kanban_bp.route('/alert-scorte')
 def pagina_alert_scorte():
+    # URL storico mantenuto per non rompere preferiti e collegamenti esistenti.
     return render_template('kanban/alert_scorte.html', active='alert-scorte',
-                            topbar_title='⏱️ Lead Time Rifornimento', righe=_calcola_alert_scorte())
+                            topbar_title='⏱️ Lead Time Rifornimento',
+                            righe=_calcola_alert_scorte())
 
 
 @kanban_bp.route('/api/alert-scorte')
@@ -521,21 +577,17 @@ def index(url_key):
     # da WMS è un'azione a parte (pulsante '🔄 Aggiorna stock WMS' o la
     # risincronizzazione su singola scheda), mai qualcosa che blocca la
     # navigazione normale.
-    op_per_sku = _mappa_op_per_sku()
-    lav_per_sku = _mappa_lavorazioni_terzisti_per_sku()
-    giacenza_per_sku = _mappa_giacenza_per_sku()
-    scorta_minima_per_sku = _mappa_scorta_minima_per_sku()
-    skus_board = list({sku_da_nome_prodotto(p.prodotto) for p in prodotti if sku_da_nome_prodotto(p.prodotto)})
-    grezzo_iw_per_sku = _grezzo_iw_per_codici(skus_board) if skus_board else {}
+    snapshot = _snapshot_campi_kanban_principale(prodotti)
     for p in prodotti:
-        _aggiorna_residuo_produzione(p, op_per_sku)
-        _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku, grezzo_iw_per_sku)
-        _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
+        dati = snapshot[p.id]
+        p.in_prod = dati['in_prod']
+        p.grezzi = dati['grezzi']
+        p.in_vern = dati['in_vern']
+        p.verniciati = dati['verniciati']
         # Attributo dinamico (non un campo del modello — mai salvato): solo
         # per il rendering di questa pagina, letto dal template come
         # p.scorta_minima_locale per la colonna SALDO C/SCORTA.
-        sku = sku_da_nome_prodotto(p.prodotto)
-        p.scorta_minima_locale = scorta_minima_per_sku.get(sku.upper()) if sku else None
+        p.scorta_minima_locale = dati['scorta_minima']
     db.session.commit()
 
     tot    = len(prodotti)
@@ -1412,35 +1464,17 @@ def api_kanban_hpi_dati():
     """
     Un prodotto Kanban alla volta, raggruppato per categoria.
 
-    BUG GRAVE TROVATO E CORRETTO (segnalato: 'tutti i Kanban stanno a
-    zero, i gruppi Kanban ci mettono ore ad aggiornare'): la versione
-    precedente RICALCOLAVA e SCRIVEVA nel database (via
-    _aggiorna_residuo_produzione/_aggiorna_grezzi_e_trattamento/
-    _sincronizza_finiti_iw_da_magazzino + db.session.commit()) per OGNI
-    prodotto Kanban a OGNI apertura di questa pagina — cosa che prima
-    non faceva. Se questa pagina viene aperta/aggiornata spesso (anche
-    da più persone), questo genera scritture continue e CONCORRENTI
-    sulle stesse righe usate anche dal tabellone Kanban principale —
-    causa sospetta sia dei valori azzerati sia della lentezza enorme
-    nell'aggiornamento segnalata sul tabellone stesso.
-    FIX DRASTICO E DELIBERATO: questa pagina torna a essere di SOLA
-    LETTURA — nessuna chiamata alle funzioni di sincronizzazione,
-    nessun db.session.commit(), MAI. Legge solo lo stato già presente
-    nel database in quel momento (lo stesso che il tabellone Kanban
-    principale mantiene aggiornato per conto suo, aprendo le singole
-    board) — può essere leggermente indietro, ma non scrive MAI nulla,
-    quindi non può mai essere la causa di un rallentamento o di un dato
-    corrotto altrove.
+    Legge esclusivamente i valori già presenti nelle schede del Kanban
+    principale (KanbanProdotto) e li raggruppa con KanbanGruppo. Non usa
+    dati o funzioni della pagina Lead Time Rifornimento, non chiama WMS e
+    non scrive sul database: il caricamento è immediato.
     """
     prodotti = KanbanProdotto.query.order_by(KanbanProdotto.sheet_key, KanbanProdotto.sort_order).all()
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
 
-    # Scorta minima — stessa fonte già sincronizzata periodicamente per
-    # Alert Scorte Codici Padre (GiacenzaWood.scorta_minima_wms, aggiornata
-    # dal pulsante 'Aggiorna da WMS' su quella pagina) — riusa la funzione
-    # già esistente per questo (_mappa_scorta_minima_per_sku), MAI una
-    # nuova interrogazione dal vivo a WMS qui.
-    scorta_minima_per_sku = _mappa_scorta_minima_per_sku()
+    # Nessuna sincronizzazione automatica: HPI è una vista diretta e veloce
+    # delle schede Kanban principali. Gli eventuali aggiornamenti si fanno
+    # nel Kanban, e HPI li riflette al successivo caricamento.
 
     # Raggruppamento per i VERI Kanban Gruppi (KanbanGruppo — gli stessi
     # nomi puliti già usati nella sidebar/Launchpad: Cavalletti, Transenne,
@@ -1460,24 +1494,25 @@ def api_kanban_hpi_dati():
     gruppi = {}
     ordine_gruppi = {}
     for p in prodotti:
-        sku = sku_da_nome_prodotto(p.prodotto)
         riservato = p.riservato or 0
         finiti_is = p.finiti_is or 0
+        verniciati = p.verniciati or 0
+        grezzi = p.grezzi or 0
+        in_vern = p.in_vern or 0
+        in_prod = p.in_prod or 0
 
-        pronti_a_magazzino = (p.verniciati or 0) + finiti_is
-        saldo_contabile = p.grezzi + p.in_vern + p.verniciati + finiti_is + p.in_prod - riservato
+        pronti_a_magazzino = verniciati + finiti_is
+        saldo_contabile = p.saldo_contabile
 
-        # Saldo C/Scorta = Saldo Contabile − Scorta Minima (stessa formula
-        # della scheda dettaglio) — a differenza di Riservato a Clienti,
-        # conta anche i codici SENZA impegni cliente ma sotto la scorta di
-        # sicurezza configurata su WMS, dove serve comunque pianificare
-        # produzione anche se nessun cliente lo sta aspettando oggi.
-        scorta_minima = scorta_minima_per_sku.get(sku.upper()) if sku else None
+        # Saldo C/Riserva = Saldo Contabile meno il buffer configurato
+        # direttamente nella scheda Kanban principale. Nessun dato della
+        # pagina Lead Time Rifornimento entra in questo calcolo.
+        scorta_minima = p.riserva or 0  # buffer/scorta della scheda Kanban principale
         saldo_c_scorta = (saldo_contabile - scorta_minima) if scorta_minima is not None else None
         sotto_scorta = saldo_c_scorta is not None and saldo_c_scorta < 0
 
         codice_stato, label_stato, colore_stato = _stato_evasione(
-            pronti_a_magazzino, riservato, p.in_vern or 0, p.grezzi or 0, p.in_prod or 0,
+            pronti_a_magazzino, riservato, in_vern, grezzi, in_prod,
             saldo_scorta=saldo_c_scorta)
 
         riga = {
@@ -1488,9 +1523,9 @@ def api_kanban_hpi_dati():
             'saldo_c_scorta': saldo_c_scorta,
             'sotto_scorta': sotto_scorta,
             'pronti_a_magazzino': pronti_a_magazzino,
-            'in_verniciatura': p.in_vern or 0,
-            'da_verniciare': p.grezzi or 0,
-            'in_produzione': p.in_prod or 0,
+            'in_verniciatura': in_vern,
+            'da_verniciare': grezzi,
+            'in_produzione': in_prod,
             'stato_codice': codice_stato, 'stato_label': label_stato, 'stato_colore': colore_stato,
         }
         gruppo_info = info_gruppo_per_sheet_key.get(p.sheet_key)
@@ -1506,4 +1541,46 @@ def api_kanban_hpi_dati():
         key=lambda x: ordine_gruppi.get(x['categoria'], 9999)
     )
     return jsonify(risultato)
+
+
+@kanban_bp.route('/api/kanban-hpi/dato-live/<int:pid>')
+def api_kanban_hpi_dato_live(pid):
+    """Riga HPI ottenuta dalla stessa funzione della Scheda Kanban completa.
+
+    Una richiesta tratta un solo codice: il browser la usa progressivamente
+    soltanto per le righe attive, evitando il timeout dell'intera pagina.
+    """
+    # Chiamata diretta: stessa funzione, stesse formule e stesse sorgenti
+    # della modal mostrata nello screenshot, senza copie della sua logica.
+    risposta_scheda = api_kanban_scheda(pid)
+    scheda = risposta_scheda.get_json()
+    if scheda.get('wms_errore'):
+        return jsonify({'ok': False, 'id': pid, 'error': scheda['wms_errore']}), 502
+
+    riservato = scheda['riservato_clienti'] or 0
+    pronti = (scheda['stock_verniciati'] or 0) + (scheda['stock_is'] or 0)
+    in_vern = scheda['in_vern'] or 0
+    grezzi = scheda['stock_grezzi'] or 0
+    in_prod = sum(c.get('saldo') or 0 for c in scheda.get('commesse_produzione', []))
+    saldo_contabile = scheda['saldo_contabile']
+    saldo_scorta = scheda['saldo_scorta']
+    sotto_scorta = saldo_scorta is not None and saldo_scorta < 0
+    codice_stato, label_stato, colore_stato = _stato_evasione(
+        pronti, riservato, in_vern, grezzi, in_prod, saldo_scorta=saldo_scorta)
+
+    return jsonify({
+        'ok': True, 'id': pid, 'live': True,
+        'riservato_clienti': riservato,
+        'saldo_contabile': saldo_contabile,
+        'scorta_minima': scheda['scorta_minima'],
+        'saldo_c_scorta': saldo_scorta,
+        'sotto_scorta': sotto_scorta,
+        'pronti_a_magazzino': pronti,
+        'in_verniciatura': in_vern,
+        'da_verniciare': grezzi,
+        'in_produzione': in_prod,
+        'stato_codice': codice_stato,
+        'stato_label': label_stato,
+        'stato_colore': colore_stato,
+    })
 

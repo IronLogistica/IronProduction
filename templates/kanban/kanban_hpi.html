@@ -264,20 +264,28 @@
 <script>
 let _hpiGruppi = [];
 let _wmsPid = null;
+let _hpiLiveCaricati = new Set();
+let _hpiLiveInCorso = new Set();
+let _hpiCaricamentoToken = 0;
 
 async function caricaKanbanHpi(){
   const box = document.getElementById('hpi-contenuto');
   box.innerHTML = 'Caricamento...';
   try{
+    const token = ++_hpiCaricamentoToken;
+    _hpiLiveCaricati.clear();
+    _hpiLiveInCorso.clear();
     const r = await fetch('/api/kanban-hpi/dati');
+    if(!r.ok) throw new Error('HTTP ' + r.status);
     _hpiGruppi = await r.json();
+    if(token !== _hpiCaricamentoToken) return;
     renderKanbanHpi();
   }catch(e){
     box.innerHTML = '<p style="color:var(--red)">❌ Errore di rete durante il caricamento.</p>';
   }
 }
 
-function renderKanbanHpi(){
+function renderKanbanHpi(aggiornaLive = true){
   const box = document.getElementById('hpi-contenuto');
   if(!_hpiGruppi.length){ box.innerHTML = '<p style="color:var(--text-dim);font-style:italic">Nessun prodotto Kanban trovato.</p>'; return; }
 
@@ -296,6 +304,7 @@ function renderKanbanHpi(){
   let html = '';
   let almenoUnGruppoMostrato = false;
   let idsVisibili = [];
+  let idsAttiviDaAggiornare = [];
   _hpiGruppi.forEach(g => {
     // Mostra il prodotto se ha impegni clienti O se è sotto scorta minima
     // (anche senza nessun ordine in corso — serve comunque pianificare
@@ -305,6 +314,9 @@ function renderKanbanHpi(){
     if(!prodottiFiltrati.length) return;
     almenoUnGruppoMostrato = true;
     idsVisibili.push(...prodottiFiltrati.map(p => p.id));
+    idsAttiviDaAggiornare.push(...prodottiFiltrati
+      .filter(p => p.riservato_clienti > 0 || p.sotto_scorta)
+      .map(p => p.id));
     html += `<div class="mon-section" style="margin-bottom:16px">
       <div style="padding:10px 14px;font-weight:700;font-size:13px;background:var(--dark3);border-bottom:1px solid var(--border)">${g.icona||'📦'} ${g.categoria}</div>
       <table class="mon-table" style="width:100%;table-layout:fixed">
@@ -317,7 +329,7 @@ function renderKanbanHpi(){
           <th style="text-align:center;width:150px">Stato</th>
           <th style="text-align:center">Riservato a Clienti</th>
           <th style="text-align:center">Saldo Contabile</th>
-          <th style="text-align:center" title="Saldo Contabile meno la Scorta Minima configurata su WMS — segnala anche i codici SENZA ordini clienti ma sotto la scorta di sicurezza">Saldo C/Scorta</th>
+          <th style="text-align:center" title="Saldo Contabile meno la Scorta Minima mostrata nella Scheda Kanban completa">Saldo C/Scorta</th>
           <th style="text-align:center">Pronti a Magazzino</th>
           <th style="text-align:center">In Verniciatura</th>
           <th style="text-align:center">Da Verniciare</th>
@@ -325,24 +337,27 @@ function renderKanbanHpi(){
         </tr></thead>
         <tbody>`;
     prodottiFiltrati.forEach(p => {
-      const badge = coloriBadge[p.stato_colore] || coloriBadge.grey;
+      const liveOk = p.live === true;
+      const badge = liveOk ? (coloriBadge[p.stato_colore] || coloriBadge.grey) : coloriBadge.grey;
       const nomePulito = p.nome.replace(/'/g, "\\'");
-      const saldoScortaVal = (p.saldo_c_scorta === null || p.saldo_c_scorta === undefined) ? '—' : p.saldo_c_scorta;
-      const saldoScortaColor = (p.saldo_c_scorta !== null && p.saldo_c_scorta !== undefined && p.saldo_c_scorta < 0) ? 'var(--red)' : 'var(--text-dim)';
+      const saldoScortaVal = liveOk ? ((p.saldo_c_scorta === null || p.saldo_c_scorta === undefined) ? '—' : p.saldo_c_scorta) : '⏳';
+      const saldoScortaColor = liveOk && p.saldo_c_scorta !== null && p.saldo_c_scorta !== undefined && p.saldo_c_scorta < 0 ? 'var(--red)' : 'var(--text-dim)';
+      const statoLabel = liveOk ? p.stato_label : (p.live_errore ? '⚠ DATO NON DISPONIBILE' : '⏳ AGGIORNAMENTO DALLA SCHEDA KANBAN');
+      const valoreLive = v => liveOk ? v : '⏳';
       html += `<tr${p.sotto_scorta ? ' style="background:rgba(192,57,43,.05)"' : ''}>
         <td style="text-align:left;font-weight:700;display:flex;align-items:center;gap:8px">
           <button title="Apri scheda dettaglio di questo prodotto" onclick="apriSchedaWms(${p.id}, '${nomePulito}')"
                   style="background:none;border:1px solid var(--border);border-radius:6px;padding:2px 6px;cursor:pointer;color:var(--accent2);font-size:12px">🔍</button>
           ${p.nome}
         </td>
-        <td style="text-align:center;width:150px"><span style="${badge};border-radius:6px;padding:4px 8px;font-size:10px;font-weight:700;white-space:normal;overflow-wrap:break-word;display:inline-block;line-height:1.3;width:100%">${p.stato_label}</span></td>
-        <td style="text-align:center;font-weight:700">${p.riservato_clienti}</td>
-        <td style="text-align:center;color:${p.saldo_contabile < 0 ? 'var(--red)' : 'var(--text-dim)'}" id="hpi-saldo-${p.id}">${p.saldo_contabile}</td>
+        <td style="text-align:center;width:150px"><span style="${badge};border-radius:6px;padding:4px 8px;font-size:10px;font-weight:700;white-space:normal;overflow-wrap:break-word;display:inline-block;line-height:1.3;width:100%">${statoLabel}</span></td>
+        <td style="text-align:center;font-weight:700">${valoreLive(p.riservato_clienti)}</td>
+        <td style="text-align:center;color:${p.saldo_contabile < 0 ? 'var(--red)' : 'var(--text-dim)'}" id="hpi-saldo-${p.id}">${valoreLive(p.saldo_contabile)}</td>
         <td style="text-align:center;font-weight:700;color:${saldoScortaColor}">${saldoScortaVal}${p.sotto_scorta ? ' ⚠️' : ''}</td>
-        <td style="text-align:center;font-weight:700" id="hpi-pronti-${p.id}">${p.pronti_a_magazzino}</td>
-        <td style="text-align:center;color:var(--text-dim)">${p.in_verniciatura || '—'}</td>
-        <td style="text-align:center;color:var(--text-dim)">${p.da_verniciare || '—'}</td>
-        <td style="text-align:center;color:var(--text-dim)">${p.in_produzione || '—'}</td>
+        <td style="text-align:center;font-weight:700" id="hpi-pronti-${p.id}">${valoreLive(p.pronti_a_magazzino)}</td>
+        <td style="text-align:center;color:var(--text-dim)">${liveOk ? (p.in_verniciatura || '—') : '⏳'}</td>
+        <td style="text-align:center;color:var(--text-dim)">${liveOk ? (p.da_verniciare || '—') : '⏳'}</td>
+        <td style="text-align:center;color:var(--text-dim)">${liveOk ? (p.in_produzione || '—') : '⏳'}</td>
       </tr>`;
     });
     html += `</tbody></table></div>`;
@@ -351,7 +366,48 @@ function renderKanbanHpi(){
     html = '<p style="color:var(--text-dim);font-style:italic">Nessun prodotto corrisponde ai filtri attivi (riservato/scorta e stati selezionati).</p>';
   }
   box.innerHTML = html;
+  if(aggiornaLive) aggiornaRigheHpiAttive(idsAttiviDaAggiornare);
 }
+
+function trovaProdottoHpi(id){
+  for(const g of _hpiGruppi){
+    const p = g.prodotti.find(x => x.id === id);
+    if(p) return p;
+  }
+  return null;
+}
+
+async function aggiornaRigheHpiAttive(ids){
+  const token = _hpiCaricamentoToken;
+  const coda = [...new Set(ids)].filter(id => !_hpiLiveCaricati.has(id) && !_hpiLiveInCorso.has(id));
+  if(!coda.length) return;
+  coda.forEach(id => _hpiLiveInCorso.add(id));
+  let prossimo = 0;
+
+  async function worker(){
+    while(prossimo < coda.length && token === _hpiCaricamentoToken){
+      const id = coda[prossimo++];
+      const prodotto = trovaProdottoHpi(id);
+      try{
+        const r = await fetch(`/api/kanban-hpi/dato-live/${id}`);
+        const d = await r.json();
+        if(!r.ok || !d.ok) throw new Error(d.error || ('HTTP ' + r.status));
+        if(prodotto) Object.assign(prodotto, d, {live: true, live_errore: null});
+      }catch(e){
+        if(prodotto) Object.assign(prodotto, {live: false, live_errore: e.message || 'Errore'});
+      }finally{
+        _hpiLiveInCorso.delete(id);
+        _hpiLiveCaricati.add(id);
+      }
+    }
+  }
+
+  // Due richieste individuali alla volta: nessun timeout globale e carico
+  // controllato su MasterLogistic-WMS.
+  await Promise.all([worker(), worker()]);
+  if(token === _hpiCaricamentoToken) renderKanbanHpi(false);
+}
+
 caricaKanbanHpi();
 
 // ══ SCHEDA PRODOTTO — stessa identica logica del tabellone Kanban ══════════
