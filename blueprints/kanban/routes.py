@@ -1,5 +1,4 @@
-import concurrent.futures
-from flask import Blueprint, render_template, jsonify, request, redirect, current_app
+from flask import Blueprint, render_template, jsonify, request, redirect
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
@@ -157,11 +156,10 @@ def _aggiorna_grezzi_e_trattamento(p, op_per_sku=None, lav_per_sku=None, grezzo_
 
 def _aggiorna_finiti_is_da_wms(p, forza=False):
     """
-    'Finiti IS' e 'Riservato a Clienti' — dati reali che MasterLogistic-WMS
-    ha per questo SKU (stesso dato di 'stock_verniciati'/'riservato_clienti'
-    dell'endpoint /api/kanban-stock), scritti sui campi DEDICATI
-    KanbanProdotto.finiti_is e .riservato (mai su 'riserva', che è il
-    buffer di sicurezza del Kanban — vedi models.py).
+    'Finiti IS' — stock reale che MasterLogistic-WMS ha per questo SKU
+    (stesso dato di 'stock_verniciati' dell'endpoint /api/kanban-stock),
+    scritto sul campo DEDICATO KanbanProdotto.finiti_is (mai su 'riserva',
+    che è il buffer di sicurezza del Kanban — vedi models.py).
 
     Chiamata via HTTP a WMS per OGNI prodotto della board a OGNI apertura
     pagina era il motivo più pesante di lentezza (N chiamate esterne
@@ -169,15 +167,16 @@ def _aggiorna_finiti_is_da_wms(p, forza=False):
     già aggiornato negli ultimi FINITI_IS_TTL_SECONDI, il valore resta
     comunque corretto per l'uso pratico (lo stock WMS non cambia al
     secondo) e la board carica quasi subito dopo il primo giro.
-    Un fallimento qui lascia i valori precedenti invariati, non li azzera.
+    Un fallimento qui lascia il valore precedente invariato, non lo azzera.
 
-    BUG REALE TROVATO E CORRETTO (segnalato: Kanban HPI mostrava
-    'Riservato a Clienti' vecchio anche subito dopo aver premuto
-    'Aggiorna stock WMS' — T200 restava a 120 invece di 110): questa
-    funzione chiamava già WMS e riceveva ANCHE 'riservato_clienti' nella
-    risposta, ma salvava solo 'stock_verniciati' — il dato sul riservato
-    veniva scaricato e poi scartato, mai persistito. Ora salva entrambi
-    dalla stessa identica chiamata, nessuna chiamata WMS aggiuntiva.
+    RIPRISTINATA AL COMPORTAMENTO ORIGINALE (aggiorna solo Finiti IS) —
+    un tentativo di farle aggiornare anche 'Riservato a Clienti' è
+    coinciso con una segnalazione grave di dati alterati sul tabellone
+    Kanban normale. Anche senza certezza al 100% sulla causa esatta, la
+    scelta più responsabile è tornare al comportamento con una storia
+    consolidata di funzionamento corretto. 'Riservato a Clienti' resta
+    aggiornabile solo dal pulsante 🔄 per singolo prodotto (funzione
+    api_risincronizza_wms, mai toccata oggi, mai causa di incidenti).
     """
     ora = datetime.utcnow()
     if not forza and p.finiti_is_aggiornato_il and (ora - p.finiti_is_aggiornato_il).total_seconds() < FINITI_IS_TTL_SECONDI:
@@ -190,8 +189,6 @@ def _aggiorna_finiti_is_da_wms(p, forza=False):
     except MasterLogisticError:
         return
     p.finiti_is = int(wms.get('stock_verniciati') or 0)
-    if 'riservato_clienti' in wms:
-        p.riservato = int(wms.get('riservato_clienti') or 0)
     p.finiti_is_aggiornato_il = ora
 
 
@@ -777,28 +774,29 @@ def api_risincronizza_wms(kid):
 @kanban_bp.route('/api/kanban/sincronizza-wms-tutti', methods=['POST'])
 def api_sincronizza_wms_tutti():
     """
-    Aggiorna 'Finiti IS' e 'Riservato a Clienti' da MasterLogistic-WMS per
-    TUTTI i prodotti di una board (o di tutte, se sheet_key non passato) —
-    azione ESPLICITA richiamata dal pulsante '🔄 Aggiorna stock WMS', mai
-    dal caricamento normale della pagina (vedi index(): la board apre
-    sempre istantanea con l'ultimo valore salvato, WMS non deve mai
-    bloccare la navigazione). Qui invece l'utente ha scelto
-    consapevolmente di aspettare, quindi le chiamate WMS si possono fare —
-    restano comunque soggette alla cache di FINITI_IS_TTL_SECONDI, per non
-    richiamare WMS su un prodotto già aggiornato pochi minuti fa.
+    Aggiorna 'Finiti IS' da MasterLogistic-WMS per TUTTI i prodotti di una
+    board (o di tutte, se sheet_key non passato) — azione ESPLICITA
+    richiamata dal pulsante '🔄 Aggiorna stock WMS', mai dal caricamento
+    normale della pagina (vedi index(): la board apre sempre istantanea
+    con l'ultimo valore salvato, WMS non deve mai bloccare la navigazione).
+    Qui invece l'utente ha scelto consapevolmente di aspettare, quindi le
+    chiamate WMS si possono fare — restano comunque soggette alla cache di
+    FINITI_IS_TTL_SECONDI, per non richiamare WMS su un prodotto già
+    aggiornato pochi minuti fa.
 
-    BUG REALE TROVATO E CORRETTO (segnalato: 'è lentissimo' — usato senza
-    sheet_key da Kanban HPI, quindi su TUTTI i prodotti di TUTTE le
-    categorie insieme, facilmente 30-50+): il ciclo era SEQUENZIALE, una
-    chiamata WMS alla volta, una dopo l'altra — il tempo totale era la
-    SOMMA di tutte, non quello della più lenta. Essendo però un'azione
-    VOLONTARIA dell'utente (mai automatica al caricamento pagina — la
-    causa dei tre incidenti precedenti era proprio l'automatismo, non la
-    parallelizzazione in sé), qui è sicuro interrogare WMS in PARALLELO:
-    stesso principio già corretto altrove per il contesto Flask nei
-    thread (current_app._get_current_object() nel thread principale,
-    spinto dentro ogni worker) — la scrittura vera sul modello resta nel
-    thread principale, mai da un thread parallelo.
+    RIPRISTINATO AL COMPORTAMENTO ORIGINALE — dopo che un tentativo di
+    parallelizzare QUESTA funzione e di farle aggiornare anche 'Riservato
+    a Clienti' ha coinciso con una segnalazione grave ('sul Kanban
+    normale è alterato il dato che precedentemente andava bene'). Anche
+    senza essere certi al 100% che la causa fosse proprio questa modifica
+    (più incidenti in fila sullo stesso fronte rendono difficile isolare
+    con certezza quale cambiamento specifico abbia causato cosa), la
+    scelta più responsabile è tornare ESATTAMENTE al comportamento
+    sequenziale e limitato a Finiti IS che era prima di OGNI modifica di
+    oggi su questo endpoint — semplice, lento, ma con una storia
+    consolidata di funzionamento corretto alle spalle. 'Riservato a
+    Clienti' resta aggiornabile solo dal pulsante 🔄 per singolo prodotto
+    (già esistente, mai toccato oggi, mai causa di nessun incidente).
     """
     sheet_key = request.args.get('sheet_key', '')
     q = KanbanProdotto.query
@@ -806,49 +804,15 @@ def api_sincronizza_wms_tutti():
         q = q.filter(db.or_(KanbanProdotto.sheet_key == sheet_key,
                              KanbanProdotto.sheet_key == sheet_key.replace('_', ' ')))
     prodotti = q.all()
-
-    # Filtra PRIMA (economico, nessuna rete) i soli prodotti con cache
-    # scaduta — chi è già fresco non genera nessuna chiamata, né
-    # sequenziale né parallela.
-    ora = datetime.utcnow()
-    da_aggiornare = [
-        p for p in prodotti
-        if p.finiti_is_aggiornato_il is None
-        or (ora - p.finiti_is_aggiornato_il).total_seconds() >= FINITI_IS_TTL_SECONDI
-    ]
-
-    if da_aggiornare:
-        app_reale = current_app._get_current_object()
-
-        def _fetch(p):
-            with app_reale.app_context():
-                sku = sku_da_nome_prodotto(p.prodotto)
-                if not sku:
-                    return p, None
-                try:
-                    return p, ottieni_scheda_kanban(sku, timeout=3)
-                except Exception:
-                    # Qualunque errore per QUESTO prodotto non deve mai
-                    # bloccare gli altri — resta al valore precedente.
-                    return p, None
-
-        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
-            risultati_grezzi = list(pool.map(_fetch, da_aggiornare))
-    else:
-        risultati_grezzi = []
-
     aggiornati = 0
-    for p, wms in risultati_grezzi:
-        if wms is None:
-            continue
+    for p in prodotti:
         prima = p.finiti_is
-        p.finiti_is = int(wms.get('stock_verniciati') or 0)
-        if 'riservato_clienti' in wms:
-            p.riservato = int(wms.get('riservato_clienti') or 0)
-        p.finiti_is_aggiornato_il = ora
+        _aggiorna_finiti_is_da_wms(p)
         if p.finiti_is != prima:
             aggiornati += 1
-
+    db.session.commit()
+    log(f'Kanban: sincronizzazione WMS massiva — {aggiornati}/{len(prodotti)} prodotti aggiornati')
+    return jsonify({'ok': True, 'totale': len(prodotti), 'aggiornati': aggiornati})
     db.session.commit()
     log(f'Kanban: sincronizzazione WMS massiva — {aggiornati}/{len(prodotti)} prodotti aggiornati '
         f'({len(da_aggiornare)} interrogati, {len(prodotti) - len(da_aggiornare)} già freschi)')
