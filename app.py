@@ -19,7 +19,7 @@ LAUNCHPAD_GRUPPI = [
         {'label': 'Cruscotto KPI', 'icona': '📈', 'url': '/kpi'},
         {'label': 'Gantt Centri di Costo', 'icona': '📊', 'url': '/gantt-centri-costo'},
         {'label': 'Pianificazione Generale', 'icona': '🗓️', 'url': '/gantt-generale'},
-        {'label': 'Alert Scorte Codici Padre', 'icona': '🚨', 'url': '/alert-scorte'},
+        {'label': 'Lead Time Rifornimento', 'icona': '⏱️', 'url': '/alert-scorte'},
         {'label': 'Kanban HPI', 'icona': '🚦', 'url': '/kanban-hpi'},
     ]},
     {'nome': 'Magazzino', 'icona': '📦', 'colore': '#1a9e5c', 'voci': [

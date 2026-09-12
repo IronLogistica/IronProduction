@@ -365,7 +365,7 @@ def _calcola_alert_scorte():
     return risultati
 
 
-# ── PAGINA ALERT SCORTE ──────────────────────────────────────────────────────
+# ── PAGINA LEAD TIME RIFORNIMENTO ────────────────────────────────────────────
 @kanban_bp.route('/commerciale/disponibilita')
 def pagina_commerciale_disponibilita():
     """
@@ -411,10 +411,10 @@ def api_commerciale_disponibilita():
 
 @kanban_bp.route('/alert-scorte')
 def pagina_alert_scorte():
-    from blueprints.magazzino.routes import calcola_alert_fabbisogno_codici_padre
+    # URL storico mantenuto per non rompere preferiti e collegamenti esistenti.
     return render_template('kanban/alert_scorte.html', active='alert-scorte',
-                            topbar_title='🚨 Alert Scorte Codici Padre', righe=_calcola_alert_scorte(),
-                            righe_fabbisogno=calcola_alert_fabbisogno_codici_padre())
+                            topbar_title='⏱️ Lead Time Rifornimento',
+                            righe=_calcola_alert_scorte())
 
 
 @kanban_bp.route('/api/alert-scorte')
@@ -1443,11 +1443,9 @@ def api_kanban_hpi_dati():
     prodotti = KanbanProdotto.query.order_by(KanbanProdotto.sheet_key, KanbanProdotto.sort_order).all()
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
 
-    # Scorta minima — stessa fonte già sincronizzata periodicamente per
-    # Alert Scorte Codici Padre (GiacenzaWood.scorta_minima_wms, aggiornata
-    # dal pulsante 'Aggiorna da WMS' su quella pagina) — riusa la funzione
-    # già esistente per questo (_mappa_scorta_minima_per_sku), MAI una
-    # nuova interrogazione dal vivo a WMS qui.
+    # Scorta minima letta direttamente dai dati locali già sincronizzati
+    # (GiacenzaWood.scorta_minima_wms): Kanban HPI non dipende dalla pagina
+    # Lead Time Rifornimento e non interroga WMS dal vivo.
     scorta_minima_per_sku = _mappa_scorta_minima_per_sku()
 
     # Raggruppamento per i VERI Kanban Gruppi (KanbanGruppo — gli stessi
