@@ -1503,19 +1503,36 @@ def api_kanban_hpi_dati():
     Un prodotto Kanban alla volta, raggruppato per categoria.
 
     Usa lo stesso snapshot calcolato dalla scheda Kanban principale e,
-    per Finiti IS, Riservato clienti e Scorta minima, la stessa lettura WMS
-    live della modal "Scheda WMS completa". Il calcolo resta in SOLA LETTURA:
-    non scrive e non esegue commit sul database.
+    per i soli codici HPI attivi, la stessa lettura WMS live della modal
+    "Scheda WMS completa". Il calcolo resta in SOLA LETTURA: non scrive e
+    non esegue commit sul database.
     """
     prodotti = KanbanProdotto.query.order_by(KanbanProdotto.sheet_key, KanbanProdotto.sort_order).all()
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
 
-    # Stesso snapshot della scheda Kanban principale per i campi locali,
-    # più gli stessi valori WMS LIVE mostrati dalla sua modal completa.
-    # Le chiamate sono parallele e non scrivono sul database.
+    # Stesso snapshot della scheda Kanban principale per i campi locali.
     snapshot = _snapshot_campi_kanban_principale(prodotti)
-    sku_prodotti = [sku_da_nome_prodotto(p.prodotto) for p in prodotti]
-    wms_live_per_sku = _snapshot_wms_live(sku_prodotti)
+
+    # WMS live SOLO per i codici attivi nel cruscotto HPI, cioè quelli che
+    # il filtro predefinito mostra: con Riservato a clienti > 0 oppure sotto
+    # la Scorta minima. Prima venivano interrogati tutti i KanbanProdotto e
+    # il reverse proxy poteva scadere prima della risposta, mostrando un
+    # falso "Errore di rete". La preselezione usa lo snapshot locale; la
+    # lettura WMS live successiva aggiorna i valori effettivi dei soli attivi.
+    prodotti_attivi = []
+    for p in prodotti:
+        dati = snapshot[p.id]
+        riservato_locale = p.riservato or 0
+        saldo_locale = (dati['grezzi'] + dati['in_vern'] + dati['verniciati'] +
+                        (p.finiti_is or 0) + dati['in_prod'] - riservato_locale)
+        scorta_locale = dati['scorta_minima']
+        sotto_scorta_locale = (scorta_locale is not None and
+                               saldo_locale - scorta_locale < 0)
+        if riservato_locale > 0 or sotto_scorta_locale:
+            prodotti_attivi.append(p)
+
+    sku_attivi = [sku_da_nome_prodotto(p.prodotto) for p in prodotti_attivi]
+    wms_live_per_sku = _snapshot_wms_live(sku_attivi)
 
     # Raggruppamento per i VERI Kanban Gruppi (KanbanGruppo — gli stessi
     # nomi puliti già usati nella sidebar/Launchpad: Cavalletti, Transenne,
