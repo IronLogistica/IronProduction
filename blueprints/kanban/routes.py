@@ -1,4 +1,5 @@
-from flask import Blueprint, render_template, jsonify, request, redirect
+import concurrent.futures
+from flask import Blueprint, render_template, jsonify, request, redirect, current_app
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
@@ -1525,3 +1526,73 @@ def api_kanban_hpi_dati():
         key=lambda x: ordine_gruppi.get(x['categoria'], 9999)
     )
     return jsonify(risultato)
+
+
+@kanban_bp.route('/api/kanban-hpi/aggiorna-finiti-is', methods=['POST'])
+def api_kanban_hpi_aggiorna_finiti_is():
+    """
+    Secondo passaggio, DOPO il caricamento iniziale (veloce, senza rete) di
+    /api/kanban-hpi/dati: aggiorna Finiti IS dal vivo SOLO per i prodotti
+    che il browser sta davvero mostrando in quel momento (già filtrati per
+    stato/riservato lato client) — non per l'intero catalogo Kanban.
+
+    Su richiesta esplicita, per limitare il rischio di sovraccaricare WMS
+    con troppe chiamate simultanee (causa sospetta di un crash su un'altra
+    pagina aperta nello stesso momento, con la versione precedente che
+    aggiornava TUTTI i prodotti): di solito con un filtro attivo (es.
+    'solo riservato a clienti') sono una decina di prodotti, non l'intero
+    catalogo — un numero di chiamate concorrenti molto più contenuto.
+
+    Tetto massimo di sicurezza (30 id per chiamata): anche se il client
+    invia una lista più lunga per errore, non si superano mai le 30
+    chiamate WMS concorrenti da qui.
+
+    Stesso identico principio già corretto in precedenza per il contesto
+    Flask nei thread (current_app._get_current_object() nel thread
+    principale, spinto dentro ogni worker) — qui però su una lista molto
+    più piccola, quindi il rischio di interferire con altre pagine è
+    molto più basso.
+    """
+    ids = (request.get_json(silent=True) or {}).get('ids', [])
+    try:
+        ids = [int(i) for i in ids][:30]
+    except (TypeError, ValueError):
+        return jsonify({'ok': False, 'error': 'ids non valido'}), 400
+    if not ids:
+        return jsonify({'ok': True, 'aggiornati': {}})
+
+    prodotti = KanbanProdotto.query.filter(KanbanProdotto.id.in_(ids)).all()
+    if not prodotti:
+        return jsonify({'ok': True, 'aggiornati': {}})
+
+    app_reale = current_app._get_current_object()
+
+    def _fetch(p):
+        with app_reale.app_context():
+            sku = sku_da_nome_prodotto(p.prodotto)
+            if not sku:
+                return p, None
+            try:
+                return p, ottieni_scheda_kanban(sku, timeout=3)
+            except Exception:
+                return p, None
+
+    ora = datetime.utcnow()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(12, len(prodotti))) as pool:
+        risultati_grezzi = list(pool.map(_fetch, prodotti))
+
+    aggiornati = {}
+    for p, wms in risultati_grezzi:
+        if wms is not None:
+            p.finiti_is = int(wms.get('stock_verniciati') or 0)
+            p.finiti_is_aggiornato_il = ora
+        riservato = p.riservato or 0
+        finiti_is = p.finiti_is or 0
+        pronti_a_magazzino = (p.verniciati or 0) + finiti_is
+        saldo_contabile = p.grezzi + p.in_vern + p.verniciati + finiti_is + p.in_prod - riservato
+        aggiornati[p.id] = {
+            'pronti_a_magazzino': pronti_a_magazzino,
+            'saldo_contabile': saldo_contabile,
+        }
+    db.session.commit()
+    return jsonify({'ok': True, 'aggiornati': aggiornati})
