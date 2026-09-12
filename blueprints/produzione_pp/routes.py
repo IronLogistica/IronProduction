@@ -2002,13 +2002,37 @@ def _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata):
     return consumi, contestuali, legacy_bloccati
 
 
-def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali, o, legacy_bloccati, _visitati=None):
+def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali, o, legacy_bloccati, _visitati=None, _primo_livello=True):
     _visitati = _visitati if _visitati is not None else set()
     if codice in _visitati:
         return  # mai un ciclo infinito su una distinta configurata male per errore
     _visitati.add(codice)
-    for rb in _righe_bom_attive_wood(codice):
-        qta_figlio = rb.quantita * qta
+    righe = _righe_bom_attive_wood(codice)
+
+    # ── Ripartizione equa tra N figli di primo livello ────────────────────
+    # Se il codice è flaggato (Angelo, in Parametri di Lavorazione) perché
+    # MasterWork non riesce a distinguere QUALE componente fisico tra N è
+    # stato davvero lavorato (stesso codice, stessa fase per entrambi — es.
+    # Fronte/Retro di un cavalletto), la quantità dichiarata va divisa in
+    # parti (quasi) uguali tra i figli di primo livello invece di essere
+    # applicata per intero a ciascuno (che raddoppierebbe/moltiplicherebbe
+    # il consumo). Resto della divisione intera → ULTIMO figlio, mai
+    # frazioni di pezzo. Si applica SOLO al primo livello di esplosione (i
+    # figli diretti del codice davvero dichiarato) — sotto prosegue tutto
+    # come sempre, quantità intere normali.
+    par_ripartizione = ParametriLavorazioneWood.query.get(codice) if _primo_livello else None
+    ripartisci = bool(par_ripartizione and par_ripartizione.ripartizione_produzione and len(righe) > 1)
+    ripartizione_qta = {}
+    if ripartisci:
+        n = len(righe)
+        qta_int = int(qta)
+        base = qta_int // n
+        resto = qta_int - base * n
+        for i, rb in enumerate(righe):
+            ripartizione_qta[rb.codice_figlio] = base + (resto if i == n - 1 else 0)
+
+    for rb in righe:
+        qta_figlio = ripartizione_qta[rb.codice_figlio] if ripartisci else rb.quantita * qta
         if rb.contestuale and not _contestuale_attivo_per_op(rb, o):
             # OP legacy (aperto prima del flag) e non ancora evaso, non
             # autorizzato da Angelo: resta sul comportamento storico per
@@ -2022,7 +2046,7 @@ def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali,
             if ha_proprio_ciclo_legacy or not figli_del_figlio_legacy:
                 consumi[rb.codice_figlio] = consumi.get(rb.codice_figlio, 0) + qta_figlio
             else:
-                _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
+                _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati, _primo_livello=False)
             continue
         if rb.contestuale:
             # Isola one-piece-flow: questo figlio non è mai stato caricato a
@@ -2033,7 +2057,7 @@ def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali,
             # le SUE materie prime/componenti vanno consumate, a meno che pure
             # loro siano contestuali o abbiano un proprio ciclo dichiarato a parte.
             contestuali[rb.codice_figlio] = contestuali.get(rb.codice_figlio, 0) + qta_figlio
-            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
+            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati, _primo_livello=False)
             continue
         ha_proprio_ciclo = CicloLavoroWood.query.filter_by(codice=rb.codice_figlio).first() is not None
         figli_del_figlio = _righe_bom_attive_wood(rb.codice_figlio)
@@ -2044,7 +2068,7 @@ def _esplodi_fino_a_semilavorati_dichiarabili(codice, qta, consumi, contestuali,
             # distinta sotto — e va comunque consumata a questo livello.
             consumi[rb.codice_figlio] = consumi.get(rb.codice_figlio, 0) + qta_figlio
         else:
-            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati)
+            _esplodi_fino_a_semilavorati_dichiarabili(rb.codice_figlio, qta_figlio, consumi, contestuali, o, legacy_bloccati, _visitati, _primo_livello=False)
 
 
 def _descrizioni_per_codici(codici):
@@ -2069,7 +2093,7 @@ def _descrizioni_per_codici(codici):
     return descr
 
 
-def _esplodi_per_dichiarazione_libera(codice, qta, consumi, _visitati=None):
+def _esplodi_per_dichiarazione_libera(codice, qta, consumi, _visitati=None, _primo_livello=True):
     """
     Come _esplodi_fino_a_semilavorati_dichiarabili, ma per una Dichiarazione
     Libera SENZA nessun Ordine di Produzione — niente logica 'contestuale'
@@ -2078,20 +2102,35 @@ def _esplodi_per_dichiarazione_libera(codice, qta, consumi, _visitati=None):
     nessun OP da proteggere). Si ferma a un figlio con un proprio ciclo di
     lavoro (semilavorato dichiarabile da solo, si consuma dal magazzino) o
     a una foglia vera (materia prima/componente d'acquisto), esplodendo
-    sotto tutto il resto.
+    sotto tutto il resto. Stessa ripartizione equa tra N figli di primo
+    livello di _esplodi_fino_a_semilavorati_dichiarabili quando il codice
+    ha il flag ripartizione_produzione — vedi quella funzione per i dettagli.
     """
     _visitati = _visitati if _visitati is not None else set()
     if codice in _visitati:
         return  # mai un ciclo infinito su una distinta configurata male per errore
     _visitati.add(codice)
-    for rb in _righe_bom_attive_wood(codice):
-        qta_figlio = rb.quantita * qta
+    righe = _righe_bom_attive_wood(codice)
+
+    par_ripartizione = ParametriLavorazioneWood.query.get(codice) if _primo_livello else None
+    ripartisci = bool(par_ripartizione and par_ripartizione.ripartizione_produzione and len(righe) > 1)
+    ripartizione_qta = {}
+    if ripartisci:
+        n = len(righe)
+        qta_int = int(qta)
+        base = qta_int // n
+        resto = qta_int - base * n
+        for i, rb in enumerate(righe):
+            ripartizione_qta[rb.codice_figlio] = base + (resto if i == n - 1 else 0)
+
+    for rb in righe:
+        qta_figlio = ripartizione_qta[rb.codice_figlio] if ripartisci else rb.quantita * qta
         ha_proprio_ciclo = CicloLavoroWood.query.filter_by(codice=rb.codice_figlio).first() is not None
         figli_del_figlio = _righe_bom_attive_wood(rb.codice_figlio)
         if ha_proprio_ciclo or not figli_del_figlio:
             consumi[rb.codice_figlio] = consumi.get(rb.codice_figlio, 0) + qta_figlio
         else:
-            _esplodi_per_dichiarazione_libera(rb.codice_figlio, qta_figlio, consumi, _visitati)
+            _esplodi_per_dichiarazione_libera(rb.codice_figlio, qta_figlio, consumi, _visitati, _primo_livello=False)
 
 
 @pp_bp.get('/api/dichiarazione-produzione/libera/anteprima')

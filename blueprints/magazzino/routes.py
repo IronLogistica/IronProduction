@@ -3666,6 +3666,7 @@ def api_albero_parametri_lavorazione(codice_radice):
             'contromatrice_id': p.contromatrice_id if p else None,
             'impostazione_satinatrice': p.impostazione_satinatrice if p else '',
             'note': p.note if p else '',
+            'ripartizione_produzione': bool(p.ripartizione_produzione) if p else False,
         })
     return jsonify({'trovato': True, 'righe': righe})
 
@@ -4507,6 +4508,40 @@ def api_mappa_codice_masterwork_upsert():
         db.session.add(MappaCodiceMasterWork(codice_ironproduction=codice_ip, codice_masterwork=codice_mw, fase_masterwork=fase_mw))
     db.session.commit()
     return jsonify({'ok': True})
+
+
+@magazzino_bp.route('/api/parametri_lavorazione_wood/ripartizione', methods=['PUT'])
+def api_toggle_ripartizione_produzione():
+    """
+    Attiva/disattiva inline il flag 'ripartizione_produzione' per un codice
+    — stesso pattern del toggle inline della Corrispondenza MasterWork,
+    compilabile da Angelo direttamente sulla riga della Tabella di
+    Lavorazione senza aprire un form a parte. Crea la riga in
+    parametri_lavorazione_wood se il codice non ne aveva ancora una (un
+    codice può avere questo flag senza avere nessun altro parametro
+    macchina impostato).
+
+    Uso previsto: codici come M17-SRI/M17-SRF (Fronte/Retro di un
+    cavalletto) dove MasterWork dichiara SEMPRE con lo stesso codice
+    padre e la STESSA fase per entrambi i componenti — nessun modo di
+    sapere quale dei due sia stato davvero lavorato. Con il flag attivo,
+    _esplodi_fino_a_semilavorati_dichiarabili divide la quantità dichiarata
+    in parti (quasi) uguali tra i figli di primo livello invece di
+    applicarla per intero a ciascuno.
+    """
+    d = request.get_json(force=True)
+    codice = (d.get('codice') or '').strip().upper()
+    attivo = bool(d.get('ripartizione_produzione'))
+    if not codice:
+        return jsonify({'errore': True, 'messaggio': 'Codice obbligatorio'}), 400
+
+    esistente = ParametriLavorazioneWood.query.get(codice)
+    if esistente:
+        esistente.ripartizione_produzione = attivo
+    else:
+        db.session.add(ParametriLavorazioneWood(codice=codice, ripartizione_produzione=attivo))
+    db.session.commit()
+    return jsonify({'ok': True, 'codice': codice, 'ripartizione_produzione': attivo})
 
 
 @magazzino_bp.route('/api/schede_lavorazione_wood', methods=['POST'])

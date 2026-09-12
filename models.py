@@ -1088,6 +1088,25 @@ class ParametriLavorazioneWood(db.Model):
     contromatrice_id          = db.Column(db.Integer, db.ForeignKey('contromatrici_wood.id', ondelete='SET NULL'), nullable=True)
     impostazione_satinatrice  = db.Column(db.String(100), default='')
     note                      = db.Column(db.String(300), default='')
+    # ── Ripartizione equa produzione tra N figli di primo livello ─────────
+    # Quando True: questo codice è un caso in cui MasterWork dichiara SEMPRE
+    # con lo stesso codice e la STESSA fase (nessun segnale per distinguere
+    # QUALE componente fisico tra N è stato davvero lavorato — es. Fronte e
+    # Retro di un cavalletto, saldati insieme più avanti, stesso identico
+    # evento in MasterWork per entrambi). Non potendo sapere quale dei due
+    # sia stato dichiarato, la quantità viene divisa in parti (quasi) uguali
+    # tra TUTTI i figli di primo livello della distinta di questo codice,
+    # invece di essere applicata per intero a ciascuno (che raddoppierebbe
+    # il consumo/produzione). Il resto della divisione intera (quando N non
+    # divide esattamente la quantità) va all'ULTIMO figlio in ordine di
+    # inserimento — mai frazioni di pezzo. Impatto SOLO sul primo livello di
+    # esplosione della distinta (vedi _esplodi_fino_a_semilavorati_dichiarabili);
+    # sotto quel livello prosegue tutto come sempre. È un'approssimazione:
+    # torna esatta SOLO a consuntivo finale (quando la somma delle
+    # dichiarazioni sul codice padre è arrivata al totale), non istante per
+    # istante durante la produzione — se serve la giacenza esatta a metà
+    # lavoro, va corretta a mano.
+    ripartizione_produzione   = db.Column(db.Boolean, default=False, nullable=False)
     aggiornato_il             = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     # BUG REALE CORRETTO (crash in produzione): il modello aveva solo le
     # colonne FK grezze (matrice_id/rullo_id/contromatrice_id), senza le
@@ -1131,6 +1150,32 @@ def migra_parametri_lavorazione_flat():
             log(f"Migrazione parametri lavorazione: consolidati {len(consolidato)} codici in parametri_lavorazione_wood")
         except Exception:
             db.session.rollback()
+
+
+def assicura_ripartizione_produzione_parametri():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    parametri_lavorazione_wood.ripartizione_produzione (flag Angelo per
+    dividere equamente la produzione tra N figli di primo livello quando
+    MasterWork non distingue quale componente fisico è stato dichiarato)
+    senza ricreare tabelle."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text(
+                "ALTER TABLE parametri_lavorazione_wood ADD COLUMN IF NOT EXISTS "
+                "ripartizione_produzione BOOLEAN NOT NULL DEFAULT FALSE"
+            ))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('parametri_lavorazione_wood')}
+        if 'ripartizione_produzione' not in colonne:
+            db.session.execute(text(
+                "ALTER TABLE parametri_lavorazione_wood ADD COLUMN ripartizione_produzione "
+                "BOOLEAN NOT NULL DEFAULT 0"
+            ))
+            db.session.commit()
 
 
 class NumeroListaLavoroWood(db.Model):

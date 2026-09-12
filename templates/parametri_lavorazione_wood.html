@@ -499,7 +499,7 @@ function renderTabellaAlbero(righe){
   // da capire, un pezzo fisico ha sempre gli stessi parametri ovunque
   // venga usato.
   let html = '<table class="kanban-table"><thead><tr>' +
-    '<th>Codice</th><th>Tipo / U.M.</th><th>Ciclo di<br>Lavoro</th><th>Codice<br>MasterWork</th><th>Lunghezza<br>Barra</th><th>Spessore<br>(mm)</th><th>pz/Barra</th><th>Sviluppo</th>' +
+    '<th>Codice</th><th>Tipo / U.M.</th><th>Ciclo di<br>Lavoro</th><th>Codice<br>MasterWork</th><th title="Se MasterWork dichiara sempre con lo stesso codice E la stessa fase per N componenti diversi (es. Fronte/Retro dello stesso pezzo), attiva qui: la quantità dichiarata viene divisa in parti uguali tra i figli di primo livello invece di essere applicata per intero a ciascuno.">Ripartizione<br>Produzione ⓘ</th><th>Lunghezza<br>Barra</th><th>Spessore<br>(mm)</th><th>pz/Barra</th><th>Sviluppo</th>' +
     '<th>Matrice</th><th>Contromatrice</th><th>Punto 0</th><th>Indice<br>assorbimento</th><th>Rullo<br>Sgolatrice</th>' +
     '<th>Impostazione<br>Satinatrice</th><th>Note</th></tr></thead><tbody>';
   righe.forEach((x, i) => {
@@ -524,6 +524,7 @@ function renderTabellaAlbero(righe){
       <td>${tipoInline}</td>
       <td>${badgeCiclo}</td>
       <td>${_pluCellaMasterWorkHTML(i, x.codice_masterwork, x.fase_masterwork)}</td>
+      <td style="text-align:center"><input type="checkbox" ${x.ripartizione_produzione ? 'checked' : ''} title="Dividi equamente la produzione tra i figli di primo livello (Fronte/Retro, ecc.)" onchange="toggleRipartizioneProduzione('${x.codice}', this.checked, this)"></td>
       <td><select style="width:80px" ${dis} ${oblig(x.lunghezza_barra_mm)} ${f} onchange="salvaCella(${i},'lunghezza_barra_mm',this.value)">${optionsLunghezzaBarra(x.lunghezza_barra_mm)}</select></td>
       <td><input type="number" step="0.1" min="0" value="${x.spessore_mm??''}" style="width:65px" ${dis} ${oblig(x.spessore_mm)} ${f} onchange="salvaCella(${i},'spessore_mm',this.value)"></td>
       <td><input type="number" step="1" min="0" value="${x.pezzi_per_barra??''}" style="width:60px" ${dis} ${oblig(x.pezzi_per_barra)} ${f} onchange="salvaCella(${i},'pezzi_per_barra',this.value)"></td>
@@ -552,6 +553,27 @@ function _pluCellaMasterWorkHTML(indice, valoreIniziale, faseIniziale){
     `style="width:100px;padding:3px 6px;margin-top:3px;border-radius:5px;border:1px solid var(--border);font-size:10px;color:var(--text-dim)" ` +
     `onchange="salvaFaseMasterWork(${indice},this.value)">`;
 }
+
+async function toggleRipartizioneProduzione(codice, attivo, checkboxEl){
+  // Attiva/disattiva il flag "ripartizione_produzione" per questo codice —
+  // vedi tooltip header colonna: da usare quando MasterWork non distingue
+  // in alcun modo (stesso codice, stessa fase) N componenti fisici diversi
+  // dello stesso pezzo (es. Fronte/Retro di un cavalletto).
+  try{
+    const r = await fetch('/api/parametri_lavorazione_wood/ripartizione', {
+      method:'PUT', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({codice: codice, ripartizione_produzione: attivo})
+    });
+    const d = await r.json();
+    if(d.errore){ alert('⚠️ ' + d.messaggio); checkboxEl.checked = !attivo; return; }
+    const riga = (window._RIGHE_ALBERO || []).find(x => x.codice === codice);
+    if(riga) riga.ripartizione_produzione = attivo;
+  }catch(e){
+    alert('⚠️ Errore di rete, riprova.');
+    checkboxEl.checked = !attivo;
+  }
+}
+
 
 // Un SOLO dropdown condiviso da tutte le righe (non uno per riga) — la
 // tabella vive dentro .mon-section (overflow:hidden) e uno scroll
