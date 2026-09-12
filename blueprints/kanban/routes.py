@@ -411,21 +411,13 @@ def api_commerciale_disponibilita():
 
 @kanban_bp.route('/alert-scorte')
 def pagina_alert_scorte():
-    from blueprints.magazzino.routes import calcola_alert_fabbisogno_codici_padre
     return render_template('kanban/alert_scorte.html', active='alert-scorte',
-                            topbar_title='🚨 Alert Scorte Codici Padre', righe=_calcola_alert_scorte(),
-                            righe_fabbisogno=calcola_alert_fabbisogno_codici_padre())
+                            topbar_title='⏱️ Lead Time Rifornimento', righe=_calcola_alert_scorte())
 
 
 @kanban_bp.route('/api/alert-scorte')
 def api_alert_scorte():
     return jsonify(_calcola_alert_scorte())
-
-
-@kanban_bp.route('/api/alert-scorte/fabbisogno-padre')
-def api_alert_fabbisogno_padre():
-    from blueprints.magazzino.routes import calcola_alert_fabbisogno_codici_padre
-    return jsonify(calcola_alert_fabbisogno_codici_padre())
 
 
 @kanban_bp.route('/api/alert-scorte/chiedi-ai', methods=['POST'])
