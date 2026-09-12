@@ -583,19 +583,25 @@ async function _pluRicercaMasterWorkInput(input, indice){
   _pluMwIndiceAttivo = indice;
   const q = input.value.trim();
   clearTimeout(_pluRicercaMwTimer);
-  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  // 1 carattere è troppo poco per un elenco utile; 0 caratteri invece è la
+  // richiesta esplicita di "sfoglia tutto il catalogo MasterWork" (widget
+  // intelligente, non serve già sapere il codice).
+  if(q.length === 1){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
   _pluRicercaMwTimer = setTimeout(async () => {
     // Due fonti in parallelo: le corrispondenze GIA' create (riconoscimento
     // rapido di una convenzione già usata) e il VERO catalogo MasterWork
     // (anagrafica_articoli, via IronProduction che fa da proxy) — utile per
     // un codice mai mappato prima, che la prima ricerca da sola non trova
     // mai ("nessuna corrispondenza" anche quando il codice esiste benissimo
-    // in MasterWork).
+    // in MasterWork). A campo vuoto (sfoglia tutto) la ricerca tra le "già
+    // usate" non ha senso — si salta, si mostra solo il catalogo completo.
     let giaUsate = [], dalCatalogo = [], erroreCatalogo = null;
-    try{
-      const r = await fetch('/api/mappa-codici-masterwork/ricerca?q=' + encodeURIComponent(q));
-      giaUsate = await r.json() || [];
-    }catch(e){ /* silenzioso: questa fonte è solo un aiuto, l'altra può bastare */ }
+    if(q.length >= 2){
+      try{
+        const r = await fetch('/api/mappa-codici-masterwork/ricerca?q=' + encodeURIComponent(q));
+        giaUsate = await r.json() || [];
+      }catch(e){ /* silenzioso: questa fonte è solo un aiuto, l'altra può bastare */ }
+    }
     try{
       const r2 = await fetch('/api/mappa-codici-masterwork/ricerca-catalogo?q=' + encodeURIComponent(q));
       const d2 = await r2.json();
