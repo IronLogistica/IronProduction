@@ -351,47 +351,8 @@ function renderKanbanHpi(){
     html = '<p style="color:var(--text-dim);font-style:italic">Nessun prodotto corrisponde ai filtri attivi (riservato/scorta e stati selezionati).</p>';
   }
   box.innerHTML = html;
-  aggiornaFinitiIsVisibili(idsVisibili);
 }
 caricaKanbanHpi();
-
-// Secondo passaggio: aggiorna Finiti IS/Pronti a Magazzino dal vivo SOLO
-// per i prodotti che stanno davvero comparendo a schermo dopo il filtro
-// (di solito una decina, non l'intero catalogo Kanban) — su richiesta
-// esplicita, per limitare quante chiamate concorrenti verso WMS possono
-// mai partire da questa pagina in un colpo solo, riducendo il rischio di
-// interferire con altre pagine aperte nello stesso momento.
-async function aggiornaFinitiIsVisibili(ids){
-  if(!ids.length) return;
-  try{
-    const r = await fetch('/api/kanban-hpi/aggiorna-finiti-is', {
-      method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({ids})
-    });
-    const d = await r.json();
-    if(!d.ok || !d.aggiornati) return;
-    for(const [id, valori] of Object.entries(d.aggiornati)){
-      const cellaPronti = document.getElementById(`hpi-pronti-${id}`);
-      if(cellaPronti) cellaPronti.textContent = valori.pronti_a_magazzino;
-      const cellaSaldo = document.getElementById(`hpi-saldo-${id}`);
-      if(cellaSaldo){
-        cellaSaldo.textContent = valori.saldo_contabile;
-        cellaSaldo.style.color = valori.saldo_contabile < 0 ? 'var(--red)' : 'var(--text-dim)';
-      }
-      // Aggiorna anche i dati in memoria, per restare coerente se l'utente
-      // cambia un filtro e la pagina si ridisegna senza ricaricare da capo.
-      _hpiGruppi.forEach(g => {
-        const p = g.prodotti.find(x => x.id === Number(id));
-        if(p){ p.pronti_a_magazzino = valori.pronti_a_magazzino; p.saldo_contabile = valori.saldo_contabile; }
-      });
-    }
-  }catch(e){
-    // Fallimento silenzioso: i valori mostrati restano quelli del primo
-    // caricamento (locali, mai sbagliati per definizione) — questo
-    // secondo passaggio è un affinamento, mai un requisito per vedere
-    // la pagina.
-  }
-}
 
 // ══ SCHEDA PRODOTTO — stessa identica logica del tabellone Kanban ══════════
 function apriSchedaWms(pid, nome) {

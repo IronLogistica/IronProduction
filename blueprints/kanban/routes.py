@@ -1,5 +1,4 @@
-import concurrent.futures
-from flask import Blueprint, render_template, jsonify, request, redirect, current_app
+from flask import Blueprint, render_template, jsonify, request, redirect
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
@@ -1392,68 +1391,30 @@ def pagina_kanban_hpi():
 @kanban_bp.route('/api/kanban-hpi/dati')
 def api_kanban_hpi_dati():
     """
-    Un prodotto Kanban alla volta, raggruppato per categoria — TUTTI i
-    valori letti DIRETTAMENTE dai campi propri di KanbanProdotto (mai
-    un secondo calcolo via GiacenzaWood/SKU-matching): la stessa fonte
-    già usata dalla scheda dettaglio del prodotto e dal tabellone
-    Kanban stesso (KanbanProdotto.saldo_contabile — 'SALDO LT Post-
-    Produzione' — è definita esattamente così), per garantire che
-    questa pagina mostri sempre gli stessi numeri che Angelo vede
-    già aprendo la scheda di un prodotto, mai un valore diverso per
-    lo stesso prodotto.
+    Un prodotto Kanban alla volta, raggruppato per categoria.
 
-    Corrispondenza confermata dall'utente sui dati reali:
-    - Riservato a Clienti  = impegni clienti (KanbanProdotto.riservato)
-    - Saldo Contabile      = SALDO LT Post-Produzione (proprietà del modello)
-    - Pronti a Magazzino   = Finiti IS + Finiti IW (finiti_is + verniciati)
-    - In Verniciatura      = in lavorazione esterna (in_vern)
-    - Da Verniciare        = Grezzi IW (grezzi)
-    - In Produzione        = saldo residuo da produrre (in_prod)
-
-    BUG REALE TROVATO E CORRETTO (segnalato: BC60 mostrava 165 come 'Da
-    Verniciare' invece dei veri 40, con 'In Verniciatura' che avrebbe
-    dovuto essere 125): il tabellone Kanban principale RICALCOLA questi
-    campi ogni volta che una board viene aperta (vedi
-    _aggiorna_grezzi_e_trattamento/_aggiorna_residuo_produzione/
-    _sincronizza_finiti_iw_da_magazzino, chiamate a ogni apertura) — ma
-    questa pagina si limitava a RILEGGERE i campi così come stavano
-    salvati nel DB, senza mai ricalcolarli: se erano rimasti indietro
-    rispetto all'ultima volta che qualcuno aveva aperto la board di
-    quel prodotto specifico, questa pagina mostrava numeri vecchi,
-    anche se la FORMULA in sé era sempre stata corretta. Ora ricalcola
-    dal vivo anche qui, con la stessa identica logica (e lo stesso
-    precalcolo batch, una query sola per tutta la pagina — non N+1 per
-    prodotto) usata dal tabellone principale.
+    BUG GRAVE TROVATO E CORRETTO (segnalato: 'tutti i Kanban stanno a
+    zero, i gruppi Kanban ci mettono ore ad aggiornare'): la versione
+    precedente RICALCOLAVA e SCRIVEVA nel database (via
+    _aggiorna_residuo_produzione/_aggiorna_grezzi_e_trattamento/
+    _sincronizza_finiti_iw_da_magazzino + db.session.commit()) per OGNI
+    prodotto Kanban a OGNI apertura di questa pagina — cosa che prima
+    non faceva. Se questa pagina viene aperta/aggiornata spesso (anche
+    da più persone), questo genera scritture continue e CONCORRENTI
+    sulle stesse righe usate anche dal tabellone Kanban principale —
+    causa sospetta sia dei valori azzerati sia della lentezza enorme
+    nell'aggiornamento segnalata sul tabellone stesso.
+    FIX DRASTICO E DELIBERATO: questa pagina torna a essere di SOLA
+    LETTURA — nessuna chiamata alle funzioni di sincronizzazione,
+    nessun db.session.commit(), MAI. Legge solo lo stato già presente
+    nel database in quel momento (lo stesso che il tabellone Kanban
+    principale mantiene aggiornato per conto suo, aprendo le singole
+    board) — può essere leggermente indietro, ma non scrive MAI nulla,
+    quindi non può mai essere la causa di un rallentamento o di un dato
+    corrotto altrove.
     """
     prodotti = KanbanProdotto.query.order_by(KanbanProdotto.sheet_key, KanbanProdotto.sort_order).all()
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
-
-    op_per_sku = _mappa_op_per_sku()
-    lav_per_sku = _mappa_lavorazioni_terzisti_per_sku()
-    giacenza_per_sku = _mappa_giacenza_per_sku()
-    skus_pagina = list({sku_da_nome_prodotto(p.prodotto) for p in prodotti if sku_da_nome_prodotto(p.prodotto)})
-    grezzo_iw_per_sku = _grezzo_iw_per_codici(skus_pagina) if skus_pagina else {}
-    for p in prodotti:
-        _aggiorna_residuo_produzione(p, op_per_sku)
-        _aggiorna_grezzi_e_trattamento(p, op_per_sku, lav_per_sku, grezzo_iw_per_sku)
-        _sincronizza_finiti_iw_da_magazzino(p, giacenza_per_sku)
-
-    # TERZO TENTATIVO FALLITO SU QUESTO STESSO FRONTE — rimosso del tutto.
-    # Dopo tre correzioni in fila (chiamate live in sequenza → in
-    # parallelo → in parallelo con contesto Flask propagato), ognuna con
-    # un problema diverso e sempre più difficile da prevedere (rete
-    # lenta, poi contesto Flask nei thread, e infine — probabilmente —
-    # troppe richieste simultanee verso WMS che hanno interferito con
-    # ALTRE pagine aperte nello stesso momento, come la scheda dettaglio
-    # di un prodotto mostrata vuota subito dopo) — la decisione più
-    # sicura è FERMARSI: questa lista non fa più NESSUNA chiamata WMS,
-    # né in sequenza né in parallelo, per nessun motivo. 'Finiti IS' (e
-    # quindi 'Pronti a Magazzino') qui riflette il valore già
-    # sincronizzato l'ultima volta che qualcuno ha aperto la board
-    # Kanban o la scheda dettaglio di QUEL prodotto specifico — può
-    # restare indietro, ma la pagina (e le ALTRE pagine aperte insieme)
-    # non deve mai più rischiare di rompersi per colpa di questa.
-    db.session.commit()
 
     # Scorta minima — stessa fonte già sincronizzata periodicamente per
     # Alert Scorte Codici Padre (GiacenzaWood.scorta_minima_wms, aggiornata
@@ -1527,72 +1488,3 @@ def api_kanban_hpi_dati():
     )
     return jsonify(risultato)
 
-
-@kanban_bp.route('/api/kanban-hpi/aggiorna-finiti-is', methods=['POST'])
-def api_kanban_hpi_aggiorna_finiti_is():
-    """
-    Secondo passaggio, DOPO il caricamento iniziale (veloce, senza rete) di
-    /api/kanban-hpi/dati: aggiorna Finiti IS dal vivo SOLO per i prodotti
-    che il browser sta davvero mostrando in quel momento (già filtrati per
-    stato/riservato lato client) — non per l'intero catalogo Kanban.
-
-    Su richiesta esplicita, per limitare il rischio di sovraccaricare WMS
-    con troppe chiamate simultanee (causa sospetta di un crash su un'altra
-    pagina aperta nello stesso momento, con la versione precedente che
-    aggiornava TUTTI i prodotti): di solito con un filtro attivo (es.
-    'solo riservato a clienti') sono una decina di prodotti, non l'intero
-    catalogo — un numero di chiamate concorrenti molto più contenuto.
-
-    Tetto massimo di sicurezza (30 id per chiamata): anche se il client
-    invia una lista più lunga per errore, non si superano mai le 30
-    chiamate WMS concorrenti da qui.
-
-    Stesso identico principio già corretto in precedenza per il contesto
-    Flask nei thread (current_app._get_current_object() nel thread
-    principale, spinto dentro ogni worker) — qui però su una lista molto
-    più piccola, quindi il rischio di interferire con altre pagine è
-    molto più basso.
-    """
-    ids = (request.get_json(silent=True) or {}).get('ids', [])
-    try:
-        ids = [int(i) for i in ids][:30]
-    except (TypeError, ValueError):
-        return jsonify({'ok': False, 'error': 'ids non valido'}), 400
-    if not ids:
-        return jsonify({'ok': True, 'aggiornati': {}})
-
-    prodotti = KanbanProdotto.query.filter(KanbanProdotto.id.in_(ids)).all()
-    if not prodotti:
-        return jsonify({'ok': True, 'aggiornati': {}})
-
-    app_reale = current_app._get_current_object()
-
-    def _fetch(p):
-        with app_reale.app_context():
-            sku = sku_da_nome_prodotto(p.prodotto)
-            if not sku:
-                return p, None
-            try:
-                return p, ottieni_scheda_kanban(sku, timeout=3)
-            except Exception:
-                return p, None
-
-    ora = datetime.utcnow()
-    with concurrent.futures.ThreadPoolExecutor(max_workers=min(12, len(prodotti))) as pool:
-        risultati_grezzi = list(pool.map(_fetch, prodotti))
-
-    aggiornati = {}
-    for p, wms in risultati_grezzi:
-        if wms is not None:
-            p.finiti_is = int(wms.get('stock_verniciati') or 0)
-            p.finiti_is_aggiornato_il = ora
-        riservato = p.riservato or 0
-        finiti_is = p.finiti_is or 0
-        pronti_a_magazzino = (p.verniciati or 0) + finiti_is
-        saldo_contabile = p.grezzi + p.in_vern + p.verniciati + finiti_is + p.in_prod - riservato
-        aggiornati[p.id] = {
-            'pronti_a_magazzino': pronti_a_magazzino,
-            'saldo_contabile': saldo_contabile,
-        }
-    db.session.commit()
-    return jsonify({'ok': True, 'aggiornati': aggiornati})
