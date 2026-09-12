@@ -1,5 +1,5 @@
 import concurrent.futures
-from flask import Blueprint, render_template, jsonify, request, redirect
+from flask import Blueprint, render_template, jsonify, request, redirect, current_app
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
@@ -1459,14 +1459,33 @@ def api_kanban_hpi_dati():
         or (ora - p.finiti_is_aggiornato_il).total_seconds() >= FINITI_IS_TTL_SECONDI
     ]
     if da_aggiornare:
+        # BUG REALE TROVATO E CORRETTO (causa esatta di 'Errore di rete'
+        # appena segnalato): dentro un ThreadPoolExecutor, un worker gira
+        # in un thread SENZA il contesto applicativo di Flask — le funzioni
+        # WMS leggono la configurazione (URL, token) tramite 'current_app',
+        # che FUORI dal contesto applicativo solleva un RuntimeError
+        # ('working outside of application context'), non un
+        # MasterLogisticError — il mio 'except MasterLogisticError' non lo
+        # catturava affatto, e quell'eccezione, risalendo da pool.map(),
+        # faceva crashare l'INTERA richiesta (500 → 'Errore di rete' visto
+        # sul frontend), invece di limitarsi a saltare quel singolo
+        # prodotto. Serve PASSARE esplicitamente il contesto app al thread:
+        # si cattura l'oggetto app reale nel thread principale (unico posto
+        # dove current_app funziona) e lo si spinge dentro ciascun worker.
+        app_reale = current_app._get_current_object()
+
         def _fetch(p):
-            sku = sku_da_nome_prodotto(p.prodotto)
-            if not sku:
-                return p, None
-            try:
-                return p, ottieni_scheda_kanban(sku, timeout=3)
-            except MasterLogisticError:
-                return p, None
+            with app_reale.app_context():
+                sku = sku_da_nome_prodotto(p.prodotto)
+                if not sku:
+                    return p, None
+                try:
+                    return p, ottieni_scheda_kanban(sku, timeout=3)
+                except Exception:
+                    # Qualunque errore per QUESTO prodotto (WMS giù, SKU
+                    # strano, timeout...) non deve mai far cadere l'intera
+                    # pagina — solo quel prodotto resta al valore precedente.
+                    return p, None
         with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
             for p, wms in pool.map(_fetch, da_aggiornare):
                 if wms is not None:
