@@ -1510,11 +1510,9 @@ def api_kanban_hpi_dati():
         pronti_a_magazzino = verniciati + finiti_is
         saldo_contabile = p.saldo_contabile
 
-        # Saldo C/Scorta = Saldo Contabile − Scorta Minima (stessa formula
-        # della scheda dettaglio) — a differenza di Riservato a Clienti,
-        # conta anche i codici SENZA impegni cliente ma sotto la scorta di
-        # sicurezza configurata su WMS, dove serve comunque pianificare
-        # produzione anche se nessun cliente lo sta aspettando oggi.
+        # Saldo C/Riserva = Saldo Contabile meno il buffer configurato
+        # direttamente nella scheda Kanban principale. Nessun dato della
+        # pagina Lead Time Rifornimento entra in questo calcolo.
         scorta_minima = p.riserva or 0  # buffer/scorta della scheda Kanban principale
         saldo_c_scorta = (saldo_contabile - scorta_minima) if scorta_minima is not None else None
         sotto_scorta = saldo_c_scorta is not None and saldo_c_scorta < 0
