@@ -1424,7 +1424,7 @@ def api_kanban_hpi_dati():
     precalcolo batch, una query sola per tutta la pagina — non N+1 per
     prodotto) usata dal tabellone principale.
     """
-    prodotti = KanbanProdotto.query.order_by(KanbanProdotto.categoria, KanbanProdotto.sort_order).all()
+    prodotti = KanbanProdotto.query.order_by(KanbanProdotto.sheet_key, KanbanProdotto.sort_order).all()
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
 
     op_per_sku = _mappa_op_per_sku()
@@ -1445,7 +1445,23 @@ def api_kanban_hpi_dati():
     # nuova interrogazione dal vivo a WMS qui.
     scorta_minima_per_sku = _mappa_scorta_minima_per_sku()
 
+    # Raggruppamento per i VERI Kanban Gruppi (KanbanGruppo — gli stessi
+    # nomi puliti già usati nella sidebar/Launchpad: Cavalletti, Transenne,
+    # Archetti...), non più per KanbanProdotto.categoria: quel campo è un
+    # testo libero storico, con nomi disomogenei ('12 Varie Altre
+    # Produzioni', 'Inox', ecc.) che non corrispondono all'organizzazione
+    # reale in gruppi usata ovunque nel resto del programma. Un prodotto
+    # il cui sheet_key non corrisponde a nessun Kanban Gruppo noto finisce
+    # in un gruppo di riserva ('Altri prodotti'), mai perso in silenzio.
+    gruppi_kanban = KanbanGruppo.query.order_by(KanbanGruppo.sort_order, KanbanGruppo.label).all()
+    info_gruppo_per_sheet_key = {}
+    for g in gruppi_kanban:
+        info = {'label': g.label, 'icona': g.icona, 'sort_order': g.sort_order}
+        info_gruppo_per_sheet_key[g.url_key] = info
+        info_gruppo_per_sheet_key[g.url_key.replace('_', ' ')] = info  # stessa doppia normalizzazione di get_kanban_gruppi
+
     gruppi = {}
+    ordine_gruppi = {}
     for p in prodotti:
         sku = sku_da_nome_prodotto(p.prodotto)
         riservato = p.riservato or 0
@@ -1480,7 +1496,16 @@ def api_kanban_hpi_dati():
             'in_produzione': p.in_prod or 0,
             'stato_codice': codice_stato, 'stato_label': label_stato, 'stato_colore': colore_stato,
         }
-        gruppi.setdefault(p.categoria, []).append(riga)
+        gruppo_info = info_gruppo_per_sheet_key.get(p.sheet_key)
+        nome_gruppo = gruppo_info['label'] if gruppo_info else 'Altri prodotti'
+        icona_gruppo = gruppo_info['icona'] if gruppo_info else '📦'
+        ordine_gruppi[nome_gruppo] = gruppo_info['sort_order'] if gruppo_info else 9999
+        riga['icona_gruppo'] = icona_gruppo
+        gruppi.setdefault(nome_gruppo, []).append(riga)
 
-    risultato = [{'categoria': cat, 'prodotti': righe} for cat, righe in gruppi.items()]
+    risultato = sorted(
+        ({'categoria': cat, 'icona': (righe[0]['icona_gruppo'] if righe else '📦'), 'prodotti': righe}
+         for cat, righe in gruppi.items()),
+        key=lambda x: ordine_gruppi.get(x['categoria'], 9999)
+    )
     return jsonify(risultato)

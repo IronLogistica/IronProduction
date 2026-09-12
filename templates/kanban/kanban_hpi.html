@@ -304,7 +304,7 @@ function renderKanbanHpi(){
     if(!prodottiFiltrati.length) return;
     almenoUnGruppoMostrato = true;
     html += `<div class="mon-section" style="margin-bottom:16px">
-      <div style="padding:10px 14px;font-weight:700;font-size:13px;background:var(--dark3);border-bottom:1px solid var(--border)">${g.categoria}</div>
+      <div style="padding:10px 14px;font-weight:700;font-size:13px;background:var(--dark3);border-bottom:1px solid var(--border)">${g.icona||'📦'} ${g.categoria}</div>
       <table class="mon-table" style="width:100%;table-layout:fixed">
         <colgroup>
           <col style="width:20%"><col style="width:11%"><col style="width:10%"><col style="width:10%"><col style="width:10%">
