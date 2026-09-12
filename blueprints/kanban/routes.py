@@ -1,4 +1,5 @@
-from flask import Blueprint, render_template, jsonify, request, redirect
+import concurrent.futures
+from flask import Blueprint, render_template, jsonify, request, redirect, current_app
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
                     StoricoProduzione, storico_aggiungi_auto, storico_get,
                     kanban_to_dict, log, get_kanban_gruppi,
@@ -776,15 +777,28 @@ def api_risincronizza_wms(kid):
 @kanban_bp.route('/api/kanban/sincronizza-wms-tutti', methods=['POST'])
 def api_sincronizza_wms_tutti():
     """
-    Aggiorna 'Finiti IS' da MasterLogistic-WMS per TUTTI i prodotti di una
-    board (o di tutte, se sheet_key non passato) — azione ESPLICITA
-    richiamata dal pulsante '🔄 Aggiorna stock WMS', mai dal caricamento
-    normale della pagina (vedi index(): la board apre sempre istantanea
-    con l'ultimo valore salvato, WMS non deve mai bloccare la navigazione).
-    Qui invece l'utente ha scelto consapevolmente di aspettare, quindi le
-    chiamate WMS si possono fare — restano comunque soggette alla cache di
-    FINITI_IS_TTL_SECONDI, per non richiamare WMS su un prodotto già
-    aggiornato pochi minuti fa.
+    Aggiorna 'Finiti IS' e 'Riservato a Clienti' da MasterLogistic-WMS per
+    TUTTI i prodotti di una board (o di tutte, se sheet_key non passato) —
+    azione ESPLICITA richiamata dal pulsante '🔄 Aggiorna stock WMS', mai
+    dal caricamento normale della pagina (vedi index(): la board apre
+    sempre istantanea con l'ultimo valore salvato, WMS non deve mai
+    bloccare la navigazione). Qui invece l'utente ha scelto
+    consapevolmente di aspettare, quindi le chiamate WMS si possono fare —
+    restano comunque soggette alla cache di FINITI_IS_TTL_SECONDI, per non
+    richiamare WMS su un prodotto già aggiornato pochi minuti fa.
+
+    BUG REALE TROVATO E CORRETTO (segnalato: 'è lentissimo' — usato senza
+    sheet_key da Kanban HPI, quindi su TUTTI i prodotti di TUTTE le
+    categorie insieme, facilmente 30-50+): il ciclo era SEQUENZIALE, una
+    chiamata WMS alla volta, una dopo l'altra — il tempo totale era la
+    SOMMA di tutte, non quello della più lenta. Essendo però un'azione
+    VOLONTARIA dell'utente (mai automatica al caricamento pagina — la
+    causa dei tre incidenti precedenti era proprio l'automatismo, non la
+    parallelizzazione in sé), qui è sicuro interrogare WMS in PARALLELO:
+    stesso principio già corretto altrove per il contesto Flask nei
+    thread (current_app._get_current_object() nel thread principale,
+    spinto dentro ogni worker) — la scrittura vera sul modello resta nel
+    thread principale, mai da un thread parallelo.
     """
     sheet_key = request.args.get('sheet_key', '')
     q = KanbanProdotto.query
@@ -792,14 +806,52 @@ def api_sincronizza_wms_tutti():
         q = q.filter(db.or_(KanbanProdotto.sheet_key == sheet_key,
                              KanbanProdotto.sheet_key == sheet_key.replace('_', ' ')))
     prodotti = q.all()
+
+    # Filtra PRIMA (economico, nessuna rete) i soli prodotti con cache
+    # scaduta — chi è già fresco non genera nessuna chiamata, né
+    # sequenziale né parallela.
+    ora = datetime.utcnow()
+    da_aggiornare = [
+        p for p in prodotti
+        if p.finiti_is_aggiornato_il is None
+        or (ora - p.finiti_is_aggiornato_il).total_seconds() >= FINITI_IS_TTL_SECONDI
+    ]
+
+    if da_aggiornare:
+        app_reale = current_app._get_current_object()
+
+        def _fetch(p):
+            with app_reale.app_context():
+                sku = sku_da_nome_prodotto(p.prodotto)
+                if not sku:
+                    return p, None
+                try:
+                    return p, ottieni_scheda_kanban(sku, timeout=3)
+                except Exception:
+                    # Qualunque errore per QUESTO prodotto non deve mai
+                    # bloccare gli altri — resta al valore precedente.
+                    return p, None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=12) as pool:
+            risultati_grezzi = list(pool.map(_fetch, da_aggiornare))
+    else:
+        risultati_grezzi = []
+
     aggiornati = 0
-    for p in prodotti:
+    for p, wms in risultati_grezzi:
+        if wms is None:
+            continue
         prima = p.finiti_is
-        _aggiorna_finiti_is_da_wms(p)
+        p.finiti_is = int(wms.get('stock_verniciati') or 0)
+        if 'riservato_clienti' in wms:
+            p.riservato = int(wms.get('riservato_clienti') or 0)
+        p.finiti_is_aggiornato_il = ora
         if p.finiti_is != prima:
             aggiornati += 1
+
     db.session.commit()
-    log(f'Kanban: sincronizzazione WMS massiva — {aggiornati}/{len(prodotti)} prodotti aggiornati')
+    log(f'Kanban: sincronizzazione WMS massiva — {aggiornati}/{len(prodotti)} prodotti aggiornati '
+        f'({len(da_aggiornare)} interrogati, {len(prodotti) - len(da_aggiornare)} già freschi)')
     return jsonify({'ok': True, 'totale': len(prodotti), 'aggiornati': aggiornati})
 
 @kanban_bp.route('/api/kanban', methods=['POST'])
