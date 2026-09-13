@@ -3597,25 +3597,43 @@ def api_elimina_lunghezza_barra(rid):
     return jsonify({'ok': True})
 
 
-def _flatten_albero_lavorazione(codice_radice, _visitati=None, _profondita=0, _max_profondita=15):
+def _flatten_albero_lavorazione(codice_radice, _visitati=None, _profondita=0, _max_profondita=15, mappa=None):
     """
     Percorre tutta la Distinta Base a partire da codice_radice e ritorna la
     lista di TUTTE le coppie (codice_padre, codice_figlio) raggiungibili, a
     qualunque livello — usa _righe_bom_attive_wood, quindi se un componente
     ha alternative (es. barra 7m/6m) considera solo quella attiva. Un guard
     su _visitati evita loop infiniti in caso di cicli accidentali nella BOM.
+
+    BUG REALE TROVATO E CORRETTO (segnalato: 'errore di rete durante il
+    salvataggio' nella Tabella di Lavorazione — causa vera non la rete ma
+    troppe query in sequenza): questa funzione chiamava
+    _righe_bom_attive_wood UNA VOLTA PER OGNI NODO dell'albero, senza mai
+    passare la 'mappa' precaricata — esattamente il caso che il commento
+    di _carica_mappa_distinta_base_wood avverte già di evitare ('con
+    distinte larghe/profonde diventa lentissimo'). Con una distinta reale
+    di qualche decina di codici, questo significava altrettante query
+    sequenziali solo per aprire la pagina — abbastanza lento da far
+    scadere in timeout la richiesta successiva di salvataggio cella,
+    apparendo come 'errore di rete' pur non essendolo mai stato.
+
+    Ora carica la mappa UNA sola volta (al primo livello di ricorsione,
+    se non già fornita) e la passa invariata a ogni chiamata ricorsiva —
+    una singola query per l'intero albero, non più una per nodo.
     """
+    if mappa is None:
+        mappa = _carica_mappa_distinta_base_wood()
     if _visitati is None:
         _visitati = set()
     if codice_radice in _visitati or _profondita > _max_profondita:
         return []
     _visitati.add(codice_radice)
     coppie = []
-    figli = _righe_bom_attive_wood(codice_radice)
+    figli = _righe_bom_attive_wood(codice_radice, mappa=mappa)
     for f in figli:
         coppie.append((codice_radice, f.codice_figlio))
     for f in figli:
-        coppie.extend(_flatten_albero_lavorazione(f.codice_figlio, _visitati, _profondita + 1, _max_profondita))
+        coppie.extend(_flatten_albero_lavorazione(f.codice_figlio, _visitati, _profondita + 1, _max_profondita, mappa=mappa))
     return coppie
 
 
