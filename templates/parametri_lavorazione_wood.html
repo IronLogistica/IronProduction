@@ -549,10 +549,79 @@ function _pluCellaMasterWorkHTML(indice, valoreIniziale, faseIniziale){
   return `<input type="text" value="${val}" placeholder="—" autocomplete="off" title="Codice con cui MasterWork conosce questo stesso pezzo, se diverso da questo" ` +
     `style="width:100px;padding:4px 6px;border-radius:5px;border:1px solid var(--border);font-size:12px" ` +
     `oninput="_pluRicercaMasterWorkInput(this,${indice})" onfocus="_pluRicercaMasterWorkInput(this,${indice})" onchange="salvaCodiceMasterWork(${indice},this.value)">` +
-    `<input type="text" value="${fase}" placeholder="fase (se serve)" title="Da compilare SOLO se lo stesso codice MasterWork ha più fasi verso componenti diversi (es. Fase A/B/C dello stesso pezzo) — lasciare vuoto per una corrispondenza semplice" ` +
+    `<input type="text" value="${fase}" placeholder="fase (se serve)" autocomplete="off" title="Da compilare SOLO se lo stesso codice MasterWork ha più fasi verso componenti diversi (es. Fase A/B/C dello stesso pezzo) — scegli dal menu, non scrivere a mano: un testo diverso da quello vero (anche solo per maiuscole/spazi) non farebbe mai combaciare la dichiarazione" ` +
     `style="width:100px;padding:3px 6px;margin-top:3px;border-radius:5px;border:1px solid var(--border);font-size:10px;color:var(--text-dim)" ` +
-    `onchange="salvaFaseMasterWork(${indice},this.value)">`;
+    `onfocus="_pluRicercaFaseInput(this,${indice})" onchange="salvaFaseMasterWork(${indice},this.value)">`;
 }
+
+// Stesso identico pattern del dropdown Codice MasterWork (dropdown unico,
+// position:fixed) — qui per il campo Fase separato: mostra le fasi REALI
+// di QUESTO specifico codice_masterwork già inserito, mai testo libero.
+// BUG REALE CORRETTO (segnalato: dichiarata 'S-20 fase A' ma caricato il
+// prodotto padre): scrivendo 'A' a mano qui, il confronto tollerante
+// usato altrove per matchare fasi lunghe e discorsive (_fasi_corrispondono)
+// faceva scattare falsi positivi su codici fase troppo corti — con questo
+// widget Angelo sceglie il testo ESATTO che MasterWork usa davvero, la
+// stessa causa del problema non può più verificarsi.
+let _pluFaseIndiceAttivo = null;
+function _assicuraPluFaseDropdown(){
+  let dd = document.getElementById('plu-fase-dropdown');
+  if(!dd){
+    dd = document.createElement('div');
+    dd.id = 'plu-fase-dropdown';
+    dd.style.cssText = 'display:none;position:fixed;z-index:9999;min-width:180px;background:var(--dark2,#1c2733);border:1px solid var(--border);border-radius:6px;box-shadow:0 6px 18px rgba(0,0,0,.35);max-height:200px;overflow-y:auto';
+    document.body.appendChild(dd);
+  }
+  return dd;
+}
+async function _pluRicercaFaseInput(input, indice){
+  const dropdown = _assicuraPluFaseDropdown();
+  _pluFaseIndiceAttivo = indice;
+  const riga = window._RIGHE_ALBERO[indice];
+  const codiceMw = (riga.codice_masterwork || '').trim();
+  if(!codiceMw){
+    dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Prima scegli il Codice MasterWork qui sopra</div>';
+  }else{
+    dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Caricamento...</div>';
+    const rect = input.getBoundingClientRect();
+    dropdown.style.top = (rect.bottom + 4) + 'px'; dropdown.style.left = rect.left + 'px';
+    dropdown.style.display = 'block';
+    try{
+      const r = await fetch('/api/mappa-codici-masterwork/fasi-per-codice?codice=' + encodeURIComponent(codiceMw));
+      const fasi = await r.json();
+      if(fasi && fasi.errore){
+        dropdown.innerHTML = `<div class="wms-item" style="cursor:default;color:#e08a8a">${fasi.messaggio}</div>`;
+      }else if(!fasi || !fasi.length){
+        dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessuna fase trovata per questo codice — lascia vuoto se non serve distinguere</div>';
+      }else{
+        dropdown.innerHTML = fasi.map(fa => {
+          const faseEsc = String(fa).replace(/"/g, '&quot;').replace(/'/g, "\\'");
+          return `<div class="wms-item" onmousedown="_pluSceltaFase('${faseEsc}')">${fa}</div>`;
+        }).join('');
+      }
+    }catch(e){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:#e08a8a">MasterWork non raggiungibile</div>';
+    }
+  }
+  const rect2 = input.getBoundingClientRect();
+  dropdown.style.top = (rect2.bottom + 4) + 'px'; dropdown.style.left = rect2.left + 'px';
+  dropdown.style.display = 'block';
+}
+function _pluSceltaFase(fase){
+  const dropdown = document.getElementById('plu-fase-dropdown');
+  const input = document.activeElement;
+  if(input && input.tagName === 'INPUT') input.value = fase;
+  dropdown.style.display = 'none';
+  const indice = _pluFaseIndiceAttivo;
+  if(indice === null) return;
+  salvaFaseMasterWork(indice, fase);
+}
+document.addEventListener('click', e => {
+  if(!e.target.closest('#plu-fase-dropdown') && !e.target.matches('input[title*="Fase A/B/C"]')){
+    const dd = document.getElementById('plu-fase-dropdown');
+    if(dd) dd.style.display = 'none';
+  }
+});
 
 async function toggleRipartizioneProduzione(codice, attivo, checkboxEl){
   // Attiva/disattiva il flag "ripartizione_produzione" per questo codice —

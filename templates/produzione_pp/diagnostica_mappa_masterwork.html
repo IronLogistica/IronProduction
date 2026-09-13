@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🔬 Diagnostica Mappa Codici MasterWork — sola lettura</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:14px">
+      Dato un codice MasterWork, mostra ESATTAMENTE quali mappature esistono verso IronProduction — utile per
+      capire perché una dichiarazione con una certa fase atterra sul componente sbagliato, invece di indovinare.
+      Nessuna scrittura.
+    </p>
+    <form method="get" style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:18px;align-items:flex-end">
+      <div>
+        <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px">Codice MasterWork</label>
+        <input type="text" name="codice" value="{{ codice_mw }}" placeholder="es. S-20"
+               style="padding:9px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);width:160px">
+      </div>
+      <div>
+        <label style="display:block;font-size:11px;color:var(--text-dim);margin-bottom:4px">Prova con questa fase (facoltativo)</label>
+        <input type="text" name="fase_test" value="{{ fase_test }}" placeholder="es. A"
+               style="padding:9px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text);width:200px">
+      </div>
+      <button class="btn btn-primary" type="submit">🔍 Cerca</button>
+    </form>
+
+    {% if codice_mw and not mappature %}
+    <p style="color:var(--red)">⚠️ Nessuna mappatura trovata per il codice MasterWork "{{ codice_mw }}" — una dichiarazione con questo codice non troverebbe NESSUNA riga candidata, e resterebbe con il codice grezzo così com'è arrivato da MasterWork.</p>
+    {% endif %}
+
+    {% if mappature %}
+    <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px">
+      <thead>
+        <tr style="text-align:left;border-bottom:1.5px solid var(--border)">
+          <th style="padding:6px 8px">ID</th>
+          <th style="padding:6px 8px">Codice IronProduction</th>
+          <th style="padding:6px 8px">Fase MasterWork configurata</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for m in mappature %}
+        <tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+          <td style="padding:6px 8px;color:var(--text-dim)">{{ m.id }}</td>
+          <td style="padding:6px 8px;font-weight:700">{{ m.codice_ironproduction }}</td>
+          <td style="padding:6px 8px;{{ 'color:var(--yellow)' if m.fase_masterwork == '(generica — nessuna fase)' else '' }}">{{ m.fase_masterwork }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% endif %}
+
+    {% if fase_test %}
+    <div style="border:1.5px solid {{ 'var(--red)' if risultato_test == codice_mw else '#1a9e5c' }};border-radius:10px;padding:16px;max-width:600px">
+      <div style="font-size:11px;color:var(--text-dim);text-transform:uppercase">Risultato: _traduci_componente_masterwork("{{ codice_mw }}", "{{ fase_test }}")</div>
+      <div style="font-size:20px;font-weight:800;margin-top:4px">{{ risultato_test }}</div>
+      {% if risultato_test == codice_mw %}
+      <p style="font-size:12px;color:var(--red);margin-top:8px">⚠️ Nessuna mappatura ha corrisposto a questa fase — è tornato il codice grezzo così com'è, non tradotto in nessun componente specifico. Se ti aspettavi un componente diverso, controlla che esista davvero una riga con quella fase configurata sopra, scritta ESATTAMENTE (o in modo tollerante) come la manda MasterWork.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

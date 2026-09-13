@@ -85,6 +85,41 @@ def _audit(o, action, detail="", event_id=""):
     db.session.add(AuditPP(op_code=o.codice, event_id=event_id, azione=action, dettaglio=detail))
 
 
+def _fase_masterwork_corrisponde(fase_configurata, fase_incoming):
+    """
+    Confronto DEDICATO per MappaCodiceMasterWork.fase_masterwork — apposta
+    diverso da _fasi_corrispondono (quello risolve un problema diverso:
+    far combaciare una fase LUNGA e discorsiva con il nome di un centro di
+    costo). Qui la fase configurata è tipicamente un codice BREVE (es.
+    'A', 'B', 'Fronte') scelto apposta per distinguere componenti diversi
+    dello stesso codice_masterwork.
+
+    BUG REALE TROVATO E CORRETTO (segnalato: dichiarata 'S-20 fase A', ma
+    caricato il prodotto padre invece del componente giusto): usare
+    _fasi_corrispondono qui (confronto per CONTENIMENTO, 'a in b') su un
+    codice fase così corto è quasi sempre vero per puro caso — la lettera
+    'A' è contenuta in QUALSIASI testo che contenga quella lettera, es.
+    'Saldatura' la contiene due volte. Verificato riproducendo esattamente
+    lo scenario: con fase configurata 'A' e fase arrivata 'Saldatura
+    Frontale' (un testo realistico, diverso dalla fase B pure configurata),
+    il vecchio confronto tornava comunque un match sulla fase A per puro
+    accidente testuale.
+
+    Corrispondenza SEMPRE esatta (dopo trim/minuscolo) per codici brevi —
+    il contenimento resta permesso SOLO quando la stringa più corta è già
+    abbastanza lunga (5+ caratteri) da escludere coincidenze casuali come
+    quella appena descritta.
+    """
+    a = (fase_configurata or '').strip().lower()
+    b = (fase_incoming or '').strip().lower()
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    più_corta = min(a, b, key=len)
+    return len(più_corta) >= 5 and (a in b or b in a)
+
+
 def _traduci_componente_masterwork(componente_raw, fase):
     """
     Traduce un 'componente' arrivato da MasterWork nel codice IronProduction
@@ -101,10 +136,11 @@ def _traduci_componente_masterwork(componente_raw, fase):
     stesso componente: le tre fasi finivano per caricare tutte insieme
     lo stesso pezzo, invece di far avanzare ciascuna il proprio.
 
-    Prova PRIMA una mappa specifica per QUESTA fase (confronto tollerante,
-    stesso _fasi_corrispondono già in uso per le fasi in tutto il
-    programma — MasterWork manda testo discorsivo, non un nome esatto);
-    se non la trova, usa la mappa 'generica' (fase_masterwork NULL) per
+    Prova PRIMA una mappa specifica per QUESTA fase (_fase_masterwork_
+    corrisponde — confronto dedicato, MAI _fasi_corrispondono: quello
+    userebbe un contenimento troppo largo per codici fase brevi come 'A'/
+    'B', causando falsi abbinamenti — vedi il suo commento); se non la
+    trova, usa la mappa 'generica' (fase_masterwork NULL) per
     compatibilità con i codici a fase unica già mappati prima di questa
     correzione.
     """
@@ -114,7 +150,7 @@ def _traduci_componente_masterwork(componente_raw, fase):
     if not candidate:
         return componente_raw
     for m in candidate:
-        if m.fase_masterwork and fase and _fasi_corrispondono(m.fase_masterwork, fase):
+        if m.fase_masterwork and fase and _fase_masterwork_corrisponde(m.fase_masterwork, fase):
             return m.codice_ironproduction
     generica = next((m for m in candidate if not m.fase_masterwork), None)
     return generica.codice_ironproduction if generica else componente_raw
@@ -411,6 +447,31 @@ def pagina_diagnostica_eventi_op():
                             op_code=op_code, o=o, eventi=eventi_annotati,
                             somma_per_componente=somma_per_componente, somma_dovrebbe_avanzare=somma_dovrebbe_avanzare,
                             audit_log=audit_log)
+
+
+@pp_bp.route('/diagnostica-mappa-masterwork')
+def pagina_diagnostica_mappa_masterwork():
+    """
+    Strumento diagnostico DI SOLA LETTURA per capire, dato un codice
+    MasterWork (es. 'S-20'), esattamente quali mappature esistono verso
+    IronProduction — una riga per ogni combinazione (codice_ironproduction,
+    fase_masterwork) — e cosa risponderebbe _traduci_componente_masterwork
+    per un paio di fasi di esempio, per vedere subito se una dichiarazione
+    con quella fase atterra sul componente giusto o no, invece di doverlo
+    dedurre da un test in produzione.
+    """
+    codice_mw = (request.args.get('codice') or '').strip()
+    fase_test = (request.args.get('fase_test') or '').strip()
+    mappature = []
+    risultato_test = None
+    if codice_mw:
+        righe = MappaCodiceMasterWork.query.filter_by(codice_masterwork=codice_mw).order_by(MappaCodiceMasterWork.id).all()
+        mappature = [{'id': m.id, 'codice_ironproduction': m.codice_ironproduction,
+                      'fase_masterwork': m.fase_masterwork or '(generica — nessuna fase)'} for m in righe]
+        if fase_test:
+            risultato_test = _traduci_componente_masterwork(codice_mw, fase_test)
+    return render_template('produzione_pp/diagnostica_mappa_masterwork.html', active='diagnostica_mappa_masterwork',
+                            codice_mw=codice_mw, fase_test=fase_test, mappature=mappature, risultato_test=risultato_test)
 
 
 @pp_bp.get('/api/diagnostica-eventi-op/esporta')
