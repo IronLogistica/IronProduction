@@ -1,4 +1,5 @@
 import os
+import re
 import uuid
 import requests
 from datetime import datetime, date, timedelta
@@ -4679,11 +4680,24 @@ def api_dichiarazione_storico(cid):
         giorno_a = datetime.strptime(data_a_str, '%Y-%m-%d').date()
     except ValueError:
         return jsonify(ok=False, error='Data non valida'), 400
-    eventi = (EventoConsuntivoPP.query
-              .filter(db.func.lower(EventoConsuntivoPP.fase) == centro.nome.lower(),
-                      db.func.date(EventoConsuntivoPP.timestamp_evento) >= giorno_da,
+    # BUG REALE TROVATO E CORRETTO (segnalato: i movimenti caricati da
+    # MasterWork non comparivano mai in questo storico): il filtro
+    # confrontava la fase con il nome del centro per UGUAGLIANZA ESATTA
+    # (dopo lower()) — ma MasterWork manda testo discorsivo e libero
+    # ('Saldatura Completa e Ripulitura'), quasi mai identico al nome
+    # breve del centro ('Saldatura'). Tutto il resto del programma usa
+    # _fasi_corrispondono (confronto tollerante) per questo stesso
+    # identico problema — qui, da solo, usava un confronto esatto,
+    # escludendo sistematicamente proprio le dichiarazioni da MasterWork
+    # (quelle manuali del capo, spesso scelte da un menu con il nome
+    # esatto del centro, per coincidenza passavano comunque). Filtra ora
+    # per data soltanto lato SQL, poi per fase con lo stesso confronto
+    # tollerante usato ovunque, lato Python.
+    eventi_nel_periodo = (EventoConsuntivoPP.query
+              .filter(db.func.date(EventoConsuntivoPP.timestamp_evento) >= giorno_da,
                       db.func.date(EventoConsuntivoPP.timestamp_evento) <= giorno_a)
               .order_by(EventoConsuntivoPP.timestamp_evento.desc()).all())
+    eventi = [e for e in eventi_nel_periodo if _fasi_corrispondono(centro.nome, e.fase)]
     return jsonify(ok=True, eventi=[{
         'id': e.id, 'event_id': e.event_id, 'op_code': e.op_code, 'componente': e.componente,
         'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M'),
@@ -5100,13 +5114,25 @@ def api_dichiarazione_movimenti(cid):
     # già stornati, appena l'OP tornava ad avere un evento attivo per un
     # altro motivo (es. una nuova dichiarazione) — il movimento vecchio non
     # era mai stato cancellato, solo temporaneamente nascosto dal filtro.
-    fase_pattern = f'fase={centro.nome};'
-    righe_audit = (AuditPP.query
+    #
+    # BUG REALE TROVATO E CORRETTO (segnalato: i movimenti caricati da
+    # MasterWork non comparivano mai qui): cercava il testo ESATTO
+    # 'fase=NomeCentro;' dentro il dettaglio dell'audit — ma MasterWork
+    # scrive lì la fase così com'è arrivata, discorsiva e libera (es.
+    # 'fase=Saldatura Completa e Ripulitura;'), quasi mai identica al nome
+    # breve del centro seguito subito dal punto e virgola. Ora estrae la
+    # fase VERA scritta nel dettaglio (tra 'fase=' e il ';' successivo) e
+    # la confronta con _fasi_corrispondono — lo stesso identico confronto
+    # tollerante usato ovunque nel programma per questo stesso problema.
+    righe_audit_periodo = (AuditPP.query
                    .filter(AuditPP.azione.in_(('EVENTO_CONSUNTIVO', 'ANNULLO_CONSUNTIVO')),
-                           AuditPP.dettaglio.ilike(f'%{fase_pattern}%'),
                            db.func.date(AuditPP.creato_il) >= giorno_da,
                            db.func.date(AuditPP.creato_il) <= giorno_a).all())
-    op_codici = {a.op_code for a in righe_audit if a.op_code}
+    op_codici = set()
+    for a in righe_audit_periodo:
+        m = re.search(r'fase=([^;]*);', a.dettaglio or '')
+        if a.op_code and m and _fasi_corrispondono(centro.nome, m.group(1)):
+            op_codici.add(a.op_code)
     if not op_codici:
         return jsonify(ok=True, movimenti=[])
     movimenti = (MovimentoGiacenzaWood.query
