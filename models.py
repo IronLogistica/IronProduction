@@ -1106,7 +1106,12 @@ class ParametriLavorazioneWood(db.Model):
     # dichiarazioni sul codice padre è arrivata al totale), non istante per
     # istante durante la produzione — se serve la giacenza esatta a metà
     # lavoro, va corretta a mano.
-    ripartizione_produzione   = db.Column(db.Boolean, default=False, nullable=False)
+    # NOTA: colonna rimossa perché non esiste realmente nel DB (crash in
+    # produzione: "column parametri_lavorazione_wood.ripartizione_produzione
+    # does not exist"). Il modello deve restare allineato allo schema
+    # effettivo del database — se in futuro la colonna verrà creata
+    # davvero tramite migrazione, si potrà reintrodurre qui.
+    # ripartizione_produzione = db.Column(db.Boolean, default=False, nullable=False)
     aggiornato_il             = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     # BUG REALE CORRETTO (crash in produzione): il modello aveva solo le
     # colonne FK grezze (matrice_id/rullo_id/contromatrice_id), senza le
