@@ -2260,6 +2260,66 @@ def api_dichiarazione_libera_conferma():
     return jsonify(ok=True)
 
 
+def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, operatore=None, approvato_direzione=False):
+    """
+    Livello sopra _registra_evento_consuntivo — decide SE una dichiarazione
+    va registrata su un solo codice o SPEZZATA tra i figli di primo livello,
+    prima di chiamarla.
+
+    BUG REALE TROVATO E CORRETTO (segnalato: dichiarati 18 pezzi 'S-20 fase
+    A', avanzavano correttamente al componente giusto DOPO il fix sulla
+    fase — ma restava un problema strutturale diverso e più a monte):
+    il flag ripartizione_produzione (Parametri di Lavorazione — 'quando
+    MasterWork non distingue N componenti fisici diversi, es. Fronte/Retro
+    di un cavalletto') era già usato per dividere il CONSUMO di materiale
+    tra i figli — ma nessun punto lo applicava anche all'ACCREDITO dei
+    pezzi finiti: la dichiarazione finiva SEMPRE registrata per intero sul
+    codice risolto dalla traduzione MasterWork (spesso il padre stesso, se
+    non c'è una fase specifica a distinguere) — mai spezzata sui figli.
+
+    Se il codice bersaglio (componente, o il codice articolo dell'OP se
+    componente_finale) ha il flag attivo e almeno 2 figli di primo livello
+    in distinta base: divide good/scarto in parti (quasi) uguali tra loro
+    (resto all'ULTIMO figlio, stessa convenzione già usata per il consumo
+    materiale) e registra UN evento PER FIGLIO, ciascuno con il proprio
+    componente e un event_id derivato ma univoco (mai lo stesso event_id
+    due volte: violerebbe la deduplicazione). Altrimenti, comportamento
+    INVARIATO: una sola chiamata a _registra_evento_consuntivo, come
+    sempre.
+
+    Ritorna la lista degli avvisi di magazzino non vuoti (uno per evento
+    registrato, se presenti) — stessa forma di quello che tornerebbe una
+    singola _registra_evento_consuntivo, solo eventualmente più di uno.
+    """
+    componente_finale = componente is None
+    codice_target = o.codice_articolo if componente_finale else componente
+    par = ParametriLavorazioneWood.query.get(codice_target)
+    righe_figli = _righe_bom_attive_wood(codice_target) if (par and par.ripartizione_produzione) else []
+
+    if not righe_figli or len(righe_figli) < 2:
+        avviso = _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id,
+                                              componente=componente, operatore=operatore,
+                                              approvato_direzione=approvato_direzione)
+        return [avviso] if avviso else []
+
+    n = len(righe_figli)
+    base_good, resto_good = divmod(int(good), n)
+    base_scrap, resto_scrap = divmod(int(scrap), n)
+    base_tempo, resto_tempo = divmod(int(tempo), n)
+    avvisi = []
+    for i, rb in enumerate(righe_figli):
+        ultimo = (i == n - 1)
+        good_i = base_good + (resto_good if ultimo else 0)
+        scrap_i = base_scrap + (resto_scrap if ultimo else 0)
+        tempo_i = base_tempo + (resto_tempo if ultimo else 0)
+        avviso = _registra_evento_consuntivo(o, fase_nome, ts, good_i, scrap_i, tempo_i,
+                                              f'{event_id}-rip-{i}', componente=rb.codice_figlio,
+                                              operatore=operatore, approvato_direzione=approvato_direzione)
+        if avviso:
+            avvisi.append(avviso)
+    return avvisi
+
+
 def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, consumi_override=None, operatore=None, approvato_direzione=False):
     """
     Nucleo di registrazione di un consuntivo per l'OP o (già lockato con
@@ -2609,7 +2669,7 @@ def api_evento():
         componente_raw = str(d['componente']).strip() if d.get('componente') else None
         componente = _traduci_componente_masterwork(componente_raw, str(d['fase']).strip())
 
-        _registra_evento_consuntivo(o, str(d['fase']).strip(), ts, good, scrap, tempo, str(d['event_id']).strip(),
+        _registra_evento_con_ripartizione(o, str(d['fase']).strip(), ts, good, scrap, tempo, str(d['event_id']).strip(),
                                      componente=componente,
                                      operatore=(str(d['operatore']).strip() if d.get('operatore') else None))
         db.session.commit(); return jsonify(ok=True, deduplicated=False, ordine=_ordine(o)), 201
@@ -2697,7 +2757,7 @@ def api_evento_correggi():
         # affidabile la SINCRONIZZAZIONE (fatta ora in automatico da
         # MasterWork, non più un pulsante manuale da ricordarsi) — non
         # saltando la revisione della Direzione.
-        avviso_magazzino = _registra_evento_consuntivo(
+        avvisi_magazzino = _registra_evento_con_ripartizione(
             o, str(d['fase']).strip(), ts, good, scrap, tempo, nuovo_event_id,
             componente=componente,
             operatore=(str(d['operatore']).strip() if d.get('operatore') else None),
@@ -2706,7 +2766,7 @@ def api_evento_correggi():
         log(f"Correzione da MasterWork applicata: OP {o.codice}, evento originale {event_id_orig} "
             f"stornato e sostituito da {nuovo_event_id} ({good} buoni, {scrap} scarto, {tempo} min)")
         return jsonify(ok=True, evento_originale_stornato=event_id_orig, nuovo_event_id=nuovo_event_id,
-                        avviso_magazzino=avviso_magazzino, ordine=_ordine(o)), 200
+                        avviso_magazzino=(avvisi_magazzino[0] if avvisi_magazzino else None), ordine=_ordine(o)), 200
     except ValueError as exc:
         db.session.rollback()
         return jsonify(ok=False, error=str(exc)), 400
