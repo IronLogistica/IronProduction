@@ -157,6 +157,55 @@ def _traduci_componente_masterwork(componente_raw, fase):
     return generica.codice_ironproduction if generica else componente_raw
 
 
+def _bersagli_masterwork(componente_raw, fase):
+    """
+    Come _traduci_componente_masterwork, ma ritorna TUTTI i bersagli
+    mappati su questa combinazione (codice_masterwork, fase) — normalmente
+    uno solo (comportamento di sempre, coefficiente 1.0).
+
+    NUOVO (richiesto: 'S-20 fase B' deve avanzare CONTEMPORANEAMENTE sia
+    S-20 stesso che M17-SFS, mentre 'S-20 fase A' avanza M17-SRF e M17-SRI
+    insieme, ciascuno per la propria quota — MasterWork non distingue questi
+    pezzi con codici diversi, la stessa fase fisica serve più codici): la
+    validazione in blueprints/magazzino/routes.py (api_salva_mappa_codice_
+    masterwork) ora permette PIÙ righe MappaCodiceMasterWork sulla stessa
+    (codice_masterwork, fase_masterwork) SOLO quando i codici_ironproduction
+    coinvolti sono già collegati come padre/figlio in DistintaBaseWood — mai
+    tra codici scollegati, per restare un caso esplicito e controllato.
+
+    Ogni bersaglio riceve la quantità dichiarata moltiplicata per il proprio
+    coefficiente, in modo INDIPENDENTE dagli altri (mai diviso/sommato tra
+    loro, comportamento diverso da 'Ripartizione Produzione' che invece
+    spezza equamente un'unica quantità tra i figli): il coefficiente è 1.0
+    per il bersaglio che fa da 'radice' del gruppo (non è figlio di nessun
+    altro bersaglio dello stesso gruppo — es. S-20), altrimenti la quantità
+    di distinta base (DistintaBaseWood.quantita) tra quella radice e il
+    bersaglio — stessa logica già usata per i figli 'contestuali'.
+    """
+    if not componente_raw:
+        return [(componente_raw, 1.0)]
+    candidate = MappaCodiceMasterWork.query.filter_by(codice_masterwork=componente_raw).all()
+    if not candidate:
+        return [(componente_raw, 1.0)]
+    specifiche = [m for m in candidate if m.fase_masterwork and fase and _fase_masterwork_corrisponde(m.fase_masterwork, fase)]
+    gruppo = specifiche if specifiche else [m for m in candidate if not m.fase_masterwork]
+    if not gruppo:
+        return [(componente_raw, 1.0)]
+    codici = [m.codice_ironproduction for m in gruppo]
+    risultato = []
+    for cod in codici:
+        coeff = 1.0
+        for altro in codici:
+            if altro == cod:
+                continue
+            riga = DistintaBaseWood.query.filter_by(codice_padre=altro, codice_figlio=cod).first()
+            if riga:
+                coeff = riga.quantita or 1.0
+                break
+        risultato.append((cod, coeff))
+    return risultato
+
+
 @pp_bp.get('/ordini-produzione')
 def pagina(): return render_template('produzione_pp/index.html', active='produzione_pp', stati=STATI_ORDINE_PP)
 
@@ -2681,11 +2730,20 @@ def api_evento():
         # l'OP né scaricare i materiali giusti. Vedi Parametri di Lavorazione
         # → Corrispondenze MasterWork per gestire le associazioni.
         componente_raw = str(d['componente']).strip() if d.get('componente') else None
-        componente = _traduci_componente_masterwork(componente_raw, str(d['fase']).strip())
+        bersagli = _bersagli_masterwork(componente_raw, str(d['fase']).strip())
 
-        _registra_evento_con_ripartizione(o, str(d['fase']).strip(), ts, good, scrap, tempo, str(d['event_id']).strip(),
-                                     componente=componente,
-                                     operatore=(str(d['operatore']).strip() if d.get('operatore') else None))
+        for i, (componente, coeff) in enumerate(bersagli):
+            good_i = round(good * coeff) if coeff != 1.0 else good
+            scrap_i = round(scrap * coeff) if coeff != 1.0 else scrap
+            # Il tempo macchina/manodopera è UN solo evento fisico condiviso
+            # da tutti i bersagli — attribuito solo al primo, mai duplicato
+            # né diviso (diversamente dai pezzi, che ciascun bersaglio
+            # riceve per intero secondo il proprio coefficiente).
+            tempo_i = tempo if i == 0 else 0
+            event_id_i = str(d['event_id']).strip() if i == 0 else f"{str(d['event_id']).strip()}-mw{i}"
+            _registra_evento_con_ripartizione(o, str(d['fase']).strip(), ts, good_i, scrap_i, tempo_i, event_id_i,
+                                         componente=componente,
+                                         operatore=(str(d['operatore']).strip() if d.get('operatore') else None))
         db.session.commit(); return jsonify(ok=True, deduplicated=False, ordine=_ordine(o)), 201
     except ValueError as exc: return jsonify(ok=False, error=str(exc)), 400
     except IntegrityError:
@@ -2747,11 +2805,20 @@ def api_evento_correggi():
                 f"correzione rifiutata per sicurezza."
             )), 409
 
-        _storna_evento_consuntivo(e_originale, o)
+        # Un evento MasterWork mappato su PIÙ bersagli (vedi _bersagli_
+        # masterwork) genera più righe EventoConsuntivoPP: la prima con
+        # l'event_id originale, le altre con suffisso '-mwN'. Stornarle
+        # tutte, non solo la prima, altrimenti i bersagli aggiuntivi
+        # resterebbero applicati due volte dopo la correzione.
+        eventi_da_stornare = [e_originale] + EventoConsuntivoPP.query.filter(
+            EventoConsuntivoPP.event_id.like(f'{event_id_orig}-mw%'),
+            EventoConsuntivoPP.op_code == o.codice).all()
+        for e in eventi_da_stornare:
+            _storna_evento_consuntivo(e, o)
         db.session.flush()   # l'event_id originale si libera PRIMA di registrare il nuovo, in caso combaci
 
         componente_raw = str(d['componente']).strip() if d.get('componente') else None
-        componente = _traduci_componente_masterwork(componente_raw, str(d['fase']).strip())
+        bersagli = _bersagli_masterwork(componente_raw, str(d['fase']).strip())
 
         nuovo_event_id = str(d['nuovo_event_id']).strip()
         # CORREZIONE VOLUTA: ogni dichiarazione corretta resta SEMPRE in
@@ -2771,11 +2838,17 @@ def api_evento_correggi():
         # affidabile la SINCRONIZZAZIONE (fatta ora in automatico da
         # MasterWork, non più un pulsante manuale da ricordarsi) — non
         # saltando la revisione della Direzione.
-        avvisi_magazzino = _registra_evento_con_ripartizione(
-            o, str(d['fase']).strip(), ts, good, scrap, tempo, nuovo_event_id,
-            componente=componente,
-            operatore=(str(d['operatore']).strip() if d.get('operatore') else None),
-            approvato_direzione=False)
+        avvisi_magazzino = []
+        for i, (componente, coeff) in enumerate(bersagli):
+            good_i = round(good * coeff) if coeff != 1.0 else good
+            scrap_i = round(scrap * coeff) if coeff != 1.0 else scrap
+            tempo_i = tempo if i == 0 else 0
+            event_id_i = nuovo_event_id if i == 0 else f'{nuovo_event_id}-mw{i}'
+            avvisi_magazzino += _registra_evento_con_ripartizione(
+                o, str(d['fase']).strip(), ts, good_i, scrap_i, tempo_i, event_id_i,
+                componente=componente,
+                operatore=(str(d['operatore']).strip() if d.get('operatore') else None),
+                approvato_direzione=False)
         db.session.commit()
         log(f"Correzione da MasterWork applicata: OP {o.codice}, evento originale {event_id_orig} "
             f"stornato e sostituito da {nuovo_event_id} ({good} buoni, {scrap} scarto, {tempo} min)")

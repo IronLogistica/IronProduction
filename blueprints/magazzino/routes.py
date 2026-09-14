@@ -4542,20 +4542,40 @@ def api_mappa_codice_masterwork_upsert():
         MappaCodiceMasterWork.fase_masterwork == fase_mw,
         MappaCodiceMasterWork.codice_ironproduction != codice_ip).first()
     if conflitto:
-        # Messaggio reso più chiaro (era 'X è già associato a X' quando il
-        # conflitto era con la mappatura generica del codice padre stesso —
-        # confuso, sembrava un errore invece di spiegare cosa fare): dice
-        # ESPLICITAMENTE su quale altra riga si trova già l'abbinamento, e
-        # cosa fare per procedere comunque (usare una fase diversa).
-        if fase_mw:
-            messaggio = (f'"{codice_mw}" (fase "{fase_mw}") è già assegnato alla riga "{conflitto.codice_ironproduction}". '
-                         f'Se questa riga è una fase diversa dello stesso pezzo, usa una fase diversa da "{fase_mw}" '
-                         f'(es. "{fase_mw}2"); altrimenti rimuovi prima l\'abbinamento sulla riga "{conflitto.codice_ironproduction}".')
-        else:
-            messaggio = (f'"{codice_mw}" (senza fase) è già assegnato alla riga "{conflitto.codice_ironproduction}". '
-                         f'Se questo codice MasterWork ha più fasi diverse per componenti diversi, inserisci anche la '
-                         f'fase qui sotto (scegliendola dal menu) invece di lasciarla vuota.')
-        return jsonify({'errore': True, 'messaggio': messaggio}), 409
+        # NUOVO (richiesto: 'S-20 fase B' deve avanzare CONTEMPORANEAMENTE
+        # sia S-20 che M17-SFS — MasterWork non li distingue, la stessa
+        # fase fisica serve entrambi i codici): il conflitto è permesso, non
+        # bloccato, SOLO quando i due codici sono già collegati come
+        # padre/figlio in distinta base (DistintaBaseWood, in un verso o
+        # nell'altro) — mai tra codici scollegati, altrimenti la regola
+        # perderebbe senso e diventerebbe un modo per aggirare la
+        # validazione su accoppiamenti arbitrari. Vedi _bersagli_masterwork
+        # in blueprints/produzione_pp/routes.py per come viene poi usato
+        # in fase di consuntivo (ciascun bersaglio avanza per la propria
+        # quota, presa dal coefficiente di distinta base — MAI diviso tra
+        # loro).
+        collegati = (
+            DistintaBaseWood.query.filter_by(codice_padre=codice_ip, codice_figlio=conflitto.codice_ironproduction).first() or
+            DistintaBaseWood.query.filter_by(codice_padre=conflitto.codice_ironproduction, codice_figlio=codice_ip).first()
+        )
+        if not collegati:
+            # Messaggio reso più chiaro (era 'X è già associato a X' quando il
+            # conflitto era con la mappatura generica del codice padre stesso —
+            # confuso, sembrava un errore invece di spiegare cosa fare): dice
+            # ESPLICITAMENTE su quale altra riga si trova già l'abbinamento, e
+            # cosa fare per procedere comunque (usare una fase diversa).
+            if fase_mw:
+                messaggio = (f'"{codice_mw}" (fase "{fase_mw}") è già assegnato alla riga "{conflitto.codice_ironproduction}". '
+                             f'Se questa riga è una fase diversa dello stesso pezzo, usa una fase diversa da "{fase_mw}" '
+                             f'(es. "{fase_mw}2"); se invece questa stessa fase deve avanzare più codici insieme, '
+                             f'"{codice_ip}" e "{conflitto.codice_ironproduction}" devono prima essere collegati come '
+                             f'padre/figlio in distinta base; altrimenti rimuovi prima l\'abbinamento sulla riga '
+                             f'"{conflitto.codice_ironproduction}".')
+            else:
+                messaggio = (f'"{codice_mw}" (senza fase) è già assegnato alla riga "{conflitto.codice_ironproduction}". '
+                             f'Se questo codice MasterWork ha più fasi diverse per componenti diversi, inserisci anche la '
+                             f'fase qui sotto (scegliendola dal menu) invece di lasciarla vuota.')
+            return jsonify({'errore': True, 'messaggio': messaggio}), 409
 
     if esistente:
         esistente.codice_masterwork = codice_mw

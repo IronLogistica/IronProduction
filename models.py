@@ -1450,7 +1450,69 @@ class MappaCodiceMasterWork(db.Model):
     fase_masterwork = db.Column(db.String(150), nullable=True)
     note = db.Column(db.String(300), default='')
     creato_il = db.Column(db.DateTime, default=datetime.utcnow)
-    __table_args__ = (db.UniqueConstraint('codice_masterwork', 'fase_masterwork', name='uq_mappa_mw_codice_fase'),)
+    # Vincolo esteso a codice_ironproduction (era solo codice_masterwork +
+    # fase_masterwork): una stessa fase MasterWork può ora avanzare PIÙ
+    # codici IronProduction insieme (es. 'S-20 fase B' → S-20 e M17-SFS
+    # insieme, ciascuno per la propria quota — vedi _bersagli_masterwork in
+    # blueprints/produzione_pp/routes.py), la validazione applicativa in
+    # blueprints/magazzino/routes.py resta comunque l'unica a decidere QUANDO
+    # questo è permesso (solo tra codici collegati come padre/figlio in
+    # distinta base) — qui a livello di database serve solo a impedire una
+    # riga duplicata letterale (stesso codice_masterwork+fase+codice_ip già
+    # presente due volte).
+    __table_args__ = (db.UniqueConstraint('codice_masterwork', 'fase_masterwork', 'codice_ironproduction', name='uq_mappa_mw_codice_fase_bersaglio'),)
+
+
+def assicura_mappa_mw_bersagli_multipli():
+    """
+    Migrazione compatibile con DB già esistenti: sostituisce il vincolo
+    UNIQUE su (codice_masterwork, fase_masterwork) con uno esteso a
+    (codice_masterwork, fase_masterwork, codice_ironproduction).
+
+    RICHIESTO: una stessa fase MasterWork può avanzare PIÙ codici
+    IronProduction insieme (es. 'S-20 fase B' evade sia S-20 che M17-SFS,
+    ciascuno per la propria quota — MasterWork non li distingue con codici
+    diversi, la stessa fase fisica serve entrambi) — il vecchio vincolo,
+    su (codice_masterwork, fase_masterwork) da soli, impediva anche solo di
+    SALVARE una seconda riga per la stessa fase, qualunque fosse il codice
+    IronProduction bersaglio. Il nuovo vincolo impedisce solo il vero
+    duplicato letterale (stessa fase, stesso bersaglio, due volte) — QUALE
+    combinazione multi-bersaglio è permessa resta deciso dalla validazione
+    applicativa in blueprints/magazzino/routes.py (solo tra codici collegati
+    come padre/figlio in distinta base), non da questo vincolo.
+
+    Stesso vecchio vincolo cercato per nome REALE prima di rimuoverlo,
+    stesso motivo di assicura_mappa_mw_fase: il nome esatto assegnato da
+    Postgres può differire da quello dichiarato nel modello se il vincolo
+    risale a una versione precedente dello schema.
+    """
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            nome_vincolo = db.session.execute(text("""
+                SELECT tc.constraint_name
+                FROM information_schema.table_constraints tc
+                JOIN information_schema.key_column_usage kcu
+                  ON tc.constraint_name = kcu.constraint_name AND tc.table_name = kcu.table_name
+                WHERE tc.table_name = 'mappa_codici_masterwork' AND tc.constraint_type = 'UNIQUE'
+                GROUP BY tc.constraint_name
+                HAVING COUNT(*) = 2
+                   AND bool_and(kcu.column_name IN ('codice_masterwork', 'fase_masterwork'))
+            """)).scalar()
+            if nome_vincolo:
+                db.session.execute(text(f'ALTER TABLE mappa_codici_masterwork DROP CONSTRAINT "{nome_vincolo}"'))
+                db.session.commit()
+        except Exception:
+            db.session.rollback()
+        try:
+            db.session.execute(text("""
+                ALTER TABLE mappa_codici_masterwork
+                ADD CONSTRAINT uq_mappa_mw_codice_fase_bersaglio
+                UNIQUE (codice_masterwork, fase_masterwork, codice_ironproduction)
+            """))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()  # esiste già (deploy ripetuto) o db.create_all() l'ha già creato: ok così
 
 
 def assicura_unita_misura_articoli():
