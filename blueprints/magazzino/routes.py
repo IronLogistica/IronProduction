@@ -4503,6 +4503,32 @@ def api_mappa_codice_masterwork_upsert():
     if not codice_ip:
         return jsonify({'errore': True, 'messaggio': 'Codice IronProduction mancante'}), 400
 
+    if codice_mw:
+        # BUG REALE TROVATO E CORRETTO (segnalato: la Ripartizione Produzione
+        # su S-20 non divideva mai la produzione tra M17-SRF e M17-SRI —
+        # 'li tiene solo su 1', campi vuoti sull'altro): la Ripartizione si
+        # attiva SOLO quando la dichiarazione atterra sul codice PADRE che
+        # ha il flag attivo (qui S-20) — se invece una mappatura MasterWork
+        # punta DIRETTAMENTE a uno dei due figli (es. 'fase B' → M17-SRF),
+        # la dichiarazione atterra già lì, bypassando del tutto il padre e
+        # la sua ripartizione: l'altro figlio (M17-SRI) non riceve mai
+        # nulla, esattamente il sintomo segnalato. Ora, prima di salvare,
+        # controlla se il codice scelto è figlio di un padre con
+        # ripartizione_produzione attiva — se sì, blocca e spiega di
+        # mappare il PADRE invece del figlio specifico, lasciando che sia
+        # la ripartizione a dividere in automatico.
+        riga_padre = DistintaBaseWood.query.filter_by(codice_figlio=codice_ip).first()
+        if riga_padre:
+            padre = ParametriLavorazioneWood.query.get(riga_padre.codice_padre)
+            if padre and padre.ripartizione_produzione:
+                return jsonify({'errore': True, 'messaggio':
+                    f'"{codice_ip}" è un componente di "{riga_padre.codice_padre}", che ha la Ripartizione Produzione '
+                    f'attiva — le dichiarazioni MasterWork per questo lavoro vanno mappate sul codice PADRE '
+                    f'"{riga_padre.codice_padre}" (non su "{codice_ip}" direttamente): è la ripartizione a dividere '
+                    f'automaticamente la quantità tra tutti i suoi componenti. Mappando qui, questo componente '
+                    f'riceverebbe tutto, e gli altri (es. i suoi "fratelli" nella stessa distinta) resterebbero a zero.'
+                }), 409
+
     esistente = MappaCodiceMasterWork.query.filter_by(codice_ironproduction=codice_ip).first()
 
     if not codice_mw:

@@ -467,8 +467,22 @@ def pagina_diagnostica_mappa_masterwork():
     risultato_test = None
     if codice_mw:
         righe = MappaCodiceMasterWork.query.filter_by(codice_masterwork=codice_mw).order_by(MappaCodiceMasterWork.id).all()
-        mappature = [{'id': m.id, 'codice_ironproduction': m.codice_ironproduction,
-                      'fase_masterwork': m.fase_masterwork or '(generica — nessuna fase)'} for m in righe]
+        mappature = []
+        for m in righe:
+            # Segnala se questa mappatura punta DIRETTAMENTE a un figlio di un
+            # padre con Ripartizione Produzione attiva — bypasserebbe la
+            # ripartizione, lasciando gli altri figli a zero (la causa esatta
+            # segnalata: 'flaggando la ripartizione i campi restano vuoti').
+            avviso_bypass = None
+            riga_padre = DistintaBaseWood.query.filter_by(codice_figlio=m.codice_ironproduction).first()
+            if riga_padre:
+                padre = ParametriLavorazioneWood.query.get(riga_padre.codice_padre)
+                if padre and padre.ripartizione_produzione:
+                    avviso_bypass = (f'⚠️ Bypassa la Ripartizione Produzione di "{riga_padre.codice_padre}" — '
+                                      f'mappa il padre "{riga_padre.codice_padre}", non questo figlio.')
+            mappature.append({'id': m.id, 'codice_ironproduction': m.codice_ironproduction,
+                               'fase_masterwork': m.fase_masterwork or '(generica — nessuna fase)',
+                               'avviso_bypass': avviso_bypass})
         if fase_test:
             risultato_test = _traduci_componente_masterwork(codice_mw, fase_test)
     return render_template('produzione_pp/diagnostica_mappa_masterwork.html', active='diagnostica_mappa_masterwork',

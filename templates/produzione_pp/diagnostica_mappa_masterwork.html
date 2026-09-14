@@ -43,7 +43,9 @@
         <tr style="border-bottom:1px solid rgba(255,255,255,.05)">
           <td style="padding:6px 8px;color:var(--text-dim)">{{ m.id }}</td>
           <td style="padding:6px 8px;font-weight:700">{{ m.codice_ironproduction }}</td>
-          <td style="padding:6px 8px;{{ 'color:var(--yellow)' if m.fase_masterwork == '(generica — nessuna fase)' else '' }}">{{ m.fase_masterwork }}</td>
+          <td style="padding:6px 8px;{{ 'color:var(--yellow)' if m.fase_masterwork == '(generica — nessuna fase)' else '' }}">{{ m.fase_masterwork }}
+            {% if m.avviso_bypass %}<div style="color:var(--red);font-size:11px;margin-top:3px">{{ m.avviso_bypass }}</div>{% endif %}
+          </td>
         </tr>
         {% endfor %}
       </tbody>
