@@ -4515,9 +4515,20 @@ def api_mappa_codice_masterwork_upsert():
         MappaCodiceMasterWork.fase_masterwork == fase_mw,
         MappaCodiceMasterWork.codice_ironproduction != codice_ip).first()
     if conflitto:
-        return jsonify({'errore': True,
-                         'messaggio': f'"{codice_mw}"' + (f' (fase "{fase_mw}")' if fase_mw else '') +
-                                      f' è già associato a "{conflitto.codice_ironproduction}"'}), 409
+        # Messaggio reso più chiaro (era 'X è già associato a X' quando il
+        # conflitto era con la mappatura generica del codice padre stesso —
+        # confuso, sembrava un errore invece di spiegare cosa fare): dice
+        # ESPLICITAMENTE su quale altra riga si trova già l'abbinamento, e
+        # cosa fare per procedere comunque (usare una fase diversa).
+        if fase_mw:
+            messaggio = (f'"{codice_mw}" (fase "{fase_mw}") è già assegnato alla riga "{conflitto.codice_ironproduction}". '
+                         f'Se questa riga è una fase diversa dello stesso pezzo, usa una fase diversa da "{fase_mw}" '
+                         f'(es. "{fase_mw}2"); altrimenti rimuovi prima l\'abbinamento sulla riga "{conflitto.codice_ironproduction}".')
+        else:
+            messaggio = (f'"{codice_mw}" (senza fase) è già assegnato alla riga "{conflitto.codice_ironproduction}". '
+                         f'Se questo codice MasterWork ha più fasi diverse per componenti diversi, inserisci anche la '
+                         f'fase qui sotto (scegliendola dal menu) invece di lasciarla vuota.')
+        return jsonify({'errore': True, 'messaggio': messaggio}), 409
 
     if esistente:
         esistente.codice_masterwork = codice_mw

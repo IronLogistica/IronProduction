@@ -797,11 +797,23 @@ async function salvaCodiceMasterWork(indice, valore){
       method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({codice_ironproduction: riga.codice, codice_masterwork: valore, fase_masterwork: riga.fase_masterwork || ''})
     });
-    const d = await r.json();
+    let d;
+    try{ d = await r.json(); }
+    catch(erroreParsing){
+      console.error('Risposta non JSON da /api/mappa-codici-masterwork:', r.status, erroreParsing);
+      alert(`❌ Il server ha risposto in modo inatteso (codice ${r.status}) — riprova, e se ricapita segnalalo con questo codice.`);
+      return;
+    }
     if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
     riga.codice_masterwork = valore;
     showToast(valore ? '✅ Corrispondenza salvata' : '✅ Corrispondenza rimossa');
-  }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
+  }catch(e){
+    // Errore VERO di rete (connessione persa, DNS, ecc.) — mai più
+    // inghiottito in silenzio: loggato in console per poterlo diagnosticare
+    // davvero, invece di restare un mistero ogni volta che ricapita.
+    console.error('Errore di rete su salvaCodiceMasterWork:', e);
+    alert('❌ Errore di rete durante il salvataggio. Dettaglio in console (F12) per la segnalazione.');
+  }
 }
 
 async function salvaFaseMasterWork(indice, valore){
@@ -813,11 +825,20 @@ async function salvaFaseMasterWork(indice, valore){
       method:'PUT', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({codice_ironproduction: riga.codice, codice_masterwork: riga.codice_masterwork, fase_masterwork: valore})
     });
-    const d = await r.json();
+    let d;
+    try{ d = await r.json(); }
+    catch(erroreParsing){
+      console.error('Risposta non JSON da /api/mappa-codici-masterwork:', r.status, erroreParsing);
+      alert(`❌ Il server ha risposto in modo inatteso (codice ${r.status}) — riprova, e se ricapita segnalalo con questo codice.`);
+      return;
+    }
     if(d.errore){ alert('⚠️ ' + d.messaggio); return; }
     riga.fase_masterwork = valore;
     showToast('✅ Fase salvata');
-  }catch(e){ alert('❌ Errore di rete durante il salvataggio.'); }
+  }catch(e){
+    console.error('Errore di rete su salvaFaseMasterWork:', e);
+    alert('❌ Errore di rete durante il salvataggio. Dettaglio in console (F12) per la segnalazione.');
+  }
 }
 
 function selezionaCodiceCicloTabella(codice){
