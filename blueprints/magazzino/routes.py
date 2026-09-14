@@ -4,6 +4,7 @@ import json
 import os
 import io
 import pandas as pd
+from sqlalchemy.exc import IntegrityError
 from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError, _kanban_stock_grezzo
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
@@ -4535,7 +4536,37 @@ def api_mappa_codice_masterwork_upsert():
         esistente.fase_masterwork = fase_mw
     else:
         db.session.add(MappaCodiceMasterWork(codice_ironproduction=codice_ip, codice_masterwork=codice_mw, fase_masterwork=fase_mw))
-    db.session.commit()
+    try:
+        db.session.commit()
+    except IntegrityError:
+        # BUG REALE TROVATO E CORRETTO (segnalato con uno screenshot: 'Il
+        # server ha risposto in modo inatteso (codice 500)'): riprodotto
+        # esattamente con due richieste quasi simultanee (fili separati,
+        # non solo in sequenza) — il controllo di conflitto applicativo qui
+        # sopra esclude SEMPRE la riga corrente (codice_ironproduction !=
+        # codice_ip), quindi non protegge da un doppio inserimento quasi
+        # contemporaneo della STESSA riga con lo STESSO valore (es. tabula
+        # rapidamente dal campo Codice al campo Fase): la seconda richiesta
+        # arrivava fino al commit, rompeva il vincolo di unicità del
+        # database (codice_masterwork + fase_masterwork) e usciva come
+        # eccezione mai catturata.
+        #
+        # Non basta però un 'ok' generico qui: nella finestra di corsa più
+        # stretta possibile, potrebbe essere arrivata prima una riga
+        # DIVERSA (altro codice_ironproduction) con lo stesso valore — un
+        # conflitto VERO, non un doppio invio innocuo della stessa riga.
+        # Dopo il rollback, si rilegge chi ha davvero vinto: se è la
+        # riga corrente, il valore voluto è comunque salvato (nessun
+        # errore da mostrare); se è una riga diversa, è lo stesso
+        # conflitto già gestito sopra — mai nascosto in silenzio.
+        db.session.rollback()
+        vincitore = MappaCodiceMasterWork.query.filter_by(
+            codice_masterwork=codice_mw, fase_masterwork=fase_mw).first()
+        if vincitore and vincitore.codice_ironproduction != codice_ip:
+            messaggio = (f'"{codice_mw}"' + (f' (fase "{fase_mw}")' if fase_mw else ' (senza fase)') +
+                         f' è stato appena assegnato alla riga "{vincitore.codice_ironproduction}" da un altro invio quasi simultaneo. Riprova.')
+            return jsonify({'errore': True, 'messaggio': messaggio}), 409
+        return jsonify({'ok': True, 'nota': 'Valore già salvato da un invio quasi simultaneo — nessuna modifica necessaria.'})
     return jsonify({'ok': True})
 
 
