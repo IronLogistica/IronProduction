@@ -1501,6 +1501,22 @@ def assicura_mappa_mw_bersagli_multipli():
             # segnalato ('salva ma poi il secondo codice non c'è').
             # pg_index è il livello più basso: cattura QUALSIASI forma di
             # unicità (con o senza un CONSTRAINT nominato sopra).
+            # CORREZIONE 2 (confermata con l'endpoint diagnostico
+            # temporaneo /api/debug/vincoli-mappa-masterwork, che ha
+            # mostrato i vincoli reali sul database live): il vincolo
+            # legacy non era affatto quello ipotizzato sopra (una coppia
+            # codice_masterwork+fase_masterwork) — era un indice univoco
+            # su codice_masterwork DA SOLO
+            # ('ix_mappa_codici_masterwork_codice_masterwork'), residuo di
+            # quando quella colonna aveva 'unique=True' nel modello, prima
+            # ancora che esistesse fase_masterwork. Il modello è stato
+            # aggiornato da tempo (ora è solo 'index=True', vedi la
+            # definizione della colonna più sotto) ma l'indice sul
+            # database non era mai stato aggiornato di conseguenza — molto
+            # più restrittivo del previsto: impediva di riusare lo stesso
+            # codice_masterwork una seconda volta IN ASSOLUTO, qualunque
+            # fase o codice_ironproduction di destinazione. La query sotto
+            # ora cerca ANCHE questo caso a 1 colonna, non solo quello a 2.
             righe_indice = db.session.execute(text("""
                 SELECT i.relname AS nome_indice, con.conname AS nome_vincolo
                 FROM pg_index ix
@@ -1510,8 +1526,8 @@ def assicura_mappa_mw_bersagli_multipli():
                 LEFT JOIN pg_constraint con ON con.conindid = ix.indexrelid
                 WHERE t.relname = 'mappa_codici_masterwork' AND ix.indisunique
                 GROUP BY i.relname, con.conname
-                HAVING COUNT(*) = 2
-                   AND bool_and(a.attname IN ('codice_masterwork', 'fase_masterwork'))
+                HAVING (COUNT(*) = 1 AND bool_and(a.attname = 'codice_masterwork'))
+                    OR (COUNT(*) = 2 AND bool_and(a.attname IN ('codice_masterwork', 'fase_masterwork')))
             """)).fetchall()
             for nome_indice, nome_vincolo in righe_indice:
                 if nome_vincolo:
