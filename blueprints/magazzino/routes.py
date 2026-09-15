@@ -5,6 +5,7 @@ import os
 import io
 import pandas as pd
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
 from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError, _kanban_stock_grezzo
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
@@ -4451,6 +4452,36 @@ def api_scheda_trasferisci(sid):
     return jsonify({'ok': True})
 
 
+@magazzino_bp.route('/api/debug/vincoli-mappa-masterwork')
+def api_debug_vincoli_mappa_masterwork():
+    """
+    DIAGNOSTICO TEMPORANEO — elenca i vincoli/indici univoci reali sulla
+    tabella mappa_codici_masterwork nel database live, per verificare se
+    il vecchio vincolo (codice_masterwork+fase_masterwork, senza
+    codice_ironproduction) è stato davvero rimosso dalla migrazione
+    assicura_mappa_mw_bersagli_multipli — invece di continuare a dedurlo
+    da messaggi d'errore. Sola lettura, nessuna modifica. Da rimuovere una
+    volta chiarito il problema del salvataggio multi-bersaglio.
+    """
+    try:
+        righe = db.session.execute(text("""
+            SELECT i.relname AS nome_indice, con.conname AS nome_vincolo,
+                   array_agg(a.attname ORDER BY a.attname) AS colonne
+            FROM pg_index ix
+            JOIN pg_class i ON i.oid = ix.indexrelid
+            JOIN pg_class t ON t.oid = ix.indrelid
+            JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+            LEFT JOIN pg_constraint con ON con.conindid = ix.indexrelid
+            WHERE t.relname = 'mappa_codici_masterwork' AND ix.indisunique
+            GROUP BY i.relname, con.conname
+        """)).fetchall()
+        return jsonify({'ok': True, 'vincoli_indici_univoci': [
+            {'nome_indice': r[0], 'nome_vincolo': r[1], 'colonne': r[2]} for r in righe
+        ]})
+    except Exception as e:
+        return jsonify({'errore': True, 'messaggio': str(e)}), 500
+
+
 @magazzino_bp.route('/api/mappa-codici-masterwork/ricerca')
 def api_ricerca_mappa_codici_masterwork():
     """
@@ -4600,8 +4631,6 @@ def api_mappa_codice_masterwork_upsert():
             padri_ip = {r.codice_padre for r in DistintaBaseWood.query.filter_by(codice_figlio=codice_ip).all()}
             padri_conflitto = {r.codice_padre for r in DistintaBaseWood.query.filter_by(codice_figlio=conflitto.codice_ironproduction).all()}
             if padri_ip & padri_conflitto:
-                collegati = True
-            if riga_padre_ip and riga_padre_conflitto and riga_padre_ip.codice_padre == riga_padre_conflitto.codice_padre:
                 collegati = True
         if not collegati:
             # Messaggio reso più chiaro (era 'X è già associato a X' quando il
