@@ -192,16 +192,30 @@ def _bersagli_masterwork(componente_raw, fase):
     if not gruppo:
         return [(componente_raw, 1.0)]
     codici = [m.codice_ironproduction for m in gruppo]
+    # BUG REALE TROVATO E CORRETTO (segnalato: 'S-20 fase A' doveva dare
+    # 0,5 a M17-SRF e 0,5 a M17-SRI, ma entrambi ricevevano 1.0 — la
+    # produzione veniva contata doppia): il calcolo cercava un legame
+    # padre/figlio SOLO fra i membri del gruppo stesso ('altro' nel loop
+    # sotto era sempre un altro bersaglio) — per due FRATELLI (M17-SRF e
+    # M17-SRI, nessuno dei due è padre dell'altro: sono entrambi figli di
+    # S-20, che non è nemmeno nel gruppo per la fase A) questo controllo
+    # non trovava mai nulla, e il coefficiente restava 1.0 di default per
+    # entrambi. Ora si cerca il VERO padre di ciascun bersaglio in
+    # distinta base (un codice può comparire come figlio in più punti,
+    # quindi avere più padri possibili — si preferisce quello condiviso
+    # con un altro bersaglio dello stesso gruppo, il contesto di questa
+    # famiglia produttiva, es. S-20); un bersaglio senza alcun padre è la
+    # radice del gruppo e riceve la quota intera (1.0), come prima.
+    padri_per_codice = {cod: {r.codice_padre: r.quantita for r in DistintaBaseWood.query.filter_by(codice_figlio=cod).all()} for cod in codici}
     risultato = []
     for cod in codici:
-        coeff = 1.0
-        for altro in codici:
-            if altro == cod:
-                continue
-            riga = DistintaBaseWood.query.filter_by(codice_padre=altro, codice_figlio=cod).first()
-            if riga:
-                coeff = riga.quantita or 1.0
-                break
+        padri_cod = padri_per_codice[cod]
+        if not padri_cod:
+            coeff = 1.0  # radice del gruppo: nessun genitore, quota intera
+        else:
+            padri_altri = {p for altro in codici if altro != cod for p in padri_per_codice[altro]}
+            padre_scelto = next((p for p in padri_cod if p in padri_altri), next(iter(padri_cod)))
+            coeff = padri_cod[padre_scelto] or 1.0
         risultato.append((cod, coeff))
     return risultato
 

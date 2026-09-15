@@ -4586,8 +4586,21 @@ def api_mappa_codice_masterwork_upsert():
             # a parte (dividere una dichiarazione che atterra DIRETTAMENTE
             # sul padre, non collegato al caso qui di due mappature
             # separate sulla stessa fase).
-            riga_padre_ip = DistintaBaseWood.query.filter_by(codice_figlio=codice_ip).first()
-            riga_padre_conflitto = DistintaBaseWood.query.filter_by(codice_figlio=conflitto.codice_ironproduction).first()
+            #
+            # BUG REALE TROVATO E CORRETTO (segnalato: bloccava ANCORA
+            # M17-SRF/M17-SRI nonostante siano davvero entrambi figli di
+            # S-20): usava .first() per trovare 'il' padre di ciascun
+            # codice, ma un codice componente può comparire come figlio in
+            # PIÙ punti della distinta base (lo stesso pezzo riusato in
+            # assiemi diversi — normalissimo in una BOM) — .first() poteva
+            # quindi pescare un padre diverso da S-20 per uno dei due
+            # codici, e il confronto falliva anche quando esisteva
+            # comunque un padre comune. Ora si guardano TUTTI i padri
+            # possibili di entrambi i codici e si cerca un'intersezione.
+            padri_ip = {r.codice_padre for r in DistintaBaseWood.query.filter_by(codice_figlio=codice_ip).all()}
+            padri_conflitto = {r.codice_padre for r in DistintaBaseWood.query.filter_by(codice_figlio=conflitto.codice_ironproduction).all()}
+            if padri_ip & padri_conflitto:
+                collegati = True
             if riga_padre_ip and riga_padre_conflitto and riga_padre_ip.codice_padre == riga_padre_conflitto.codice_padre:
                 collegati = True
         if not collegati:
