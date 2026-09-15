@@ -4559,6 +4559,27 @@ def api_mappa_codice_masterwork_upsert():
             DistintaBaseWood.query.filter_by(codice_padre=conflitto.codice_ironproduction, codice_figlio=codice_ip).first()
         )
         if not collegati:
+            # BUG REALE TROVATO E CORRETTO (segnalato: 'S-20 fase A' deve
+            # dividersi 0,5/0,5 fra M17-SRF e M17-SRI, entrambi figli di
+            # S-20 — ma il salvataggio del secondo dei due veniva bloccato
+            # come conflitto): il controllo sopra riconosce SOLO un legame
+            # padre/figlio DIRETTO fra i due codici in conflitto. M17-SRF e
+            # M17-SRI però non sono padre/figlio fra loro — sono FRATELLI,
+            # entrambi figli di S-20 — esattamente il caso per cui esiste
+            # la Ripartizione Produzione (dividere una dichiarazione fra i
+            # figli di uno stesso padre). Il controllo diretto da solo non
+            # lo contemplava mai. Ora, se non c'è un legame diretto, si
+            # controlla anche se i due codici sono fratelli sotto lo stesso
+            # padre CON Ripartizione Produzione attiva — mai fra fratelli
+            # scollegati da una ripartizione, per restare un caso esplicito
+            # e controllato come il resto di questa validazione.
+            riga_padre_ip = DistintaBaseWood.query.filter_by(codice_figlio=codice_ip).first()
+            riga_padre_conflitto = DistintaBaseWood.query.filter_by(codice_figlio=conflitto.codice_ironproduction).first()
+            if riga_padre_ip and riga_padre_conflitto and riga_padre_ip.codice_padre == riga_padre_conflitto.codice_padre:
+                padre_comune = ParametriLavorazioneWood.query.get(riga_padre_ip.codice_padre)
+                if padre_comune and padre_comune.ripartizione_produzione:
+                    collegati = True
+        if not collegati:
             # Messaggio reso più chiaro (era 'X è già associato a X' quando il
             # conflitto era con la mappatura generica del codice padre stesso —
             # confuso, sembrava un errore invece di spiegare cosa fare): dice
