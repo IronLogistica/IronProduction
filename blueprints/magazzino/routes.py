@@ -4570,15 +4570,26 @@ def api_mappa_codice_masterwork_upsert():
             # figli di uno stesso padre). Il controllo diretto da solo non
             # lo contemplava mai. Ora, se non c'è un legame diretto, si
             # controlla anche se i due codici sono fratelli sotto lo stesso
-            # padre CON Ripartizione Produzione attiva — mai fra fratelli
-            # scollegati da una ripartizione, per restare un caso esplicito
-            # e controllato come il resto di questa validazione.
+            # padre in distinta base.
+            #
+            # CORREZIONE: il primo tentativo richiedeva ANCHE che il padre
+            # avesse il flag 'Ripartizione Produzione' attivo — requisito
+            # che NON era nel commento/design originale qui sopra (parla
+            # solo di 'collegati come padre/figlio', senza menzionare quel
+            # flag) e che nella pratica ha continuato a bloccare il caso
+            # reale: il flag era spuntato sui FIGLI (M17-SRF/M17-SRI, per
+            # la LORO propria ripartizione verso i rispettivi sotto-livelli
+            # M17RF*/M17RI*), non sul padre comune S-20. Essere fratelli
+            # sotto lo stesso padre in distinta base è di per sé un legame
+            # sufficientemente esplicito e controllato (mai fra codici
+            # scollegati) — non serve anche quel flag, che è un meccanismo
+            # a parte (dividere una dichiarazione che atterra DIRETTAMENTE
+            # sul padre, non collegato al caso qui di due mappature
+            # separate sulla stessa fase).
             riga_padre_ip = DistintaBaseWood.query.filter_by(codice_figlio=codice_ip).first()
             riga_padre_conflitto = DistintaBaseWood.query.filter_by(codice_figlio=conflitto.codice_ironproduction).first()
             if riga_padre_ip and riga_padre_conflitto and riga_padre_ip.codice_padre == riga_padre_conflitto.codice_padre:
-                padre_comune = ParametriLavorazioneWood.query.get(riga_padre_ip.codice_padre)
-                if padre_comune and padre_comune.ripartizione_produzione:
-                    collegati = True
+                collegati = True
         if not collegati:
             # Messaggio reso più chiaro (era 'X è già associato a X' quando il
             # conflitto era con la mappatura generica del codice padre stesso —
