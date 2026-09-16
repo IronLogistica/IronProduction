@@ -2744,20 +2744,28 @@ def api_evento():
         # l'OP né scaricare i materiali giusti. Vedi Parametri di Lavorazione
         # → Corrispondenze MasterWork per gestire le associazioni.
         componente_raw = str(d['componente']).strip() if d.get('componente') else None
-        # BUG REALE TROVATO E CORRETTO (segnalato: dichiarazione MasterWork
-        # 'S-14, fase SALDATURA DEI RETRO, 10 pz' SENZA componente esplicito
-        # — l'app di Angelo dichiara a livello di prodotto finito, non di
-        # singolo sotto-codice — caricava tutto sul codice della OP (S-14)
-        # invece di dividersi fra M16-SRF/M16-SRI come da Ripartizione):
-        # senza questo, componente_raw restava None e _bersagli_masterwork
-        # rinunciava subito alla traduzione (vedi il suo 'if not
-        # componente_raw'), ignorando la fase che invece MasterWork AVEVA
-        # mandato correttamente. Il codice della OP stessa (es. 'S-14') è
-        # esattamente il codice_masterwork giusto da cercare in questo caso
-        # — è la stessa famiglia prodotto — quindi usiamolo come base
-        # quando MasterWork non specifica un componente più preciso.
-        if not componente_raw:
-            componente_raw = o.codice
+        # BUG REALE TROVATO E CORRETTO (segnalato con screenshot: la
+        # dichiarazione MasterWork per 30 pezzi mostrava 'COMPONENTE:
+        # OP-2026-000046' invece del codice prodotto 'S-14' — confermato
+        # dall'evento arrivato con componente='OP-2026-000046' letterale,
+        # non vuoto): due problemi in cascata.
+        #
+        # 1) Il fix precedente (v. commit sul componente mancante) usava
+        #    o.codice come ripiego — ma o.codice è il NUMERO DELLA
+        #    COMMESSA ('OP-2026-000046'), non il codice prodotto. Il campo
+        #    giusto è o.codice_articolo ('S-14'). Non si era notato prima
+        #    perché nel primo test MasterWork aveva mandato 'S-14'
+        #    direttamente (componente_raw non era vuoto quella volta, il
+        #    ripiego non è mai scattato).
+        #
+        # 2) In questo caso MasterWork manda letteralmente il numero della
+        #    commessa come componente (non vuoto) — quindi il controllo
+        #    'if not componente_raw' da solo non basta: va trattato come
+        #    'nessun componente specifico' anche quando componente_raw
+        #    COINCIDE col numero della commessa stessa (non porta nessuna
+        #    informazione distintiva in più rispetto a saperlo già).
+        if not componente_raw or componente_raw == o.codice:
+            componente_raw = o.codice_articolo
         bersagli = _bersagli_masterwork(componente_raw, str(d['fase']).strip())
 
         for i, (componente, coeff) in enumerate(bersagli):
@@ -2846,11 +2854,12 @@ def api_evento_correggi():
         db.session.flush()   # l'event_id originale si libera PRIMA di registrare il nuovo, in caso combaci
 
         componente_raw = str(d['componente']).strip() if d.get('componente') else None
-        # Stesso fix di /api/pp/events poco sopra (componente mancante →
-        # usa il codice della OP stessa come base per la traduzione) — le
-        # due implementazioni condividono sempre la stessa logica apposta.
-        if not componente_raw:
-            componente_raw = o.codice
+        # Stesso fix di /api/pp/events poco sopra: o.codice è il numero
+        # della commessa, non il prodotto — va usato o.codice_articolo, e
+        # va trattato come 'nessun componente' anche quando MasterWork
+        # manda letteralmente il numero della commessa come componente.
+        if not componente_raw or componente_raw == o.codice:
+            componente_raw = o.codice_articolo
         bersagli = _bersagli_masterwork(componente_raw, str(d['fase']).strip())
 
         nuovo_event_id = str(d['nuovo_event_id']).strip()
