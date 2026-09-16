@@ -2413,10 +2413,26 @@ def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, even
     """
     componente_finale = componente is None
     codice_target = o.codice_articolo if componente_finale else componente
+    # BUG REALE TROVATO E CORRETTO (segnalato: dichiarati 50 pezzi 'S-14
+    # fase B/FRONTALE' — risolti correttamente in M16-SFS + S-14 dalla
+    # mappatura multi-bersaglio, ma quando S-14 arrivava qui come
+    # bersaglio, il controllo trovava comunque M16-SRF/M16-SRI flaggati
+    # e li faceva scattare DI NUOVO, dividendo 25+25 — anche se quel
+    # flag riguarda un gruppo di TUTT'ALTRA fase, 'SALDATURA DEI RETRO'
+    # (fase A), che non c'entra niente con la fase B appena dichiarata.
+    # La ripartizione era fase-agnostica: scattava per qualunque
+    # dichiarazione risolta sul padre, indipendentemente da quale fase.
+    # Ora un figlio flaggato entra nel gruppo di ripartizione SOLO se è
+    # mappato (in MappaCodiceMasterWork) ANCHE per la fase che si sta
+    # dichiarando in QUESTO momento — non basta avere il flag attivo in
+    # generale, deve essere il gruppo giusto per QUESTA fase.
     righe_figli = []
     for r in _righe_bom_attive_wood(codice_target):
         p = ParametriLavorazioneWood.query.get(r.codice_figlio)
-        if p and p.ripartizione_produzione:
+        if not (p and p.ripartizione_produzione):
+            continue
+        mappe_figlio = MappaCodiceMasterWork.query.filter_by(codice_ironproduction=r.codice_figlio).all()
+        if any(m.fase_masterwork and _fase_masterwork_corrisponde(m.fase_masterwork, fase_nome) for m in mappe_figlio):
             righe_figli.append(r)
 
     if not righe_figli or len(righe_figli) < 2:
