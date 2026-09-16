@@ -2337,43 +2337,50 @@ def api_dichiarazione_libera_conferma():
     return jsonify(ok=True)
 
 
-def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, operatore=None, approvato_direzione=False, gia_suddiviso=False):
+def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, operatore=None, approvato_direzione=False):
     """
     Livello sopra _registra_evento_consuntivo — decide SE una dichiarazione
-    va registrata su un solo codice o SPEZZATA tra i figli di primo livello,
-    prima di chiamarla.
+    va registrata su un solo codice o SPEZZATA tra i figli che fanno parte
+    di un gruppo di ripartizione, prima di chiamarla.
 
-    BUG REALE TROVATO E CORRETTO (segnalato: dichiarati 18 pezzi 'S-20 fase
-    A', avanzavano correttamente al componente giusto DOPO il fix sulla
-    fase — ma restava un problema strutturale diverso e più a monte):
-    il flag ripartizione_produzione (Parametri di Lavorazione — 'quando
-    MasterWork non distingue N componenti fisici diversi, es. Fronte/Retro
-    di un cavalletto') era già usato per dividere il CONSUMO di materiale
-    tra i figli — ma nessun punto lo applicava anche all'ACCREDITO dei
-    pezzi finiti: la dichiarazione finiva SEMPRE registrata per intero sul
-    codice risolto dalla traduzione MasterWork (spesso il padre stesso, se
-    non c'è una fase specifica a distinguere) — mai spezzata sui figli.
+    SEMANTICA DEL FLAG (corretta dopo due bug consecutivi sullo stesso
+    meccanismo — la prima correzione era ANCH'ESSA sbagliata, verificata
+    di persona da Maurizio): 'Ripartizione Produzione' spuntato su un
+    codice FIGLIO (es. M16-SRF) non dice nulla sui SUOI sotto-componenti
+    — dice che QUEL figlio fa parte del gruppo su cui va spezzata la
+    produzione dichiarata sul PADRE (es. S-14). È una proprietà dal
+    basso verso l'alto: il figlio marca la propria appartenenza al
+    gruppo di spartizione del padre, non innesca una spartizione verso
+    il basso, sui propri figli.
+
+    BUG 1 (corretto): il flag non veniva applicato affatto
+    all'accredito dei pezzi finiti, solo al consumo di materiale — una
+    dichiarazione sul padre finiva sempre registrata per intero su un
+    solo codice, mai spezzata.
+
+    BUG 2 (corretto DOPO, e SBAGLIATO ancora — segnalato da Maurizio):
+    il primo tentativo controllava il flag sul BERSAGLIO risolto
+    (es. M16-SRF) e, se attivo, esplodeva verso i SUOI figli
+    (M16RF01/02/03) — cascata sbagliata verso le materie prime. La
+    lettura corretta del flag è l'opposto: si cercano, fra i FIGLI del
+    codice bersaglio, quelli che HANNO IL FLAG ATTIVO SU SÉ STESSI, e
+    si divide fra QUELLI (non fra tutti i figli indiscriminatamente, e
+    mai controllando il flag del bersaglio stesso).
 
     Se il codice bersaglio (componente, o il codice articolo dell'OP se
-    componente_finale) ha il flag attivo e almeno 2 figli di primo livello
-    in distinta base: divide good/scarto in parti (quasi) uguali tra loro
-    (resto all'ULTIMO figlio, stessa convenzione già usata per il consumo
-    materiale) e registra UN evento PER FIGLIO, ciascuno con il proprio
-    componente e un event_id derivato ma univoco (mai lo stesso event_id
-    due volte: violerebbe la deduplicazione). Altrimenti, comportamento
-    INVARIATO: una sola chiamata a _registra_evento_consuntivo, come
-    sempre.
-
-    BUG REALE TROVATO E CORRETTO 2 (segnalato con screenshot: 'S-14 fase
-    RETRO' risolto correttamente in M16-SRF+M16-SRI dalla mappatura
-    multi-bersaglio, ma poi accreditato sui LORO sotto-componenti materie
-    prime invece che su M16-SRF/M16-SRI stessi): quando la dichiarazione è
-    già stata distinta in più bersagli dal chiamante (gia_suddiviso=True —
-    es. dalla mappatura multi-bersaglio MasterWork su codici/fasi diversi),
-    quella distinzione era già lo scopo della ripartizione per QUESTA
-    dichiarazione — anche se il bersaglio risolto ha A SUA VOLTA il flag
-    attivo (per un motivo diverso, es. dividere il consumo materiale verso
-    i SUOI figli), non va suddiviso una seconda volta sullo stesso evento.
+    componente_finale) ha almeno 2 figli di primo livello in distinta
+    base CON IL FLAG ATTIVO SU SÉ STESSI: divide good/scarto in parti
+    (quasi) uguali tra loro (resto all'ULTIMO, stessa convenzione già
+    usata per il consumo materiale) e registra UN evento PER FIGLIO
+    flaggato, ciascuno con il proprio componente e un event_id derivato
+    ma univoco (mai lo stesso event_id due volte: violerebbe la
+    deduplicazione). Altrimenti (nessun figlio flaggato, o solo uno):
+    una sola chiamata a _registra_evento_consuntivo, come sempre — e
+    questo copre da solo anche il caso di un bersaglio già risolto dalla
+    mappatura multi-bersaglio MasterWork (es. M16-SRF): i SUOI figli
+    (M16RF01/02/03) non hanno il flag attivo su sé stessi, quindi non
+    scatta nessuna ulteriore suddivisione, senza bisogno di un segnale
+    esplicito dal chiamante.
 
     Ritorna la lista degli avvisi di magazzino non vuoti (uno per evento
     registrato, se presenti) — stessa forma di quello che tornerebbe una
@@ -2381,8 +2388,11 @@ def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, even
     """
     componente_finale = componente is None
     codice_target = o.codice_articolo if componente_finale else componente
-    par = ParametriLavorazioneWood.query.get(codice_target)
-    righe_figli = _righe_bom_attive_wood(codice_target) if (not gia_suddiviso and par and par.ripartizione_produzione) else []
+    righe_figli = []
+    for r in _righe_bom_attive_wood(codice_target):
+        p = ParametriLavorazioneWood.query.get(r.codice_figlio)
+        if p and p.ripartizione_produzione:
+            righe_figli.append(r)
 
     if not righe_figli or len(righe_figli) < 2:
         avviso = _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id,
@@ -2778,21 +2788,6 @@ def api_evento():
         if not componente_raw or componente_raw == o.codice:
             componente_raw = o.codice_articolo
         bersagli = _bersagli_masterwork(componente_raw, str(d['fase']).strip())
-        # BUG REALE TROVATO E CORRETTO (segnalato con screenshot: dichiarati
-        # dei pezzi 'S-14 fase RETRO', risolti correttamente in M16-SRF +
-        # M16-SRI dalla mappatura multi-bersaglio — ma poi accreditati sui
-        # LORO sotto-componenti materie prime, M16RF01/RF02, invece che su
-        # M16-SRF/M16-SRI stessi): due meccanismi di suddivisione indipendenti
-        # si sommavano in cascata. M16-SRF/M16-SRI hanno il flag
-        # 'Ripartizione Produzione' attivo (per dividere il CONSUMO
-        # materiale verso i loro figli, tutt'altro scopo), e
-        # _registra_evento_con_ripartizione lo vede e suddivide di nuovo il
-        # bersaglio già risolto, scendendo un altro livello. Quando la
-        # dichiarazione è già stata distinta in più bersagli qui sopra
-        # (len(bersagli) > 1), quella distinzione era già lo scopo del
-        # flag ripartizione per QUESTA dichiarazione — non va applicato una
-        # seconda volta sullo stesso evento.
-        gia_suddiviso = len(bersagli) > 1
 
         for i, (componente, coeff) in enumerate(bersagli):
             good_i = round(good * coeff) if coeff != 1.0 else good
@@ -2804,7 +2799,7 @@ def api_evento():
             tempo_i = tempo if i == 0 else 0
             event_id_i = str(d['event_id']).strip() if i == 0 else f"{str(d['event_id']).strip()}-mw{i}"
             _registra_evento_con_ripartizione(o, str(d['fase']).strip(), ts, good_i, scrap_i, tempo_i, event_id_i,
-                                         componente=componente, gia_suddiviso=gia_suddiviso,
+                                         componente=componente,
                                          operatore=(str(d['operatore']).strip() if d.get('operatore') else None))
         db.session.commit(); return jsonify(ok=True, deduplicated=False, ordine=_ordine(o)), 201
     except ValueError as exc: return jsonify(ok=False, error=str(exc)), 400
@@ -2907,7 +2902,6 @@ def api_evento_correggi():
         # MasterWork, non più un pulsante manuale da ricordarsi) — non
         # saltando la revisione della Direzione.
         avvisi_magazzino = []
-        gia_suddiviso = len(bersagli) > 1
         for i, (componente, coeff) in enumerate(bersagli):
             good_i = round(good * coeff) if coeff != 1.0 else good
             scrap_i = round(scrap * coeff) if coeff != 1.0 else scrap
@@ -2915,7 +2909,7 @@ def api_evento_correggi():
             event_id_i = nuovo_event_id if i == 0 else f'{nuovo_event_id}-mw{i}'
             avvisi_magazzino += _registra_evento_con_ripartizione(
                 o, str(d['fase']).strip(), ts, good_i, scrap_i, tempo_i, event_id_i,
-                componente=componente, gia_suddiviso=gia_suddiviso,
+                componente=componente,
                 operatore=(str(d['operatore']).strip() if d.get('operatore') else None),
                 approvato_direzione=False)
         db.session.commit()
