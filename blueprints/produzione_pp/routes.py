@@ -192,6 +192,7 @@ def _bersagli_masterwork(componente_raw, fase):
     if not gruppo:
         return [(componente_raw, 1.0)]
     codici = [m.codice_ironproduction for m in gruppo]
+    padri_per_codice = {cod: {r.codice_padre: r.quantita for r in DistintaBaseWood.query.filter_by(codice_figlio=cod).all()} for cod in codici}
     # BUG REALE TROVATO E CORRETTO (segnalato: 'S-20 fase A' doveva dare
     # 0,5 a M17-SRF e 0,5 a M17-SRI, ma entrambi ricevevano 1.0 — la
     # produzione veniva contata doppia): il calcolo cercava un legame
@@ -206,11 +207,35 @@ def _bersagli_masterwork(componente_raw, fase):
     # con un altro bersaglio dello stesso gruppo, il contesto di questa
     # famiglia produttiva, es. S-20); un bersaglio senza alcun padre è la
     # radice del gruppo e riceve la quota intera (1.0), come prima.
-    padri_per_codice = {cod: {r.codice_padre: r.quantita for r in DistintaBaseWood.query.filter_by(codice_figlio=cod).all()} for cod in codici}
+    #
+    # BUG REALE TROVATO E CORRETTO 2 (segnalato: dichiarati 8 pezzi 'S-14
+    # fase RETRO', risolti nei due bersagli giusti M16-SRF/M16-SRI — ma
+    # entrambi accreditati per 8, non divisi 4+4): il coefficiente sopra
+    # usa la QUANTITÀ DI DISTINTA BASE fra bersaglio e padre comune — giusto
+    # per un consumo di componente (es. S-20→M17-SFS, 1 S-20 richiede 1
+    # M17-SFS: entrambi devono ricevere la stessa quantità intera, non
+    # dividersi), ma SBAGLIATO per una vera ripartizione (es. S-14→{M16-SRF,
+    # M16-SRI}, 'i 2 retro': la produzione dichiarata va divisa in parti
+    # uguali fra loro, non replicata). Il flag Ripartizione Produzione (già
+    # usato altrove per segnare l'appartenenza di un figlio al gruppo di
+    # spartizione del padre) è esattamente il segnale per distinguere i due
+    # casi: se il bersaglio ha il flag attivo SU SÉ STESSO, il suo
+    # coefficiente è 1 diviso il numero di bersagli-fratelli (stesso padre)
+    # anche loro flaggati — mai la quantità di distinta base in quel caso.
+    flag_per_codice = {}
+    for cod in codici:
+        p = ParametriLavorazioneWood.query.get(cod)
+        flag_per_codice[cod] = bool(p and p.ripartizione_produzione)
     risultato = []
     for cod in codici:
         padri_cod = padri_per_codice[cod]
-        if not padri_cod:
+        if flag_per_codice[cod] and padri_cod:
+            n_fratelli_flaggati = sum(
+                1 for altro in codici
+                if flag_per_codice[altro] and (set(padri_per_codice[altro]) & set(padri_cod))
+            )
+            coeff = 1.0 / max(n_fratelli_flaggati, 1)
+        elif not padri_cod:
             coeff = 1.0  # radice del gruppo: nessun genitore, quota intera
         else:
             padri_altri = {p for altro in codici if altro != cod for p in padri_per_codice[altro]}
