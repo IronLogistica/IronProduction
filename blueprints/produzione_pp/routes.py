@@ -2337,7 +2337,7 @@ def api_dichiarazione_libera_conferma():
     return jsonify(ok=True)
 
 
-def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, operatore=None, approvato_direzione=False):
+def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, operatore=None, approvato_direzione=False, gia_suddiviso=False):
     """
     Livello sopra _registra_evento_consuntivo — decide SE una dichiarazione
     va registrata su un solo codice o SPEZZATA tra i figli di primo livello,
@@ -2364,6 +2364,17 @@ def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, even
     INVARIATO: una sola chiamata a _registra_evento_consuntivo, come
     sempre.
 
+    BUG REALE TROVATO E CORRETTO 2 (segnalato con screenshot: 'S-14 fase
+    RETRO' risolto correttamente in M16-SRF+M16-SRI dalla mappatura
+    multi-bersaglio, ma poi accreditato sui LORO sotto-componenti materie
+    prime invece che su M16-SRF/M16-SRI stessi): quando la dichiarazione è
+    già stata distinta in più bersagli dal chiamante (gia_suddiviso=True —
+    es. dalla mappatura multi-bersaglio MasterWork su codici/fasi diversi),
+    quella distinzione era già lo scopo della ripartizione per QUESTA
+    dichiarazione — anche se il bersaglio risolto ha A SUA VOLTA il flag
+    attivo (per un motivo diverso, es. dividere il consumo materiale verso
+    i SUOI figli), non va suddiviso una seconda volta sullo stesso evento.
+
     Ritorna la lista degli avvisi di magazzino non vuoti (uno per evento
     registrato, se presenti) — stessa forma di quello che tornerebbe una
     singola _registra_evento_consuntivo, solo eventualmente più di uno.
@@ -2371,7 +2382,7 @@ def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, even
     componente_finale = componente is None
     codice_target = o.codice_articolo if componente_finale else componente
     par = ParametriLavorazioneWood.query.get(codice_target)
-    righe_figli = _righe_bom_attive_wood(codice_target) if (par and par.ripartizione_produzione) else []
+    righe_figli = _righe_bom_attive_wood(codice_target) if (not gia_suddiviso and par and par.ripartizione_produzione) else []
 
     if not righe_figli or len(righe_figli) < 2:
         avviso = _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id,
@@ -2767,6 +2778,21 @@ def api_evento():
         if not componente_raw or componente_raw == o.codice:
             componente_raw = o.codice_articolo
         bersagli = _bersagli_masterwork(componente_raw, str(d['fase']).strip())
+        # BUG REALE TROVATO E CORRETTO (segnalato con screenshot: dichiarati
+        # dei pezzi 'S-14 fase RETRO', risolti correttamente in M16-SRF +
+        # M16-SRI dalla mappatura multi-bersaglio — ma poi accreditati sui
+        # LORO sotto-componenti materie prime, M16RF01/RF02, invece che su
+        # M16-SRF/M16-SRI stessi): due meccanismi di suddivisione indipendenti
+        # si sommavano in cascata. M16-SRF/M16-SRI hanno il flag
+        # 'Ripartizione Produzione' attivo (per dividere il CONSUMO
+        # materiale verso i loro figli, tutt'altro scopo), e
+        # _registra_evento_con_ripartizione lo vede e suddivide di nuovo il
+        # bersaglio già risolto, scendendo un altro livello. Quando la
+        # dichiarazione è già stata distinta in più bersagli qui sopra
+        # (len(bersagli) > 1), quella distinzione era già lo scopo del
+        # flag ripartizione per QUESTA dichiarazione — non va applicato una
+        # seconda volta sullo stesso evento.
+        gia_suddiviso = len(bersagli) > 1
 
         for i, (componente, coeff) in enumerate(bersagli):
             good_i = round(good * coeff) if coeff != 1.0 else good
@@ -2778,7 +2804,7 @@ def api_evento():
             tempo_i = tempo if i == 0 else 0
             event_id_i = str(d['event_id']).strip() if i == 0 else f"{str(d['event_id']).strip()}-mw{i}"
             _registra_evento_con_ripartizione(o, str(d['fase']).strip(), ts, good_i, scrap_i, tempo_i, event_id_i,
-                                         componente=componente,
+                                         componente=componente, gia_suddiviso=gia_suddiviso,
                                          operatore=(str(d['operatore']).strip() if d.get('operatore') else None))
         db.session.commit(); return jsonify(ok=True, deduplicated=False, ordine=_ordine(o)), 201
     except ValueError as exc: return jsonify(ok=False, error=str(exc)), 400
@@ -2881,6 +2907,7 @@ def api_evento_correggi():
         # MasterWork, non più un pulsante manuale da ricordarsi) — non
         # saltando la revisione della Direzione.
         avvisi_magazzino = []
+        gia_suddiviso = len(bersagli) > 1
         for i, (componente, coeff) in enumerate(bersagli):
             good_i = round(good * coeff) if coeff != 1.0 else good
             scrap_i = round(scrap * coeff) if coeff != 1.0 else scrap
@@ -2888,7 +2915,7 @@ def api_evento_correggi():
             event_id_i = nuovo_event_id if i == 0 else f'{nuovo_event_id}-mw{i}'
             avvisi_magazzino += _registra_evento_con_ripartizione(
                 o, str(d['fase']).strip(), ts, good_i, scrap_i, tempo_i, event_id_i,
-                componente=componente,
+                componente=componente, gia_suddiviso=gia_suddiviso,
                 operatore=(str(d['operatore']).strip() if d.get('operatore') else None),
                 approvato_direzione=False)
         db.session.commit()
