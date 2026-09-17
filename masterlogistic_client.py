@@ -168,3 +168,68 @@ def carica_produzione(sku, quantita, timeout=8):
     if not dati.get("ok"):
         raise MasterLogisticError(f"MasterLogistic-WMS ha rifiutato il carico per {sku}: {dati.get('error', 'errore sconosciuto')}")
     return dati
+
+
+# ── Mappatura fisica del magazzino / WIP (fase 2 — vedi warehouse/models.py
+# e warehouse/routes.py lato MasterLogistic-WMS) — token DIVERSO da
+# MASTERLOGISTIC_API_TOKEN qui sopra apposta: integrazione separata,
+# aggiunta dopo, con permessi propri (WAREHOUSE_API_TOKEN deve combaciare
+# ESATTAMENTE, stesso nome su entrambi i Railway, non rinominato da un lato
+# come invece succede per la coppia MASTERLOGISTIC_API_TOKEN/
+# IRONPRODUCTION_API_TOKEN qui sopra).
+def _headers_warehouse():
+    token = current_app.config.get("WAREHOUSE_API_TOKEN", "")
+    if not token:
+        raise MasterLogisticError(
+            "WAREHOUSE_API_TOKEN non configurato. Deve combaciare ESATTAMENTE (stesso nome, "
+            "stesso valore) con WAREHOUSE_API_TOKEN impostato lato MasterLogistic-WMS."
+        )
+    return {"Authorization": f"Bearer {token}"}
+
+
+def _post_warehouse(path, payload, timeout=8):
+    """Chiamata POST grezza verso un endpoint /api/warehouse/... — uso interno."""
+    url = f"{_base_url()}{path}"
+    try:
+        resp = requests.post(url, json=payload, headers=_headers_warehouse(), timeout=timeout)
+    except requests.exceptions.RequestException as e:
+        raise MasterLogisticError(f"MasterLogistic-WMS non raggiungibile ({url}): {e}")
+    if resp.status_code == 401:
+        raise MasterLogisticError("MasterLogistic-WMS ha rifiutato l'autenticazione: verifica WAREHOUSE_API_TOKEN.")
+    if resp.status_code == 503:
+        raise MasterLogisticError("Integrazione mappatura magazzino disabilitata lato MasterLogistic-WMS (WAREHOUSE_API_TOKEN non configurato là).")
+    try:
+        dati = resp.json()
+    except ValueError:
+        raise MasterLogisticError(f"MasterLogistic-WMS ha risposto in un formato inatteso (status {resp.status_code}).")
+    if not dati.get("ok"):
+        raise MasterLogisticError(f"MasterLogistic-WMS ha rifiutato la richiesta {path}: {dati.get('error', 'errore sconosciuto')}")
+    return dati
+
+
+def assegna_ubicazione_wip(sku, centro_costo, quantita=None, timeout=8):
+    """
+    Sposta `sku` nella zona WIP del centro di costo indicato — crea la
+    zona/ubicazione in WMS se non esistono ancora (idempotente), e
+    sostituisce ogni precedente posizionamento WIP dello stesso sku (un
+    pezzo è in lavorazione in un solo posto alla volta). Chiamata dopo OGNI
+    fase intermedia dichiarata (vedi _applica_effetti_evento_consuntivo).
+    """
+    if not sku or not centro_costo:
+        raise MasterLogisticError("sku e centro_costo obbligatori per assegnare l'ubicazione WIP.")
+    payload = {"sku": sku, "centro_costo": centro_costo}
+    if quantita is not None:
+        payload["quantita"] = quantita
+    return _post_warehouse("/api/warehouse/assegna-wip", payload, timeout=timeout)
+
+
+def rimuovi_ubicazione_wip(sku, timeout=8):
+    """
+    Il pezzo ha completato il SUO ciclo di lavorazione (ultima fase per
+    quel codice specifico) — non è più WIP, esce dal tracciamento di
+    reparto (diventa scorta pronta o prodotto finito da posizionare a mano
+    dalla logistica post-vendita).
+    """
+    if not sku:
+        raise MasterLogisticError("sku obbligatorio per rimuovere l'ubicazione WIP.")
+    return _post_warehouse("/api/warehouse/rimuovi-wip", {"sku": sku}, timeout=timeout)

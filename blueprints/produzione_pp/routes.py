@@ -31,6 +31,7 @@ from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 from blueprints.produzione_pp.avanzamento import (calcola_avanzamento_commesse,
                     _capacita_giornaliera_ore, DEFAULT_ORE_GIORNO)
+from masterlogistic_client import assegna_ubicazione_wip, rimuovi_ubicazione_wip, MasterLogisticError
 
 pp_bp = Blueprint("produzione_pp", __name__)
 
@@ -2778,6 +2779,32 @@ def _applica_effetti_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, eve
                         contromatrice.contapieghe = (contromatrice.contapieghe or 0) + qta_pieghe
         except Exception:
             pass  # mai bloccare il consuntivo per un contatore di manutenzione
+
+    # ── Mappatura WIP per centro di costo (fase 2) — vedi masterlogistic_
+    # client.py e warehouse/ lato MasterLogistic-WMS. "Il materiale non va
+    # mai lasciato nel limbo": ogni fase dichiarata sposta il codice nella
+    # zona WIP di QUESTO centro di costo (fase_nome è già il nome del
+    # centro di costo in questo codebase, vedi CentroCostoWood più sopra),
+    # a meno che non sia l'ULTIMA fase del ciclo di questo specifico
+    # codice — in quel caso il pezzo è pronto (semilavorato o finito) e
+    # esce dal tracciamento WIP, non è più "in lavorazione da qualche
+    # parte". Chiamata per OGNI fase (non solo la prima, a differenza dello
+    # scarico materiali sopra): la posizione fisica cambia a ogni passaggio
+    # di reparto, indipendentemente da quando si consuma il materiale.
+    # Mai bloccante: se MasterLogistic-WMS non risponde, il consuntivo
+    # resta comunque valido — la mappatura fisica è un arricchimento
+    # informativo, non una condizione per registrare la produzione.
+    if qta_tagliata > 0:
+        try:
+            ultima_fase_di_questo_codice = _e_ultima_fase_del_ciclo(codice_lavorato, fase_nome)
+            if ultima_fase_di_questo_codice:
+                rimuovi_ubicazione_wip(codice_lavorato)
+            else:
+                assegna_ubicazione_wip(codice_lavorato, fase_nome)
+        except MasterLogisticError as e:
+            log(f'AVVISO mappatura WIP non aggiornata — OP {o.codice}, {codice_lavorato}, evento {event_id}: {e}')
+        except Exception as e:
+            log(f'ERRORE inatteso mappatura WIP — OP {o.codice}, {codice_lavorato}, evento {event_id}: {e}')
 
     return avviso_magazzino
 

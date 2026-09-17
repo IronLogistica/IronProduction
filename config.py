@@ -49,6 +49,10 @@ class Config:
     # passa sempre da lì, mai dal bind diretto.
     MASTERLOGISTIC_URL = os.environ.get('MASTERLOGISTIC_URL', '')
     MASTERLOGISTIC_API_TOKEN = os.environ.get('MASTERLOGISTIC_API_TOKEN', '')
+    # Mappatura fisica del magazzino / WIP (fase 2) — vedi masterlogistic_client.py.
+    # Stesso nome ESATTO su entrambi i Railway (diverso dalla coppia sopra,
+    # che invece ha nomi diversi sui due lati).
+    WAREHOUSE_API_TOKEN = os.environ.get('WAREHOUSE_API_TOKEN', '')
 
     # URL + token per interrogare in sola lettura MasterLedgerLight
     # dall'interrogazione automatica del Kanban Gruppi (masterledgerlight_client.py,
