@@ -1489,19 +1489,52 @@ def assicura_mappa_mw_bersagli_multipli():
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:
         try:
-            nome_vincolo = db.session.execute(text("""
-                SELECT tc.constraint_name
-                FROM information_schema.table_constraints tc
-                JOIN information_schema.key_column_usage kcu
-                  ON tc.constraint_name = kcu.constraint_name AND tc.table_name = kcu.table_name
-                WHERE tc.table_name = 'mappa_codici_masterwork' AND tc.constraint_type = 'UNIQUE'
-                GROUP BY tc.constraint_name
-                HAVING COUNT(*) = 2
-                   AND bool_and(kcu.column_name IN ('codice_masterwork', 'fase_masterwork'))
-            """)).scalar()
-            if nome_vincolo:
-                db.session.execute(text(f'ALTER TABLE mappa_codici_masterwork DROP CONSTRAINT "{nome_vincolo}"'))
-                db.session.commit()
+            # CORREZIONE: la versione precedente cercava il vincolo solo in
+            # information_schema.table_constraints — che elenca SOLO i
+            # vincoli UNIQUE nominati, non un eventuale indice univoco
+            # 'nudo' (creato senza passare da un CONSTRAINT, es. con
+            # db.Index(..., unique=True) invece di UniqueConstraint(...)
+            # in __table_args__). Se il vincolo originale è di questo tipo,
+            # la query non lo trovava mai, non lo rimuoveva mai, e restava
+            # attivo INSIEME al nuovo vincolo esteso — bloccando comunque
+            # ogni inserimento multi-bersaglio, esattamente il sintomo
+            # segnalato ('salva ma poi il secondo codice non c'è').
+            # pg_index è il livello più basso: cattura QUALSIASI forma di
+            # unicità (con o senza un CONSTRAINT nominato sopra).
+            # CORREZIONE 2 (confermata con l'endpoint diagnostico
+            # temporaneo /api/debug/vincoli-mappa-masterwork, che ha
+            # mostrato i vincoli reali sul database live): il vincolo
+            # legacy non era affatto quello ipotizzato sopra (una coppia
+            # codice_masterwork+fase_masterwork) — era un indice univoco
+            # su codice_masterwork DA SOLO
+            # ('ix_mappa_codici_masterwork_codice_masterwork'), residuo di
+            # quando quella colonna aveva 'unique=True' nel modello, prima
+            # ancora che esistesse fase_masterwork. Il modello è stato
+            # aggiornato da tempo (ora è solo 'index=True', vedi la
+            # definizione della colonna più sotto) ma l'indice sul
+            # database non era mai stato aggiornato di conseguenza — molto
+            # più restrittivo del previsto: impediva di riusare lo stesso
+            # codice_masterwork una seconda volta IN ASSOLUTO, qualunque
+            # fase o codice_ironproduction di destinazione. La query sotto
+            # ora cerca ANCHE questo caso a 1 colonna, non solo quello a 2.
+            righe_indice = db.session.execute(text("""
+                SELECT i.relname AS nome_indice, con.conname AS nome_vincolo
+                FROM pg_index ix
+                JOIN pg_class i ON i.oid = ix.indexrelid
+                JOIN pg_class t ON t.oid = ix.indrelid
+                JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = ANY(ix.indkey)
+                LEFT JOIN pg_constraint con ON con.conindid = ix.indexrelid
+                WHERE t.relname = 'mappa_codici_masterwork' AND ix.indisunique
+                GROUP BY i.relname, con.conname
+                HAVING (COUNT(*) = 1 AND bool_and(a.attname = 'codice_masterwork'))
+                    OR (COUNT(*) = 2 AND bool_and(a.attname IN ('codice_masterwork', 'fase_masterwork')))
+            """)).fetchall()
+            for nome_indice, nome_vincolo in righe_indice:
+                if nome_vincolo:
+                    db.session.execute(text(f'ALTER TABLE mappa_codici_masterwork DROP CONSTRAINT "{nome_vincolo}"'))
+                else:
+                    db.session.execute(text(f'DROP INDEX IF EXISTS "{nome_indice}"'))
+            db.session.commit()
         except Exception:
             db.session.rollback()
         try:

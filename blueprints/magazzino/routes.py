@@ -5,6 +5,7 @@ import os
 import io
 import pandas as pd
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy import text
 from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError, _kanban_stock_grezzo
 from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
@@ -4558,6 +4559,49 @@ def api_mappa_codice_masterwork_upsert():
             DistintaBaseWood.query.filter_by(codice_padre=codice_ip, codice_figlio=conflitto.codice_ironproduction).first() or
             DistintaBaseWood.query.filter_by(codice_padre=conflitto.codice_ironproduction, codice_figlio=codice_ip).first()
         )
+        if not collegati:
+            # BUG REALE TROVATO E CORRETTO (segnalato: 'S-20 fase A' deve
+            # dividersi 0,5/0,5 fra M17-SRF e M17-SRI, entrambi figli di
+            # S-20 — ma il salvataggio del secondo dei due veniva bloccato
+            # come conflitto): il controllo sopra riconosce SOLO un legame
+            # padre/figlio DIRETTO fra i due codici in conflitto. M17-SRF e
+            # M17-SRI però non sono padre/figlio fra loro — sono FRATELLI,
+            # entrambi figli di S-20 — esattamente il caso per cui esiste
+            # la Ripartizione Produzione (dividere una dichiarazione fra i
+            # figli di uno stesso padre). Il controllo diretto da solo non
+            # lo contemplava mai. Ora, se non c'è un legame diretto, si
+            # controlla anche se i due codici sono fratelli sotto lo stesso
+            # padre in distinta base.
+            #
+            # CORREZIONE: il primo tentativo richiedeva ANCHE che il padre
+            # avesse il flag 'Ripartizione Produzione' attivo — requisito
+            # che NON era nel commento/design originale qui sopra (parla
+            # solo di 'collegati come padre/figlio', senza menzionare quel
+            # flag) e che nella pratica ha continuato a bloccare il caso
+            # reale: il flag era spuntato sui FIGLI (M17-SRF/M17-SRI, per
+            # la LORO propria ripartizione verso i rispettivi sotto-livelli
+            # M17RF*/M17RI*), non sul padre comune S-20. Essere fratelli
+            # sotto lo stesso padre in distinta base è di per sé un legame
+            # sufficientemente esplicito e controllato (mai fra codici
+            # scollegati) — non serve anche quel flag, che è un meccanismo
+            # a parte (dividere una dichiarazione che atterra DIRETTAMENTE
+            # sul padre, non collegato al caso qui di due mappature
+            # separate sulla stessa fase).
+            #
+            # BUG REALE TROVATO E CORRETTO (segnalato: bloccava ANCORA
+            # M17-SRF/M17-SRI nonostante siano davvero entrambi figli di
+            # S-20): usava .first() per trovare 'il' padre di ciascun
+            # codice, ma un codice componente può comparire come figlio in
+            # PIÙ punti della distinta base (lo stesso pezzo riusato in
+            # assiemi diversi — normalissimo in una BOM) — .first() poteva
+            # quindi pescare un padre diverso da S-20 per uno dei due
+            # codici, e il confronto falliva anche quando esisteva
+            # comunque un padre comune. Ora si guardano TUTTI i padri
+            # possibili di entrambi i codici e si cerca un'intersezione.
+            padri_ip = {r.codice_padre for r in DistintaBaseWood.query.filter_by(codice_figlio=codice_ip).all()}
+            padri_conflitto = {r.codice_padre for r in DistintaBaseWood.query.filter_by(codice_figlio=conflitto.codice_ironproduction).all()}
+            if padri_ip & padri_conflitto:
+                collegati = True
         if not collegati:
             # Messaggio reso più chiaro (era 'X è già associato a X' quando il
             # conflitto era con la mappatura generica del codice padre stesso —

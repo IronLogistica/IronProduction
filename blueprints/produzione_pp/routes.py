@@ -192,16 +192,55 @@ def _bersagli_masterwork(componente_raw, fase):
     if not gruppo:
         return [(componente_raw, 1.0)]
     codici = [m.codice_ironproduction for m in gruppo]
+    padri_per_codice = {cod: {r.codice_padre: r.quantita for r in DistintaBaseWood.query.filter_by(codice_figlio=cod).all()} for cod in codici}
+    # BUG REALE TROVATO E CORRETTO (segnalato: 'S-20 fase A' doveva dare
+    # 0,5 a M17-SRF e 0,5 a M17-SRI, ma entrambi ricevevano 1.0 — la
+    # produzione veniva contata doppia): il calcolo cercava un legame
+    # padre/figlio SOLO fra i membri del gruppo stesso ('altro' nel loop
+    # sotto era sempre un altro bersaglio) — per due FRATELLI (M17-SRF e
+    # M17-SRI, nessuno dei due è padre dell'altro: sono entrambi figli di
+    # S-20, che non è nemmeno nel gruppo per la fase A) questo controllo
+    # non trovava mai nulla, e il coefficiente restava 1.0 di default per
+    # entrambi. Ora si cerca il VERO padre di ciascun bersaglio in
+    # distinta base (un codice può comparire come figlio in più punti,
+    # quindi avere più padri possibili — si preferisce quello condiviso
+    # con un altro bersaglio dello stesso gruppo, il contesto di questa
+    # famiglia produttiva, es. S-20); un bersaglio senza alcun padre è la
+    # radice del gruppo e riceve la quota intera (1.0), come prima.
+    #
+    # BUG REALE TROVATO E CORRETTO 2 (segnalato: dichiarati 8 pezzi 'S-14
+    # fase RETRO', risolti nei due bersagli giusti M16-SRF/M16-SRI — ma
+    # entrambi accreditati per 8, non divisi 4+4): il coefficiente sopra
+    # usa la QUANTITÀ DI DISTINTA BASE fra bersaglio e padre comune — giusto
+    # per un consumo di componente (es. S-20→M17-SFS, 1 S-20 richiede 1
+    # M17-SFS: entrambi devono ricevere la stessa quantità intera, non
+    # dividersi), ma SBAGLIATO per una vera ripartizione (es. S-14→{M16-SRF,
+    # M16-SRI}, 'i 2 retro': la produzione dichiarata va divisa in parti
+    # uguali fra loro, non replicata). Il flag Ripartizione Produzione (già
+    # usato altrove per segnare l'appartenenza di un figlio al gruppo di
+    # spartizione del padre) è esattamente il segnale per distinguere i due
+    # casi: se il bersaglio ha il flag attivo SU SÉ STESSO, il suo
+    # coefficiente è 1 diviso il numero di bersagli-fratelli (stesso padre)
+    # anche loro flaggati — mai la quantità di distinta base in quel caso.
+    flag_per_codice = {}
+    for cod in codici:
+        p = ParametriLavorazioneWood.query.get(cod)
+        flag_per_codice[cod] = bool(p and p.ripartizione_produzione)
     risultato = []
     for cod in codici:
-        coeff = 1.0
-        for altro in codici:
-            if altro == cod:
-                continue
-            riga = DistintaBaseWood.query.filter_by(codice_padre=altro, codice_figlio=cod).first()
-            if riga:
-                coeff = riga.quantita or 1.0
-                break
+        padri_cod = padri_per_codice[cod]
+        if flag_per_codice[cod] and padri_cod:
+            n_fratelli_flaggati = sum(
+                1 for altro in codici
+                if flag_per_codice[altro] and (set(padri_per_codice[altro]) & set(padri_cod))
+            )
+            coeff = 1.0 / max(n_fratelli_flaggati, 1)
+        elif not padri_cod:
+            coeff = 1.0  # radice del gruppo: nessun genitore, quota intera
+        else:
+            padri_altri = {p for altro in codici if altro != cod for p in padri_per_codice[altro]}
+            padre_scelto = next((p for p in padri_cod if p in padri_altri), next(iter(padri_cod)))
+            coeff = padri_cod[padre_scelto] or 1.0
         risultato.append((cod, coeff))
     return risultato
 
@@ -2326,29 +2365,47 @@ def api_dichiarazione_libera_conferma():
 def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, event_id, componente=None, operatore=None, approvato_direzione=False):
     """
     Livello sopra _registra_evento_consuntivo — decide SE una dichiarazione
-    va registrata su un solo codice o SPEZZATA tra i figli di primo livello,
-    prima di chiamarla.
+    va registrata su un solo codice o SPEZZATA tra i figli che fanno parte
+    di un gruppo di ripartizione, prima di chiamarla.
 
-    BUG REALE TROVATO E CORRETTO (segnalato: dichiarati 18 pezzi 'S-20 fase
-    A', avanzavano correttamente al componente giusto DOPO il fix sulla
-    fase — ma restava un problema strutturale diverso e più a monte):
-    il flag ripartizione_produzione (Parametri di Lavorazione — 'quando
-    MasterWork non distingue N componenti fisici diversi, es. Fronte/Retro
-    di un cavalletto') era già usato per dividere il CONSUMO di materiale
-    tra i figli — ma nessun punto lo applicava anche all'ACCREDITO dei
-    pezzi finiti: la dichiarazione finiva SEMPRE registrata per intero sul
-    codice risolto dalla traduzione MasterWork (spesso il padre stesso, se
-    non c'è una fase specifica a distinguere) — mai spezzata sui figli.
+    SEMANTICA DEL FLAG (corretta dopo due bug consecutivi sullo stesso
+    meccanismo — la prima correzione era ANCH'ESSA sbagliata, verificata
+    di persona da Maurizio): 'Ripartizione Produzione' spuntato su un
+    codice FIGLIO (es. M16-SRF) non dice nulla sui SUOI sotto-componenti
+    — dice che QUEL figlio fa parte del gruppo su cui va spezzata la
+    produzione dichiarata sul PADRE (es. S-14). È una proprietà dal
+    basso verso l'alto: il figlio marca la propria appartenenza al
+    gruppo di spartizione del padre, non innesca una spartizione verso
+    il basso, sui propri figli.
+
+    BUG 1 (corretto): il flag non veniva applicato affatto
+    all'accredito dei pezzi finiti, solo al consumo di materiale — una
+    dichiarazione sul padre finiva sempre registrata per intero su un
+    solo codice, mai spezzata.
+
+    BUG 2 (corretto DOPO, e SBAGLIATO ancora — segnalato da Maurizio):
+    il primo tentativo controllava il flag sul BERSAGLIO risolto
+    (es. M16-SRF) e, se attivo, esplodeva verso i SUOI figli
+    (M16RF01/02/03) — cascata sbagliata verso le materie prime. La
+    lettura corretta del flag è l'opposto: si cercano, fra i FIGLI del
+    codice bersaglio, quelli che HANNO IL FLAG ATTIVO SU SÉ STESSI, e
+    si divide fra QUELLI (non fra tutti i figli indiscriminatamente, e
+    mai controllando il flag del bersaglio stesso).
 
     Se il codice bersaglio (componente, o il codice articolo dell'OP se
-    componente_finale) ha il flag attivo e almeno 2 figli di primo livello
-    in distinta base: divide good/scarto in parti (quasi) uguali tra loro
-    (resto all'ULTIMO figlio, stessa convenzione già usata per il consumo
-    materiale) e registra UN evento PER FIGLIO, ciascuno con il proprio
-    componente e un event_id derivato ma univoco (mai lo stesso event_id
-    due volte: violerebbe la deduplicazione). Altrimenti, comportamento
-    INVARIATO: una sola chiamata a _registra_evento_consuntivo, come
-    sempre.
+    componente_finale) ha almeno 2 figli di primo livello in distinta
+    base CON IL FLAG ATTIVO SU SÉ STESSI: divide good/scarto in parti
+    (quasi) uguali tra loro (resto all'ULTIMO, stessa convenzione già
+    usata per il consumo materiale) e registra UN evento PER FIGLIO
+    flaggato, ciascuno con il proprio componente e un event_id derivato
+    ma univoco (mai lo stesso event_id due volte: violerebbe la
+    deduplicazione). Altrimenti (nessun figlio flaggato, o solo uno):
+    una sola chiamata a _registra_evento_consuntivo, come sempre — e
+    questo copre da solo anche il caso di un bersaglio già risolto dalla
+    mappatura multi-bersaglio MasterWork (es. M16-SRF): i SUOI figli
+    (M16RF01/02/03) non hanno il flag attivo su sé stessi, quindi non
+    scatta nessuna ulteriore suddivisione, senza bisogno di un segnale
+    esplicito dal chiamante.
 
     Ritorna la lista degli avvisi di magazzino non vuoti (uno per evento
     registrato, se presenti) — stessa forma di quello che tornerebbe una
@@ -2356,8 +2413,27 @@ def _registra_evento_con_ripartizione(o, fase_nome, ts, good, scrap, tempo, even
     """
     componente_finale = componente is None
     codice_target = o.codice_articolo if componente_finale else componente
-    par = ParametriLavorazioneWood.query.get(codice_target)
-    righe_figli = _righe_bom_attive_wood(codice_target) if (par and par.ripartizione_produzione) else []
+    # BUG REALE TROVATO E CORRETTO (segnalato: dichiarati 50 pezzi 'S-14
+    # fase B/FRONTALE' — risolti correttamente in M16-SFS + S-14 dalla
+    # mappatura multi-bersaglio, ma quando S-14 arrivava qui come
+    # bersaglio, il controllo trovava comunque M16-SRF/M16-SRI flaggati
+    # e li faceva scattare DI NUOVO, dividendo 25+25 — anche se quel
+    # flag riguarda un gruppo di TUTT'ALTRA fase, 'SALDATURA DEI RETRO'
+    # (fase A), che non c'entra niente con la fase B appena dichiarata.
+    # La ripartizione era fase-agnostica: scattava per qualunque
+    # dichiarazione risolta sul padre, indipendentemente da quale fase.
+    # Ora un figlio flaggato entra nel gruppo di ripartizione SOLO se è
+    # mappato (in MappaCodiceMasterWork) ANCHE per la fase che si sta
+    # dichiarando in QUESTO momento — non basta avere il flag attivo in
+    # generale, deve essere il gruppo giusto per QUESTA fase.
+    righe_figli = []
+    for r in _righe_bom_attive_wood(codice_target):
+        p = ParametriLavorazioneWood.query.get(r.codice_figlio)
+        if not (p and p.ripartizione_produzione):
+            continue
+        mappe_figlio = MappaCodiceMasterWork.query.filter_by(codice_ironproduction=r.codice_figlio).all()
+        if any(m.fase_masterwork and _fase_masterwork_corrisponde(m.fase_masterwork, fase_nome) for m in mappe_figlio):
+            righe_figli.append(r)
 
     if not righe_figli or len(righe_figli) < 2:
         avviso = _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id,
@@ -2730,6 +2806,28 @@ def api_evento():
         # l'OP né scaricare i materiali giusti. Vedi Parametri di Lavorazione
         # → Corrispondenze MasterWork per gestire le associazioni.
         componente_raw = str(d['componente']).strip() if d.get('componente') else None
+        # BUG REALE TROVATO E CORRETTO (segnalato con screenshot: la
+        # dichiarazione MasterWork per 30 pezzi mostrava 'COMPONENTE:
+        # OP-2026-000046' invece del codice prodotto 'S-14' — confermato
+        # dall'evento arrivato con componente='OP-2026-000046' letterale,
+        # non vuoto): due problemi in cascata.
+        #
+        # 1) Il fix precedente (v. commit sul componente mancante) usava
+        #    o.codice come ripiego — ma o.codice è il NUMERO DELLA
+        #    COMMESSA ('OP-2026-000046'), non il codice prodotto. Il campo
+        #    giusto è o.codice_articolo ('S-14'). Non si era notato prima
+        #    perché nel primo test MasterWork aveva mandato 'S-14'
+        #    direttamente (componente_raw non era vuoto quella volta, il
+        #    ripiego non è mai scattato).
+        #
+        # 2) In questo caso MasterWork manda letteralmente il numero della
+        #    commessa come componente (non vuoto) — quindi il controllo
+        #    'if not componente_raw' da solo non basta: va trattato come
+        #    'nessun componente specifico' anche quando componente_raw
+        #    COINCIDE col numero della commessa stessa (non porta nessuna
+        #    informazione distintiva in più rispetto a saperlo già).
+        if not componente_raw or componente_raw == o.codice:
+            componente_raw = o.codice_articolo
         bersagli = _bersagli_masterwork(componente_raw, str(d['fase']).strip())
 
         for i, (componente, coeff) in enumerate(bersagli):
@@ -2818,6 +2916,12 @@ def api_evento_correggi():
         db.session.flush()   # l'event_id originale si libera PRIMA di registrare il nuovo, in caso combaci
 
         componente_raw = str(d['componente']).strip() if d.get('componente') else None
+        # Stesso fix di /api/pp/events poco sopra: o.codice è il numero
+        # della commessa, non il prodotto — va usato o.codice_articolo, e
+        # va trattato come 'nessun componente' anche quando MasterWork
+        # manda letteralmente il numero della commessa come componente.
+        if not componente_raw or componente_raw == o.codice:
+            componente_raw = o.codice_articolo
         bersagli = _bersagli_masterwork(componente_raw, str(d['fase']).strip())
 
         nuovo_event_id = str(d['nuovo_event_id']).strip()
