@@ -125,13 +125,19 @@ def _righe_macchina(centro):
     # Lavoro di TUTTI in una sola query invece di una per (OP, componente).
     componenti_per_op = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini}
 
-    # ERRORE CONCETTUALE CORRETTO (rimosso 'giacenza già disponibile'
-    # sottratta al saldo qui): l'emissione di un Ordine di Lavoro parte GIÀ
-    # dopo aver interrogato quanta merce c'è a magazzino — il pianificato
-    # dell'OP è deciso tenendone conto. Sottrarre di nuovo la giacenza qui
-    # era un doppio conteggio che confondeva l'operaio con un saldo troppo
-    # basso rispetto alla realtà, non un aiuto. Il Totem e l'Ordine di
-    # Lavoro mostrano di nuovo solo Pz da fare / Fatti / Saldo, come prima.
+    # BUG REALE TROVATO E CORRETTO (segnalato: Monitor LIVE mostrava un
+    # Saldo più alto di quello dell'Ordine di Lavoro stampato per la stessa
+    # fase — es. 800 qui contro 734 lì, per 66 pezzi già pronti a magazzino):
+    # il commento precedente qui era sbagliato — 'il pianificato dell'OP
+    # tiene già conto della giacenza' non è vero, qta_pianificata è una
+    # quantità FISSA del prodotto finito, mai ricalcolata in base a quanto
+    # SEMILAVORATO esiste già a magazzino (stesso identico equivoco già
+    # trovato e corretto in _lista_lavoro_op, mai propagato qui). 'saldo_fase'
+    # ORA sottrae anche quanto già disponibile a magazzino (vedi
+    # 'gia_disponibile' più sotto, dove si assegnano le righe) — niente più
+    # doppio conteggio: la giacenza sottratta è quella residua DOPO aver già
+    # servito gli OP a priorità pari/superiore, la stessa usata per il
+    # controllo materiale poco sotto, mai la giacenza grezza totale.
     componenti_per_op_non_rilasciati = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini_non_rilasciati}
     tutti_i_codici = ({c['codice'] for lista in componenti_per_op.values() for c in lista}
                        | {c['codice'] for lista in componenti_per_op_non_rilasciati.values() for c in lista})
@@ -196,7 +202,28 @@ def _righe_macchina(centro):
 
             qta_necessaria = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
             pezzi_fase = _pezzi_fase_cached(o.codice, centro.nome, componente=componente_param)
-            saldo_fase = max(qta_necessaria - pezzi_fase, 0)
+
+            # BUG REALE TROVATO E CORRETTO (segnalato: Monitor LIVE mostrava
+            # 'Saldo' 800 per un codice che l'Ordine di Lavoro stampato per la
+            # stessa fase mostra correttamente a 734, perché 66 pezzi erano
+            # già pronti a magazzino al momento del rilascio) — stesso identico
+            # errore concettuale già trovato e corretto in _lista_lavoro_op
+            # ('il pianificato dell'OP tiene già conto della giacenza' non è
+            # vero: qta_pianificata è una quantità FISSA del prodotto finito,
+            # mai ricalcolata in base a quanto SEMILAVORATO esiste già a
+            # magazzino), ma mai propagato qui: 'saldo_fase' contava solo i
+            # pezzi già DICHIARATI (pezzi_fase), ignorando quelli già pronti a
+            # scorta PRIMA ancora di iniziare — la stessa differenza poteva
+            # portare a tagliare più pezzi del necessario.
+            # Fix: sottrae anche quanto di QUESTO componente è già disponibile
+            # a magazzino, al netto di ciò che altri OP aperti (a parità o
+            # maggiore priorità) già se ne contendono — 'giacenza_di_op' è
+            # esattamente lo stesso residuo già calcolato qui sotto per il
+            # controllo materiale, va solo letto PRIMA anziché dopo.
+            giacenza_di_op = residuo_per_op.get(o.id, residuo_finale)
+            saldo_prima_giacenza = max(qta_necessaria - pezzi_fase, 0)
+            gia_disponibile = max(giacenza_di_op.get(codice_comp, 0), 0)
+            saldo_fase = max(saldo_prima_giacenza - gia_disponibile, 0)
             pct_fase = round(pezzi_fase / qta_necessaria * 100) if qta_necessaria else 0
 
             if saldo_fase <= 0:
@@ -223,7 +250,6 @@ def _righe_macchina(centro):
             # componente. Nessun consumo noto registrato → non blocca
             # l'evidenza (stessa tolleranza già usata nelle Liste di Lavoro
             # quando Parametri di Lavorazione non è ancora compilato).
-            giacenza_di_op = residuo_per_op.get(o.id, residuo_finale)
             materiale_disponibile_riga = all(
                 giacenza_di_op.get(cs['codice'], 0) >= round(qta_necessaria * cs['quantita'], 4)
                 for cs in consumi_standard
