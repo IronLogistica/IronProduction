@@ -1472,9 +1472,27 @@ def api_kanban_hpi_dati():
     prodotti = KanbanProdotto.query.order_by(KanbanProdotto.sheet_key, KanbanProdotto.sort_order).all()
     prodotti = [p for p in prodotti if p.prodotto not in ('Totali',) and not p.prodotto.isdigit()]
 
-    # Nessuna sincronizzazione automatica: HPI è una vista diretta e veloce
-    # delle schede Kanban principali. Gli eventuali aggiornamenti si fanno
-    # nel Kanban, e HPI li riflette al successivo caricamento.
+    # BUG REALE TROVATO E CORRETTO (segnalato: un prodotto con una commessa
+    # di produzione aperta — es. C12 con OP-2026-000056, saldo residuo 400
+    # — risultava "Nessun ordine"/non evadibile qui, mentre la Scheda WMS
+    # dello stesso prodotto lo mostrava correttamente): il commento qui
+    # sopra prometteva "nessuna sincronizzazione automatica... HPI riflette
+    # gli aggiornamenti del Kanban principale al successivo caricamento",
+    # ma HPI leggeva i campi grezzi/in_vern/verniciati/in_prod SALVATI sulla
+    # scheda (p.grezzi, p.in_prod, ...) — fermi finché qualcuno non preme
+    # "Risincronizza WMS" su QUELLA scheda nel Kanban principale — invece di
+    # _snapshot_campi_kanban_principale, la funzione già scritta apposta per
+    # essere "la fonte condivisa tra la board principale e Kanban HPI:
+    # entrambe vedono gli stessi valori" (sua stessa docstring) — HPI non la
+    # chiamava mai. Nessuna chiamata WMS in più: la funzione lavora già in
+    # batch su tutti i prodotti (stesse query di gruppo usate dalla board
+    # principale), quindi resta veloce come prima.
+    snapshot_per_id = _snapshot_campi_kanban_principale(prodotti)
+
+    # Nessuna sincronizzazione automatica per riservato/Finiti IS (via WMS):
+    # restano quelli salvati sulla scheda — l'aggiornamento si fa nel Kanban
+    # principale (chiamata di rete a MasterLogistic-WMS, volutamente esclusa
+    # qui per restare veloci su tutta la lista).
 
     # Raggruppamento per i VERI Kanban Gruppi (KanbanGruppo — gli stessi
     # nomi puliti già usati nella sidebar/Launchpad: Cavalletti, Transenne,
@@ -1494,12 +1512,13 @@ def api_kanban_hpi_dati():
     gruppi = {}
     ordine_gruppi = {}
     for p in prodotti:
+        snap = snapshot_per_id.get(p.id, {})
         riservato = p.riservato or 0
         finiti_is = p.finiti_is or 0
-        verniciati = p.verniciati or 0
-        grezzi = p.grezzi or 0
-        in_vern = p.in_vern or 0
-        in_prod = p.in_prod or 0
+        verniciati = snap.get('verniciati', p.verniciati or 0)
+        grezzi = snap.get('grezzi', p.grezzi or 0)
+        in_vern = snap.get('in_vern', p.in_vern or 0)
+        in_prod = snap.get('in_prod', p.in_prod or 0)
 
         pronti_a_magazzino = verniciati + finiti_is
         saldo_contabile = p.saldo_contabile
