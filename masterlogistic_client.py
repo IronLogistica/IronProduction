@@ -233,3 +233,22 @@ def rimuovi_ubicazione_wip(sku, timeout=8):
     if not sku:
         raise MasterLogisticError("sku obbligatorio per rimuovere l'ubicazione WIP.")
     return _post_warehouse("/api/warehouse/rimuovi-wip", {"sku": sku}, timeout=timeout)
+
+
+def segnala_semilavorato_da_allocare(sku, quantita, centro_costo=None, semilavorato=False, timeout=8):
+    """
+    Richiesta esplicita di Mauri: "un potenziale punto di caricamento deve
+    essere anche a livello di dichiarazione di produzione la sera perché se
+    avanzano dei semilavorati da mettere a magazzino devo sapere dove li
+    stocchiamo". Chiamata nello stesso punto in cui il pezzo entra
+    fisicamente nella giacenza di IronProduction (carica_prodotto_finito —
+    vedi _applica_effetti_evento_consuntivo): la riga finisce nella bacheca
+    "Merce da Allocare" di MasterLogistic-WMS, esattamente come un arrivo
+    DDT, finché l'impiegata non le assegna una vera ubicazione.
+    """
+    if not sku or quantita is None or quantita <= 0:
+        raise MasterLogisticError("sku e quantita (>0) obbligatori per segnalare un semilavorato da allocare.")
+    payload = {"sku": sku, "quantita": quantita, "semilavorato": bool(semilavorato)}
+    if centro_costo:
+        payload["centro_costo"] = centro_costo
+    return _post_warehouse("/api/warehouse/pending-produzione", payload, timeout=timeout)

@@ -31,7 +31,7 @@ from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 from blueprints.produzione_pp.avanzamento import (calcola_avanzamento_commesse,
                     _capacita_giornaliera_ore, DEFAULT_ORE_GIORNO)
-from masterlogistic_client import assegna_ubicazione_wip, rimuovi_ubicazione_wip, MasterLogisticError
+from masterlogistic_client import assegna_ubicazione_wip, rimuovi_ubicazione_wip, segnala_semilavorato_da_allocare, MasterLogisticError
 
 pp_bp = Blueprint("produzione_pp", __name__)
 
@@ -2675,6 +2675,19 @@ def _applica_effetti_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, eve
                 _registra_movimento_giacenza(codice_lavorato, good, 'carico_produzione',
                                               riferimento=o.codice, note=nota_costo,
                                               costo_unitario=costo['costo_totale'])
+                # Segnala a MasterLogistic-WMS che c'è merce fisica pronta da
+                # posizionare — "un potenziale punto di caricamento anche a
+                # livello di dichiarazione di produzione la sera" (richiesta
+                # esplicita di Mauri). Mai bloccante: se WMS non risponde, il
+                # carico in giacenza qui sopra resta comunque valido — è un
+                # arricchimento della tracciabilità fisica, non una
+                # condizione per registrare la produzione.
+                try:
+                    segnala_semilavorato_da_allocare(codice_lavorato, good, centro_costo=fase_nome, semilavorato=not componente_finale)
+                except MasterLogisticError as e:
+                    log(f'AVVISO merce da allocare non segnalata — OP {o.codice}, {codice_lavorato}, evento {event_id}: {e}')
+                except Exception as e:
+                    log(f'ERRORE inatteso segnalazione merce da allocare — OP {o.codice}, {codice_lavorato}, evento {event_id}: {e}')
         except Exception as e:
             avviso_magazzino = (avviso_magazzino + ' | ' if avviso_magazzino else '') + f'Carico prodotto FALLITO: {e}'
             log(f'ERRORE carico giacenza — OP {o.codice}, {codice_lavorato}, evento {event_id}: {e}')
