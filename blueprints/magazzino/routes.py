@@ -1480,6 +1480,28 @@ def api_wms_scarica_finiti_iw():
                      'kanban_verniciati_residuo': kanban_verniciati_dopo})
 
 
+@magazzino_bp.route('/api/wms/giacenza-completa', methods=['GET'])
+def api_wms_giacenza_completa():
+    """
+    Richiesta esplicita di Mauri: "creami una pagina di allocazione dove
+    pezzo per pezzo Angelo li sistema... per il passato dobbiamo fare un
+    lavoro massivo" — MasterLogistic-WMS chiama questo endpoint per
+    ottenere TUTTA la giacenza attuale Iron Wood (senza il limite di 200
+    righe della pagina Materiali, pensato per la UI, non per un export
+    completo) e generare l'arretrato da allocare fisicamente.
+
+    Nessun filtro solo_bom qui: l'obiettivo è mappare fisicamente OGNI
+    codice che risulta a magazzino oggi, anche uno estraneo alla distinta
+    base corrente — se c'è fisicamente, va comunque messo da qualche
+    parte.
+    """
+    auth = _auth_wms()
+    if auth:
+        return auth
+    righe = GiacenzaWood.query.filter(GiacenzaWood.quantita > 0).all()
+    return jsonify({'ok': True, 'giacenza': [{'codice': g.codice, 'quantita': g.quantita} for g in righe]})
+
+
 def _tipologia_codice(codice):
     """Versione a singolo codice di _tipologie_per_codici — comodo per un
     endpoint che opera su un codice alla volta (es. impostare la scorta
