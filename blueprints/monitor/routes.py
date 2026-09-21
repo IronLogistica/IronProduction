@@ -222,7 +222,17 @@ def _righe_macchina(centro):
             # controllo materiale, va solo letto PRIMA anziché dopo.
             giacenza_di_op = residuo_per_op.get(o.id, residuo_finale)
             saldo_prima_giacenza = max(qta_necessaria - pezzi_fase, 0)
-            gia_disponibile = max(giacenza_di_op.get(codice_comp, 0), 0)
+            # BUG REALE TROVATO E CORRETTO (segnalato: pianificato alzato,
+            # tre componenti restavano a Saldo 0 invece di riaprirsi — la
+            # giacenza già disponibile qui sotto è la STESSA quantità già
+            # contata in 'pezzi_fase' poche righe sopra, quando quei pezzi
+            # sono stati tagliati per QUESTA fase e non ancora consumati
+            # dalla fase successiva: sottrarla di nuovo la contava due
+            # volte. Stesso fix già applicato in _lista_lavoro_op — la
+            # giacenza va scontata di quanto quest'OP ha già dichiarato
+            # PRIMA di usarla come sconto ulteriore, altrimenti solo
+            # un'eccedenza genuinamente esterna dovrebbe ridurre il saldo).
+            gia_disponibile = max(giacenza_di_op.get(codice_comp, 0) - pezzi_fase, 0)
             saldo_fase = max(saldo_prima_giacenza - gia_disponibile, 0)
             pct_fase = round(pezzi_fase / qta_necessaria * 100) if qta_necessaria else 0
 

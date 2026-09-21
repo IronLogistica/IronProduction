@@ -3766,7 +3766,22 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         pezzi_fatti = sum(e.pezzi_buoni or 0 for e in eventi_componente
                           if _fasi_corrispondono(centro.nome, e.fase))
         saldo_prima_giacenza = max(nr_pz_da_fare - pezzi_fatti, 0)
-        gia_disponibile = max(residuo_giacenza_per_op.get(codice_comp, 0), 0)
+        # BUG REALE TROVATO E CORRETTO (segnalato: pianificato alzato da 110
+        # a 200, i tre componenti T1515 restavano a Saldo 0 invece di
+        # riaprirsi — es. C104: 200 da fare, 110 fatti, 110 già a
+        # magazzino, doveva mancare 90 e invece appariva 0): la giacenza
+        # sottratta qui è la STESSA quantità già cutta per QUESTO OP (i 110
+        # pezzi appena tagliati e non ancora consumati dalla fase
+        # successiva) — sottrarla di nuovo, oltre a 'pezzi_fatti', la
+        # contava due volte (110 fatti + 110 di scorta stessa origine =
+        # 220, coprendo per intero un fabbisogno di 200 che invece i fatti
+        # da soli coprivano solo per 110). La giacenza va scontata di
+        # 'pezzi_fatti' PRIMA di usarla come sconto ulteriore: solo
+        # l'eventuale ECCEDENZA oltre a quanto quest'OP ha già dichiarato
+        # (es. scorta genuinamente preesistente da altre commesse, o un
+        #'ricalcolo BOM' su un OP con priorità superiore che libera stock
+        # non suo) rappresenta davvero un risparmio di taglio.
+        gia_disponibile = max(residuo_giacenza_per_op.get(codice_comp, 0) - pezzi_fatti, 0)
         saldo = max(saldo_prima_giacenza - gia_disponibile, 0)
 
         # 'Materiale' mostrato in tabella è SEMPRE il primo figlio diretto in
