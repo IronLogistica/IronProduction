@@ -20,7 +20,7 @@
   .btn-print{background:var(--iron-blue);color:#fff}
   .btn-back{background:#fff;color:#333;border:1px solid #ccc}
 
-  .card{width:480px;max-width:96vw;background:#fff;border:3px solid var(--iron-black);border-radius:6px;overflow:hidden}
+  .card{width:480px;height:710px;max-width:96vw;background:#fff;border:3px solid var(--iron-black);border-radius:6px;overflow:hidden;display:flex;flex-direction:column}
   /* Contenitore della scheda — dimensionato via JS (vedi script in fondo
      alla pagina, ridimensionaSchedaPerA4) alla dimensione REALE della
      scheda una volta ingrandita: serve sempre, non solo in stampa, perché
@@ -42,7 +42,10 @@
   .field{padding:10px 16px;border-bottom:2px dashed #c6ccd3}
   .field .lbl{font-size:10px;font-weight:800;letter-spacing:1px;color:#5a6472;text-transform:uppercase;display:flex;align-items:center;gap:6px}
   .field .lbl svg{stroke:var(--iron-blue2);flex-shrink:0}
-  .field .val{font-size:22px;font-weight:900;color:var(--iron-black);margin-top:2px;word-break:break-word}
+  .field .val{font-weight:900;color:var(--iron-black);margin-top:2px;word-break:break-word}
+  .field-code{padding-top:12px;padding-bottom:12px}
+  .field-code .val{font-size:32px;line-height:1.05;letter-spacing:.5px}
+  .field-supplier .val{font-size:21px;line-height:1.1}
 
   /* ── BANNER TRATTAMENTI ────────────────────────────────────────────── */
   .trat-hdr{background:linear-gradient(135deg,var(--iron-blue),var(--iron-blue2));color:#fff;
@@ -70,9 +73,9 @@
      si prendeva tutto lo spazio che voleva e allungava l'intera scheda.
      Ora .bottom ha un'altezza fissa: l'immagine scala SEMPRE dentro quella,
      non il contrario. */
-  .bottom{display:flex;height:260px}
+  .bottom{display:flex;flex:1;min-height:0}
   .img-box{flex:1;border-right:2px dashed #c6ccd3;padding:10px;display:flex;flex-direction:column;min-height:0}
-  .qr-box{width:130px;padding:10px;display:flex;flex-direction:column;align-items:center;gap:8px;min-height:0}
+  .qr-box{width:170px;padding:12px;display:flex;flex-direction:column;align-items:center;gap:10px;min-height:0}
   .box-title{background:var(--iron-black);color:#fff;font-size:9px;font-weight:800;letter-spacing:.5px;
              text-align:center;padding:3px 4px;border-radius:3px;margin-bottom:6px;width:100%}
   .img-placeholder{flex:1;border:1.5px dashed #b9c0c8;border-radius:5px;display:flex;flex-direction:column;
@@ -87,9 +90,9 @@
      allungare la scheda con una riga in piu' sotto.
      Riquadro ingrandito (era 34px, troppo compresso per scriverci un
      numero a mano): ora piu' alto e con l'etichetta piu' leggibile. ── */
-  .qta-mini{width:100%;display:flex;flex-direction:column;align-items:center;gap:6px}
-  .qta-mini .lbl{font-size:11px;font-weight:900;letter-spacing:.5px;color:var(--iron-blue);text-transform:uppercase}
-  .qta-mini .qta-box{width:100%;border:2.5px solid var(--iron-black);border-radius:6px;height:70px;background:#fff;box-shadow:inset 0 1px 3px rgba(0,0,0,.08)}
+  .qta-mini{width:100%;display:flex;flex-direction:column;align-items:center;gap:7px}
+  .qta-mini .lbl{font-size:14px;font-weight:900;letter-spacing:.8px;color:var(--iron-blue);text-transform:uppercase}
+  .qta-mini .qta-box{width:100%;border:3px solid var(--iron-black);border-radius:7px;height:138px;background:#fff;box-shadow:inset 0 1px 3px rgba(0,0,0,.08)}
 
   .footer{display:flex;justify-content:space-between;padding:6px 16px 10px;font-size:9px;color:#8b95a1}
 
@@ -152,7 +155,7 @@
   </div>
 
   <!-- ═══ CODICE ARTICOLO ═══ -->
-  <div class="field">
+  <div class="field field-code">
     <div class="lbl">
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
         <path d="M2 2h9l11 11-9 9L2 13V2z"/><circle cx="7" cy="7" r="1.6" fill="currentColor" stroke="none"/>
@@ -163,7 +166,7 @@
   </div>
 
   <!-- ═══ FORNITORE ═══ -->
-  <div class="field">
+  <div class="field field-supplier">
     <div class="lbl">
       <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke-width="2" stroke-linejoin="round" stroke-linecap="round">
         <path d="M3 7l9-4 9 4-9 4-9-4z"/><path d="M3 7v10l9 4 9-4V7"/><path d="M12 11v10"/>
