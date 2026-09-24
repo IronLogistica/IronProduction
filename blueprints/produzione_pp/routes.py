@@ -5004,8 +5004,16 @@ def api_dichiarazione_storico(cid):
                       db.func.date(EventoConsuntivoPP.timestamp_evento) <= giorno_a)
               .order_by(EventoConsuntivoPP.timestamp_evento.desc()).all())
     eventi = [e for e in eventi_nel_periodo if _fasi_corrispondono(centro.nome, e.fase)]
+    # Codice articolo (il codice padre della commessa): senza questo, la
+    # riga mostra solo l'OP e non si capisce a colpo d'occhio PER COSA sia
+    # — stesso pattern già usato in api_dichiarazione_approvazioni, una
+    # sola query per tutti gli OP coinvolti, non una per riga.
+    op_codes = {e.op_code for e in eventi}
+    articolo_per_op = {o.codice: o.codice_articolo for o in
+                        OrdineProduzione.query.filter(OrdineProduzione.codice.in_(op_codes)).all()}
     return jsonify(ok=True, eventi=[{
         'id': e.id, 'event_id': e.event_id, 'op_code': e.op_code, 'componente': e.componente,
+        'codice_articolo': articolo_per_op.get(e.op_code, '—'),
         'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M'),
         'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto, 'tempo_minuti': e.tempo_minuti,
         'approvato_direzione': e.approvato_direzione,
