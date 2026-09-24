@@ -368,7 +368,8 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
     <label class="modal-label">Codice articolo</label>
     <div style="position:relative">
       <input class="modal-input" id="sch-codice" type="text" placeholder="es. BC60" maxlength="100" autocomplete="off"
-             oninput="_schedaRicercaInput(this)" onfocus="_schedaRicercaInput(this)">
+             oninput="_schedaRicercaInput(this)" onfocus="_schedaRicercaInput(this)"
+             onchange="_caricaUltimeCommesse(this.value)">
       <div id="scheda-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
     </div>
 
@@ -383,6 +384,10 @@ table.tz-t tr.par td{background:rgba(230,184,0,.04)}
 
     <label class="modal-label" style="margin-top:10px">Commessa</label>
     <input class="modal-input" id="sch-commessa" type="text" placeholder="es. 630/26" maxlength="100">
+    <div id="sch-commesse-recenti" style="display:none;margin-top:7px;padding:8px 10px;background:rgba(37,137,199,.08);border:1px solid rgba(37,137,199,.22);border-radius:7px">
+      <div id="sch-commesse-recenti-titolo" style="font-size:.65rem;color:var(--text-dim);margin-bottom:6px"></div>
+      <div id="sch-commesse-recenti-lista" style="display:flex;gap:6px;flex-wrap:wrap"></div>
+    </div>
 
     <label class="modal-label" style="margin-top:12px">Trattamento (seleziona uno o entrambi)</label>
 
@@ -496,6 +501,7 @@ function apriModalScheda(){
   document.getElementById('sch-fornitore-libero').style.display='none';
   document.getElementById('sch-fornitore-libero').value='';
   document.getElementById('sch-commessa').value='';
+  _nascondiUltimeCommesse();
   document.getElementById('sch-flag-zincatura').checked=false;
   document.getElementById('sch-flag-verniciatura').checked=false;
   document.getElementById('sch-zincatura-tipo').value='CALDO';
@@ -507,6 +513,48 @@ function apriModalScheda(){
 }
 
 let _schedaRicercaTimer = null;
+let _schedaCommesseSeq = 0;
+function _nascondiUltimeCommesse(){
+  _schedaCommesseSeq++;
+  const box = document.getElementById('sch-commesse-recenti');
+  if(box) box.style.display = 'none';
+}
+async function _caricaUltimeCommesse(codice){
+  codice = String(codice || '').trim();
+  const box = document.getElementById('sch-commesse-recenti');
+  const titolo = document.getElementById('sch-commesse-recenti-titolo');
+  const lista = document.getElementById('sch-commesse-recenti-lista');
+  const seq = ++_schedaCommesseSeq;
+  box.style.display = 'none';
+  lista.replaceChildren();
+  if(!codice) return;
+
+  try{
+    const r = await fetch('/api/schede_trattamenti/ultime-commesse?codice=' + encodeURIComponent(codice));
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const commesse = await r.json();
+    if(seq !== _schedaCommesseSeq || !commesse.length) return;
+
+    titolo.textContent = commesse.length === 1
+      ? 'Ultima commessa già usata per ' + codice
+      : 'Ultime 2 commesse già usate per ' + codice;
+    commesse.forEach(item => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-ghost btn-sm';
+      btn.textContent = item.commessa + (item.creato_il ? ' · ' + item.creato_il : '');
+      btn.title = 'Inserisci la commessa ' + item.commessa;
+      btn.addEventListener('click', () => {
+        document.getElementById('sch-commessa').value = item.commessa;
+      });
+      lista.appendChild(btn);
+    });
+    box.style.display = 'block';
+  }catch(e){
+    // Il suggerimento storico è accessorio: non deve bloccare la scheda.
+    if(seq === _schedaCommesseSeq) box.style.display = 'none';
+  }
+}
 function _posizionaSchedaDropdown(input){
   const dropdown = document.getElementById('scheda-dropdown');
   const rect = input.getBoundingClientRect();
@@ -543,6 +591,7 @@ async function _schedaRicercaInput(input){
 function _schedaSceltaMateriale(codice){
   document.getElementById('sch-codice').value = codice;
   document.getElementById('scheda-dropdown').style.display = 'none';
+  _caricaUltimeCommesse(codice);
 }
 document.addEventListener('click', e => {
   const dropdown = document.getElementById('scheda-dropdown');

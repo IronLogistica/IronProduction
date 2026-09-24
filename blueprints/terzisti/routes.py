@@ -9,6 +9,7 @@ from models import (
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
 from blueprints.magazzino.routes import _registra_movimento_giacenza, _grezzo_iw_per_codici
 from datetime import datetime, date
+from sqlalchemy import func
 import os, re, json, shutil
 import PyPDF2
 
@@ -532,6 +533,41 @@ def api_schede_lista():
         'colore':                 s.colore,
         'creato_il':              s.creato_il.strftime('%d/%m/%Y %H:%M') if s.creato_il else '',
     } for s in schede])
+
+
+@terzisti_bp.route('/api/schede_trattamenti/ultime-commesse')
+def api_schede_ultime_commesse():
+    """Restituisce le ultime due commesse distinte già usate per il codice."""
+    codice = (request.args.get('codice') or '').strip()
+    if not codice:
+        return jsonify([])
+
+    # Confronto esatto ma senza distinzione maiuscole/minuscole: non usare
+    # ILIKE, perché i caratteri % e _ eventualmente presenti nel codice
+    # verrebbero interpretati come jolly.
+    schede = (SchedaTrattamento.query
+              .filter(func.upper(SchedaTrattamento.codice_articolo) == codice.upper())
+              .filter(SchedaTrattamento.commessa.isnot(None))
+              .order_by(SchedaTrattamento.id.desc())
+              .limit(30).all())
+
+    risultati = []
+    gia_viste = set()
+    for scheda in schede:
+        commessa = (scheda.commessa or '').strip()
+        chiave = commessa.casefold()
+        if not commessa or chiave in gia_viste:
+            continue
+        gia_viste.add(chiave)
+        risultati.append({
+            'commessa': commessa,
+            'numero_scheda': scheda.numero_scheda,
+            'creato_il': scheda.creato_il.strftime('%d/%m/%Y') if scheda.creato_il else '',
+        })
+        if len(risultati) == 2:
+            break
+
+    return jsonify(risultati)
 
 
 @terzisti_bp.route('/api/schede_trattamenti', methods=['POST'])
