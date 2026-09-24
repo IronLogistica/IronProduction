@@ -59,22 +59,29 @@
   .trat-extra{font-size:15px;font-weight:800;color:var(--iron-blue);text-transform:uppercase}
 
   /* ── IMMAGINE / QR ────────────────────────────────────────────────── */
-  .bottom{display:flex}
-  .img-box{flex:1;border-right:2px dashed #c6ccd3;padding:10px;display:flex;flex-direction:column}
-  .qr-box{width:160px;padding:10px;display:flex;flex-direction:column;align-items:center}
+  /* Prima .img-box/.qr-box non avevano un'altezza propria: con object-fit:
+     contain ma senza un contenitore di altezza FISSA, un'immagine grande
+     si prendeva tutto lo spazio che voleva e allungava l'intera scheda.
+     Ora .bottom ha un'altezza fissa: l'immagine scala SEMPRE dentro quella,
+     non il contrario. */
+  .bottom{display:flex;height:190px}
+  .img-box{flex:1;border-right:2px dashed #c6ccd3;padding:10px;display:flex;flex-direction:column;min-height:0}
+  .qr-box{width:130px;padding:10px;display:flex;flex-direction:column;align-items:center;gap:8px;min-height:0}
   .box-title{background:var(--iron-black);color:#fff;font-size:9px;font-weight:800;letter-spacing:.5px;
-             text-align:center;padding:3px 4px;border-radius:3px;margin-bottom:6px}
+             text-align:center;padding:3px 4px;border-radius:3px;margin-bottom:6px;width:100%}
   .img-placeholder{flex:1;border:1.5px dashed #b9c0c8;border-radius:5px;display:flex;flex-direction:column;
-                    align-items:center;justify-content:center;gap:6px;color:#9aa4af;font-size:10px;text-align:center;min-height:110px}
+                    align-items:center;justify-content:center;gap:6px;color:#9aa4af;font-size:10px;text-align:center;min-height:0}
   .img-placeholder svg{stroke:#b9c0c8}
-  #qrcode{display:flex;align-items:center;justify-content:center}
-  #qrcode img, #qrcode canvas{border:1px solid #ddd}
+  #qrcode{display:flex;align-items:center;justify-content:center;flex-shrink:0}
+  #qrcode img, #qrcode canvas{border:1px solid #ddd;max-width:100%;height:auto}
 
-  /* ── QUANTITÀ ─────────────────────────────────────────────────────── */
-  .qta{display:flex;align-items:center;gap:12px;padding:14px 16px;background:linear-gradient(135deg,#eef5fc,#e3edf9);border-top:3px solid var(--iron-blue)}
-  .qta .lbl{font-size:13px;font-weight:900;letter-spacing:1px;color:var(--iron-blue);text-transform:uppercase;white-space:nowrap;display:flex;align-items:center;gap:7px}
-  .qta .lbl svg{stroke:var(--iron-blue)}
-  .qta-box{flex:1;border:3px solid var(--iron-black);border-radius:7px;height:52px;background:#fff;box-shadow:inset 0 1px 3px rgba(0,0,0,.08)}
+  /* ── QUANTITÀ — ora un riquadro compatto sopra il QR, non piu' una
+     barra a tutta larghezza in fondo: la colonna destra e' comunque
+     dedicata al QR, tanto vale usarci lo spazio sopra invece di
+     allungare la scheda con una riga in piu' sotto. ────────────────── */
+  .qta-mini{width:100%;display:flex;flex-direction:column;align-items:center;gap:4px}
+  .qta-mini .lbl{font-size:9px;font-weight:900;letter-spacing:.5px;color:var(--iron-blue);text-transform:uppercase}
+  .qta-mini .qta-box{width:100%;border:2.5px solid var(--iron-black);border-radius:6px;height:34px;background:#fff;box-shadow:inset 0 1px 3px rgba(0,0,0,.08)}
 
   .footer{display:flex;justify-content:space-between;padding:6px 16px 10px;font-size:9px;color:#8b95a1}
 
@@ -201,22 +208,13 @@
       {% endif %}
     </div>
     <div class="qr-box">
+      <div class="qta-mini">
+        <div class="lbl">Quantità</div>
+        <div class="qta-box"></div>
+      </div>
       <div class="box-title">QR CODE</div>
       <div id="qrcode"></div>
     </div>
-  </div>
-
-  <!-- ═══ QUANTITÀ — riquadro grande e ben visibile ═══ -->
-  <div class="qta">
-    <div class="lbl">
-      <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <rect x="5" y="4" width="14" height="17" rx="2"/>
-        <path d="M9 3.5h6a.7.7 0 0 1 .7.7v1.3h-7.4V4.2a.7.7 0 0 1 .7-.7z" fill="currentColor" stroke="none"/>
-        <path d="M8.5 13.2l2 2 4-4.4"/>
-      </svg>
-      QUANTITÀ
-    </div>
-    <div class="qta-box"></div>
   </div>
 
   <div class="footer">
@@ -228,8 +226,8 @@
 <script>
 new QRCode(document.getElementById('qrcode'), {
   text: {{ qr_text|tojson }},
-  width: 128,
-  height: 128,
+  width: 108,
+  height: 108,
   correctLevel: QRCode.CorrectLevel.M
 });
 </script>

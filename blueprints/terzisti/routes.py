@@ -1,4 +1,5 @@
 from flask import Blueprint, render_template, jsonify, request, current_app
+from urllib.parse import quote
 from models import (
     db, Terzista, LavorazioneTerzista, RigaCommessa, FaseRiga, log,
     SchedaTrattamento, TIPI_TRATTAMENTO_SCHEDA, FORNITORI_SCHEDA_DEFAULT,
@@ -592,17 +593,13 @@ def scheda_stampa(sid):
     foto = (FotoArticolo.query.filter_by(codice_articolo=s.codice_articolo)
             .order_by(FotoArticolo.id.desc()).first())
 
-    qr_righe = [
-        f"SCHEDA: {s.numero_scheda}",
-        f"CODICE: {s.codice_articolo}",
-        f"FORNITORE: {s.fornitore}",
-        f"COMMESSA: {s.commessa or '-'}",
-        f"TRATTAMENTO: {info.get('label', s.tipo_trattamento)}"
-        + (f" {info.get('zinc_label')}" if info.get('zinc_label') else ""),
-    ]
-    if info.get('verniciatura') and s.colore:
-        qr_righe.append(f"COLORE: {s.colore}")
-    qr_text = "\n".join(qr_righe)
+    # Il QR deve poter essere "pescato" da MasterWork, non solo leggibile
+    # da un operatore: MasterWork espone /avvio_da_qr/<codice>, che cerca
+    # il codice fra codice_interno/codice_esterno/fase della SUA anagrafica
+    # e avvia direttamente il lavoro (stessa route usata dal suo scanner
+    # QR interno). Prima il QR conteneva solo un riepilogo testuale a
+    # beneficio dell'occhio umano, che nessun sistema esterno poteva usare.
+    qr_text = f"https://masterwork.up.railway.app/avvio_da_qr/{quote(s.codice_articolo)}"
 
     return render_template(
         'terzisti/scheda_stampa.html',
