@@ -97,6 +97,9 @@
   <button class="totem-tab" id="tab-rietichettatura" onclick="mostraPannello('rietichettatura')">
     <span class="ic">🏷️</span> Rietichettatura
   </button>
+  <button class="totem-tab" id="tab-schede" onclick="mostraPannello('schede')">
+    <span class="ic">🧪</span> Scheda<br>Trattamenti
+  </button>
 </div>
 <div class="clock" id="clock"></div>
 
@@ -233,6 +236,61 @@
 
       <button class="btn btn-primary" onclick="generaEtichettaRietichettatura()">🖨️ Genera Etichetta</button>
       <div id="riet-esito" style="font-size:12px;margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ PANNELLO 5 — SCHEDA TRATTAMENTI ══════════════════════ -->
+<!-- Stessi campi e stesso widget di ricerca già presenti nel popup "Nuova
+     Scheda Trattamento Esterno" di Terzisti (templates/terzisti/index.html)
+     — qui però una pagina intera del totem, non un popup: richiesto
+     esplicitamente per agevolare Alessandro, con lo stesso widget
+     intelligente che suggerisce i codici mentre scrive. -->
+<div class="totem-panel" id="panel-schede">
+  <div class="page-title">🧪 Scheda Trattamento Esterno</div>
+  <div class="mon-section">
+    <div style="padding:14px">
+      <label class="modal-label" style="margin-top:0">Codice articolo</label>
+      <div style="position:relative;margin-bottom:14px">
+        <input id="sch-codice" type="text" placeholder="Cerca codice o descrizione..." autocomplete="off" class="big-input"
+               oninput="_schedaRicercaInputTotem(this)" onfocus="_schedaRicercaInputTotem(this)">
+        <div id="scheda-dropdown-totem" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+      </div>
+
+      <label class="modal-label">Fornitore</label>
+      <select id="sch-fornitore-sel" class="big-input" onchange="toggleFornitoreLiberoTotem()" style="margin-bottom:6px">
+        <option value="TGT">TGT</option>
+        <option value="NUOVA PLASTIC METAL">NUOVA PLASTIC METAL</option>
+        <option value="__ALTRO__">Altro (testo libero)…</option>
+      </select>
+      <input id="sch-fornitore-libero" type="text" class="big-input"
+             placeholder="Ragione sociale fornitore" style="display:none;margin-bottom:14px" maxlength="200">
+
+      <label class="modal-label">Commessa</label>
+      <input id="sch-commessa" type="text" class="big-input" placeholder="es. 630/26" maxlength="100" style="margin-bottom:16px">
+
+      <label class="modal-label" style="margin-top:0">Trattamento (seleziona uno o entrambi)</label>
+      <label style="display:flex;align-items:center;gap:10px;margin-top:10px;font-weight:600;cursor:pointer;font-size:14px">
+        <input type="checkbox" id="sch-flag-zincatura" onchange="toggleFlagZincaturaTotem()" style="width:22px;height:22px">
+        🧪 Zincatura
+      </label>
+      <div id="sch-zincatura-wrap" style="display:none;margin:8px 0 0 32px">
+        <select id="sch-zincatura-tipo" class="big-input">
+          <option value="CALDO">A Caldo</option>
+          <option value="FREDDO">A Freddo</option>
+        </select>
+      </div>
+
+      <label style="display:flex;align-items:center;gap:10px;margin-top:16px;font-weight:600;cursor:pointer;font-size:14px">
+        <input type="checkbox" id="sch-flag-verniciatura" onchange="toggleFlagVerniciaturaTotem()" style="width:22px;height:22px">
+        🎨 Verniciatura
+      </label>
+      <div id="sch-colore-wrap" style="display:none;margin:8px 0 0 32px">
+        <input id="sch-colore" type="text" class="big-input" placeholder="Colore, es. RAL 9010 bianco" maxlength="100">
+      </div>
+
+      <button class="btn btn-primary" style="margin-top:20px" onclick="creaSchedaEStampaTotem()">🖨️ Genera e Stampa</button>
+      <div id="sch-esito" style="font-size:12px;margin-top:10px"></div>
     </div>
   </div>
 </div>
@@ -532,6 +590,106 @@ function generaEtichettaRietichettatura(){
   esito.textContent = '';
   const params = new URLSearchParams({codice, descrizione: _rietDescrizioneScelta, quantita: quantita || ''});
   window.open('/scheda-materiale-stampa?' + params.toString(), '_blank');
+}
+
+// ── Scheda Trattamenti — stesso widget di ricerca già usato sopra per
+// Rietichettatura (stessa API /api/ricerca_materiale_wood), qui per la
+// nuova pagina "Scheda Trattamento Esterno": porta esattamente la stessa
+// logica del popup di Terzisti (templates/terzisti/index.html), come
+// pagina intera invece che popup.
+let _schedaRicercaTimerTotem = null;
+function _posizionaSchedaDropdownTotem(input){
+  const dropdown = document.getElementById('scheda-dropdown-totem');
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = rect.width + 'px';
+}
+async function _schedaRicercaInputTotem(input){
+  const dropdown = document.getElementById('scheda-dropdown-totem');
+  const q = input.value.trim();
+  clearTimeout(_schedaRicercaTimerTotem);
+  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  _schedaRicercaTimerTotem = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/ricerca_materiale_wood?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessun codice trovato</div>';
+      _posizionaSchedaDropdownTotem(input);
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = risultati.map(x => {
+      const cod = String(x.codice).replace(/"/g, '&quot;');
+      return `<div class="wms-item" onmousedown="_schedaSceltaMaterialeTotem('${cod}')">` +
+        `<div><b class="codice">${x.codice}</b>${x.descrizione ? `<br><span style="font-size:11px;color:var(--text-dim)">${x.descrizione}</span>` : ''}</div></div>`;
+    }).join('');
+    _posizionaSchedaDropdownTotem(input);
+    dropdown.style.display = 'block';
+  }, 220);
+}
+function _schedaSceltaMaterialeTotem(codice){
+  document.getElementById('sch-codice').value = codice;
+  document.getElementById('scheda-dropdown-totem').style.display = 'none';
+}
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('scheda-dropdown-totem');
+  if(dropdown && dropdown.style.display !== 'none' && e.target !== document.getElementById('sch-codice') && !dropdown.contains(e.target)){
+    dropdown.style.display = 'none';
+  }
+});
+function toggleFornitoreLiberoTotem(){
+  const sel = document.getElementById('sch-fornitore-sel').value;
+  document.getElementById('sch-fornitore-libero').style.display = (sel === '__ALTRO__') ? 'block' : 'none';
+}
+function toggleFlagZincaturaTotem(){
+  document.getElementById('sch-zincatura-wrap').style.display = document.getElementById('sch-flag-zincatura').checked ? 'block' : 'none';
+}
+function toggleFlagVerniciaturaTotem(){
+  document.getElementById('sch-colore-wrap').style.display = document.getElementById('sch-flag-verniciatura').checked ? 'block' : 'none';
+}
+async function creaSchedaEStampaTotem(){
+  const esito = document.getElementById('sch-esito');
+  esito.textContent = '';
+  const codice = document.getElementById('sch-codice').value.trim();
+  const selForn = document.getElementById('sch-fornitore-sel').value;
+  const fornitore = (selForn === '__ALTRO__')
+    ? document.getElementById('sch-fornitore-libero').value.trim()
+    : selForn;
+  const commessa = document.getElementById('sch-commessa').value.trim();
+  const zincatura = document.getElementById('sch-flag-zincatura').checked;
+  const zincaturaTipo = document.getElementById('sch-zincatura-tipo').value;
+  const verniciatura = document.getElementById('sch-flag-verniciatura').checked;
+  const colore = document.getElementById('sch-colore').value.trim();
+
+  if(!codice){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Inserisci il codice articolo.'; return; }
+  if(!fornitore){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Inserisci il fornitore.'; return; }
+  if(!zincatura && !verniciatura){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Seleziona almeno un trattamento.'; return; }
+
+  try{
+    const r = await fetch('/api/schede_trattamenti', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        codice_articolo: codice, fornitore, commessa,
+        zincatura, zincatura_tipo: zincaturaTipo, verniciatura, colore
+      })
+    });
+    const d = await r.json();
+    if(d.ok){
+      esito.style.color = '#1a9e5c';
+      esito.textContent = '✅ Scheda creata — apertura stampa...';
+      window.open('/schede_trattamenti/' + d.id + '/stampa', '_blank');
+    }else{
+      esito.style.color = '#c0392b';
+      esito.textContent = '❌ ' + (d.error || 'Errore');
+    }
+  }catch(e){
+    esito.style.color = '#c0392b';
+    esito.textContent = '❌ Errore di rete';
+  }
 }
 
 async function caricaOpAperti(){
