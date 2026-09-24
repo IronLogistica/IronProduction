@@ -64,7 +64,7 @@
      si prendeva tutto lo spazio che voleva e allungava l'intera scheda.
      Ora .bottom ha un'altezza fissa: l'immagine scala SEMPRE dentro quella,
      non il contrario. */
-  .bottom{display:flex;height:190px}
+  .bottom{display:flex;height:260px}
   .img-box{flex:1;border-right:2px dashed #c6ccd3;padding:10px;display:flex;flex-direction:column;min-height:0}
   .qr-box{width:130px;padding:10px;display:flex;flex-direction:column;align-items:center;gap:8px;min-height:0}
   .box-title{background:var(--iron-black);color:#fff;font-size:9px;font-weight:800;letter-spacing:.5px;
@@ -85,10 +85,23 @@
 
   .footer{display:flex;justify-content:space-between;padding:6px 16px 10px;font-size:9px;color:#8b95a1}
 
+  /* La pagina di stampa deve restare SEMPRE su formato A4, indipendentemente
+     dalla carta impostata di default nel driver di stampa dell'utente. */
+  @page{ size:A4; margin:14mm; }
+
   @media print{
-    body{background:#fff;padding:0}
+    /* Senza questo, Chrome/Edge NON stampano sfondi e gradienti a meno
+       che l'utente non spunti manualmente "Grafica di sfondo" nella
+       finestra di stampa — risultato: header nero, banner blu e la
+       spunta nera di trattamento diventavano tutti bianchi/vuoti in
+       stampa, pur essendo perfettamente a colori a schermo (il CSS dei
+       colori non era mai stato toccato). Questo forza SEMPRE la resa
+       corretta, senza dipendere da un'opzione che l'utente deve
+       ricordarsi di attivare ogni volta. */
+    *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
+    html,body{background:#fff;padding:0;display:block}
     .toolbar{display:none}
-    .card{border:2.5px solid #000;width:100%}
+    .card{border:2.5px solid #000;width:480px;max-width:100%;margin:0 auto}
   }
 </style>
 </head>
