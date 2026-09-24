@@ -21,6 +21,12 @@
   .btn-back{background:#fff;color:#333;border:1px solid #ccc}
 
   .card{width:480px;max-width:96vw;background:#fff;border:3px solid var(--iron-black);border-radius:6px;overflow:hidden}
+  /* Contenitore della scheda — dimensionato via JS (vedi script in fondo
+     alla pagina, ridimensionaSchedaPerA4) alla dimensione REALE della
+     scheda una volta ingrandita: serve sempre, non solo in stampa, perché
+     l'ingrandimento ora si applica appena la pagina si carica (WYSIWYG:
+     quello che si vede a schermo è quello che va in stampa). */
+  .card-print-wrap{width:100%;display:flex;justify-content:center;align-items:flex-start}
 
   /* ── HEADER ─────────────────────────────────────────────────────────── */
   .hdr{display:flex;align-items:stretch}
@@ -103,20 +109,11 @@
     *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
     html,body{background:#fff;padding:0;display:block}
     .toolbar{display:none}
-    /* La scheda restava a 480px fissi anche in stampa: su un foglio A4
-       (582px netti di larghezza utile qui sotto) restava piccola in mezzo
-       al foglio, con tutto il resto bianco intorno — segnalato da Mauri
-       con screenshot. Zoom calcolato al volo in JS (vedi sotto,
-       prepareZoomStampa/resetZoomStampa): la scheda viene ingrandita
-       MANTENENDO le proporzioni fino a riempire il foglio, invece di
-       restare a dimensione fissa indipendentemente da quanto contenuto
-       (foto, righe trattamento) la allunga. .card-print-wrap ha una
-       dimensione ESPLICITA pari alla scheda già ingrandita, altrimenti il
-       transform:scale (che non cambia lo spazio occupato nel flusso della
-       pagina) lascerebbe browser/stampante convinti che la scheda sia
-       ancora quella piccola, tagliando o lasciando vuoto il resto del
-       foglio lo stesso. */
-    .card-print-wrap{width:100%;display:flex;justify-content:center;align-items:flex-start}
+    /* Il ridimensionamento vero e proprio (JS, ridimensionaSchedaPerA4) è
+       già applicato SEMPRE, non solo qui — qui resta solo quello che deve
+       differire tra schermo e stampa: bordo pieno invece che ombreggiato,
+       niente vincolo di larghezza massima legato al viewport (96vw non ha
+       senso su un foglio), margini a zero. */
     .card{border:2.5px solid #000;width:480px;max-width:none;margin:0}
   }
 </style>
@@ -262,25 +259,25 @@ new QRCode(document.getElementById('qrcode'), {
   correctLevel: QRCode.CorrectLevel.M
 });
 
-// ── Zoom di stampa: la scheda ha una larghezza fissa in schermo (480px),
-// pensata per essere leggibile in una finestra di anteprima — ma su un
-// foglio A4 stampato quella stessa larghezza fissa lascia tutto il resto
-// del foglio vuoto (segnalato con screenshot: la scheda piccola in mezzo
-// a un A4 bianco). Qui si ingrandisce la scheda SOLO al momento di
-// stampare — mai a schermo — fino a riempire il foglio, mantenendo le
-// proporzioni (non stirando larghezza e altezza in modo diverso) e
-// adattandosi da sola all'altezza reale della scheda in quel momento
-// (che varia already in base a quante righe trattamento ci sono e se c'è
-// una foto caricata) invece di un numero fisso calcolato una volta sola.
-function calcolaEApplicaZoomStampa(){
+// ── Ridimensionamento: la scheda ha una larghezza fissa "di progetto"
+// (480px), pensata per essere leggibile in una finestra piccola — ma su
+// un foglio A4 stampato quella stessa larghezza fissa lasciava tutto il
+// resto del foglio vuoto (segnalato con screenshot due volte: la scheda
+// piccola in mezzo a un A4 bianco, il fix precedente basato su
+// beforeprint/afterprint NON ha funzionato in stampa reale — il timing
+// con cui i vari browser applicano modifiche al DOM appena prima di
+// catturare la stampa non è affidabile allo stesso modo ovunque).
+//
+// Fix più robusto: si applica l'ingrandimento SUBITO al caricamento della
+// pagina, non al momento di stampare — quello che si vede a schermo è
+// ESATTAMENTE quello che va in stampa (WYSIWYG), nessun evento di
+// stampa da cui dipendere. Mantiene le proporzioni (stesso rapporto
+// larghezza/altezza) e si adatta da solo all'altezza reale della scheda
+// in quel momento (che varia in base a quante righe trattamento ci sono
+// e se c'è una foto caricata), non un numero fisso calcolato una volta.
+function ridimensionaSchedaPerA4(){
   const card = document.querySelector('.card');
   const wrap = document.querySelector('.card-print-wrap');
-  // Riparte sempre da zoom 1 prima di misurare, altrimenti una stampa
-  // ripetuta misurerebbe la scheda già ingrandita dalla volta precedente.
-  card.style.transform = 'none';
-  card.style.transformOrigin = 'top center';
-  wrap.style.width = '';
-  wrap.style.height = '';
 
   const naturaleW = card.offsetWidth;
   const naturaleH = card.offsetHeight;
@@ -300,6 +297,7 @@ function calcolaEApplicaZoomStampa(){
   const scala = Math.min(areaW / naturaleW, areaH / naturaleH);
 
   card.style.transform = `scale(${scala})`;
+  card.style.transformOrigin = 'top center';
   // transform non cambia lo spazio occupato nel FLUSSO della pagina — va
   // detto esplicitamente al contenitore quanto spazio la scheda ingrandita
   // occuperà davvero, altrimenti la stampa continua a "vedere" le
@@ -309,17 +307,13 @@ function calcolaEApplicaZoomStampa(){
   wrap.style.height = (naturaleH * scala) + 'px';
 }
 
-function ripristinaDopoStampa(){
-  const card = document.querySelector('.card');
-  const wrap = document.querySelector('.card-print-wrap');
-  card.style.transform = '';
-  card.style.transformOrigin = '';
-  wrap.style.width = '';
-  wrap.style.height = '';
-}
-
-window.addEventListener('beforeprint', calcolaEApplicaZoomStampa);
-window.addEventListener('afterprint', ripristinaDopoStampa);
+// Il contenuto che determina l'altezza della scheda (foto, righe
+// trattamento) è già tutto presente nell'HTML renderizzato dal server —
+// solo il QR code va generato via JS, ma vive in un contenitore di
+// altezza fissa (non cambia le dimensioni della scheda quando compare):
+// si può quindi calcolare subito, senza aspettare eventi di caricamento
+// o la stampa, così la stessa dimensione vale per schermo E stampa.
+ridimensionaSchedaPerA4();
 </script>
 
 </body>
