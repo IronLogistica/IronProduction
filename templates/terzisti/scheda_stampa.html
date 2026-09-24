@@ -78,10 +78,12 @@
   /* ── QUANTITÀ — ora un riquadro compatto sopra il QR, non piu' una
      barra a tutta larghezza in fondo: la colonna destra e' comunque
      dedicata al QR, tanto vale usarci lo spazio sopra invece di
-     allungare la scheda con una riga in piu' sotto. ────────────────── */
-  .qta-mini{width:100%;display:flex;flex-direction:column;align-items:center;gap:4px}
-  .qta-mini .lbl{font-size:9px;font-weight:900;letter-spacing:.5px;color:var(--iron-blue);text-transform:uppercase}
-  .qta-mini .qta-box{width:100%;border:2.5px solid var(--iron-black);border-radius:6px;height:34px;background:#fff;box-shadow:inset 0 1px 3px rgba(0,0,0,.08)}
+     allungare la scheda con una riga in piu' sotto.
+     Riquadro ingrandito (era 34px, troppo compresso per scriverci un
+     numero a mano): ora piu' alto e con l'etichetta piu' leggibile. ── */
+  .qta-mini{width:100%;display:flex;flex-direction:column;align-items:center;gap:6px}
+  .qta-mini .lbl{font-size:11px;font-weight:900;letter-spacing:.5px;color:var(--iron-blue);text-transform:uppercase}
+  .qta-mini .qta-box{width:100%;border:2.5px solid var(--iron-black);border-radius:6px;height:70px;background:#fff;box-shadow:inset 0 1px 3px rgba(0,0,0,.08)}
 
   .footer{display:flex;justify-content:space-between;padding:6px 16px 10px;font-size:9px;color:#8b95a1}
 
@@ -101,7 +103,21 @@
     *{-webkit-print-color-adjust:exact!important;print-color-adjust:exact!important;color-adjust:exact!important}
     html,body{background:#fff;padding:0;display:block}
     .toolbar{display:none}
-    .card{border:2.5px solid #000;width:480px;max-width:100%;margin:0 auto}
+    /* La scheda restava a 480px fissi anche in stampa: su un foglio A4
+       (582px netti di larghezza utile qui sotto) restava piccola in mezzo
+       al foglio, con tutto il resto bianco intorno — segnalato da Mauri
+       con screenshot. Zoom calcolato al volo in JS (vedi sotto,
+       prepareZoomStampa/resetZoomStampa): la scheda viene ingrandita
+       MANTENENDO le proporzioni fino a riempire il foglio, invece di
+       restare a dimensione fissa indipendentemente da quanto contenuto
+       (foto, righe trattamento) la allunga. .card-print-wrap ha una
+       dimensione ESPLICITA pari alla scheda già ingrandita, altrimenti il
+       transform:scale (che non cambia lo spazio occupato nel flusso della
+       pagina) lascerebbe browser/stampante convinti che la scheda sia
+       ancora quella piccola, tagliando o lasciando vuoto il resto del
+       foglio lo stesso. */
+    .card-print-wrap{width:100%;display:flex;justify-content:center;align-items:flex-start}
+    .card{border:2.5px solid #000;width:480px;max-width:none;margin:0}
   }
 </style>
 </head>
@@ -120,6 +136,7 @@
   </button>
 </div>
 
+<div class="card-print-wrap">
 <div class="card">
 
   <!-- ═══ HEADER ═══ -->
@@ -235,6 +252,7 @@
     <span>{{ s.creato_il.strftime('%d/%m/%Y %H:%M') if s.creato_il else '' }}</span>
   </div>
 </div>
+</div>
 
 <script>
 new QRCode(document.getElementById('qrcode'), {
@@ -243,6 +261,65 @@ new QRCode(document.getElementById('qrcode'), {
   height: 108,
   correctLevel: QRCode.CorrectLevel.M
 });
+
+// ── Zoom di stampa: la scheda ha una larghezza fissa in schermo (480px),
+// pensata per essere leggibile in una finestra di anteprima — ma su un
+// foglio A4 stampato quella stessa larghezza fissa lascia tutto il resto
+// del foglio vuoto (segnalato con screenshot: la scheda piccola in mezzo
+// a un A4 bianco). Qui si ingrandisce la scheda SOLO al momento di
+// stampare — mai a schermo — fino a riempire il foglio, mantenendo le
+// proporzioni (non stirando larghezza e altezza in modo diverso) e
+// adattandosi da sola all'altezza reale della scheda in quel momento
+// (che varia already in base a quante righe trattamento ci sono e se c'è
+// una foto caricata) invece di un numero fisso calcolato una volta sola.
+function calcolaEApplicaZoomStampa(){
+  const card = document.querySelector('.card');
+  const wrap = document.querySelector('.card-print-wrap');
+  // Riparte sempre da zoom 1 prima di misurare, altrimenti una stampa
+  // ripetuta misurerebbe la scheda già ingrandita dalla volta precedente.
+  card.style.transform = 'none';
+  card.style.transformOrigin = 'top center';
+  wrap.style.width = '';
+  wrap.style.height = '';
+
+  const naturaleW = card.offsetWidth;
+  const naturaleH = card.offsetHeight;
+
+  // Area utile del foglio A4 con margini @page di 14mm: 210-28=182mm di
+  // larghezza, 297-28=269mm di altezza — convertiti in px CSS (96dpi,
+  // 1mm = 96/25.4px) per confrontarli con le misure in px di offsetWidth/
+  // offsetHeight qui sopra.
+  const mmToPx = 96 / 25.4;
+  const areaW = 182 * mmToPx;
+  const areaH = 269 * mmToPx;
+
+  // Il più piccolo dei due rapporti: riempie il foglio senza sforare né
+  // in larghezza né in altezza, qualunque sia il contenuto della scheda
+  // in quel momento (richiesto: "adeguando ogni volta la grandezza
+  // dell'immagine alla bisogna").
+  const scala = Math.min(areaW / naturaleW, areaH / naturaleH);
+
+  card.style.transform = `scale(${scala})`;
+  // transform non cambia lo spazio occupato nel FLUSSO della pagina — va
+  // detto esplicitamente al contenitore quanto spazio la scheda ingrandita
+  // occuperà davvero, altrimenti la stampa continua a "vedere" le
+  // dimensioni piccole di prima e il resto del foglio resta comunque
+  // vuoto sotto/accanto alla scheda ingrandita.
+  wrap.style.width = (naturaleW * scala) + 'px';
+  wrap.style.height = (naturaleH * scala) + 'px';
+}
+
+function ripristinaDopoStampa(){
+  const card = document.querySelector('.card');
+  const wrap = document.querySelector('.card-print-wrap');
+  card.style.transform = '';
+  card.style.transformOrigin = '';
+  wrap.style.width = '';
+  wrap.style.height = '';
+}
+
+window.addEventListener('beforeprint', calcolaEApplicaZoomStampa);
+window.addEventListener('afterprint', ripristinaDopoStampa);
 </script>
 
 </body>
