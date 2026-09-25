@@ -413,10 +413,13 @@ async function apriOrdine(id){
   o.articoli.forEach(a=>{
     const completo = a.qta_originale > 0 && a.qta_ricevuta >= a.qta_originale;
     const prezzoIgnoto = (a.prezzo_unitario === null || a.prezzo_unitario === undefined);
-    righe += `<tr style="${completo?'opacity:.6':''}"><td class="codice">
-        <input type="text" value="${a.codice}" style="width:100px;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;font-family:monospace;padding:2px 4px" onchange="aggiornaCampoRiga(${a.id}, 'codice', this.value)">
+    righe += `<tr style="${completo?'opacity:.6':''}"><td class="codice" style="position:relative">
+        <input id="oa-riga-codice-${a.id}" type="text" value="${a.codice}" autocomplete="off" style="width:100px;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;font-family:monospace;padding:2px 4px"
+               oninput="_oaRicercaCodiceInput(this, ${a.id})" onfocus="_oaRicercaCodiceInput(this, ${a.id})"
+               onchange="aggiornaCampoRiga(${a.id}, 'codice', this.value)">
+        <div id="oa-dropdown-${a.id}" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:240px;overflow-y:auto"></div>
         ${a.codice_fornitore_originale?` <span style="font-size:9px;color:#999" title="Codice originale sul PDF fornitore">(${a.codice_fornitore_originale})</span>`:''}</td>
-      <td class="lav-td"><input type="text" value="${(a.descrizione||'').replace(/"/g,'&quot;')}" style="width:100%;min-width:140px;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;padding:2px 4px" onchange="aggiornaCampoRiga(${a.id}, 'descrizione', this.value)"></td>
+      <td class="lav-td"><input id="oa-riga-descrizione-${a.id}" type="text" value="${(a.descrizione||'').replace(/"/g,'&quot;')}" style="width:100%;min-width:140px;background:transparent;border:1px solid var(--border);border-radius:4px;color:inherit;padding:2px 4px" onchange="aggiornaCampoRiga(${a.id}, 'descrizione', this.value)"></td>
       <td class="num"><input type="number" step="0.01" min="0" value="${a.qta_originale}" style="width:80px" onchange="aggiornaCampoRiga(${a.id}, 'qta_originale', this.value)"> ${a.unita_misura||''}</td>
       <td class="num"><input type="number" step="0.01" min="0" value="${a.qta_ricevuta}" style="width:80px" onchange="aggiornaCampoRiga(${a.id}, 'qta_ricevuta', this.value)"></td>
       <td class="num"><input type="number" step="0.0001" min="0" value="${prezzoIgnoto?'':a.prezzo_unitario}" placeholder="${prezzoIgnoto?'non trovato':''}"
@@ -478,6 +481,71 @@ async function aggiornaCampoRiga(rigaId, campo, valore){
   await apriOrdine(_oaCorrente);
   caricaListaOrdini();
 }
+
+// ── Menù intelligente dei codici — richiesto esplicitamente per
+// "Aggiungi riga": stesso identico endpoint/pattern già usato nel totem
+// di Alessandro per Rietichettatura e Scheda Trattamenti
+// (_schedaRicercaInputTotem), qui applicato all'input codice di ogni riga
+// dell'Ordine di Acquisto (comprese quelle appena aggiunte vuote).
+let _oaRicercaTimer = null;
+function _oaPosizionaDropdown(input, rigaId){
+  const dropdown = document.getElementById('oa-dropdown-' + rigaId);
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = Math.max(rect.width, 220) + 'px';
+}
+async function _oaRicercaCodiceInput(input, rigaId){
+  const dropdown = document.getElementById('oa-dropdown-' + rigaId);
+  const q = input.value.trim();
+  clearTimeout(_oaRicercaTimer);
+  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  _oaRicercaTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/ricerca_materiale_wood?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessun codice trovato</div>';
+      _oaPosizionaDropdown(input, rigaId);
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = risultati.map(x => {
+      const cod = String(x.codice).replace(/"/g, '&quot;');
+      const desc = String(x.descrizione || '').replace(/"/g, '&quot;').replace(/'/g, "\\'");
+      return `<div class="wms-item" onmousedown="_oaSceltaCodice(${rigaId}, '${cod}', '${desc}')">` +
+        `<div><b class="codice">${x.codice}</b>${x.descrizione ? `<br><span style="font-size:11px;color:var(--text-dim)">${x.descrizione}</span>` : ''}</div></div>`;
+    }).join('');
+    _oaPosizionaDropdown(input, rigaId);
+    dropdown.style.display = 'block';
+  }, 220);
+}
+async function _oaSceltaCodice(rigaId, codice, descrizione){
+  document.getElementById('oa-riga-codice-' + rigaId).value = codice;
+  document.getElementById('oa-dropdown-' + rigaId).style.display = 'none';
+  // Letta PRIMA di aggiornare il codice: quell'aggiornamento ricostruisce
+  // tutto il popup da capo (apriOrdine), quindi l'input di adesso non
+  // esisterebbe più subito dopo.
+  const campoDesc = document.getElementById('oa-riga-descrizione-' + rigaId);
+  const descrizioneEraVuota = campoDesc && !campoDesc.value.trim();
+  await aggiornaCampoRiga(rigaId, 'codice', codice);
+  // La descrizione si compila da sola SOLO se era vuota — non sovrascrive
+  // mai una descrizione che qualcuno ha già scritto o corretto a mano.
+  if(descrizioneEraVuota && descrizione){
+    await aggiornaCampoRiga(rigaId, 'descrizione', descrizione);
+  }
+}
+document.addEventListener('click', e => {
+  document.querySelectorAll('[id^="oa-dropdown-"]').forEach(dropdown => {
+    const rigaId = dropdown.id.replace('oa-dropdown-', '');
+    const input = document.getElementById('oa-riga-codice-' + rigaId);
+    if(dropdown.style.display !== 'none' && e.target !== input && !dropdown.contains(e.target)){
+      dropdown.style.display = 'none';
+    }
+  });
+});
 async function eliminaRigaOrdine(rigaId){
   if(!confirm('Eliminare questa riga? Non è reversibile.')) return;
   await fetch('/api/ordini_acquisto_wood/righe/' + rigaId, {method:'DELETE'});
