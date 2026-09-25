@@ -533,7 +533,7 @@ async function caricaListaDdt(){
             ${d.responsabile_verifica && !d.confermato ? `<span style="font-size:10px;color:var(--text-dim)">👤 ${d.responsabile_verifica}</span>` : ''}
             <a href="${d.link_modulo_verifica}" target="_blank" class="btn btn-ghost" style="padding:4px 8px;font-size:11px">📋 Modulo</a>
             <a href="/ddt_carico_wood/${d.id}/pdf" target="_blank" class="btn btn-ghost" style="padding:4px 8px;font-size:11px">📄 PDF</a>
-            ${!d.confermato ? `<button onclick="eliminaDdtBozza(${d.id})" class="btn btn-ghost" style="padding:4px 8px;font-size:11px;color:#e07a6e">🗑️ Elimina bozza</button>` : ''}
+            <button onclick="eliminaDdt(${d.id}, ${d.confermato ? 'true' : 'false'})" class="btn btn-ghost" style="padding:4px 8px;font-size:11px;color:#e07a6e">🗑️ ${d.confermato ? 'Elimina (storna)' : 'Elimina bozza'}</button>
           </div>
         </div>
         <div style="font-size:11px;color:var(--text-dim);margin-bottom:6px">${abbinate}/${d.righe.length} righe abbinate a un Ordine di Acquisto</div>`;
@@ -675,8 +675,11 @@ async function confermaDdt(ddtId){
     caricaListaOrdini();
   }catch(e){ alert('❌ Errore di rete.'); }
 }
-async function eliminaDdtBozza(ddtId){
-  if(!confirm('Eliminare questa bozza di DDT? Non è ancora stata confermata, nessun effetto sul magazzino da annullare.')) return;
+async function eliminaDdt(ddtId, confermato){
+  const messaggio = confermato
+    ? 'Questo DDT è già CONFERMATO — ha già caricato la giacenza e aggiornato le quantità ricevute sugli ordini collegati. Eliminandolo, quegli effetti vengono stornati automaticamente (giacenza sottratta, quantità ricevute ripristinate, stato dell\'ordine ricalcolato). Procedere?'
+    : 'Eliminare questa bozza di DDT? Non è ancora stata confermata, nessun effetto sul magazzino da annullare.';
+  if(!confirm(messaggio)) return;
   try{
     const r = await fetch('/api/ddt_carico_wood/' + ddtId, {method:'DELETE'});
     const d = await r.json();

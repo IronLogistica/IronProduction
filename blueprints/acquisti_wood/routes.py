@@ -955,15 +955,52 @@ def api_elimina_riga_ddt(rid):
 
 @acquisti_wood_bp.route('/api/ddt_carico_wood/<int:did>', methods=['DELETE'])
 def api_elimina_ddt_carico(did):
-    """Elimina un DDT ancora in BOZZA (es. caricato per sbaglio, o da
-    ricaricare da capo) — rifiuta se già confermato, dato che a quel punto
-    ha già toccato la giacenza reale e gli ordini: cancellarlo senza
-    invertire quegli effetti lascerebbe il magazzino sballato."""
+    """
+    Elimina un DDT — se era ancora in bozza (mai confermato), non ha mai
+    toccato nulla di reale: si cancella e basta. Se era già CONFERMATO
+    (giacenza caricata, quantità ricevute aggiornate sugli Ordini di
+    Acquisto collegati — vedi api_conferma_ddt_carico), prima STORNA
+    esattamente quegli stessi effetti, uno per uno, poi cancella:
+      - giacenza: sottrae la stessa quantità che era stata caricata
+        (quella verificata, se diversa da quella dichiarata)
+      - riga d'ordine collegata: sottrae la quantità ricevuta, mai sotto
+        zero
+      - stato dell'ordine: ricalcolato da capo con la stessa identica
+        logica automatica di sempre (_calcola_stato_automatico_oa) — se
+        era ORDINE_RICEVUTO solo grazie a questo DDT, torna da solo allo
+        stato corretto (es. ORDINE_CONFERMATO o ORDINE_IN_ARRIVO)
+    Gli eventuali ScartoFornitoreWood collegati (storico differenze
+    dichiarato/verificato) NON vengono cancellati — restano come
+    audit, solo scollegati da questo DDT che sta per sparire.
+    """
     ddt = DDTCaricoWood.query.get_or_404(did)
+    ordini_da_ricalcolare = set()
+
     if ddt.confermato:
-        return jsonify({'errore': True, 'messaggio':
-            'DDT già confermato — ha già aggiornato la giacenza reale, non si può eliminare da qui senza rischiare di sballare il magazzino.'}), 409
+        for riga_ddt in ddt.righe:
+            qta_caricata = riga_ddt.quantita_verificata if riga_ddt.quantita_verificata is not None else riga_ddt.quantita
+            if qta_caricata and riga_ddt.codice:
+                _registra_movimento_giacenza(
+                    riga_ddt.codice, -qta_caricata, 'storno_eliminazione_ddt',
+                    riferimento=ddt.filename,
+                    note=f'Storno per eliminazione DDT {ddt.numero_ddt or ddt.filename}')
+            if riga_ddt.ordine_acquisto_id:
+                riga_oa = RigaOrdineAcquistoWood.query.filter_by(
+                    ordine_id=riga_ddt.ordine_acquisto_id, codice=riga_ddt.codice).first()
+                if riga_oa:
+                    riga_oa.qta_ricevuta = max((riga_oa.qta_ricevuta or 0) - qta_caricata, 0)
+                    ordini_da_ricalcolare.add(riga_ddt.ordine_acquisto_id)
+
+    ScartoFornitoreWood.query.filter_by(ddt_id=ddt.id).update({'ddt_id': None})
+
     db.session.delete(ddt)
+    db.session.flush()
+
+    for oa_id in ordini_da_ricalcolare:
+        oa = OrdineAcquistoWood.query.get(oa_id)
+        if oa:
+            _calcola_stato_automatico_oa(oa)
+
     db.session.commit()
     return jsonify({'ok': True})
 
