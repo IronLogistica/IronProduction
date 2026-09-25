@@ -446,6 +446,44 @@ def api_elimina_riga_ordine(rid):
     return jsonify({'ok': True})
 
 
+@acquisti_wood_bp.route('/api/ordini_acquisto_wood/<int:oid>/righe', methods=['POST'])
+def api_nuova_riga_ordine(oid):
+    """
+    Aggiunge una riga articolo a un ordine di acquisto già esistente —
+    richiesto esplicitamente: sul popup dell'ordine, oltre a poter già
+    eliminare una riga (api_elimina_riga_ordine qui sopra), serve anche
+    poterne aggiungere una (es. il fornitore ha confermato un articolo in
+    più rispetto al PDF originale, o una riga letta male va ricreata da
+    zero invece che solo corretta). Nessun campo è obbligatorio: crea una
+    riga vuota pronta da compilare se il chiamante non manda nulla, così
+    il pulsante "+ Aggiungi riga" può limitarsi a chiamare questo endpoint
+    e lasciare che sia poi la modifica sul posto (già esistente,
+    api_modifica_riga_ordine) a riempirla.
+    """
+    o = OrdineAcquistoWood.query.get_or_404(oid)
+    d = request.get_json(force=True) if request.data else {}
+    try:
+        qta_originale = float(d.get('qta_originale') or 0)
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Quantità non valida'}), 400
+    try:
+        prezzo_unitario = float(d['prezzo_unitario']) if d.get('prezzo_unitario') not in (None, '') else None
+    except (TypeError, ValueError):
+        return jsonify({'errore': True, 'messaggio': 'Prezzo non valido'}), 400
+    r = RigaOrdineAcquistoWood(
+        ordine_id=o.id,
+        codice=(d.get('codice') or '').strip(),
+        descrizione=(d.get('descrizione') or '').strip(),
+        unita_misura=(d.get('unita_misura') or '').strip(),
+        qta_originale=qta_originale,
+        qta_ricevuta=0,
+        prezzo_unitario=prezzo_unitario,
+    )
+    db.session.add(r)
+    db.session.commit()
+    return jsonify({'ok': True, 'id': r.id}), 201
+
+
 @acquisti_wood_bp.route('/ordini_acquisto_wood/<int:oid>/pdf')
 def api_scarica_pdf(oid):
     o = OrdineAcquistoWood.query.get_or_404(oid)

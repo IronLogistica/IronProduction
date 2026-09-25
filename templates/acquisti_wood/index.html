@@ -424,8 +424,20 @@ async function apriOrdine(id){
       <td><button onclick="eliminaRigaOrdine(${a.id})" title="Elimina questa riga (es. letta male dal PDF)" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px">🗑️</button></td></tr>`;
   });
   righe += '</tbody></table></div>';
+  righe += '<button class="btn btn-ghost" style="margin-top:8px" onclick="aggiungiRigaOrdine()">➕ Aggiungi riga</button>';
   document.getElementById('oa-modal-righe').innerHTML = righe;
   openModal('modal-ordine-acquisto');
+}
+
+async function aggiungiRigaOrdine(){
+  // Riga vuota, subito modificabile sul posto — stessi campi editabili
+  // (aggiornaCampoRiga) già usati per correggere una riga letta dal PDF,
+  // qui applicati a una riga nuova invece che a una esistente.
+  const r = await fetch('/api/ordini_acquisto_wood/' + _oaCorrente + '/righe', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({})});
+  const d = await r.json();
+  if(!d.ok){ alert('❌ ' + (d.error || d.messaggio || 'Errore.')); return; }
+  await apriOrdine(_oaCorrente);
+  caricaListaOrdini();
 }
 
 async function confermaLetturaOrdine(){
