@@ -329,12 +329,16 @@ function renderListaOrdini(){
       const ricevute = o.articoli.filter(a => a.qta_ricevuta >= a.qta_originale && a.qta_originale > 0).length;
       const nienteRicevuto = ricevute === 0;
       const tuttoRicevuto = totRighe > 0 && ricevute === totRighe;
-      // Stesso schema colori della Situazione Ordini di Produzione:
-      // rosso = niente ancora arrivato, blu = in arrivo/parziale, verde = tutto ricevuto.
-      const bordo = daVerificare ? '#e6b800' : (tuttoRicevuto ? '#1a9e5c' : (nienteRicevuto ? '#c0392b' : '#2589c7'));
       const pct = totRighe > 0 ? Math.round((ricevute / totRighe) * 100) : 0;
-      const pillTesto = daVerificare ? '📋 DA VERIFICARE' : (tuttoRicevuto ? '✅ RICEVUTO' : (nienteRicevuto ? '🔴 DA RICEVERE' : '🚚 PARZIALE'));
-      const pillColore = daVerificare ? '#e6b800' : (tuttoRicevuto ? '#1a9e5c' : (nienteRicevuto ? '#c0392b' : '#2589c7'));
+      // Stessa etichetta/colore già mostrati nel popup dell'ordine
+      // (STATO_LABEL, calcolata in automatico) — prima qui c'era una
+      // pillola SEPARATA basata solo sulle quantità ricevute, che poteva
+      // dire "DA RICEVERE" mentre il popup dello stesso ordine diceva
+      // "In arrivo": segnalato con screenshot, ora è la stessa fonte.
+      const badgeStato = STATO_LABEL[o.stato_label] || {testo: o.stato_label, colore: '#888'};
+      const bordo = badgeStato.colore;
+      const pillTesto = badgeStato.testo;
+      const pillColore = badgeStato.colore;
 
       html += `<div style="width:290px;background:var(--dark3);border:1px solid var(--border);border-left:4px solid ${bordo};${daVerificare?'border-width:2px':''};border-radius:10px;padding:16px;cursor:pointer" onclick="apriOrdine(${o.id})">
         <div style="font-size:11px;color:var(--text-dim)">OA n° ${o.ordine_n} · ${o.filename}</div>
