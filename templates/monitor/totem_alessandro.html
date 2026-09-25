@@ -644,24 +644,38 @@ function _schedaSceltaMaterialeTotem(codice){
 // usata per quello stesso codice, cliccabile per non doverla riscrivere.
 // Non sostituisce mai un valore già scritto a mano da Alessandro — se il
 // campo Commessa ha già qualcosa, non tocca nulla.
+let _totemCommesseSeq = 0;
 async function suggerisciCommesseTotem(codice){
+  codice = String(codice || '').trim();
   const box = document.getElementById('sch-commesse-suggerite');
   if(document.getElementById('sch-commessa').value.trim()) { box.style.display = 'none'; return; }
+  const seq = ++_totemCommesseSeq;
   box.style.display = 'none';
   box.innerHTML = '';
   if(!codice) return;
   try{
-    const r = await fetch('/api/schede_trattamenti/ultime_commesse?codice=' + encodeURIComponent(codice));
-    const d = await r.json();
-    if(!d.ok || !d.commesse.length) return;
-    box.innerHTML = '<div style="font-size:11px;color:var(--text-dim);margin-bottom:5px">Ultima commessa usata per questo codice — tocca per riusarla:</div>' +
-      d.commesse.map(c => {
-        const cEsc = c.replace(/'/g, "\\'");
+    // Stesso endpoint/formato già usato dal popup di Terzisti per la
+    // stessa identica funzione (vedi templates/terzisti/index.html,
+    // _caricaUltimeCommesse) — un array di {commessa, numero_scheda,
+    // creato_il}, non {ok, commesse:[...]}.
+    const r = await fetch('/api/schede_trattamenti/ultime-commesse?codice=' + encodeURIComponent(codice));
+    if(!r.ok) throw new Error('HTTP ' + r.status);
+    const commesse = await r.json();
+    if(seq !== _totemCommesseSeq || !commesse.length) return;
+    box.innerHTML = '<div style="font-size:11px;color:var(--text-dim);margin-bottom:5px">' +
+      (commesse.length === 1 ? 'Ultima commessa usata per questo codice' : 'Ultime 2 commesse usate per questo codice') +
+      ' — tocca per riusarla:</div>' +
+      commesse.map(item => {
+        const cEsc = item.commessa.replace(/'/g, "\\'");
+        const testo = item.commessa + (item.creato_il ? ' · ' + item.creato_il : '');
         return `<button type="button" onclick="document.getElementById('sch-commessa').value='${cEsc}'; document.getElementById('sch-commesse-suggerite').style.display='none';" ` +
-          `style="background:var(--dark3);border:1.5px solid var(--border);color:var(--text);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;margin:0 6px 6px 0">${c}</button>`;
+          `style="background:var(--dark3);border:1.5px solid var(--border);color:var(--text);border-radius:8px;padding:8px 14px;font-size:13px;font-weight:600;cursor:pointer;margin:0 6px 6px 0">${testo}</button>`;
       }).join('');
     box.style.display = 'block';
-  }catch(e){ /* suggerimento facoltativo — mai bloccare la compilazione se la richiesta fallisce */ }
+  }catch(e){
+    // Il suggerimento storico è accessorio: non deve bloccare la scheda.
+    if(seq === _totemCommesseSeq) box.style.display = 'none';
+  }
 }
 document.addEventListener('click', e => {
   const dropdown = document.getElementById('scheda-dropdown-totem');

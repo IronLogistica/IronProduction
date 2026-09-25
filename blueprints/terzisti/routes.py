@@ -9,6 +9,7 @@ from models import (
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
 from blueprints.magazzino.routes import _registra_movimento_giacenza, _grezzo_iw_per_codici
 from datetime import datetime, date
+from sqlalchemy import func
 import os, re, json, shutil
 import PyPDF2
 
@@ -534,31 +535,39 @@ def api_schede_lista():
     } for s in schede])
 
 
-@terzisti_bp.route('/api/schede_trattamenti/ultime_commesse')
+@terzisti_bp.route('/api/schede_trattamenti/ultime-commesse')
 def api_schede_ultime_commesse():
-    """
-    Richiesta esplicita: una volta scelto il codice articolo, suggerire le
-    ultime commesse già usate per QUEL codice — Alessandro non deve
-    ricordarsela/riscriverla ogni volta se è la stessa (o una delle ultime
-    due) di prima. Solo le ultime 2 commesse DISTINTE (non le ultime 2
-    schede — se le ultime 3 schede di quel codice avessero tutte la stessa
-    commessa, sarebbe una sola voce utile, non un elenco ripetuto), più
-    recenti per prime, mai vuote.
-    """
+    """Restituisce le ultime due commesse distinte già usate per il codice."""
     codice = (request.args.get('codice') or '').strip()
     if not codice:
-        return jsonify({'ok': True, 'commesse': []})
+        return jsonify([])
+
+    # Confronto esatto ma senza distinzione maiuscole/minuscole: non usare
+    # ILIKE, perché i caratteri % e _ eventualmente presenti nel codice
+    # verrebbero interpretati come jolly.
     schede = (SchedaTrattamento.query
-              .filter(SchedaTrattamento.codice_articolo == codice, SchedaTrattamento.commessa != '')
+              .filter(func.upper(SchedaTrattamento.codice_articolo) == codice.upper())
+              .filter(SchedaTrattamento.commessa.isnot(None))
               .order_by(SchedaTrattamento.id.desc())
-              .limit(20).all())
-    viste = []
-    for s in schede:
-        if s.commessa and s.commessa not in viste:
-            viste.append(s.commessa)
-        if len(viste) >= 2:
+              .limit(30).all())
+
+    risultati = []
+    gia_viste = set()
+    for scheda in schede:
+        commessa = (scheda.commessa or '').strip()
+        chiave = commessa.casefold()
+        if not commessa or chiave in gia_viste:
+            continue
+        gia_viste.add(chiave)
+        risultati.append({
+            'commessa': commessa,
+            'numero_scheda': scheda.numero_scheda,
+            'creato_il': scheda.creato_il.strftime('%d/%m/%Y') if scheda.creato_il else '',
+        })
+        if len(risultati) == 2:
             break
-    return jsonify({'ok': True, 'commesse': viste})
+
+    return jsonify(risultati)
 
 
 @terzisti_bp.route('/api/schede_trattamenti', methods=['POST'])
