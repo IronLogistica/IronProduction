@@ -381,6 +381,49 @@ def api_upload_ordine_acquisto():
     return jsonify({'ok': True, 'ordine': _ordine_dict(o), 'n_articoli_trovati': len(dati['articoli'])})
 
 
+def _calcola_stato_automatico_oa(o):
+    """
+    Stesse identiche regole già in uso in MasterLogistic-WMS (letto lì per
+    espressa richiesta di Mauri, invece di reinventarle): lo stato
+    dell'ordine non si sceglie più a mano da un menu, si CALCOLA da
+    confermato + data_consegna + ritiro_proprio + quanto è stato ricevuto:
+
+      1. LETTURA_DA_VERIFICARE resta com'è — è un gate manuale PRIMA di
+         questa logica (vedi confermaLetturaOrdine), non fa parte del
+         calcolo automatico: un OA letto da PDF non passa in automatico
+         a "confermato" solo perché ha una data o un ritiro compilati,
+         deve prima essere guardato da una persona.
+      2. Non confermato → DA_CONFERMARE.
+      3. Confermato, con data di consegna:
+         - Ritiriamo noi: DA_RITIRARE se la data è oggi/scaduta/entro 2
+           giorni, altrimenti CONFERMATO (ci si organizza dopo).
+         - Consegnano loro: IN_ARRIVO se entro 2 giorni, altrimenti
+           CONFERMATO.
+      4. Confermato, senza data di consegna → CONFERMATO.
+      5. RICEVUTO ha SEMPRE la precedenza su tutto quanto sopra: se ogni
+         riga dell'ordine ha saldo residuo zero (qta_originale <=
+         qta_ricevuta, e l'ordine ha almeno una riga), l'ordine è ricevuto
+         indipendentemente da conferma/data/ritiro.
+    """
+    if o.stato_label == 'LETTURA_DA_VERIFICARE':
+        return
+
+    if not o.confermato:
+        o.stato_label = 'DA_CONFERMARE'
+    elif o.data_consegna:
+        delta = (o.data_consegna - date.today()).days
+        if o.ritiro_proprio:
+            o.stato_label = 'ORDINE_DA_RITIRARE' if delta <= 2 else 'ORDINE_CONFERMATO'
+        else:
+            o.stato_label = 'ORDINE_IN_ARRIVO' if delta <= 2 else 'ORDINE_CONFERMATO'
+    else:
+        o.stato_label = 'ORDINE_CONFERMATO'
+
+    righe = list(o.righe)
+    if righe and all((r.qta_originale or 0) <= (r.qta_ricevuta or 0) for r in righe):
+        o.stato_label = 'ORDINE_RICEVUTO'
+
+
 @acquisti_wood_bp.route('/api/ordini_acquisto_wood/<int:oid>', methods=['PUT'])
 def api_modifica_ordine_acquisto(oid):
     o = OrdineAcquistoWood.query.get_or_404(oid)
@@ -392,17 +435,19 @@ def api_modifica_ordine_acquisto(oid):
     if 'ritiro_proprio' in d: o.ritiro_proprio = bool(d.get('ritiro_proprio'))
     if 'confermato' in d:
         o.confermato = bool(d.get('confermato'))
-        if o.confermato and o.stato_label == 'DA_CONFERMARE':
-            o.stato_label = 'ORDINE_CONFERMATO'
-    if 'stato_label' in d:
-        if d['stato_label'] not in ('LETTURA_DA_VERIFICARE', 'DA_CONFERMARE', 'ORDINE_CONFERMATO', 'ORDINE_IN_ARRIVO', 'ORDINE_DA_RITIRARE', 'ORDINE_RICEVUTO'):
-            return jsonify({'errore': True, 'messaggio': 'Stato non valido'}), 400
-        o.stato_label = d['stato_label']
+    # 'stato_label' resta accettato in scrittura diretta SOLO per il passo
+    # "CONFERMA LETTURA" (LETTURA_DA_VERIFICARE -> DA_CONFERMARE) — l'unico
+    # gate che resta manuale di proposito (vedi _calcola_stato_automatico_oa).
+    # Qualunque altro stato richiesto qui viene ignorato: da qui in poi lo
+    # stato lo decide sempre e solo il calcolo automatico qui sotto.
+    if d.get('stato_label') == 'DA_CONFERMARE' and o.stato_label == 'LETTURA_DA_VERIFICARE':
+        o.stato_label = 'DA_CONFERMARE'
     if 'data_consegna' in d:
         try:
             o.data_consegna = date.fromisoformat(d['data_consegna']) if d.get('data_consegna') else None
         except ValueError:
             return jsonify({'errore': True, 'messaggio': 'Data non valida'}), 400
+    _calcola_stato_automatico_oa(o)
     db.session.commit()
     return jsonify({'ok': True, 'ordine': _ordine_dict(o)})
 
@@ -431,6 +476,10 @@ def api_modifica_riga_ordine(rid):
         return jsonify({'errore': True, 'messaggio': 'Quantità o prezzo non validi'}), 400
     if 'codice' in d: r.codice = (d.get('codice') or '').strip()
     if 'descrizione' in d: r.descrizione = (d.get('descrizione') or '').strip()
+    # Ricevere l'ultima quantità mancante può far scattare da sola
+    # ORDINE_RICEVUTO (vedi _calcola_stato_automatico_oa) — stessa logica
+    # automatica di MasterLogistic-WMS, non solo quando si tocca l'OA.
+    _calcola_stato_automatico_oa(r.ordine)
     db.session.commit()
     return jsonify({'ok': True})
 
@@ -441,7 +490,10 @@ def api_elimina_riga_ordine(rid):
     PDF, o un articolo che in realtà non era su questo ordine) — non
     elimina l'intero ordine, solo quella riga."""
     r = RigaOrdineAcquistoWood.query.get_or_404(rid)
+    o = r.ordine
     db.session.delete(r)
+    db.session.flush()
+    _calcola_stato_automatico_oa(o)
     db.session.commit()
     return jsonify({'ok': True})
 
@@ -480,6 +532,11 @@ def api_nuova_riga_ordine(oid):
         prezzo_unitario=prezzo_unitario,
     )
     db.session.add(r)
+    db.session.flush()
+    # Una riga nuova non ancora ricevuta può far uscire l'ordine da
+    # ORDINE_RICEVUTO se prima era considerato completo (es. si scopre un
+    # articolo mancante dopo aver già segnato tutto arrivato).
+    _calcola_stato_automatico_oa(o)
     db.session.commit()
     return jsonify({'ok': True, 'id': r.id}), 201
 

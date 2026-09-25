@@ -389,7 +389,7 @@ async function apriOrdine(id){
   if(!o) return;
   document.getElementById('oa-modal-titolo').textContent = o.fornitore + ' — OA n° ' + o.ordine_n;
 
-  const stati = Object.keys(STATO_LABEL).map(k => `<option value="${k}" ${o.stato_label===k?'selected':''}>${STATO_LABEL[k].testo}</option>`).join('');
+  const badgeStato = STATO_LABEL[o.stato_label] || {testo: o.stato_label, colore: '#888'};
   const bannerLettura = o.stato_label === 'LETTURA_DA_VERIFICARE'
     ? `<div style="background:#e6b80022;border:1px solid #e6b80055;border-radius:8px;padding:10px;margin-bottom:10px">
         <b style="color:#e6b800">📋 Lettura automatica da verificare</b> — correggi codice/descrizione/quantità qui sotto se il PDF è stato letto male, poi conferma.
@@ -398,7 +398,8 @@ async function apriOrdine(id){
   document.getElementById('oa-modal-testata').innerHTML = `
     ${bannerLettura}
     <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
-      <select id="oa-stato-sel" onchange="cambiaStatoOrdine()">${stati}</select>
+      <span style="background:${badgeStato.colore}22;border:1.5px solid ${badgeStato.colore};color:${badgeStato.colore};border-radius:14px;padding:5px 14px;font-weight:700;font-size:12.5px" title="Calcolato in automatico da conferma + data di consegna + ritiro (stessa logica di MasterLogistic-WMS) — non si sceglie più a mano">${badgeStato.testo}</span>
+      <label style="font-size:12px"><input type="checkbox" id="oa-confermato" ${o.confermato?'checked':''} onchange="cambiaConfermato()"> Confermato</label>
       <label style="font-size:12px"><input type="checkbox" id="oa-ritiro" ${o.ritiro_proprio?'checked':''} onchange="cambiaRitiro()"> Ritiriamo noi</label>
       <a href="${o.ha_pdf_caricato ? '/ordini_acquisto_wood/'+o.id+'/pdf' : '/ordini_acquisto_wood/'+o.id+'/stampa'}" target="_blank" class="btn btn-ghost" style="padding:5px 10px;font-size:12px">${o.ha_pdf_caricato ? '📄 Apri PDF' : '🖨️ Stampa ordine'}</a>
     </div>
@@ -449,15 +450,19 @@ async function confermaLetturaOrdine(){
   caricaListaOrdini();
 }
 
-async function cambiaStatoOrdine(){
-  await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({stato_label: document.getElementById('oa-stato-sel').value})});
+async function cambiaConfermato(){
+  await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({confermato: document.getElementById('oa-confermato').checked})});
+  await apriOrdine(_oaCorrente);
   caricaListaOrdini();
 }
 async function cambiaRitiro(){
   await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ritiro_proprio: document.getElementById('oa-ritiro').checked})});
+  await apriOrdine(_oaCorrente);
+  caricaListaOrdini();
 }
 async function cambiaDataConsegna(){
   await fetch('/api/ordini_acquisto_wood/' + _oaCorrente, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({data_consegna: document.getElementById('oa-data-consegna').value})});
+  await apriOrdine(_oaCorrente);
   caricaListaOrdini();
 }
 async function cambiaNota(){
@@ -468,6 +473,9 @@ async function cambiaResponsabileVerifica(){
 }
 async function aggiornaCampoRiga(rigaId, campo, valore){
   await fetch('/api/ordini_acquisto_wood/righe/' + rigaId, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({[campo]: valore})});
+  // La quantità ricevuta può far scattare ORDINE_RICEVUTO in automatico —
+  // il badge va aggiornato subito, non solo alla prossima apertura.
+  await apriOrdine(_oaCorrente);
   caricaListaOrdini();
 }
 async function eliminaRigaOrdine(rigaId){
