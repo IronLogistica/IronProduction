@@ -534,6 +534,33 @@ def api_schede_lista():
     } for s in schede])
 
 
+@terzisti_bp.route('/api/schede_trattamenti/ultime_commesse')
+def api_schede_ultime_commesse():
+    """
+    Richiesta esplicita: una volta scelto il codice articolo, suggerire le
+    ultime commesse già usate per QUEL codice — Alessandro non deve
+    ricordarsela/riscriverla ogni volta se è la stessa (o una delle ultime
+    due) di prima. Solo le ultime 2 commesse DISTINTE (non le ultime 2
+    schede — se le ultime 3 schede di quel codice avessero tutte la stessa
+    commessa, sarebbe una sola voce utile, non un elenco ripetuto), più
+    recenti per prime, mai vuote.
+    """
+    codice = (request.args.get('codice') or '').strip()
+    if not codice:
+        return jsonify({'ok': True, 'commesse': []})
+    schede = (SchedaTrattamento.query
+              .filter(SchedaTrattamento.codice_articolo == codice, SchedaTrattamento.commessa != '')
+              .order_by(SchedaTrattamento.id.desc())
+              .limit(20).all())
+    viste = []
+    for s in schede:
+        if s.commessa and s.commessa not in viste:
+            viste.append(s.commessa)
+        if len(viste) >= 2:
+            break
+    return jsonify({'ok': True, 'commesse': viste})
+
+
 @terzisti_bp.route('/api/schede_trattamenti', methods=['POST'])
 def api_schede_crea():
     try:
