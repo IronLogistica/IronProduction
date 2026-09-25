@@ -4,21 +4,6 @@ class Config:
     _db = os.environ.get('DATABASE_URL', 'sqlite:///masterproduction.db')
     if _db.startswith('postgres://'):
         _db = _db.replace('postgres://', 'postgresql://', 1)
-    # BUG REALE TROVATO E CORRETTO (programma in crash totale al boot:
-    # "ModuleNotFoundError: No module named 'psycopg'"): Railway ha
-    # ricominciato a fornire DATABASE_URL con lo schema
-    # "postgresql+psycopg://" (driver psycopg v3, esplicito), invece del
-    # semplice "postgresql://" di sempre — ma qui è installato solo
-    # psycopg2-binary (v2), mai psycopg v3. SQLAlchemy legge lo schema
-    # dell'URL e prova a importare ESATTAMENTE il driver richiesto lì
-    # dentro, quindi con "+psycopg" tenta "import psycopg" (v3) e fallisce
-    # sempre, ovunque, ad ogni avvio — non un problema di dati, un
-    # mismatch tra cosa chiede l'URL e cosa è davvero installato. Si
-    # forza lo schema a puntare sempre al driver psycopg2 già installato
-    # e già funzionante, indipendentemente da quale schema Railway decida
-    # di fornire in futuro.
-    if _db.startswith('postgresql+psycopg://') or _db.startswith('postgresql+psycopg3://'):
-        _db = _db.replace('postgresql+psycopg://', 'postgresql+psycopg2://', 1).replace('postgresql+psycopg3://', 'postgresql+psycopg2://', 1)
     SQLALCHEMY_DATABASE_URI = _db
     SQLALCHEMY_TRACK_MODIFICATIONS = False
     SECRET_KEY = os.environ.get('SECRET_KEY', 'mes-carpenteria-dev-2024')
@@ -34,10 +19,6 @@ class Config:
     _ml_db = os.environ.get('MASTERLOGISTIC_DATABASE_URL', '')
     if _ml_db.startswith('postgres://'):
         _ml_db = _ml_db.replace('postgres://', 'postgresql://', 1)
-    # Stessa normalizzazione psycopg v3 -> v2 di sopra, applicata anche qui:
-    # stesso identico crash si presenterebbe altrimenti anche su questo bind.
-    if _ml_db.startswith('postgresql+psycopg://') or _ml_db.startswith('postgresql+psycopg3://'):
-        _ml_db = _ml_db.replace('postgresql+psycopg://', 'postgresql+psycopg2://', 1).replace('postgresql+psycopg3://', 'postgresql+psycopg2://', 1)
     SQLALCHEMY_BINDS = {'masterlogistic': _ml_db} if _ml_db else {}
 
     # Token Bearer obbligatorio per le API PP; lasciare vuoto disabilita le API.
