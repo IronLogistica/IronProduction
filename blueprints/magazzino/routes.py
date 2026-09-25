@@ -1181,7 +1181,17 @@ def _registra_movimento_giacenza(codice, delta, tipo, riferimento='', note='', c
     """Applica un delta (positivo=carico, negativo=scarico) alla giacenza di un
     codice e registra il movimento in storico. Non fa il commit (lo fa il chiamante).
     costo_unitario è facoltativo: se dato, il movimento viene valorizzato
-    (valore = costo_unitario × |delta|) — usato per i carichi a costo standard."""
+    (valore = costo_unitario × |delta|) — usato per i carichi a costo standard.
+
+    Il codice è SEMPRE normalizzato in maiuscolo prima di toccare la
+    Giacenza: è il punto unico da cui passano tutti i movimenti di
+    magazzino (carico DDT, scarico produzione, rettifiche, import...), e
+    senza questa normalizzazione un codice arrivato con maiuscole/minuscole
+    diverse (es. "TTD65sp15" letto da un PDF invece di "TTD65SP15") crea
+    silenziosamente una riga di Giacenza NUOVA e separata invece di
+    aggiornare quella vera — il magazzino risulta "non movimentato" pur
+    risultando l'ordine/DDT correttamente abbinato."""
+    codice = (codice or '').strip().upper()
     g = GiacenzaWood.query.get(codice)
     if not g:
         g = GiacenzaWood(codice=codice, quantita=0)

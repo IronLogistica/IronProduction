@@ -4,6 +4,7 @@ from datetime import datetime, date
 
 import PyPDF2
 from flask import Blueprint, render_template, jsonify, request, Response
+from sqlalchemy import func
 
 from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
@@ -54,12 +55,22 @@ def _risolvi_codice_fornitore(fornitore, codice_grezzo):
     e ritorna il codice interno corrispondente se trovata, altrimenti ritorna
     codice_grezzo invariato (nessuna mappa = comportamento di prima, il
     codice del PDF viene usato così com'è).
+
+    Il codice interno restituito è SEMPRE normalizzato in maiuscolo: un PDF
+    (fornitore/DDT/ordine) può riportare lo stesso codice con maiuscole e
+    minuscole diverse a seconda di come lo scrivono loro (es. "TTD65sp15"
+    invece di "TTD65SP15"), ma in magazzino/produzione deve restare SEMPRE
+    lo stesso articolo — altrimenti l'abbinamento con l'Ordine di Acquisto
+    e il carico della Giacenza silenziosamente non si applicano allo stesso
+    codice e sembra che "non abbia movimentato il magazzino".
     """
     if not codice_grezzo:
         return codice_grezzo
+    codice_grezzo = codice_grezzo.strip()
     mappa = MappaCodiceFornitoreWood.query.filter_by(
         fornitore=fornitore, codice_fornitore=codice_grezzo).first()
-    return mappa.codice_interno if mappa else codice_grezzo
+    codice = mappa.codice_interno if mappa else codice_grezzo
+    return codice.strip().upper()
 
 
 def _estrai_dati_ordine_acquisto(testo_completo):
@@ -474,7 +485,7 @@ def api_modifica_riga_ordine(rid):
             r.prezzo_unitario = float(d['prezzo_unitario']) if d.get('prezzo_unitario') not in (None, '') else None
     except (TypeError, ValueError):
         return jsonify({'errore': True, 'messaggio': 'Quantità o prezzo non validi'}), 400
-    if 'codice' in d: r.codice = (d.get('codice') or '').strip()
+    if 'codice' in d: r.codice = (d.get('codice') or '').strip().upper()
     if 'descrizione' in d: r.descrizione = (d.get('descrizione') or '').strip()
     # Ricevere l'ultima quantità mancante può far scattare da sola
     # ORDINE_RICEVUTO (vedi _calcola_stato_automatico_oa) — stessa logica
@@ -524,7 +535,7 @@ def api_nuova_riga_ordine(oid):
         return jsonify({'errore': True, 'messaggio': 'Prezzo non valido'}), 400
     r = RigaOrdineAcquistoWood(
         ordine_id=o.id,
-        codice=(d.get('codice') or '').strip(),
+        codice=(d.get('codice') or '').strip().upper(),
         descrizione=(d.get('descrizione') or '').strip(),
         unita_misura=(d.get('unita_misura') or '').strip(),
         qta_originale=qta_originale,
@@ -559,7 +570,8 @@ def pagina_scheda_identificazione_magazzino(rid):
     # diverse (usato in più prodotti) — tutti i padri distinti, non solo il
     # primo trovato, ordinati per leggibilità.
     codici_padre = sorted({riga.codice_padre for riga in
-                            DistintaBaseWood.query.filter_by(codice_figlio=r.codice).all()})
+                            DistintaBaseWood.query.filter(
+                                func.upper(DistintaBaseWood.codice_figlio) == (r.codice or '').upper()).all()})
 
     quantita = r.qta_originale if (r.qta_originale or 0) > 0 else r.qta_ricevuta
     quantita_stampata = f"{quantita:g}" if quantita else '—'
@@ -772,7 +784,10 @@ def api_upload_ddt_carico():
         # nell'anteprima (nessuna riga OA viene toccata qui, nessuna
         # giacenza registrata: questo succede solo alla conferma).
         oa = OrdineAcquistoWood.query.filter_by(ordine_n=ordine_n_rif).first() if ordine_n_rif else None
-        riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=codice_risolto).first() if oa else None
+        riga_oa = (RigaOrdineAcquistoWood.query.filter(
+                       RigaOrdineAcquistoWood.ordine_id == oa.id,
+                       func.upper(RigaOrdineAcquistoWood.codice) == codice_risolto.upper()).first()
+                   if oa else None)
         db.session.add(RigaDDTCaricoWood(
             ddt_id=ddt.id, ordine_n_riferimento=ordine_n_rif, codice=codice_risolto,
             descrizione=art['descrizione'], quantita=qta,
@@ -831,8 +846,9 @@ def api_conferma_ddt_carico(did):
                                                (f' — rif. OA {riga_ddt.ordine_n_riferimento}' if riga_ddt.ordine_n_riferimento else '') +
                                                (f' — quantità VERIFICATA (dichiarate {riga_ddt.quantita})' if riga_ddt.quantita_verificata is not None and riga_ddt.quantita_verificata != riga_ddt.quantita else ''))
         if riga_ddt.ordine_acquisto_id:
-            riga_oa = RigaOrdineAcquistoWood.query.filter_by(
-                ordine_id=riga_ddt.ordine_acquisto_id, codice=riga_ddt.codice).first()
+            riga_oa = RigaOrdineAcquistoWood.query.filter(
+                RigaOrdineAcquistoWood.ordine_id == riga_ddt.ordine_acquisto_id,
+                func.upper(RigaOrdineAcquistoWood.codice) == (riga_ddt.codice or '').upper()).first()
             if riga_oa:
                 riga_oa.qta_ricevuta = (riga_oa.qta_ricevuta or 0) + qta_da_caricare
 
@@ -879,7 +895,7 @@ def api_aggiungi_riga_ddt(did):
     if ddt.confermato:
         return jsonify({'errore': True, 'messaggio': 'DDT già confermato — non più modificabile da qui.'}), 409
     d = request.get_json(force=True)
-    codice = (d.get('codice') or '').strip()
+    codice = (d.get('codice') or '').strip().upper()
     if not codice:
         return jsonify({'errore': True, 'messaggio': 'Il codice è obbligatorio.'}), 400
     try:
@@ -891,7 +907,10 @@ def api_aggiungi_riga_ddt(did):
 
     ordine_n_riferimento = (d.get('ordine_n_riferimento') or '').strip()
     oa = OrdineAcquistoWood.query.filter_by(ordine_n=ordine_n_riferimento).first() if ordine_n_riferimento else None
-    riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=codice).first() if oa else None
+    riga_oa = (RigaOrdineAcquistoWood.query.filter(
+                   RigaOrdineAcquistoWood.ordine_id == oa.id,
+                   func.upper(RigaOrdineAcquistoWood.codice) == codice.upper()).first()
+               if oa else None)
 
     r = RigaDDTCaricoWood(
         ddt_id=did, codice=codice, descrizione=(d.get('descrizione') or '').strip(),
@@ -914,7 +933,7 @@ def api_modifica_riga_ddt(rid):
     if r.ddt.confermato:
         return jsonify({'errore': True, 'messaggio': 'DDT già confermato — non più modificabile da qui.'}), 409
     d = request.get_json(force=True)
-    if 'codice' in d: r.codice = (d.get('codice') or '').strip()
+    if 'codice' in d: r.codice = (d.get('codice') or '').strip().upper()
     if 'descrizione' in d: r.descrizione = (d.get('descrizione') or '').strip()
     if 'ordine_n_riferimento' in d: r.ordine_n_riferimento = (d.get('ordine_n_riferimento') or '').strip()
     if 'quantita' in d:
@@ -935,7 +954,10 @@ def api_modifica_riga_ddt(rid):
         r.ubicazione_allocata = (d.get('ubicazione_allocata') or '').strip()
     if 'codice' in d or 'ordine_n_riferimento' in d:
         oa = OrdineAcquistoWood.query.filter_by(ordine_n=r.ordine_n_riferimento).first() if r.ordine_n_riferimento else None
-        riga_oa = RigaOrdineAcquistoWood.query.filter_by(ordine_id=oa.id, codice=r.codice).first() if oa else None
+        riga_oa = (RigaOrdineAcquistoWood.query.filter(
+                       RigaOrdineAcquistoWood.ordine_id == oa.id,
+                       func.upper(RigaOrdineAcquistoWood.codice) == (r.codice or '').upper()).first()
+                   if oa else None)
         r.ordine_acquisto_id = oa.id if (oa and riga_oa) else None
         r.abbinata = bool(oa and riga_oa)
     db.session.commit()
