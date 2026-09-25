@@ -421,7 +421,10 @@ async function apriOrdine(id){
       <td class="num"><input type="number" step="0.0001" min="0" value="${prezzoIgnoto?'':a.prezzo_unitario}" placeholder="${prezzoIgnoto?'non trovato':''}"
           style="width:90px;${prezzoIgnoto?'border-color:#b8860b':''}" onchange="aggiornaCampoRiga(${a.id}, 'prezzo_unitario', this.value)"></td>
       <td class="lav-td">${a.data_evasione||'—'}</td>
-      <td><button onclick="eliminaRigaOrdine(${a.id})" title="Elimina questa riga (es. letta male dal PDF)" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px">🗑️</button></td></tr>`;
+      <td style="white-space:nowrap">
+        <a href="/ordini_acquisto_wood/righe/${a.id}/scheda-identificazione" target="_blank" title="Stampa scheda identificazione magazzino" style="text-decoration:none;font-size:14px;margin-right:6px">🏷️</a>
+        <button onclick="eliminaRigaOrdine(${a.id})" title="Elimina questa riga (es. letta male dal PDF)" style="background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px">🗑️</button>
+      </td></tr>`;
   });
   righe += '</tbody></table></div>';
   righe += '<button class="btn btn-ghost" style="margin-top:8px" onclick="aggiungiRigaOrdine()">➕ Aggiungi riga</button>';

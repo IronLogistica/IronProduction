@@ -9,7 +9,7 @@ from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
                     OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento, ScortaMinimaWood,
                     AnagraficaAziendaWood, AnagraficaFornitoreWood, CatalogoFornitoreWood, Terzista,
-                    ScartoFornitoreWood)
+                    ScartoFornitoreWood, DistintaBaseWood)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
                     _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
                     _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO, _leggi_file_tabellare_tollerante,
@@ -482,6 +482,35 @@ def api_nuova_riga_ordine(oid):
     db.session.add(r)
     db.session.commit()
     return jsonify({'ok': True, 'id': r.id}), 201
+
+
+@acquisti_wood_bp.route('/ordini_acquisto_wood/righe/<int:rid>/scheda-identificazione')
+def pagina_scheda_identificazione_magazzino(rid):
+    """
+    Richiesta esplicita: "per la merce che arriva e la vogliamo etichettare
+    dovremmo creare una SCHEDA IDENTIFICAZIONE MAGAZZINO" — stesso stile
+    grafico della Scheda Trattamenti di Terzisti (stessa impalcatura di
+    ridimensionamento per A4), ma per etichettare l'arrivo di un articolo
+    invece di una lavorazione esterna: codice, codici padre (da distinta
+    base — a cosa serve questo pezzo), descrizione, riferimento
+    fornitore/ordine, quantità in un riquadro grande.
+    """
+    r = RigaOrdineAcquistoWood.query.get_or_404(rid)
+    o = r.ordine
+
+    # Uno stesso codice può comparire come figlio in più distinte base
+    # diverse (usato in più prodotti) — tutti i padri distinti, non solo il
+    # primo trovato, ordinati per leggibilità.
+    codici_padre = sorted({riga.codice_padre for riga in
+                            DistintaBaseWood.query.filter_by(codice_figlio=r.codice).all()})
+
+    quantita = r.qta_originale if (r.qta_originale or 0) > 0 else r.qta_ricevuta
+    quantita_stampata = f"{quantita:g}" if quantita else '—'
+
+    return render_template('acquisti_wood/scheda_identificazione_magazzino.html',
+                            r=r, o=o, codici_padre=codici_padre,
+                            quantita_stampata=quantita_stampata,
+                            qr_text=r.codice, oggi=datetime.now().strftime('%d/%m/%Y %H:%M'))
 
 
 @acquisti_wood_bp.route('/ordini_acquisto_wood/<int:oid>/pdf')
