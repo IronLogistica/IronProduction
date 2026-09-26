@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Smistamento DDT {{ ddt.numero_ddt or ddt.filename }}</title>
+<style>
+  @page { size: A4 portrait; margin: 10mm; }
+  body { margin:0; padding:12px; background:#fff; }
+  .btn-stampa { display:block; width:100%; margin:0 0 14px; padding:12px; font-size:16px; font-weight:700; background:#1e6fa5; color:#fff; border:none; border-radius:8px; cursor:pointer; }
+  @media print { .btn-stampa { display:none; } body { padding:0; } }
+</style>
+</head>
+<body>
+<button class="btn-stampa" onclick="window.print()">🖨️ Stampa smistamento</button>
+{% include 'acquisti_wood/_smistamento_blocco.html' %}
+</body>
+</html>

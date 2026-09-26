@@ -1,0 +1,72 @@
+{# Blocco "Smistamento merce in arrivo" — incluso sia nella pagina dedicata
+   sia come seconda pagina del Modulo di Verifica Ingresso Merci.
+   Richiede: ddt, schede (vedi calcola_smistamento_ddt). #}
+<style>
+  .sm-wrap { font-family: Arial, Helvetica, sans-serif; color:#000; }
+  .sm-titolo { font-size:20px; font-weight:900; border:2px solid #000; padding:8px 12px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; }
+  .sm-sotto { font-size:11px; margin-bottom:12px; }
+  .sm-cod { border:2px solid #000; margin-bottom:10px; page-break-inside:avoid; break-inside:avoid; }
+  .sm-cod-testa { display:flex; justify-content:space-between; align-items:center; background:#000; color:#fff; padding:6px 10px; }
+  .sm-cod-testa .c { font-size:22px; font-weight:900; font-family:monospace; }
+  .sm-cod-testa .q { font-size:22px; font-weight:900; white-space:nowrap; }
+  .sm-desc { font-size:13px; font-weight:700; padding:6px 10px; border-bottom:1px solid #000; }
+  .sm-dest { display:flex; align-items:stretch; border-bottom:1px solid #999; }
+  .sm-dest:last-child { border-bottom:none; }
+  .sm-dest .ico { width:150px; flex-shrink:0; font-size:13px; font-weight:900; padding:8px 10px; border-right:1px solid #999; display:flex; align-items:center; }
+  .sm-dest .ico.prod { background:#e8e8e8; }
+  .sm-dest .txt { flex:1; padding:6px 10px; font-size:12px; line-height:1.35; }
+  .sm-dest .txt b.grande { font-size:15px; }
+  .sm-dest .qta { width:110px; flex-shrink:0; font-size:22px; font-weight:900; text-align:center; border-left:1px solid #999; display:flex; align-items:center; justify-content:center; }
+  .sm-check { display:inline-block; width:16px; height:16px; border:2px solid #000; vertical-align:middle; margin-right:6px; }
+  .sm-vuoto { font-size:14px; padding:20px; border:2px dashed #999; text-align:center; }
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+</style>
+<div class="sm-wrap">
+  <div class="sm-titolo">
+    <span>🧭 SMISTAMENTO MERCE IN ARRIVO</span>
+    <span style="font-size:13px">DDT n. {{ ddt.numero_ddt or '—' }} del {{ ddt.data_ddt or '—' }}</span>
+  </div>
+  <div class="sm-sotto">
+    Fornitore: <b>{{ ddt.fornitore or '—' }}</b> —
+    Per ogni codice ricevuto: portalo dove indicato. Prima gli Ordini di Produzione che lo aspettano (in ordine di priorità), il resto a magazzino a scorta.
+    Spunta la casella quando fatto.
+  </div>
+  {% if not schede %}
+  <div class="sm-vuoto">Nessun codice in questo DDT.</div>
+  {% endif %}
+  {% for s in schede %}
+  <div class="sm-cod">
+    <div class="sm-cod-testa">
+      <span class="c">{{ s.codice }}</span>
+      <span class="q">RICEVUTI: {{ '%g'|format(s.arrivata) }} {{ s.unita_misura }}</span>
+    </div>
+    <div class="sm-desc">{{ s.descrizione or '—' }}</div>
+    {% for p in s.produzione %}
+    <div class="sm-dest">
+      <div class="ico prod"><span class="sm-check"></span>➡️ PRODUZIONE</div>
+      <div class="txt">
+        <b class="grande">{{ p.op_code }}</b> — prodotto <b>{{ p.prodotto }}</b>{% if p.descrizione_op %} ({{ p.descrizione_op }}){% endif %}<br>
+        {% set dett = [('Commessa ' ~ p.commessa) if p.commessa else '', p.cliente or '',
+                       ('consegna ' ~ p.data_prevista[8:10] ~ '/' ~ p.data_prevista[5:7] ~ '/' ~ p.data_prevista[0:4]) if p.data_prevista else ''] %}
+        {% if dett|select|list %}{{ dett|select|join(' · ') }}<br>{% endif %}
+        {% for d in p.destinazioni %}
+          Portare a: <b class="grande">{{ d.reparto or 'reparto non configurato' }}</b>{% if d.padre %} — per {{ d.padre }}{% endif %}{% if not loop.last %}<br>{% endif %}
+        {% endfor %}
+      </div>
+      <div class="qta">{{ '%g'|format(p.quantita) }}</div>
+    </div>
+    {% endfor %}
+    {% if s.magazzino > 0 %}
+    <div class="sm-dest">
+      <div class="ico"><span class="sm-check"></span>📦 A MAGAZZINO</div>
+      <div class="txt">
+        <b class="grande">A SCORTA</b>{% if not s.produzione %} — nessun impegno di produzione in attesa{% endif %}<br>
+        Ubicazione: <b class="grande">{{ s.ubicazione or '________________' }}</b>
+        {% if s.scorta_minima %}&nbsp;·&nbsp;scorta minima {{ '%g'|format(s.scorta_minima) }}{% endif %}
+      </div>
+      <div class="qta">{{ '%g'|format(s.magazzino) }}</div>
+    </div>
+    {% endif %}
+  </div>
+  {% endfor %}
+</div>

@@ -2615,6 +2615,53 @@ def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None, fabbisogno_lo
     return giacenza_residua
 
 
+def impegni_op_per_codice(giacenza_iniziale=None, mappa=None):
+    """
+    Dettaglio degli IMPEGNI per codice: per ogni Ordine di Produzione aperto
+    (STATI_CHE_IMPEGNANO, in ordine di priorità — stessa coda di
+    _giacenza_residua_dopo_impegni), quanto di ogni codice serve a
+    quell'OP (fabbisogno lordo), quanto è già coperto dalla giacenza
+    (usato) e quanto MANCA. Somma dei 'fabbisogno' per codice = Impegnato
+    di Magazzino (stessa esplosione, stesso netting).
+
+    'giacenza_iniziale' opzionale ({codice: qta}): per simulare una
+    giacenza diversa da quella attuale — es. lo Smistamento DDT la usa
+    SENZA la merce del DDT stesso, per sapere a chi mancava prima che
+    arrivasse.
+
+    Ritorna {codice: [ {op_id, op_code, commessa, cliente, codice_articolo,
+    descrizione_op, priorita, data_prevista, fabbisogno, coperto, mancante} ]}.
+    """
+    if giacenza_iniziale is None:
+        giacenza = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
+    else:
+        giacenza = dict(giacenza_iniziale)
+    if mappa is None:
+        mappa = _carica_mappa_distinta_base_wood()
+    op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
+                 .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+    risultato = {}
+    for op in op_aperti:
+        saldo = _saldo_materiale_op(op)
+        if saldo <= 0:
+            continue
+        out = {}
+        _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza, out, mappa=mappa,
+                               escludi_fabbisogno_per=op.codice_articolo)
+        for cod, r in out.items():
+            if r['fabbisogno'] <= 0:
+                continue
+            risultato.setdefault(cod, []).append({
+                'op_id': op.id, 'op_code': op.codice, 'commessa': op.commessa or '',
+                'cliente': op.cliente or '', 'codice_articolo': op.codice_articolo,
+                'descrizione_op': op.descrizione or '', 'priorita': op.priorita,
+                'data_prevista': op.data_prevista.isoformat() if op.data_prevista else None,
+                'fabbisogno': round(r['fabbisogno'], 4), 'coperto': round(r['usato'], 4),
+                'mancante': round(r['mancante'], 4),
+            })
+    return risultato
+
+
 def _residuo_giacenza_progressivo(op_aperti=None, mappa=None):
     """
     Versione efficiente di _giacenza_residua_dopo_impegni pensata per essere

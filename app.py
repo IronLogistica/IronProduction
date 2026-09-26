@@ -32,6 +32,7 @@ LAUNCHPAD_GRUPPI = [
     ]},
     {'nome': 'Acquisti', 'icona': '🛒', 'colore': '#e6b800', 'voci': [
         {'label': 'Ordini di Acquisto', 'icona': '🛒', 'url': '/ordini-acquisto-wood'},
+        {'label': 'Lista Fabbisogni', 'icona': '📋', 'url': '/lista-fabbisogni'},
         {'label': 'Acquisti da Fabbisogno', 'icona': '🧮', 'url': '/acquisti-da-fabbisogno'},
         {'label': 'Materiale in Arrivo', 'icona': '🚛', 'url': '/materiale-in-arrivo'},
         {'label': 'Anagrafica Iron Wood', 'icona': '🏢', 'url': '/anagrafica-azienda-wood'},

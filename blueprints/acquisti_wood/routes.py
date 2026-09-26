@@ -14,7 +14,7 @@ from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
                     _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
                     _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO, _leggi_file_tabellare_tollerante,
-                    _calcola_costo_standard)
+                    _calcola_costo_standard, impegni_op_per_codice)
 
 acquisti_wood_bp = Blueprint('acquisti_wood', __name__)
 
@@ -1671,7 +1671,214 @@ def pagina_modulo_verifica_ddt(did):
         ddt.modulo_verifica_stampato_il = datetime.utcnow()
         db.session.commit()
     azienda = AnagraficaAziendaWood.query.first()
-    return render_template('acquisti_wood/modulo_verifica.html', ddt=ddt, azienda=azienda)
+    # Seconda pagina: SMISTAMENTO — dove portare ogni codice (produzione o
+    # magazzino), stampata insieme al modulo così arriva all'operatore
+    # con il bancale. Un errore nel calcolo non deve mai bloccare il modulo.
+    try:
+        schede_smistamento = calcola_smistamento_ddt(ddt)
+    except Exception as e:
+        db.session.rollback()
+        print(f'[smistamento DDT {did}] non calcolato: {e}')
+        schede_smistamento = []
+    return render_template('acquisti_wood/modulo_verifica.html', ddt=ddt, azienda=azienda,
+                           schede_smistamento=schede_smistamento)
 
 
 
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  LISTA FABBISOGNI (stile "Sottoscorta" Zucchetti) — elenco UNICO per gli
+#  acquisti: ogni codice da comprare con Esistenza, Impegnato, Disponibilità,
+#  Ordinato, Scorta Minima, Sottoscorta e Da Ordinare — e SOTTO ogni codice
+#  l'elenco degli impegni (quali Ordini di Produzione lo richiedono e quanto).
+#  I numeri vengono dalla STESSA funzione di Magazzino (_calcola_campi_giacenza):
+#  non possono mai differire da quelli mostrati là.
+# ══════════════════════════════════════════════════════════════════════════════
+TIPI_DA_ACQUISTARE = ('MATERIA_PRIMA_FORNITORE', 'COMPONENTE_ACQUISTO', 'LASERATO',
+                      'MATERIALE_CONSUMO', 'MATERIALE_SICUREZZA')
+
+
+def _ordini_acquisto_aperti_per_codice(codici):
+    """{codice: [ {ordine_n, fornitore, residuo, data_consegna} ]} per le righe OA non ancora ricevute."""
+    out = {}
+    if not codici:
+        return out
+    righe = (RigaOrdineAcquistoWood.query.join(OrdineAcquistoWood)
+             .filter(func.upper(RigaOrdineAcquistoWood.codice).in_([c.upper() for c in codici]),
+                     OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all())
+    for r in righe:
+        residuo = (r.qta_originale or 0) - (r.qta_ricevuta or 0)
+        if residuo <= 0:
+            continue
+        out.setdefault((r.codice or '').upper(), []).append({
+            'ordine_n': r.ordine.ordine_n, 'fornitore': r.ordine.fornitore,
+            'residuo': round(residuo, 3),
+            'data_consegna': r.ordine.data_consegna.isoformat() if r.ordine.data_consegna else None,
+        })
+    return out
+
+
+def calcola_lista_fabbisogni(includi_coperti=False):
+    mappa = _carica_mappa_distinta_base_wood()
+    impegni = impegni_op_per_codice(mappa=mappa)
+    impegni_upper = {k.upper(): v for k, v in impegni.items()}
+
+    articoli = [a for a in ArticoloApprovvigionamento.query.all() if a.codice]
+    tipi = {a.codice.upper(): a.tipo_approvvigionamento for a in articoli}
+    # Codici candidati, deduplicati senza distinzione maiuscole/minuscole
+    # (chiave MAIUSCOLA → codice come scritto nella sua fonte).
+    candidati = {}
+    for a in articoli:
+        if a.tipo_approvvigionamento in TIPI_DA_ACQUISTARE:
+            candidati.setdefault(a.codice.upper(), a.codice)
+    for sm in ScortaMinimaWood.query.all():
+        if sm.codice and (sm.scorta_minima or 0) > 0:
+            candidati.setdefault(sm.codice.upper(), sm.codice)
+    # Codici impegnati dagli OP che NON hanno una distinta propria (foglie:
+    # si comprano, non si producono) — anche se non ancora classificati.
+    for c in impegni:
+        if not mappa.get(c):
+            candidati.setdefault(c.upper(), c)
+    if not candidati:
+        return []
+
+    presenti = {g.codice.upper(): g for g in GiacenzaWood.query.all()}
+    righe_g = [presenti.get(k) or GiacenzaWood(codice=v, quantita=0) for k, v in sorted(candidati.items())]
+    codici = list(candidati.values())
+    calcolate = _calcola_campi_giacenza(righe_g)
+    ordini = _ordini_acquisto_aperti_per_codice(codici)
+
+    risultato = []
+    for r in calcolate:
+        cod = r['codice']
+        # Prodotti finiti e semilavorati interni si PRODUCONO, non si comprano.
+        if r['tipologia'] == 'Codice Padre' or (
+                (r['tipologia'] or '').startswith('Semilavorato') and tipi.get(cod.upper()) not in TIPI_DA_ACQUISTARE):
+            continue
+        esistenza = r['quantita'] or 0
+        impegnato = r['impegnato'] or 0
+        disponibilita = round(esistenza - impegnato, 3)
+        scorta_min = r['scorta_minima'] or 0
+        sottoscorta = round(max(scorta_min - disponibilita, 0), 3)
+        da_ordinare = round(r['fabbisogno'] or 0, 3)
+        lista_imp = impegni.get(cod) or impegni_upper.get(cod.upper()) or []
+        if not includi_coperti and da_ordinare <= 0 and sottoscorta <= 0:
+            continue
+        if includi_coperti and da_ordinare <= 0 and sottoscorta <= 0 and not lista_imp:
+            continue
+        risultato.append({
+            'codice': cod, 'descrizione': r['descrizione'] or '', 'unita_misura': r['unita_misura'] or '',
+            'tipo': tipi.get(cod.upper(), 'DA_CLASSIFICARE'), 'tipologia': r['tipologia'],
+            'esistenza': round(esistenza, 3), 'impegnato': round(impegnato, 3),
+            'disponibilita': disponibilita, 'ordinato': round(r['ordinato'] or 0, 3),
+            'scorta_minima': round(scorta_min, 3), 'sottoscorta': sottoscorta,
+            'da_ordinare': da_ordinare,
+            'stato': 'DA_ORDINARE' if da_ordinare > 0 else ('COPERTO_DA_ORDINI' if sottoscorta > 0 else 'COPERTO'),
+            'impegni': [{
+                'op_code': i['op_code'], 'commessa': i['commessa'], 'cliente': i['cliente'],
+                'prodotto': i['codice_articolo'], 'data_prevista': i['data_prevista'],
+                'quantita': i['fabbisogno'], 'coperto': i['coperto'], 'mancante': i['mancante'],
+            } for i in lista_imp],
+            'ordini_aperti': ordini.get(cod.upper(), []),
+        })
+    risultato.sort(key=lambda x: (0 if x['stato'] == 'DA_ORDINARE' else 1, -x['da_ordinare'], x['codice']))
+    return risultato
+
+
+@acquisti_wood_bp.route('/lista-fabbisogni')
+def pagina_lista_fabbisogni():
+    return render_template('acquisti_wood/lista_fabbisogni.html', active='acquisti_wood')
+
+
+@acquisti_wood_bp.route('/api/lista_fabbisogni')
+def api_lista_fabbisogni():
+    return jsonify({'righe': calcola_lista_fabbisogni(includi_coperti=request.args.get('tutti') == '1'),
+                    'generato_il': datetime.now().strftime('%d/%m/%Y %H:%M')})
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SMISTAMENTO MERCE IN ARRIVO — per ogni codice di un DDT di carico dice
+#  all'operatore DOVE va la merce: agli Ordini di Produzione che ne erano
+#  rimasti senza (in ordine di priorità, con reparto della prima
+#  lavorazione) oppure A MAGAZZINO a scorta. Il calcolo usa la giacenza
+#  PRIMA di questo DDT (se è già confermato, la sua quantità viene tolta),
+#  così i mancanti sono quelli che la merce appena arrivata deve coprire.
+# ══════════════════════════════════════════════════════════════════════════════
+def _destinazione_produzione(codice, op_code):
+    """Padre immediato nella distinta dell'OP + reparto della sua prima lavorazione."""
+    from blueprints.produzione_pp.routes import _trova_codici_padre_immediati
+    from models import CicloLavoroWood
+    ordine = OrdineProduzione.query.filter_by(codice=op_code).first()
+    padri = _trova_codici_padre_immediati(codice, ordine) if ordine else []
+    reparti = []
+    for p in padri[:4]:
+        fase = (CicloLavoroWood.query.filter_by(codice=p).order_by(CicloLavoroWood.sequenza).first())
+        if fase and fase.centro_costo:
+            reparti.append({'padre': p, 'reparto': fase.centro_costo.nome})
+        else:
+            reparti.append({'padre': p, 'reparto': ''})
+    if not padri and ordine:
+        fase = (CicloLavoroWood.query.filter_by(codice=ordine.codice_articolo).order_by(CicloLavoroWood.sequenza).first())
+        reparti.append({'padre': ordine.codice_articolo, 'reparto': fase.centro_costo.nome if fase and fase.centro_costo else ''})
+    return reparti
+
+
+def calcola_smistamento_ddt(ddt):
+    righe = [r for r in sorted(ddt.righe, key=lambda r: r.id) if r.codice]
+    qta_riga = {r.id: (r.quantita_verificata if r.quantita_verificata is not None else (r.quantita or 0)) for r in righe}
+
+    giacenza = {g.codice.upper(): g.quantita or 0 for g in GiacenzaWood.query.all()}
+    if ddt.confermato:
+        for r in righe:
+            c = r.codice.upper()
+            giacenza[c] = giacenza.get(c, 0) - qta_riga[r.id]
+    impegni = impegni_op_per_codice(giacenza_iniziale=giacenza)
+    impegni = {k.upper(): v for k, v in impegni.items()}
+    # mancante ancora da coprire per (codice, OP) — consumato riga dopo riga
+    residuo_mancante = {(c, i['op_code']): i['mancante'] for c, lst in impegni.items() for i in lst}
+
+    try:
+        calcolati = {x['codice'].upper(): x for x in _calcola_campi_giacenza(
+            [GiacenzaWood(codice=r.codice.upper(), quantita=giacenza.get(r.codice.upper(), 0)) for r in righe])}
+    except Exception:
+        db.session.rollback()
+        calcolati = {}
+
+    schede = []
+    for r in righe:
+        c = r.codice.upper()
+        arrivata = qta_riga[r.id] or 0
+        resto = arrivata
+        produzione = []
+        for imp in impegni.get(c, []):
+            chiave = (c, imp['op_code'])
+            manca = residuo_mancante.get(chiave, 0)
+            if resto <= 0 or manca <= 0:
+                continue
+            assegnata = min(resto, manca)
+            residuo_mancante[chiave] = manca - assegnata
+            resto -= assegnata
+            produzione.append({
+                'op_code': imp['op_code'], 'commessa': imp['commessa'], 'cliente': imp['cliente'],
+                'prodotto': imp['codice_articolo'], 'descrizione_op': imp['descrizione_op'],
+                'data_prevista': imp['data_prevista'], 'quantita': round(assegnata, 3),
+                'destinazioni': _destinazione_produzione(r.codice, imp['op_code']),
+            })
+        info = calcolati.get(c, {})
+        descr = info.get('descrizione') or r.descrizione or ''
+        schede.append({
+            'codice': r.codice, 'descrizione': descr, 'unita_misura': info.get('unita_misura') or '',
+            'arrivata': round(arrivata, 3), 'produzione': produzione,
+            'magazzino': round(max(resto, 0), 3), 'ubicazione': r.ubicazione_allocata or '',
+            'scorta_minima': info.get('scorta_minima') or 0,
+        })
+    return schede
+
+
+@acquisti_wood_bp.route('/ddt_carico_wood/<int:did>/smistamento')
+def pagina_smistamento_ddt(did):
+    ddt = DDTCaricoWood.query.get_or_404(did)
+    return render_template('acquisti_wood/smistamento_ddt.html', ddt=ddt,
+                           schede=calcola_smistamento_ddt(ddt))

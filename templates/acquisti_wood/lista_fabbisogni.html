@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar no-print">
+  <div class="page-title">📋 Lista Fabbisogni</div>
+  <a class="btn btn-ghost" href="/acquisti-da-fabbisogno" style="margin-left:auto">🧮 Crea Ordine di Acquisto</a>
+  <button class="btn btn-primary" onclick="window.print()">🖨️ Stampa</button>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p class="no-print" style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      Elenco unico per gli acquisti: ogni codice da comprare per <b>scorta minima</b> o per <b>impegni</b> degli
+      Ordini di Produzione aperti. Sotto ogni codice trovi l'elenco degli impegni (quale OP lo richiede e quanto).
+      <b>Disponibilità</b> = Esistenza − Impegnato · <b>Sottoscorta</b> = Scorta minima − Disponibilità ·
+      <b>Da ordinare</b> = fabbisogno già al netto di quanto è in arrivo dai fornitori (stesso calcolo di Magazzino).
+    </p>
+    <div class="no-print" style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px">
+      <input id="lf-cerca" type="text" placeholder="Filtra codice o descrizione..." oninput="render()"
+             style="width:280px;padding:8px 10px;border-radius:6px;border:1px solid var(--border)">
+      <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="lf-solo-da-ordinare" onchange="render()" checked> Solo da ordinare
+      </label>
+      <label style="font-size:12px;display:flex;align-items:center;gap:6px;cursor:pointer">
+        <input type="checkbox" id="lf-tutti" onchange="carica()"> Mostra anche i codici impegnati già coperti
+      </label>
+      <span id="lf-info" style="font-size:12px;color:var(--text-dim);margin-left:auto"></span>
+    </div>
+
+    <div class="stampa-intestazione">
+      <b>LISTA FABBISOGNI — Iron Wood</b> <span id="lf-data"></span>
+    </div>
+    <div style="overflow-x:auto">
+      <table class="lf-tab">
+        <thead>
+          <tr>
+            <th style="text-align:left">Articolo</th>
+            <th style="text-align:left">Descrizione</th>
+            <th>U.M.</th>
+            <th>Esistenza</th>
+            <th>Impegnato</th>
+            <th>Disponibilità</th>
+            <th>Ordinato</th>
+            <th>Scorta min.</th>
+            <th>Sottoscorta</th>
+            <th class="col-da-ordinare">Da ordinare</th>
+          </tr>
+        </thead>
+        <tbody id="lf-body"><tr><td colspan="10">Caricamento...</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
+<style>
+  .lf-tab { width:100%; border-collapse:collapse; font-size:12.5px; }
+  .lf-tab th { font-size:11px; text-transform:uppercase; color:var(--text-dim); padding:7px 8px;
+               border-bottom:2px solid var(--border); text-align:right; white-space:nowrap; }
+  .lf-tab td { padding:6px 8px; text-align:right; white-space:nowrap; }
+  .lf-tab td.sx { text-align:left; white-space:normal; }
+  .lf-art td { border-top:1px solid var(--border); font-weight:600; }
+  .lf-art .codice { font-family:monospace; font-weight:800; }
+  .lf-imp td { font-size:11.5px; color:var(--text-dim); padding-top:2px; padding-bottom:2px; }
+  .lf-imp td.sx { padding-left:26px; }
+  .col-da-ordinare { font-weight:900; }
+  .neg { color:#c0392b; }
+  .badge-st { display:inline-block; font-size:10px; font-weight:800; padding:1px 7px; border-radius:999px; margin-left:6px; }
+  .st-DA_ORDINARE { background:#c0392b22; color:#c0392b; border:1px solid #c0392b55; }
+  .st-COPERTO_DA_ORDINI { background:#b8860b22; color:#b8860b; border:1px solid #b8860b55; }
+  .st-COPERTO { background:#1a9e5c22; color:#1a9e5c; border:1px solid #1a9e5c55; }
+  .stampa-intestazione { display:none; }
+  @media print {
+    @page { size: A4 landscape; margin: 10mm; }
+    .no-print, nav, .sidebar, header { display:none !important; }
+    body, .mon-section { background:#fff !important; color:#000 !important; }
+    .lf-tab th, .lf-tab td { color:#000 !important; border-color:#999 !important; }
+    .stampa-intestazione { display:block; margin-bottom:8px; font-size:14px; }
+  }
+</style>
+{% endblock %}
+{% block scripts %}
+let RIGHE = [];
+const fmt = v => (v === null || v === undefined) ? '' :
+  Number(v).toLocaleString('it-IT', {minimumFractionDigits: 0, maximumFractionDigits: 3});
+const esc = t => String(t || '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const STATI = {DA_ORDINARE: 'DA ORDINARE', COPERTO_DA_ORDINI: 'COPERTO DA ORDINI', COPERTO: 'COPERTO'};
+
+async function carica(){
+  const body = document.getElementById('lf-body');
+  body.innerHTML = '<tr><td colspan="10">Caricamento...</td></tr>';
+  try{
+    const tutti = document.getElementById('lf-tutti').checked ? '1' : '0';
+    const r = await fetch('/api/lista_fabbisogni?tutti=' + tutti);
+    const d = await r.json();
+    RIGHE = d.righe || [];
+    document.getElementById('lf-data').textContent = '— ' + (d.generato_il || '');
+    render();
+  }catch(e){
+    body.innerHTML = '<tr><td colspan="10" style="color:#c0392b">❌ Errore di rete durante il caricamento.</td></tr>';
+  }
+}
+
+function render(){
+  const q = document.getElementById('lf-cerca').value.trim().toLowerCase();
+  const soloDaOrdinare = document.getElementById('lf-solo-da-ordinare').checked;
+  const lista = RIGHE.filter(r =>
+    (!q || r.codice.toLowerCase().includes(q) || (r.descrizione || '').toLowerCase().includes(q)) &&
+    (!soloDaOrdinare || r.stato === 'DA_ORDINARE'));
+  document.getElementById('lf-info').textContent =
+    `${lista.length} codici — ${RIGHE.filter(r => r.stato === 'DA_ORDINARE').length} da ordinare`;
+  const body = document.getElementById('lf-body');
+  if(!lista.length){ body.innerHTML = '<tr><td colspan="10" class="sx">Nessun codice da ordinare. 👍</td></tr>'; return; }
+  body.innerHTML = lista.map(r => {
+    let h = `<tr class="lf-art">
+      <td class="sx"><span class="codice">${esc(r.codice)}</span><span class="badge-st st-${r.stato}">${STATI[r.stato]}</span></td>
+      <td class="sx">${esc(r.descrizione)}</td>
+      <td>${esc(r.unita_misura)}</td>
+      <td>${fmt(r.esistenza)}</td>
+      <td>${fmt(r.impegnato)}</td>
+      <td class="${r.disponibilita < 0 ? 'neg' : ''}">${fmt(r.disponibilita)}</td>
+      <td>${fmt(r.ordinato)}</td>
+      <td>${fmt(r.scorta_minima)}</td>
+      <td>${fmt(r.sottoscorta)}</td>
+      <td class="col-da-ordinare ${r.da_ordinare > 0 ? 'neg' : ''}">${fmt(r.da_ordinare)}</td>
+    </tr>`;
+    (r.impegni || []).forEach(i => {
+      const dett = [i.commessa ? 'commessa ' + esc(i.commessa) : '', esc(i.cliente),
+                    i.data_prevista ? 'cons. ' + i.data_prevista.split('-').reverse().join('/') : ''].filter(x => x).join(' · ');
+      h += `<tr class="lf-imp">
+        <td class="sx" colspan="4">↳ Impegno <b>${esc(i.op_code)}</b> — prodotto ${esc(i.prodotto)}${dett ? ' — ' + dett : ''}</td>
+        <td>${fmt(i.quantita)}</td>
+        <td colspan="5" class="sx">${i.mancante > 0 ? 'manca ' + fmt(i.mancante) : 'coperto da giacenza'}</td>
+      </tr>`;
+    });
+    (r.ordini_aperti || []).forEach(o => {
+      h += `<tr class="lf-imp">
+        <td class="sx" colspan="6">🚚 In arrivo: OA ${esc(o.ordine_n)} — ${esc(o.fornitore)}${o.data_consegna ? ' — cons. ' + o.data_consegna.split('-').reverse().join('/') : ''}</td>
+        <td>${fmt(o.residuo)}</td><td colspan="3"></td>
+      </tr>`;
+    });
+    return h;
+  }).join('');
+}
+
+carica();
+{% endblock %}

@@ -127,5 +127,9 @@
   </div>
 </div>
 
+{% if schede_smistamento is defined and schede_smistamento %}
+<div style="page-break-before:always;break-before:page;margin-top:24px"></div>
+{% with schede=schede_smistamento %}{% include 'acquisti_wood/_smistamento_blocco.html' %}{% endwith %}
+{% endif %}
 </body>
 </html>
