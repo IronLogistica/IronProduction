@@ -6,6 +6,7 @@
 
 <div class="mon-section">
   <div style="padding:14px">
+    <div style="font-size:15px;font-weight:800;margin-bottom:6px">🔧 A · Rietichettatura lavorazioni in corso</div>
     <p style="font-size:12px;color:var(--text-dim);margin-bottom:16px">
       Per merce già a magazzino trovata in officina SENZA etichetta (o con l'etichetta persa/illeggibile) — cerca il
       codice, il programma capisce da solo a che fase è arrivato e quale fase segue, e genera la Scheda
@@ -28,6 +29,42 @@
       <button class="btn btn-primary" onclick="generaEtichettaRietichettatura()">🖨️ Genera Etichetta</button>
     </div>
     <div id="riet-esito" style="font-size:12px;margin-top:10px"></div>
+  </div>
+</div>
+
+<!-- ── B · ETICHETTATURA MATERIALE DA MAGAZZINO (Scheda Identificazione Magazzino) ── -->
+<div class="mon-section" style="margin-top:18px">
+  <div style="padding:14px">
+    <div style="font-size:15px;font-weight:800;margin-bottom:6px">📦 B · Etichettatura materiale da magazzino</div>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:16px">
+      Scheda Identificazione Magazzino per merce in giacenza (materie prime, laserati, semilavorati a scorta):
+      codice, descrizione, codici padre e quantità in evidenza, con fornitore e DDT di ingresso. Nessuna fase
+      di lavorazione e nessun carico a magazzino.
+    </p>
+
+    <label class="modal-label" style="margin-top:0">Codice</label>
+    <div style="position:relative;margin-bottom:14px;max-width:480px">
+      <input id="mag-codice" type="text" placeholder="Cerca codice o descrizione..." autocomplete="off" style="width:100%;padding:10px 12px;border-radius:6px;border:1px solid var(--border);font-size:13px"
+             oninput="_magRicercaInput(this)" onfocus="_magRicercaInput(this)">
+      <div id="mag-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
+    </div>
+
+    <label class="modal-label">Quantità</label>
+    <input id="mag-quantita" type="number" min="0" placeholder="Quantità" style="max-width:200px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);margin-bottom:16px;display:block">
+
+    <div>
+      <button class="btn btn-primary" onclick="generaEtichettaMagazzino()">🖨️ Genera Etichetta Magazzino</button>
+    </div>
+    <div id="mag-esito" style="font-size:12px;margin-top:10px"></div>
+
+    <div style="border-top:1px solid var(--border);margin:18px 0 14px"></div>
+    <label class="modal-label" style="margin-top:0">Oppure: tutte le etichette di un DDT di ingresso (una pagina per codice)</label>
+    <select id="mag-ddt" style="width:100%;max-width:640px;padding:8px 10px;border-radius:6px;border:1px solid var(--border);margin-bottom:12px;display:block">
+      <option value="">Caricamento DDT...</option>
+    </select>
+    <div>
+      <button class="btn btn-primary" onclick="stampaEtichetteDdtMagazzino()">🖨️ Stampa etichette DDT</button>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -93,4 +130,87 @@ function generaEtichettaRietichettatura(){
   const params = new URLSearchParams({codice, descrizione: _rietDescrizioneScelta, quantita: quantita || ''});
   window.open('/scheda-materiale-stampa?' + params.toString(), '_blank');
 }
+
+// ═══════════════════ B — ETICHETTATURA MATERIALE DA MAGAZZINO ═══════════════════
+let _magRicercaTimer = null;
+let _magDescrizioneScelta = '';
+function _posizionaMagDropdown(input){
+  const dropdown = document.getElementById('mag-dropdown');
+  const rect = input.getBoundingClientRect();
+  dropdown.style.top = (rect.bottom + 4) + 'px';
+  dropdown.style.left = rect.left + 'px';
+  dropdown.style.width = rect.width + 'px';
+}
+async function _magRicercaInput(input){
+  const dropdown = document.getElementById('mag-dropdown');
+  const q = input.value.trim();
+  _magDescrizioneScelta = '';
+  clearTimeout(_magRicercaTimer);
+  if(q.length < 2){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
+  _magRicercaTimer = setTimeout(async () => {
+    let risultati;
+    try{
+      const r = await fetch('/api/ricerca_materiale_wood?q=' + encodeURIComponent(q));
+      risultati = await r.json();
+    }catch(e){ dropdown.style.display = 'none'; return; }
+    if(!risultati || !risultati.length){
+      dropdown.innerHTML = '<div class="wms-item" style="cursor:default;color:var(--text-dim)">Nessun codice trovato</div>';
+      _posizionaMagDropdown(input);
+      dropdown.style.display = 'block';
+      return;
+    }
+    dropdown.innerHTML = risultati.map((x, i) =>
+      `<div class="wms-item" onmousedown="_magSceltaMateriale(${i})">` +
+      `<div><b class="codice">${x.codice}</b>${x.descrizione ? `<br><span style="font-size:11px;color:var(--text-dim)">${x.descrizione}</span>` : ''}</div></div>`
+    ).join('');
+    dropdown._risultati = risultati;
+    _posizionaMagDropdown(input);
+    dropdown.style.display = 'block';
+  }, 220);
+}
+function _magSceltaMateriale(i){
+  const dropdown = document.getElementById('mag-dropdown');
+  const x = (dropdown._risultati || [])[i];
+  if(!x) return;
+  document.getElementById('mag-codice').value = x.codice;
+  _magDescrizioneScelta = x.descrizione || '';
+  dropdown.style.display = 'none';
+}
+document.addEventListener('click', e => {
+  const dropdown = document.getElementById('mag-dropdown');
+  if(dropdown && dropdown.style.display !== 'none' && e.target !== document.getElementById('mag-codice') && !dropdown.contains(e.target)){
+    dropdown.style.display = 'none';
+  }
+});
+function generaEtichettaMagazzino(){
+  const esito = document.getElementById('mag-esito');
+  const codice = document.getElementById('mag-codice').value.trim();
+  const quantita = document.getElementById('mag-quantita').value;
+  if(!codice){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Indica un codice.'; return; }
+  esito.textContent = '';
+  const params = new URLSearchParams({codice, descrizione: _magDescrizioneScelta, quantita: quantita || ''});
+  window.open('/scheda-magazzino-stampa?' + params.toString(), '_blank');
+}
+async function caricaDdtPerEtichetteMagazzino(){
+  const sel = document.getElementById('mag-ddt');
+  if(!sel) return;
+  try{
+    const r = await fetch('/api/ddt_carico_wood');
+    const ddts = (await r.json()).slice(0, 40);
+    if(!ddts.length){ sel.innerHTML = '<option value="">Nessun DDT di ingresso caricato</option>'; return; }
+    sel.innerHTML = '<option value="">— Scegli il DDT —</option>' + ddts.map(d => {
+      const stato = d.confermato ? '✅' : '⏳';
+      const n = (d.righe || []).length;
+      return `<option value="${d.id}">${stato} DDT ${d.numero_ddt || d.filename} — ${d.fornitore || ''} ${d.data_ddt || ''} (${n} codic${n === 1 ? 'e' : 'i'})</option>`;
+    }).join('');
+  }catch(e){ sel.innerHTML = '<option value="">Errore nel caricamento DDT</option>'; }
+}
+function stampaEtichetteDdtMagazzino(){
+  const id = document.getElementById('mag-ddt').value;
+  const esito = document.getElementById('mag-esito');
+  if(!id){ esito.style.color = '#c0392b'; esito.textContent = '⚠️ Scegli un DDT.'; return; }
+  esito.textContent = '';
+  window.open('/scheda-magazzino-stampa?ddt_id=' + encodeURIComponent(id), '_blank');
+}
+caricaDdtPerEtichetteMagazzino();
 {% endblock %}

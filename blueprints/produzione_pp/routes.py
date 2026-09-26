@@ -19,7 +19,8 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     MatriceWood, ContromatriceWood, MappaCodiceMasterWork, RettificaGrezzoIW,
                     ParametriLavorazioneWood, OperatoreWood, CompetenzaOperatoreWood,
                     AssegnazioneOperatoreCentroWood, SequenzaMonitorMacchina, SequenzaAvanzamentoKPI,
-                    SessioneLavoroMacchina, FotoLavorazioneMacchina, LavorazioneTerzista)
+                    SessioneLavoroMacchina, FotoLavorazioneMacchina, LavorazioneTerzista,
+                    DDTCaricoWood, RigaDDTCaricoWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
@@ -4834,6 +4835,106 @@ def pagina_scheda_materiale_stampa():
         descrizione=descrizione, quantita=quantita,
         fasi_ciclo=fasi_ciclo, fase_eseguita=fase_eseguita,
         fase_prossima=fase_prossima, prima_fase_padre=prima_fase_padre)
+
+
+def _fmt_qta_etichetta(valore):
+    """Quantità senza decimali inutili (132.0 → '132', 2.5 → '2,5')."""
+    if valore is None or valore == '':
+        return ''
+    try:
+        numero = float(str(valore).replace(',', '.'))
+    except (TypeError, ValueError):
+        return str(valore)
+    if numero == int(numero):
+        return str(int(numero))
+    return f'{numero:g}'.replace('.', ',')
+
+
+def _descrizione_interna_codice(codice):
+    """
+    Descrizione INTERNA del codice (ArticoloML, poi riserva locale
+    DescrizioneCodiceWood) — sulle etichette di magazzino è meglio la
+    nostra descrizione di quella scritta dal fornitore sul DDT.
+    """
+    if not codice:
+        return ''
+    try:
+        a = ArticoloML.query.filter_by(sku=codice).first()
+        if a and a.descrizione:
+            return a.descrizione
+    except Exception:
+        db.session.rollback()
+    d = DescrizioneCodiceWood.query.get(codice)
+    return d.descrizione if d and d.descrizione else ''
+
+
+def _scheda_magazzino_da_riga_ddt(riga, ddt, quantita_forzata=None):
+    qta = quantita_forzata
+    if qta is None:
+        qta = riga.quantita_verificata if riga.quantita_verificata is not None else riga.quantita
+    return {
+        'codice': riga.codice,
+        'descrizione': _descrizione_interna_codice(riga.codice) or riga.descrizione or '',
+        'codici_padre': _trova_tutte_le_radici_finali(riga.codice, None),
+        'quantita': _fmt_qta_etichetta(qta),
+        'fornitore': ddt.fornitore or '',
+        'numero_ddt': ddt.numero_ddt or '',
+        'data_ddt': ddt.data_ddt or '',
+        'rif_oa': riga.ordine_n_riferimento or '',
+        'ubicazione': riga.ubicazione_allocata or '',
+    }
+
+
+@pp_bp.get('/scheda-magazzino-stampa')
+def pagina_scheda_magazzino_stampa():
+    """
+    Scheda Identificazione MAGAZZINO — etichetta per merce in giacenza
+    (materie prime, laserati acquistati, semilavorati a scorta), SEPARATA
+    dalla Scheda Identificazione Materiale in Produzione: niente fase
+    eseguita / prossima fase, massima evidenza a CODICE, DESCRIZIONE,
+    CODICI PADRE e QUANTITÀ, più i riferimenti di ingresso (fornitore,
+    DDT, data, rif. OA, ubicazione).
+
+    Due modi:
+      - ?ddt_id=N → UNA PAGINA PER OGNI RIGA del DDT di ingresso, tutte in
+        un unico documento (Stampa → Salva come PDF = un solo PDF): si
+        stampano quando arriva il bancale. Quantità = verificata se c'è,
+        altrimenti dichiarata sul DDT.
+      - ?codice=X[&quantita=Q] → una sola scheda; i riferimenti di
+        ingresso si prendono dall'ultimo DDT in cui è arrivato quel codice
+        (prima i confermati), se esiste.
+    """
+    schede = []
+    ddt_id = request.args.get('ddt_id', type=int)
+    if ddt_id:
+        ddt = DDTCaricoWood.query.get_or_404(ddt_id)
+        for riga in sorted(ddt.righe, key=lambda r: r.id):
+            if riga.codice:
+                schede.append(_scheda_magazzino_da_riga_ddt(riga, ddt))
+        titolo = f'DDT {ddt.numero_ddt or ddt.filename} — {ddt.fornitore or ""}'.strip(' —')
+    else:
+        codice = (request.args.get('codice') or '').strip()
+        descrizione = (request.args.get('descrizione') or '').strip()
+        quantita = (request.args.get('quantita') or '').strip()
+        if codice:
+            riga = (RigaDDTCaricoWood.query.join(DDTCaricoWood)
+                    .filter(db.func.upper(RigaDDTCaricoWood.codice) == codice.upper())
+                    .order_by(DDTCaricoWood.confermato.desc(), DDTCaricoWood.caricato_il.desc(),
+                              RigaDDTCaricoWood.id.desc())
+                    .first())
+            if riga:
+                scheda = _scheda_magazzino_da_riga_ddt(riga, riga.ddt, quantita_forzata=quantita or '')
+            else:
+                scheda = {'codice': codice, 'codici_padre': _trova_tutte_le_radici_finali(codice, None),
+                          'descrizione': '', 'quantita': '', 'fornitore': '', 'numero_ddt': '',
+                          'data_ddt': '', 'rif_oa': '', 'ubicazione': ''}
+            scheda['codice'] = codice
+            scheda['descrizione'] = descrizione or scheda['descrizione'] or _descrizione_interna_codice(codice)
+            scheda['quantita'] = _fmt_qta_etichetta(quantita)
+            schede.append(scheda)
+        titolo = codice
+
+    return render_template('produzione_pp/scheda_magazzino_stampa.html', schede=schede, titolo=titolo)
 
 
 @pp_bp.get('/api/dichiarazione-produzione/anteprima')

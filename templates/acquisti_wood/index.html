@@ -604,6 +604,7 @@ async function caricaListaDdt(){
               : '<span class="badge" style="background:#e6b80022;color:#e6b800;border:1px solid #e6b80055;padding:3px 8px;border-radius:10px;font-size:11px;font-weight:700">⏳ IN ATTESA DI VERIFICA</span>'}
             ${d.responsabile_verifica && !d.confermato ? `<span style="font-size:10px;color:var(--text-dim)">👤 ${d.responsabile_verifica}</span>` : ''}
             <a href="${d.link_modulo_verifica}" target="_blank" class="btn btn-ghost" style="padding:4px 8px;font-size:11px">📋 Modulo</a>
+            <a href="/scheda-magazzino-stampa?ddt_id=${d.id}" target="_blank" class="btn btn-ghost" style="padding:4px 8px;font-size:11px" title="Una Scheda Identificazione Magazzino per ogni codice del DDT, in un unico documento (Stampa → Salva come PDF)">🏷️ Etichette magazzino</a>
             <a href="/ddt_carico_wood/${d.id}/pdf" target="_blank" class="btn btn-ghost" style="padding:4px 8px;font-size:11px">📄 PDF</a>
             <button onclick="eliminaDdt(${d.id}, ${d.confermato ? 'true' : 'false'})" class="btn btn-ghost" style="padding:4px 8px;font-size:11px;color:#e07a6e">🗑️ ${d.confermato ? 'Elimina (storna)' : 'Elimina bozza'}</button>
           </div>

@@ -1,0 +1,129 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<title>Scheda Identificazione Magazzino — {{ titolo }}</title>
+<style>
+  @page { size: A4 portrait; margin: 10mm; }
+  * { box-sizing: border-box; }
+  body { font-family: Arial, Helvetica, sans-serif; margin: 0; padding: 12px; color: #000; }
+  .pagina { page-break-after: always; break-after: page; }
+  .pagina:last-of-type { page-break-after: auto; break-after: auto; }
+  .titolo { font-size: 22px; font-weight: 800; text-align: center; border: 2px solid #000; padding: 10px; margin-bottom: 10px; letter-spacing: .5px; }
+  .campo { border: 2px solid #000; padding: 9px 12px; margin-bottom: 10px; }
+  .campo-label { font-size: 11px; font-weight: 700; text-transform: uppercase; margin-bottom: 4px; }
+  .campo-nero { background: #000; color: #fff; }
+  .campo-nero .campo-label { color: #fff; }
+  .codice-valore { font-size: 54px; font-weight: 900; line-height: 1.05; overflow-wrap: anywhere; }
+  .descrizione-valore { font-size: 28px; font-weight: 800; line-height: 1.2; min-height: 36px; overflow-wrap: anywhere; }
+  .padri-valore { font-size: 26px; font-weight: 900; line-height: 1.25; overflow-wrap: anywhere; }
+  .padri-valore.molti { font-size: 18px; }
+  .quantita-campo { border: 4px solid #000; padding: 12px 16px; margin-bottom: 10px; min-height: 170px; display: flex; align-items: center; justify-content: space-between; }
+  .quantita-valore { font-size: 90px; font-weight: 900; line-height: 1; min-height: 90px; }
+  .logo { font-size: 30px; font-weight: 900; letter-spacing: 1px; text-align: right; }
+  .logo-rev { font-size: 9px; color: #555; text-align: right; }
+  .rif-grid { display: grid; grid-template-columns: 1.4fr 1fr 1fr; gap: 10px; }
+  .rif-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+  .rif-valore { font-size: 19px; font-weight: 800; min-height: 24px; overflow-wrap: anywhere; }
+  .footer-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 6px; }
+  .footer-campo { border: 2px solid #000; padding: 9px; min-height: 58px; }
+  .footer-valore { margin-top: 6px; font-size: 20px; font-weight: 800; }
+  .barra-azioni { display: flex; gap: 10px; align-items: center; margin: 0 0 14px; }
+  .btn-stampa { flex: 1; padding: 12px; font-size: 16px; font-weight: 700; background: #1e6fa5; color: #fff; border: none; border-radius: 8px; cursor: pointer; }
+  .n-pagine { font-size: 13px; color: #444; }
+  .vuoto { font-size: 16px; padding: 30px; text-align: center; border: 2px dashed #999; }
+  @media print {
+    .barra-azioni { display: none; }
+    body { padding: 0; }
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+  }
+</style>
+</head>
+<body>
+
+<div class="barra-azioni">
+  <button class="btn-stampa" onclick="aggiornaDataStampa(); window.print()">🖨️ Stampa / Salva PDF</button>
+  <span class="n-pagine">{{ schede|length }} etichett{{ 'a' if schede|length == 1 else 'e' }} — una pagina per codice</span>
+</div>
+
+{% if not schede %}
+<div class="vuoto">Nessun codice da etichettare.</div>
+{% endif %}
+
+{% for s in schede %}
+<div class="pagina">
+  <div class="titolo">SCHEDA IDENTIFICAZIONE MAGAZZINO</div>
+
+  <div class="campo campo-nero">
+    <div class="campo-label">Codice</div>
+    <div class="codice-valore">{{ s.codice or '—' }}</div>
+  </div>
+
+  <div class="campo">
+    <div class="campo-label">Descrizione</div>
+    <div class="descrizione-valore">{{ s.descrizione or '—' }}</div>
+  </div>
+
+  <div class="campo">
+    <div class="campo-label">Codic{{ 'e' if s.codici_padre|length == 1 else 'i' }} padre</div>
+    <div class="padri-valore{{ ' molti' if s.codici_padre|length > 6 else '' }}">{{ s.codici_padre|join(' · ') if s.codici_padre else '—' }}</div>
+  </div>
+
+  <div class="quantita-campo">
+    <div>
+      <div class="campo-label">Quantità</div>
+      <div class="quantita-valore">{{ s.quantita }}</div>
+    </div>
+    <div>
+      <div class="logo">IRON</div>
+      <div class="logo-rev">Mag. Rev.1 - 09/2026</div>
+    </div>
+  </div>
+
+  <div class="rif-grid">
+    <div class="campo">
+      <div class="campo-label">Fornitore</div>
+      <div class="rif-valore">{{ s.fornitore or '' }}</div>
+    </div>
+    <div class="campo">
+      <div class="campo-label">DDT n°</div>
+      <div class="rif-valore">{{ s.numero_ddt or '' }}</div>
+    </div>
+    <div class="campo">
+      <div class="campo-label">Data DDT</div>
+      <div class="rif-valore">{{ s.data_ddt or '' }}</div>
+    </div>
+  </div>
+
+  <div class="rif-grid-2">
+    <div class="campo">
+      <div class="campo-label">Rif. Ordine Acquisto</div>
+      <div class="rif-valore">{{ s.rif_oa or '' }}</div>
+    </div>
+    <div class="campo">
+      <div class="campo-label">Ubicazione</div>
+      <div class="rif-valore">{{ s.ubicazione or '' }}</div>
+    </div>
+  </div>
+
+  <div class="footer-row">
+    <div class="footer-campo"><div class="campo-label">Operatore</div></div>
+    <div class="footer-campo">
+      <div class="campo-label">Data di stampa</div>
+      <div class="footer-valore data-stampa"></div>
+    </div>
+  </div>
+</div>
+{% endfor %}
+
+<script>
+  function aggiornaDataStampa() {
+    const oggi = new Date().toLocaleDateString('it-IT');
+    document.querySelectorAll('.data-stampa').forEach(el => el.textContent = oggi);
+  }
+  aggiornaDataStampa();
+  window.addEventListener('beforeprint', aggiornaDataStampa);
+</script>
+
+</body>
+</html>
