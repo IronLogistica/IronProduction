@@ -54,6 +54,15 @@
   .terminati-box{margin-top:20px;background:var(--surf);border:1px solid var(--border);border-radius:12px;padding:14px}
   .terminati-titolo{font-size:.85rem;font-weight:700;color:var(--ok);text-transform:uppercase;margin-bottom:8px}
   .tag-name{display:inline-block;background:var(--surf2);border:1px solid var(--border);border-radius:6px;padding:4px 10px;font-size:.78rem;margin:3px}
+
+  /* Riquadro colorato con nome macchina in grande — stesso stile del LIVE doppio */
+  .meta{border:2px solid var(--accent);border-radius:12px;overflow:hidden;background:var(--surf);margin-bottom:16px}
+  .meta-testa{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--accent);color:#05070a;padding:10px 16px}
+  .meta-testa .nome{font-size:2.1rem;font-weight:900;text-transform:uppercase;letter-spacing:1px}
+  .meta-testa .conteggio{font-size:1.05rem;font-weight:800}
+  .meta table.tabella-totem{border-radius:0}
+  .meta .piede{border-top:1px solid var(--border);padding:7px 14px;font-size:.78rem;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+  .meta .piede .lbl{color:var(--ok);font-weight:800;text-transform:uppercase}
 </style>
 </head>
 <body>
@@ -88,6 +97,11 @@
   <div id="reintegro-lista" style="padding:0 14px 12px"></div>
 </div>
 
+<section class="meta">
+  <div class="meta-testa">
+    <span class="nome">{{ centro.nome }}</span>
+    <span class="conteggio">{{ gruppi|length }} commess{{ 'a' if gruppi|length == 1 else 'e' }} in coda</span>
+  </div>
 <table class="tabella-totem">
   <thead><tr>
     <th>Priority</th><th>N° Commessa</th><th>N° pz in produzione</th><th>Codice e Immagine</th>
@@ -150,13 +164,12 @@
 </table>
 
 {% if righe_terminati %}
-<div class="terminati-box">
-  <div class="terminati-titolo">✅ Appena terminati (questa fase)</div>
-  {% for r in righe_terminati %}
-  <span class="tag-name">{{ r.op_codice }} — {{ r.codice_lavorato }}</span>
-  {% endfor %}
-</div>
+  <div class="piede">
+    <span class="lbl">✅ Appena terminati:</span>
+    {% for r in righe_terminati %}<span class="tag-name" style="margin:0">{{ r.op_codice }} — {{ r.codice_lavorato }}</span>{% endfor %}
+  </div>
 {% endif %}
+</section>
 
 {% if saldatura_nota %}
 <div class="terminati-box" style="border-color:var(--warn)">
