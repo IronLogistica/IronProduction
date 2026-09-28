@@ -140,7 +140,9 @@ class TestConfig(unittest.TestCase):
     def test_acceso_usa_lo_stesso_postgres(self):
         cfg = self._config(CL_ENABLED='1', DATABASE_URL='postgres://u:p@host/ip')
         self.assertTrue(cfg.CL_ENABLED)
-        self.assertEqual(cfg.SQLALCHEMY_BINDS['conto_lavoro'], 'postgresql://u:p@host/ip')
+        bind = cfg.SQLALCHEMY_BINDS['conto_lavoro']
+        self.assertEqual(bind['url'], 'postgresql://u:p@host/ip')
+        self.assertEqual(bind['execution_options']['schema_translate_map'], {None: 'conto_lavoro'})
 
 
 if __name__ == '__main__':

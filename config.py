@@ -34,7 +34,14 @@ class Config:
     if _cl_db.startswith('postgres://'):
         _cl_db = _cl_db.replace('postgres://', 'postgresql://', 1)
     if CL_ENABLED:
-        SQLALCHEMY_BINDS = {**SQLALCHEMY_BINDS, 'conto_lavoro': _cl_db}
+        # Su Postgres le tabelle cl_* stanno nello schema dedicato
+        # 'conto_lavoro' (creato dallo script di migrazione): rollback
+        # completo = DROP SCHEMA conto_lavoro CASCADE, niente di esistente
+        # viene toccato.
+        _cl_bind = {'url': _cl_db}
+        if _cl_db.startswith('postgresql'):
+            _cl_bind['execution_options'] = {'schema_translate_map': {None: 'conto_lavoro'}}
+        SQLALCHEMY_BINDS = {**SQLALCHEMY_BINDS, 'conto_lavoro': _cl_bind}
 
     # Token Bearer obbligatorio per le API PP; lasciare vuoto disabilita le API.
     PP_API_TOKEN = os.environ.get('PP_API_TOKEN', '')
