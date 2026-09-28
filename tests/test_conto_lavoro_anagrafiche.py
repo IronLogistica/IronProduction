@@ -77,5 +77,56 @@ class TestAnagrafiche(unittest.TestCase):
         self.assertEqual(MovimentoGiacenzaWood.query.count(), 0)
 
 
+class TestImportExcel(TestAnagrafiche):
+    def _xlsx(self, righe, colonne):
+        import io
+        import pandas as pd
+        buf = io.BytesIO()
+        pd.DataFrame(righe, columns=colonne).to_excel(buf, index=False)
+        return buf.getvalue()
+
+    def _importa(self, raw, nome, cid, conferma=False):
+        import io
+        return self.c.post('/conto-lavoro/api/articoli/importa', content_type='multipart/form-data',
+                           data={'file': (io.BytesIO(raw), nome), 'cliente_id': str(cid),
+                                 'conferma': 'true' if conferma else 'false'})
+
+    def test_anteprima_poi_conferma(self):
+        from blueprints.conto_lavoro.models import ClArticoloCliente
+        cid = self._cliente().get_json()['cliente']['id']
+        self.c.post('/conto-lavoro/api/articoli', json={'codice': 'FZ44', 'descrizione': 'vecchia', 'udm': 'PZ', 'cliente_id': cid})
+        raw = self._xlsx([['fz44', 'Telaio DX', 'n.', ''], ['TUBO-101', 'Tubo', 'KG', 'matricola'],
+                          ['X1', 'Pezzo', 'LITRI', ''], ['TUBO-101', 'Tubo bis', 'PZ', ''], [None, 'vuota', '', '']],
+                         ['Codice', 'Descrizione', 'U.M.', 'Tracciamento'])
+        r = self._importa(raw, 'articoli.xlsx', cid).get_json()
+        self.assertTrue(r['anteprima'])
+        self.assertEqual((r['nuovi'], r['aggiornati'], r['n_scartate']), (1, 1, 2))   # X1 udm errata + TUBO-101 ripetuto
+        self.assertEqual(ClArticoloCliente.query.count(), 1)                            # anteprima: niente scritto
+        r = self._importa(raw, 'articoli.xlsx', cid, conferma=True).get_json()
+        self.assertEqual((r['nuovi'], r['aggiornati']), (1, 1))
+        art = {a.codice: a for a in ClArticoloCliente.query.all()}
+        self.assertEqual(art['FZ44'].descrizione, 'Telaio DX')
+        self.assertEqual(art['FZ44'].udm, 'PZ')
+        self.assertEqual((art['TUBO-101'].descrizione, art['TUBO-101'].udm, art['TUBO-101'].tracciamento), ('Tubo bis', 'PZ', 'LOTTO'))
+        self.assertEqual(ClAudit.query.filter_by(azione='ARTICOLI_IMPORTATI').count(), 1)
+        self.assertEqual(GiacenzaWood.query.count(), 0)
+
+    def test_formati_zucchetti_e_csv(self):
+        cid = self._cliente().get_json()['cliente']['id']
+        raw = self._xlsx([[1234, 'Codice numerico', 'NR']], ['ARCODART', 'ARDESART', 'ARUNMIS1'])
+        r = self._importa(raw, 'export.xls', cid).get_json()
+        self.assertEqual(r['esempio'][0]['codice'], '1234')
+        html = b'<table><tr><th>ARCODART</th><th>ARDESART</th></tr><tr><td>ZT9</td><td>Zampa</td></tr></table>'
+        self.assertEqual(self._importa(html, 'finto.xlsx', cid).get_json()['nuovi'], 1)
+        csv = 'CODICE;DESCRIZIONE;UDM\nA1;Uno;PZ\nA2;Due;M\n'.encode('latin-1')
+        self.assertEqual(self._importa(csv, 'a.csv', cid).get_json()['totale'], 2)
+
+    def test_errori(self):
+        cid = self._cliente().get_json()['cliente']['id']
+        self.assertEqual(self._importa(self._xlsx([['a']], ['Pippo']), 'x.xlsx', cid).status_code, 400)   # manca CODICE
+        self.assertEqual(self._importa(self._xlsx([['a']], ['CODICE']), 'x.xlsx', 9999).status_code, 400)  # cliente inesistente
+        self.assertEqual(self.c.get('/conto-lavoro/api/articoli/modello.xlsx').status_code, 200)
+
+
 if __name__ == '__main__':
     unittest.main()

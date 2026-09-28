@@ -25,6 +25,7 @@
   <div class="mon-section">
     <div style="padding:12px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)">
       <b style="flex:1" id="titolo-articoli">Articoli — seleziona un cliente</b>
+      <button class="btn btn-ghost" id="btn-importa" onclick="apriImport()" disabled>📥 Importa da Excel</button>
       <button class="btn btn-primary" id="btn-nuovo-articolo" onclick="apriArticolo(null)" disabled>＋ Nuovo articolo</button>
     </div>
     <div style="padding:10px 14px;overflow-x:auto">
@@ -87,6 +88,24 @@
     </div>
   </div>
 </div>
+<!-- MODAL IMPORT -->
+<div class="modal-overlay" id="modalImport">
+  <div class="modal-box" style="width:640px">
+    <h3>📥 Importa articoli da Excel — <span id="imp-cliente"></span></h3>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+      File .xlsx, .xls, export Zucchetti o .csv. Colonne: <b>CODICE</b> (obbligatoria), DESCRIZIONE, UDM (PZ, KG, M, KIT — default PZ),
+      TRACCIAMENTO (LOTTO o MATRICOLA — default LOTTO). Vanno bene anche ARCODART / ARDESART / ARUNMIS1 di Zucchetti.
+      <a href="/conto-lavoro/api/articoli/modello.xlsx">⬇️ Scarica il modello</a>
+    </p>
+    <input type="file" id="imp-file" accept=".xlsx,.xls,.csv,.htm,.html" onchange="document.getElementById('imp-esito').innerHTML='';document.getElementById('btn-imp-conferma').disabled=true">
+    <div id="imp-esito" style="font-size:12px;margin-top:10px;max-height:320px;overflow:auto"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalImport')">Chiudi</button>
+      <button class="btn btn-ghost" onclick="importa(false)">🔍 Anteprima</button>
+      <button class="btn btn-primary" id="btn-imp-conferma" onclick="importa(true)" disabled>✅ Conferma importazione</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 
 {% block scripts %}
@@ -122,6 +141,7 @@ async function selezionaCliente(id){
   const c = CLIENTI.find(x => x.id === id);
   document.getElementById('titolo-articoli').textContent = 'Articoli — ' + (c ? c.ragione_sociale : '');
   document.getElementById('btn-nuovo-articolo').disabled = false;
+  document.getElementById('btn-importa').disabled = false;
   caricaClienti();
   const d = await chiama('/conto-lavoro/api/articoli?tutti=1&cliente_id=' + id);
   ARTICOLI = Array.isArray(d) ? d : [];
@@ -179,6 +199,51 @@ async function salvaArticolo(){
   if(!d.ok){ document.getElementById('esito-articolo').textContent = '❌ ' + (d.error || 'Errore'); return; }
   closeModal('modalArticolo');
   showToast('✅ Articolo salvato');
+  selezionaCliente(clienteSel);
+}
+
+function apriImport(){
+  const c = CLIENTI.find(x => x.id === clienteSel);
+  document.getElementById('imp-cliente').textContent = c ? c.ragione_sociale : '';
+  document.getElementById('imp-file').value = '';
+  document.getElementById('imp-esito').innerHTML = '';
+  document.getElementById('btn-imp-conferma').disabled = true;
+  openModal('modalImport');
+}
+
+async function importa(conferma){
+  const esito = document.getElementById('imp-esito');
+  const file = document.getElementById('imp-file').files[0];
+  if(!file){ esito.innerHTML = '<span style="color:#c0392b">Scegli un file.</span>'; return; }
+  const fd = new FormData();
+  fd.append('file', file); fd.append('cliente_id', clienteSel); fd.append('conferma', conferma ? 'true' : 'false');
+  esito.innerHTML = conferma ? 'Importazione in corso…' : 'Lettura del file…';
+  let d;
+  try{ d = await (await fetch('/conto-lavoro/api/articoli/importa', {method:'POST', body: fd})).json(); }
+  catch(e){ esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete.</span>'; return; }
+  const scartate = (d.scartate || []).map(x => `<li>riga ${x.riga} — <b>${esc(x.codice)}</b>: ${esc(x.motivo)}</li>`).join('');
+  if(!d.ok){
+    esito.innerHTML = `<span style="color:#c0392b">❌ ${esc(d.error || 'Errore')}</span>` + (scartate ? `<ul>${scartate}</ul>` : '');
+    return;
+  }
+  if(d.anteprima){
+    esito.innerHTML = `
+      <div style="margin-bottom:6px">Formato: <b>${esc(d.formato)}</b> — cliente <b>${esc(d.cliente)}</b></div>
+      <div style="display:flex;gap:10px;margin-bottom:8px">
+        <span style="color:#1a9e5c;font-weight:700">🆕 ${d.nuovi} nuovi</span>
+        <span style="color:#1e6fa5;font-weight:700">✏️ ${d.aggiornati} aggiornati</span>
+        <span style="color:${d.n_scartate ? '#c0392b' : 'var(--text-dim)'};font-weight:700">⛔ ${d.n_scartate} scartate</span>
+      </div>
+      <table class="mon-table" style="width:100%"><thead><tr><th>Riga</th><th>Codice</th><th>Descrizione</th><th>U.M.</th><th>Tracc.</th></tr></thead>
+      <tbody>${d.esempio.map(r => `<tr><td>${r.riga}</td><td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td><td>${r.udm}</td><td>${r.tracciamento}</td></tr>`).join('')}</tbody></table>
+      ${d.totale > d.esempio.length ? `<div style="color:var(--text-dim);margin-top:4px">… e altri ${d.totale - d.esempio.length}</div>` : ''}
+      ${scartate ? `<div style="margin-top:8px;color:#c0392b;font-weight:700">Righe scartate:</div><ul>${scartate}</ul>` : ''}`;
+    document.getElementById('btn-imp-conferma').disabled = false;
+    return;
+  }
+  esito.innerHTML = `<span style="color:#1a9e5c;font-weight:700">✅ Importati: ${d.nuovi} nuovi, ${d.aggiornati} aggiornati${d.n_scartate ? `, ${d.n_scartate} righe scartate` : ''}.</span>`;
+  document.getElementById('btn-imp-conferma').disabled = true;
+  showToast('✅ Articoli importati');
   selezionaCliente(clienteSel);
 }
 

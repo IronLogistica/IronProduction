@@ -16,10 +16,11 @@ Regole di isolamento che valgono per tutto il modulo:
     capo, entrando dal pulsante di IronProduction). Ogni scrittura resta
     comunque tracciata in cl_audit (solo inserimento), intestata a 'capo'.
 """
-from flask import Blueprint, abort, current_app, jsonify, render_template, request
+from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from models import db
+from blueprints.conto_lavoro.importa_articoli import analizza_file, crea_modello_xlsx
 from blueprints.conto_lavoro.models import (ClAudit, ClArticoloCliente, ClCliente, ClSchemaVersion,
                                             TRACCIAMENTI, UDM)
 
@@ -238,3 +239,70 @@ def api_modifica_articolo(aid):
         db.session.rollback()
         return jsonify(ok=False, error='Questo cliente ha già un articolo con questo codice.'), 409
     return jsonify(ok=True, articolo=_articolo_dict(a))
+
+
+# ── Import articoli da Excel/CSV (anteprima → conferma, come il resto del programma) ──
+@cl_bp.get('/api/articoli/modello.xlsx')
+def api_modello_articoli():
+    return Response(crea_modello_xlsx(),
+                    mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    headers={'Content-Disposition': 'attachment; filename=modello_articoli_conto_lavoro.xlsx'})
+
+
+@cl_bp.post('/api/articoli/importa')
+def api_importa_articoli():
+    """
+    Carica gli articoli di UN cliente da file. Senza conferma=true: SOLO
+    anteprima (nuovi / aggiornati / scartati), nessuna scrittura. Con
+    conferma=true: stesso file ricaricato, applica in UNA transazione.
+    Un codice già esistente per quel cliente viene aggiornato (descrizione
+    se presente nel file, UdM, tracciamento); mai toccati gli articoli
+    degli altri clienti.
+    """
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify(ok=False, error='Nessun file selezionato.'), 400
+    cliente_id = request.form.get('cliente_id', type=int)
+    cliente = db.session.get(ClCliente, cliente_id) if cliente_id else None
+    if not cliente:
+        return jsonify(ok=False, error='Scegli prima il cliente.'), 400
+    conferma = (request.form.get('conferma') or '').lower() == 'true'
+    raw = f.read()
+    if len(raw) > 10 * 1024 * 1024:
+        return jsonify(ok=False, error='File troppo grande (massimo 10 MB).'), 400
+    try:
+        righe, scartate, formato = analizza_file(raw, f.filename)
+    except ValueError as e:
+        return jsonify(ok=False, error=str(e)), 400
+    if not righe:
+        return jsonify(ok=False, error='Nessuna riga valida nel file.', scartate=scartate[:50]), 400
+
+    esistenti = {a.codice: a for a in ClArticoloCliente.query.filter(
+        ClArticoloCliente.cliente_id == cliente.id,
+        ClArticoloCliente.codice.in_([r['codice'] for r in righe])).all()}
+    nuovi = [r for r in righe if r['codice'] not in esistenti]
+    aggiornati = [r for r in righe if r['codice'] in esistenti]
+
+    if not conferma:
+        return jsonify(ok=True, anteprima=True, formato=formato, cliente=cliente.ragione_sociale,
+                       totale=len(righe), nuovi=len(nuovi), aggiornati=len(aggiornati),
+                       scartate=scartate[:50], n_scartate=len(scartate), esempio=righe[:8])
+
+    try:
+        for r in nuovi:
+            db.session.add(ClArticoloCliente(cliente_id=cliente.id, codice=r['codice'], descrizione=r['descrizione'],
+                                             udm=r['udm'], tracciamento=r['tracciamento'], attivo=True))
+        for r in aggiornati:
+            a = esistenti[r['codice']]
+            if r['descrizione']:
+                a.descrizione = r['descrizione']
+            a.udm = r['udm']
+            a.tracciamento = r['tracciamento']
+        _audit('ARTICOLI_IMPORTATI', 'cl_cliente', cliente.id, dopo={
+            'file': f.filename[:200], 'formato': formato, 'nuovi': [r['codice'] for r in nuovi],
+            'aggiornati': [r['codice'] for r in aggiornati], 'scartate': len(scartate)})
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(ok=False, error='Conflitto sui codici: qualcuno li ha modificati nel frattempo, ripeti l\'anteprima.'), 409
+    return jsonify(ok=True, anteprima=False, nuovi=len(nuovi), aggiornati=len(aggiornati), n_scartate=len(scartate))
