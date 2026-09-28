@@ -48,6 +48,13 @@
   .pz-prod{font-size:.72rem;color:var(--muted)}
   .pz-prod b{font-size:1rem;color:var(--text)}
   .num-grande{font-size:1.35rem;font-weight:800}
+
+  /* Pz da fare / Pz fatti comprendono anche i componenti: NON in grassetto,
+     per non confonderli coi prodotti finiti. Il SALDO invece va in un riquadro. */
+  .num-leggero{font-size:1.05rem;font-weight:400;color:var(--text)}
+  .saldo-box{display:inline-block;min-width:64px;text-align:center;font-size:1.35rem;font-weight:900;color:#fff;
+             border:2px solid var(--warn);background:rgba(245,158,11,.14);border-radius:8px;padding:4px 10px}
+  .saldo-box.zero{border-color:var(--ok);background:rgba(34,197,94,.14)}
   .codice-img{display:flex;align-items:center;gap:10px}
   .foto-box{width:96px;height:56px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
   .foto-box img{width:100%;height:100%;object-fit:contain;background:#fff}
@@ -106,14 +113,15 @@
     <div class="scorri">
       <table class="tabella-totem">
         <thead><tr>
-          <th>Prio</th><th>Commessa</th><th>Codice e immagine</th>
-          <th>Da fare{{ '*' if s.saldatura_nota else '' }}</th><th>Fatti</th><th>Saldo</th><th>%</th>
+          <th>Prio</th><th>Commessa</th><th>Saldo</th><th>Codice e immagine</th>
+          <th>Da fare{{ '*' if s.saldatura_nota else '' }}</th><th>Fatti</th><th>%</th>
         </tr></thead>
         <tbody>
         {% for g in s.gruppi %}
           <tr class="{{ 'completa' if g.saldo_totale <= 0 else ('materiale-ok' if g.materiale_disponibile else '') }}">
             <td><span class="prio-badge">{{ g.priorita }}</span></td>
             <td><span class="commessa">{{ g.commessa or g.op_codice }}</span><span class="pz-prod">pz in prod. <b>{{ g.qta_pianificata }}</b></span></td>
+            <td><span class="saldo-box{{ ' zero' if g.saldo_totale <= 0 else '' }}">{{ g.saldo_totale | round | int }}</span></td>
             <td>
               <div class="codice-img">
                 {% if g.foto_id %}<div class="foto-box"><img src="/api/foto_articolo/file/{{ g.foto_id }}" alt=""></div>
@@ -124,9 +132,8 @@
                 </div>
               </div>
             </td>
-            <td><span class="num-grande">{{ g.totale_totale | round | int }}</span></td>
-            <td><span class="num-grande">{{ g.pezzi_fatti_totale | round | int }}</span></td>
-            <td><span class="num-grande">{{ g.saldo_totale | round | int }}</span></td>
+            <td><span class="num-leggero">{{ g.totale_totale | round | int }}</span></td>
+            <td><span class="num-leggero">{{ g.pezzi_fatti_totale | round | int }}</span></td>
             <td><div class="pct-bar"><div class="pct-fill" style="width:{{ g.pct_aggregato }}%"></div><span class="pct-label">{{ g.pct_aggregato }}%</span></div></td>
           </tr>
           {% if s.colonne_parametri and g.componenti %}
