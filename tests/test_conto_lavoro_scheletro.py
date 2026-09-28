@@ -10,7 +10,7 @@ import requests
 from flask import Flask
 
 from models import db
-from blueprints.conto_lavoro.routes import cl_bp, SECRET_KEY_PREDEFINITA
+from blueprints.conto_lavoro.routes import cl_bp
 
 RADICE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CARTELLA_MODULO = os.path.join(RADICE, 'blueprints', 'conto_lavoro')
@@ -61,15 +61,18 @@ class TestCancelloModulo(unittest.TestCase):
         c = _app(False, registra=True).test_client()
         self.assertEqual(c.get('/conto-lavoro/api/stato').status_code, 404)
 
-    def test_acceso_con_secret_key_predefinita_rifiuta(self):
-        c = _app(True, secret=SECRET_KEY_PREDEFINITA).test_client()
-        self.assertEqual(c.get('/conto-lavoro/api/stato').status_code, 503)
+    def test_acceso_senza_login_non_serve_secret_key(self):
+        # Decisione 28/09: nessun login, quindi nessun vincolo sulla SECRET_KEY
+        c = _app(True, secret='mes-carpenteria-dev-2024').test_client()
+        self.assertEqual(c.get('/conto-lavoro/api/stato').status_code, 200)
 
     def test_acceso_risponde(self):
         c = _app(True).test_client()
         r = c.get('/conto-lavoro/api/stato')
         self.assertEqual(r.status_code, 200)
         self.assertTrue(r.get_json()['abilitato'])
+        self.assertEqual(r.get_json()['schema'], 0)   # nessuna tabella nel DB di test
+        self.assertEqual(c.get('/conto-lavoro/api/clienti').status_code, 503)
         self.assertEqual(c.get('/conto-lavoro/').status_code, 200)
 
 

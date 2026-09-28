@@ -1,0 +1,186 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🤝 Conto lavoro — Clienti e articoli</div>
+  <a class="btn btn-ghost" href="/conto-lavoro/" style="margin-left:auto">← Conto lavoro</a>
+</div>
+
+{% if schema < 1 %}
+<div class="mon-section" style="padding:14px;color:#c0392b;font-weight:700">
+  ⚠️ Tabelle non ancora create: imposta CL_MIGRA_AUTO = 0001 su Railway.
+</div>
+{% else %}
+<div style="display:grid;grid-template-columns:minmax(300px,1fr) 2fr;gap:16px;align-items:start">
+
+  <!-- CLIENTI -->
+  <div class="mon-section">
+    <div style="padding:12px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)">
+      <b style="flex:1">Clienti</b>
+      <button class="btn btn-primary" onclick="apriCliente(null)">＋ Nuovo cliente</button>
+    </div>
+    <div id="lista-clienti" style="max-height:70vh;overflow:auto">Caricamento...</div>
+  </div>
+
+  <!-- ARTICOLI -->
+  <div class="mon-section">
+    <div style="padding:12px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)">
+      <b style="flex:1" id="titolo-articoli">Articoli — seleziona un cliente</b>
+      <button class="btn btn-primary" id="btn-nuovo-articolo" onclick="apriArticolo(null)" disabled>＋ Nuovo articolo</button>
+    </div>
+    <div style="padding:10px 14px;overflow-x:auto">
+      <table class="mon-table" style="width:100%">
+        <thead><tr><th>Codice</th><th>Descrizione</th><th>U.M.</th><th>Tracciamento</th><th></th></tr></thead>
+        <tbody id="lista-articoli"><tr><td colspan="5" style="color:var(--text-dim)">—</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- MODAL CLIENTE -->
+<div class="modal-overlay" id="modalCliente">
+  <div class="modal-box" style="width:520px">
+    <h3 id="titolo-modal-cliente">Nuovo cliente</h3>
+    <label class="modal-label">Ragione sociale *</label>
+    <input class="modal-input" id="c-ragione_sociale" maxlength="200">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label class="modal-label">Partita IVA</label><input class="modal-input" id="c-piva" maxlength="20"></div>
+      <div><label class="modal-label">Codice fiscale</label><input class="modal-input" id="c-codice_fiscale" maxlength="20"></div>
+    </div>
+    <label class="modal-label">Indirizzo</label>
+    <input class="modal-input" id="c-indirizzo" maxlength="200">
+    <div style="display:grid;grid-template-columns:1fr 2fr 1fr 1fr;gap:8px">
+      <div><label class="modal-label">CAP</label><input class="modal-input" id="c-cap" maxlength="10"></div>
+      <div><label class="modal-label">Città</label><input class="modal-input" id="c-citta" maxlength="100"></div>
+      <div><label class="modal-label">Prov.</label><input class="modal-input" id="c-provincia" maxlength="5"></div>
+      <div><label class="modal-label">Nazione</label><input class="modal-input" id="c-nazione" maxlength="2" value="IT"></div>
+    </div>
+    <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="c-attivo" checked> Attivo</label>
+    <div id="esito-cliente" style="font-size:12px;color:#c0392b;min-height:16px;margin-top:6px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalCliente')">Annulla</button>
+      <button class="btn btn-primary" onclick="salvaCliente()">💾 Salva</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL ARTICOLO -->
+<div class="modal-overlay" id="modalArticolo">
+  <div class="modal-box" style="width:480px">
+    <h3 id="titolo-modal-articolo">Nuovo articolo</h3>
+    <label class="modal-label">Codice (come lo usa il cliente) *</label>
+    <input class="modal-input" id="a-codice" maxlength="100">
+    <label class="modal-label">Descrizione</label>
+    <input class="modal-input" id="a-descrizione" maxlength="300">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label class="modal-label">Unità di misura *</label>
+        <select class="modal-input" id="a-udm">{% for u in udm %}<option>{{ u }}</option>{% endfor %}</select></div>
+      <div><label class="modal-label">Tracciamento *</label>
+        <select class="modal-input" id="a-tracciamento">{% for t in tracciamenti %}<option>{{ t }}</option>{% endfor %}</select></div>
+    </div>
+    <p style="font-size:11px;color:var(--text-dim);margin-top:6px">LOTTO = per DDT e cassone · MATRICOLA = ogni pezzo con il suo numero</p>
+    <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-top:8px"><input type="checkbox" id="a-attivo" checked> Attivo</label>
+    <div id="esito-articolo" style="font-size:12px;color:#c0392b;min-height:16px;margin-top:6px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalArticolo')">Annulla</button>
+      <button class="btn btn-primary" onclick="salvaArticolo()">💾 Salva</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+const CAMPI_CLIENTE = ['ragione_sociale','piva','codice_fiscale','indirizzo','cap','citta','provincia','nazione'];
+let CLIENTI = [], ARTICOLI = [], clienteSel = null, clienteInModifica = null, articoloInModifica = null;
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function chiama(url, metodo, corpo){
+  const r = await fetch(url, {method: metodo || 'GET', headers: {'Content-Type':'application/json'},
+                              body: corpo ? JSON.stringify(corpo) : undefined});
+  const d = await r.json().catch(() => ({ok:false, error:'Risposta non valida'}));
+  if(!r.ok && d.ok !== false) d.ok = false;
+  return d;
+}
+
+async function caricaClienti(){
+  const d = await chiama('/conto-lavoro/api/clienti?tutti=1');
+  CLIENTI = Array.isArray(d) ? d : [];
+  const box = document.getElementById('lista-clienti');
+  if(!CLIENTI.length){ box.innerHTML = '<div style="padding:14px;color:var(--text-dim)">Nessun cliente. Crea il primo con “＋ Nuovo cliente”.</div>'; return; }
+  box.innerHTML = CLIENTI.map(c => `
+    <div onclick="selezionaCliente(${c.id})" style="padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;${clienteSel===c.id?'background:var(--dark3)':''};${c.attivo?'':'opacity:.5'}">
+      <div style="display:flex;justify-content:space-between;gap:8px">
+        <b>${esc(c.ragione_sociale)}</b>
+        <button class="btn btn-ghost" style="padding:2px 8px;font-size:11px" onclick="event.stopPropagation();apriCliente(${c.id})">✏️</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-dim)">${c.piva ? 'P.IVA ' + esc(c.piva) : 'P.IVA —'} ${c.citta ? '· ' + esc(c.citta) : ''}${c.attivo ? '' : ' · non attivo'}</div>
+    </div>`).join('');
+}
+
+async function selezionaCliente(id){
+  clienteSel = id;
+  const c = CLIENTI.find(x => x.id === id);
+  document.getElementById('titolo-articoli').textContent = 'Articoli — ' + (c ? c.ragione_sociale : '');
+  document.getElementById('btn-nuovo-articolo').disabled = false;
+  caricaClienti();
+  const d = await chiama('/conto-lavoro/api/articoli?tutti=1&cliente_id=' + id);
+  ARTICOLI = Array.isArray(d) ? d : [];
+  const tb = document.getElementById('lista-articoli');
+  tb.innerHTML = ARTICOLI.length ? ARTICOLI.map(a => `
+    <tr style="${a.attivo?'':'opacity:.5'}">
+      <td class="codice"><b>${esc(a.codice)}</b></td><td>${esc(a.descrizione)}</td>
+      <td>${esc(a.udm)}</td><td>${esc(a.tracciamento)}</td>
+      <td><button class="btn btn-ghost" style="padding:2px 8px;font-size:11px" onclick="apriArticolo(${a.id})">✏️</button></td>
+    </tr>`).join('') : '<tr><td colspan="5" style="color:var(--text-dim)">Nessun articolo per questo cliente.</td></tr>';
+}
+
+function apriCliente(id){
+  clienteInModifica = id;
+  const c = CLIENTI.find(x => x.id === id) || {nazione:'IT', attivo:true};
+  document.getElementById('titolo-modal-cliente').textContent = id ? 'Modifica cliente' : 'Nuovo cliente';
+  CAMPI_CLIENTE.forEach(k => document.getElementById('c-' + k).value = c[k] || (k === 'nazione' ? 'IT' : ''));
+  document.getElementById('c-attivo').checked = c.attivo !== false;
+  document.getElementById('esito-cliente').textContent = '';
+  openModal('modalCliente');
+}
+
+async function salvaCliente(){
+  const corpo = {attivo: document.getElementById('c-attivo').checked};
+  CAMPI_CLIENTE.forEach(k => corpo[k] = document.getElementById('c-' + k).value);
+  const d = clienteInModifica ? await chiama('/conto-lavoro/api/clienti/' + clienteInModifica, 'PUT', corpo)
+                              : await chiama('/conto-lavoro/api/clienti', 'POST', corpo);
+  if(!d.ok){ document.getElementById('esito-cliente').textContent = '❌ ' + (d.error || 'Errore'); return; }
+  closeModal('modalCliente');
+  showToast('✅ Cliente salvato');
+  await caricaClienti();
+  selezionaCliente(d.cliente.id);
+}
+
+function apriArticolo(id){
+  articoloInModifica = id;
+  const a = ARTICOLI.find(x => x.id === id) || {udm:'PZ', tracciamento:'LOTTO', attivo:true};
+  document.getElementById('titolo-modal-articolo').textContent = id ? 'Modifica articolo' : 'Nuovo articolo';
+  document.getElementById('a-codice').value = a.codice || '';
+  document.getElementById('a-descrizione').value = a.descrizione || '';
+  document.getElementById('a-udm').value = a.udm;
+  document.getElementById('a-tracciamento').value = a.tracciamento;
+  document.getElementById('a-attivo').checked = a.attivo !== false;
+  document.getElementById('esito-articolo').textContent = '';
+  openModal('modalArticolo');
+}
+
+async function salvaArticolo(){
+  const corpo = {codice: document.getElementById('a-codice').value, descrizione: document.getElementById('a-descrizione').value,
+                 udm: document.getElementById('a-udm').value, tracciamento: document.getElementById('a-tracciamento').value,
+                 attivo: document.getElementById('a-attivo').checked};
+  let d;
+  if(articoloInModifica){ d = await chiama('/conto-lavoro/api/articoli/' + articoloInModifica, 'PUT', corpo); }
+  else { corpo.cliente_id = clienteSel; d = await chiama('/conto-lavoro/api/articoli', 'POST', corpo); }
+  if(!d.ok){ document.getElementById('esito-articolo').textContent = '❌ ' + (d.error || 'Errore'); return; }
+  closeModal('modalArticolo');
+  showToast('✅ Articolo salvato');
+  selezionaCliente(clienteSel);
+}
+
+if(document.getElementById('lista-clienti')) caricaClienti();
+{% endblock %}
