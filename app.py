@@ -80,6 +80,9 @@ def create_app():
     from blueprints.produzione_pp.routes import pp_bp
     from blueprints.acquisti_wood.routes import acquisti_wood_bp
     from blueprints.commesse.routes import commesse_bp
+    # Conto lavoro: registrato SOLO con CL_ENABLED acceso — spento, le sue
+    # rotte non esistono proprio (vedi blueprints/conto_lavoro/routes.py).
+    from blueprints.conto_lavoro.routes import cl_bp
 
     app.register_blueprint(monitor_bp)
     app.register_blueprint(kanban_bp)
@@ -89,6 +92,8 @@ def create_app():
     app.register_blueprint(pp_bp)
     app.register_blueprint(acquisti_wood_bp)
     app.register_blueprint(commesse_bp)
+    if app.config.get('CL_ENABLED'):
+        app.register_blueprint(cl_bp)
 
     @app.context_processor
     def inject_globals():

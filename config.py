@@ -21,6 +21,21 @@ class Config:
         _ml_db = _ml_db.replace('postgres://', 'postgresql://', 1)
     SQLALCHEMY_BINDS = {'masterlogistic': _ml_db} if _ml_db else {}
 
+    # ══════════════════════════════════════════════════════════════════════
+    #  CONTO LAVORO — modulo autonomo (blueprints/conto_lavoro). Spento di
+    #  default: CL_ENABLED=1 su Railway per accenderlo. Le sue tabelle
+    #  stanno sul bind 'conto_lavoro', che punta allo STESSO Postgres di
+    #  IronProduction (o a CL_DATABASE_URL se impostata): essendo un bind
+    #  separato, db.create_all(bind_key=None) all'avvio NON le crea mai —
+    #  il DDL del modulo si esegue solo con il suo script esplicito.
+    # ══════════════════════════════════════════════════════════════════════
+    CL_ENABLED = os.environ.get('CL_ENABLED', '').strip().lower() in ('1', 'true', 'si', 'sì', 'yes', 'on')
+    _cl_db = os.environ.get('CL_DATABASE_URL', '') or _db
+    if _cl_db.startswith('postgres://'):
+        _cl_db = _cl_db.replace('postgres://', 'postgresql://', 1)
+    if CL_ENABLED:
+        SQLALCHEMY_BINDS = {**SQLALCHEMY_BINDS, 'conto_lavoro': _cl_db}
+
     # Token Bearer obbligatorio per le API PP; lasciare vuoto disabilita le API.
     PP_API_TOKEN = os.environ.get('PP_API_TOKEN', '')
 
