@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LIVE {{ coppia.etichetta|upper }} — MES Carpenteria</title>
+<style>
+  /* ── LIVE DOPPIO — pensato per monitor RUOTATO IN VERTICALE (es. 1080×1920):
+     macchina 1 nella metà SOPRA, macchina 2 nella metà SOTTO, ognuna col suo
+     colore. Ogni metà occupa esattamente metà schermo; se una lista è più
+     lunga dello spazio, scorre da sola lentamente (nessuno deve toccare). */
+  :root{
+    --bg:#07090d; --surf:#0e1117; --surf2:#141920; --border:#1e2a38;
+    --text:#d4e0f0; --muted:#5a7090; --accent:#00b4d8;
+    --ok:#22c55e; --warn:#f59e0b; --danger:#ef4444;
+    --c1:#00b4d8; --c2:#f97316;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',Arial,sans-serif;
+       display:flex;flex-direction:column;height:100vh;overflow:hidden;padding:10px 12px}
+  .header{display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid var(--border);padding-bottom:6px;margin-bottom:6px;flex-shrink:0}
+  .titolo{font-size:1.25rem;font-weight:800;color:var(--accent);display:flex;align-items:center;gap:10px;text-transform:uppercase;letter-spacing:.5px}
+  .titolo .dot{width:10px;height:10px;border-radius:50%;background:var(--ok);box-shadow:0 0 10px var(--ok);animation:blink 2s infinite}
+  @keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+  #clock{font-size:1.15rem;font-family:'Consolas',monospace}
+  .nav-macchine{display:flex;gap:5px;flex-wrap:wrap;margin-bottom:8px;flex-shrink:0}
+  .nav-macchine a{padding:4px 10px;border-radius:6px;border:1px solid var(--border);color:var(--muted);text-decoration:none;font-size:.72rem}
+  .nav-macchine a.attivo{border-color:var(--accent);color:var(--accent)}
+
+  .meta{flex:1 1 0;min-height:0;display:flex;flex-direction:column;border:2px solid var(--colore);border-radius:12px;overflow:hidden;background:var(--surf)}
+  .meta + .meta{margin-top:10px}
+  .meta.m1{--colore:var(--c1)} .meta.m2{--colore:var(--c2)}
+  .meta-testa{display:flex;align-items:center;justify-content:space-between;gap:10px;background:var(--colore);color:#05070a;padding:8px 14px;flex-shrink:0}
+  .meta-testa .nome{font-size:1.9rem;font-weight:900;text-transform:uppercase;letter-spacing:1px}
+  .meta-testa .posizione{font-size:.8rem;font-weight:900;text-transform:uppercase;background:rgba(0,0,0,.18);padding:3px 10px;border-radius:999px}
+  .meta-testa .conteggio{font-size:1rem;font-weight:800}
+  .meta-corpo{flex:1;min-height:0;overflow:hidden;position:relative}
+
+  table.tabella-totem{width:100%;border-collapse:collapse}
+  table.tabella-totem th{position:sticky;top:0;z-index:2;background:var(--surf2);color:var(--muted);text-transform:uppercase;font-size:.66rem;letter-spacing:.4px;padding:7px 6px;text-align:left;border-bottom:2px solid var(--border)}
+  table.tabella-totem td{padding:7px 6px;border-bottom:1px solid var(--border);vertical-align:middle}
+  table.tabella-totem tr.completa{opacity:.45}
+  tr.materiale-ok{box-shadow:inset 0 0 0 3px var(--warn);animation:lampeggio-giallo 2s infinite}
+  @keyframes lampeggio-giallo{0%,100%{box-shadow:inset 0 0 0 3px var(--warn), 0 0 14px 4px rgba(245,158,11,.7)}50%{box-shadow:inset 0 0 0 3px var(--warn), 0 0 4px 1px rgba(245,158,11,.2)}}
+  .prio-badge{font-size:1.2rem;font-weight:800;color:var(--muted)}
+  .commessa{font-family:'Consolas',monospace;font-size:.85rem;display:block}
+  .pz-prod{font-size:.72rem;color:var(--muted)}
+  .pz-prod b{font-size:1rem;color:var(--text)}
+  .num-grande{font-size:1.35rem;font-weight:800}
+  .codice-img{display:flex;align-items:center;gap:10px}
+  .foto-box{width:96px;height:56px;border-radius:6px;flex-shrink:0;display:flex;align-items:center;justify-content:center;overflow:hidden}
+  .foto-box img{width:100%;height:100%;object-fit:contain;background:#fff}
+  .foto-box.vuota{background:var(--surf2);border:1px dashed var(--border);color:var(--muted);font-size:1.1rem}
+  .codice-nome{font-size:1.1rem;font-weight:800}
+  .codice-desc{font-size:.74rem;color:var(--muted);line-height:1.25}
+  .pct-bar{background:var(--surf2);border-radius:8px;height:18px;overflow:hidden;position:relative;min-width:80px}
+  .pct-fill{background:linear-gradient(90deg,var(--ok),#16a34a);height:100%}
+  .pct-label{position:absolute;inset:0;text-align:center;font-size:.75rem;line-height:18px;color:#fff;font-weight:700}
+  .dettaglio-codici{background:var(--surf2)}
+  .dettaglio-codici > td{padding:0 6px 8px 34px !important}
+  table.tabella-dettaglio{width:100%;border-collapse:collapse}
+  table.tabella-dettaglio th{color:var(--muted);text-transform:uppercase;font-size:.6rem;text-align:left;padding:4px 6px}
+  table.tabella-dettaglio td{padding:4px 6px;font-size:.8rem;border-top:1px solid var(--border)}
+  table.tabella-dettaglio .codice-cell{font-weight:700}
+  table.tabella-dettaglio .muted{color:var(--muted)}
+  table.tabella-dettaglio tr.componente-completo td{color:var(--ok)}
+  .vuoto{text-align:center;color:var(--muted);padding:26px;font-size:1rem}
+  .piede{flex-shrink:0;border-top:1px solid var(--border);padding:5px 12px;font-size:.72rem;display:flex;gap:6px;flex-wrap:wrap;align-items:center;background:var(--surf)}
+  .piede .lbl{color:var(--ok);font-weight:800;text-transform:uppercase}
+  .tag-name{background:var(--surf2);border:1px solid var(--border);border-radius:5px;padding:2px 8px}
+  .reintegro{flex-shrink:0;border-bottom:1.5px solid #e6b800;background:rgba(230,184,0,.08);padding:5px 12px;font-size:.78rem;display:none}
+  .reintegro b.t{color:#e6b800}
+
+  /* Schermo orizzontale (se il monitor torna dritto): le due metà affiancate */
+  @media (orientation: landscape) and (min-width: 1300px){
+    .corpo-doppio{flex-direction:row !important}
+    .meta + .meta{margin-top:0;margin-left:10px}
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="titolo"><span class="dot"></span> LIVE {{ coppia.etichetta }}</div>
+  <div id="clock">{{ now }}</div>
+</div>
+
+{% with slug_attivo=coppia.slug %}{% include 'monitor/_nav_live.html' %}{% endwith %}
+
+<div id="kpi-overlay" style="position:fixed;inset:0;background:var(--bg);z-index:500;display:none;flex-direction:column">
+  <div style="display:flex;align-items:center;gap:14px;padding:14px 24px;border-bottom:2px solid var(--border);flex-shrink:0">
+    <button onclick="chiudiKpiOverlay()" style="background:transparent;border:1px solid var(--border);color:var(--accent);border-radius:7px;padding:6px 14px;cursor:pointer;font-size:.85rem;font-weight:700">← Torna al Totem</button>
+    <div style="color:var(--muted);font-size:.8rem">Cruscotto KPI</div>
+  </div>
+  <iframe id="kpi-iframe" src="" style="flex:1;border:none;width:100%;background:#fff"></iframe>
+</div>
+
+<div class="corpo-doppio" style="flex:1;min-height:0;display:flex;flex-direction:column">
+{% for s in sezioni %}
+{% set centro = s.centro %}
+<section class="meta m{{ loop.index }}">
+  <div class="meta-testa">
+    <span class="nome">{{ centro.nome }}</span>
+    <span class="conteggio">{{ s.gruppi|length }} commess{{ 'a' if s.gruppi|length == 1 else 'e' }} in coda</span>
+    <span class="posizione">{{ '▲ sopra' if loop.first else '▼ sotto' }}</span>
+  </div>
+  <div class="reintegro" id="reintegro-{{ centro.id }}"></div>
+  <div class="meta-corpo">
+    <div class="scorri">
+      <table class="tabella-totem">
+        <thead><tr>
+          <th>Prio</th><th>Commessa</th><th>Codice e immagine</th>
+          <th>Da fare{{ '*' if s.saldatura_nota else '' }}</th><th>Fatti</th><th>Saldo</th><th>%</th>
+        </tr></thead>
+        <tbody>
+        {% for g in s.gruppi %}
+          <tr class="{{ 'completa' if g.saldo_totale <= 0 else ('materiale-ok' if g.materiale_disponibile else '') }}">
+            <td><span class="prio-badge">{{ g.priorita }}</span></td>
+            <td><span class="commessa">{{ g.commessa or g.op_codice }}</span><span class="pz-prod">pz in prod. <b>{{ g.qta_pianificata }}</b></span></td>
+            <td>
+              <div class="codice-img">
+                {% if g.foto_id %}<div class="foto-box"><img src="/api/foto_articolo/file/{{ g.foto_id }}" alt=""></div>
+                {% else %}<div class="foto-box vuota">📷</div>{% endif %}
+                <div>
+                  <div class="codice-nome">{{ g.codice_articolo }}</div>
+                  <div class="codice-desc">{{ g.descrizione or '' }}</div>
+                </div>
+              </div>
+            </td>
+            <td><span class="num-grande">{{ g.totale_totale | round | int }}</span></td>
+            <td><span class="num-grande">{{ g.pezzi_fatti_totale | round | int }}</span></td>
+            <td><span class="num-grande">{{ g.saldo_totale | round | int }}</span></td>
+            <td><div class="pct-bar"><div class="pct-fill" style="width:{{ g.pct_aggregato }}%"></div><span class="pct-label">{{ g.pct_aggregato }}%</span></div></td>
+          </tr>
+          {% if s.colonne_parametri and g.componenti %}
+          <tr class="dettaglio-codici"><td colspan="7">
+            <table class="tabella-dettaglio">
+              <thead><tr>
+                <th>Codice lavorato</th><th>Descrizione</th><th>Da fare</th><th>Fatti</th><th>Saldo</th>
+                {% for col in s.colonne_parametri %}<th>{{ col.etichetta }}</th>{% endfor %}
+              </tr></thead>
+              <tbody>
+              {% for c in g.componenti %}
+                <tr class="{{ 'componente-completo' if c.completato else '' }}">
+                  <td class="codice-cell">{{ c.codice_lavorato }}{{ ' ✅' if c.completato else '' }}</td>
+                  <td class="muted">{{ c.descrizione_lavorata or '—' }}</td>
+                  <td>{{ c.totale | round | int }}</td><td>{{ c.pezzi_fatti | round | int }}</td><td>{{ c.saldo | round | int }}</td>
+                  {% for col in s.colonne_parametri %}<td>{{ c.parametri[col.chiave] or '—' }}</td>{% endfor %}
+                </tr>
+              {% endfor %}
+              </tbody>
+            </table>
+          </td></tr>
+          {% endif %}
+        {% else %}
+          <tr><td colspan="7" class="vuoto">Nessuna commessa in coda su {{ centro.nome }}.</td></tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+  {% if s.righe_terminati %}
+  <div class="piede">
+    <span class="lbl">✅ Appena terminati:</span>
+    {% for r in s.righe_terminati[:6] %}<span class="tag-name">{{ r.op_codice }} — {{ r.codice_lavorato }}</span>{% endfor %}
+  </div>
+  {% endif %}
+</section>
+{% endfor %}
+</div>
+
+<script>
+setInterval(() => {
+  const d = new Date();
+  document.getElementById('clock').textContent = d.toLocaleDateString('it-IT') + ' ' + d.toLocaleTimeString('it-IT');
+}, 1000);
+
+let _kpiOverlayAperto = false;
+function apriKpiOverlay(ev){
+  ev.preventDefault();
+  document.getElementById('kpi-iframe').src = '/kpi/embed';
+  document.getElementById('kpi-overlay').style.display = 'flex';
+  _kpiOverlayAperto = true;
+}
+function chiudiKpiOverlay(){
+  document.getElementById('kpi-overlay').style.display = 'none';
+  document.getElementById('kpi-iframe').src = '';
+  _kpiOverlayAperto = false;
+}
+setInterval(() => { if(!_kpiOverlayAperto) window.location.reload(); }, 60000);
+
+// Scorrimento automatico di ogni metà quando la lista non ci sta:
+// pausa in cima, scende piano fino in fondo, pausa, torna su.
+document.querySelectorAll('.meta-corpo').forEach(corpo => {
+  let pos = 0, dir = 1, pausa = 240;  // ~4 s a 60 fps
+  function passo(){
+    const extra = corpo.scrollHeight - corpo.clientHeight;
+    if(extra > 4){
+      if(pausa > 0){ pausa--; }
+      else{
+        pos += dir * 0.5;
+        if(pos >= extra){ pos = extra; dir = -1; pausa = 240; }
+        if(pos <= 0){ pos = 0; dir = 1; pausa = 240; }
+        corpo.scrollTop = pos;   // intestazione tabella "sticky": resta sempre visibile
+      }
+    }
+    requestAnimationFrame(passo);
+  }
+  requestAnimationFrame(passo);
+});
+
+async function caricaReintegro(cid){
+  try{
+    const r = await fetch('/api/dichiarazione-produzione/reintegro-scarti?centro_id=' + cid);
+    const righe = await r.json();
+    const box = document.getElementById('reintegro-' + cid);
+    if(!box || !righe.length) return;
+    box.style.display = 'block';
+    box.innerHTML = `<b class="t">🔄 Reintegro scarti (${righe.length}):</b> ` +
+      righe.slice(0, 6).map(x => `<b>${x.codice_lavorato}</b> ${x.da_rifare} da rifare (${x.op_code})`).join(' · ');
+  }catch(e){ /* il totem non si blocca per questo */ }
+}
+{% for s in sezioni %}caricaReintegro({{ s.centro.id }});
+{% endfor %}
+</script>
+</body>
+</html>

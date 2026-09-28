@@ -420,6 +420,12 @@ def totem_macchina(cid):
     if centro.esterno or centro.escluso_da_monitor_produzione:
         return render_template('monitor/nessuna_macchina.html', active='monitor',
             messaggio=f'"{centro.nome}" è marcato come {"esterno" if centro.esterno else "escluso dal Monitor Produzione"} — nessun totem qui.')
+    return render_template('monitor/totem_tabella.html', macchine=get_macchine_monitor(),
+        coppie_live=COPPIE_LIVE, now=datetime.now().strftime('%d/%m/%Y'), **_contesto_totem(centro))
+
+
+def _contesto_totem(centro):
+    """Dati del Totem LIVE di UNA macchina — condivisi dalla vista singola e da quella doppia (verticale)."""
     righe = _righe_macchina(centro)
     # Le righe COMPLETATE (sezione 'terminati') restano visibili qui, non
     # spariscono più: prima venivano escluse del tutto dal Totem Live, quindi
@@ -549,9 +555,47 @@ def totem_macchina(cid):
             g['saldo_totale'] = finale['saldo'] if finale else g['qta_pianificata']
             g['pct_aggregato'] = round(100 * (g['totale_totale'] - g['saldo_totale']) / g['totale_totale']) if g['totale_totale'] else 0
 
-    return render_template('monitor/totem_tabella.html', centro=centro, gruppi=gruppi,
-        righe_terminati=righe['terminati'][:8], macchine=get_macchine_monitor(),
-        colonne_parametri=colonne_parametri, saldatura_nota=saldatura_nota,
+    return dict(centro=centro, gruppi=gruppi, righe_terminati=righe['terminati'][:8],
+                colonne_parametri=colonne_parametri, saldatura_nota=saldatura_nota)
+
+
+# ── LIVE DOPPIO (monitor in VERTICALE) ────────────────────────────────────────
+# Due macchine gestite dalla stessa postazione/operatore su UN solo schermo
+# ruotato in verticale: la prima macchina nella metà SOPRA, la seconda nella
+# metà SOTTO, ognuna con la sua lista ben distinta (colore e intestazione
+# propri). Le coppie si riconoscono dal NOME del Centro di Costo — nessuna
+# configurazione da fare: basta che i centri esistano.
+COPPIE_LIVE = [
+    {'slug': 'satinatrice-sgolatrice', 'etichetta': 'Satinatrice + Sgolatrice', 'nomi': ('satin', 'sgola')},
+    {'slug': 'pressopiegatrice-punzonatrice', 'etichetta': 'Pressopiegatrice + Punzonatrice', 'nomi': ('piega', 'punzon')},
+]
+
+
+def _centro_per_nome(parte_nome, macchine=None):
+    """Primo centro del Monitor (stesso elenco della barra macchine) il cui nome contiene 'parte_nome'."""
+    for m in (macchine if macchine is not None else get_macchine_monitor()):
+        if parte_nome in (m['nome'] or '').lower():
+            return CentroCostoWood.query.get(m['id'])
+    return None
+
+
+@monitor_bp.route('/totem/doppio/<slug>')
+def totem_doppio(slug):
+    coppia = next((c for c in COPPIE_LIVE if c['slug'] == slug), None)
+    if not coppia:
+        from flask import abort
+        abort(404)
+    sezioni = []
+    macchine = get_macchine_monitor()
+    for parte in coppia['nomi']:
+        centro = _centro_per_nome(parte, macchine)
+        if centro:
+            sezioni.append(_contesto_totem(centro))
+    if not sezioni:
+        return render_template('monitor/nessuna_macchina.html', active='monitor',
+            messaggio=f'Nessun Centro di Costo trovato per "{coppia["etichetta"]}" — verifica i nomi in Centri di Costo.')
+    return render_template('monitor/totem_doppio.html', coppia=coppia, sezioni=sezioni,
+        macchine=macchine, coppie_live=COPPIE_LIVE,
         now=datetime.now().strftime('%d/%m/%Y'))
 
 

@@ -1,0 +1,18 @@
+{# Barra macchine del LIVE: le macchine che fanno parte di una coppia
+   (Satinatrice+Sgolatrice, Pressopiegatrice+Punzonatrice) compaiono come
+   UN solo pulsante che apre la vista doppia verticale. #}
+<div class="nav-macchine">
+  {% set gia = [] %}
+  {% for m in macchine %}
+    {% set ns = namespace(coppia=None) %}
+    {% for c in coppie_live %}{% for n in c.nomi %}{% if n in (m.nome|lower) %}{% set ns.coppia = c %}{% endif %}{% endfor %}{% endfor %}
+    {% if ns.coppia %}
+      {% if ns.coppia.slug not in gia %}{% if gia.append(ns.coppia.slug) %}{% endif %}
+      <a href="/totem/doppio/{{ ns.coppia.slug }}" class="{{ 'attivo' if slug_attivo == ns.coppia.slug else '' }}">{{ ns.coppia.etichetta }}</a>
+      {% endif %}
+    {% else %}
+      <a href="/totem/macchina/{{ m.id }}" class="{{ 'attivo' if (centro_attivo_id is defined and m.id == centro_attivo_id) else '' }}">{{ m.nome }}</a>
+    {% endif %}
+  {% endfor %}
+  <a href="#" onclick="apriKpiOverlay(event)" style="margin-left:auto">📈 KPI</a>
+</div>

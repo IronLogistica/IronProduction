@@ -63,12 +63,7 @@
   <div id="clock">{{ now }}</div>
 </div>
 
-<div class="nav-macchine">
-  {% for m in macchine %}
-  <a href="/totem/macchina/{{ m.id }}" class="{{ 'attivo' if m.id == centro.id else '' }}">{{ m.nome }}</a>
-  {% endfor %}
-  <a href="#" onclick="apriKpiOverlay(event)" style="margin-left:auto">📈 KPI</a>
-</div>
+{% with centro_attivo_id=centro.id, slug_attivo='' %}{% include 'monitor/_nav_live.html' %}{% endwith %}
 
 <!-- Overlay KPI: resta dentro il totem, non naviga via — l'auto-refresh
      della pagina (ogni 60s) si mette in pausa finché è aperto. -->
