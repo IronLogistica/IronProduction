@@ -67,6 +67,20 @@ LAUNCHPAD_GRUPPI = [
 ]
 
 
+# Gruppo del modulo Conto lavoro: nel Launchpad e nel menu a sinistra SOLO
+# con CL_ENABLED acceso (spento, le sue pagine non esistono).
+GRUPPO_CONTO_LAVORO = {'nome': 'Conto Lavoro', 'icona': '🤝', 'colore': '#0e9f8e', 'voci': [
+    {'label': 'Conto Lavoro', 'icona': '🤝', 'url': '/conto-lavoro/'},
+]}
+
+
+def gruppi_launchpad(app):
+    gruppi = list(LAUNCHPAD_GRUPPI)
+    if app.config.get('CL_ENABLED'):
+        gruppi.insert(1, GRUPPO_CONTO_LAVORO)
+    return gruppi
+
+
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
@@ -106,12 +120,12 @@ def create_app():
         except Exception:
             macchine = []
         return {'now': datetime.now().strftime('%d/%m/%y'), 'kanban_gruppi': gruppi, 'macchine_monitor': macchine,
-                'sidebar_gruppi': LAUNCHPAD_GRUPPI}
+                'sidebar_gruppi': gruppi_launchpad(app)}
 
 
     @app.route('/launchpad')
     def launchpad():
-        return render_template('launchpad/index.html', active='launchpad', gruppi=LAUNCHPAD_GRUPPI)
+        return render_template('launchpad/index.html', active='launchpad', gruppi=gruppi_launchpad(app))
 
     @app.route('/')
     def index():
