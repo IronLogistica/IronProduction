@@ -22,6 +22,11 @@ from urllib.parse import urlsplit
 
 from sqlalchemy import create_engine, text
 
+
+def _log(msg):
+    """Log visibile subito su Railway: stderr senza buffer (print su stdout sotto gunicorn può restare nel buffer)."""
+    print(msg, file=sys.stderr, flush=True)
+
 CARTELLA_SQL = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sql')
 MIGRAZIONI = [1]  # versioni disponibili, in ordine
 SCHEMA = 'conto_lavoro'
@@ -63,7 +68,7 @@ def _esegui_script(engine, sql):
 LOCK_MIGRAZIONE = 506900001  # pg_advisory lock: una sola migrazione alla volta (più worker gunicorn)
 
 
-def applica_su_con_lock(url, versione_richiesta, out=print):
+def applica_su_con_lock(url, versione_richiesta, out=_log):
     """
     Applica le migrazioni fino a 'versione_richiesta' tenendo un advisory lock
     Postgres per tutta la transazione: se più processi partono insieme (i 2
@@ -95,7 +100,7 @@ def applica_su_con_lock(url, versione_richiesta, out=print):
         engine.dispose()
 
 
-def applica_all_avvio(out=print):
+def applica_all_avvio(out=_log):
     """
     Chiamata da app.py SOLO se la variabile Railway CL_MIGRA_AUTO vale
     esattamente il numero di una migrazione (es. '0001'): è il consenso
