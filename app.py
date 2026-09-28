@@ -151,6 +151,12 @@ def create_app():
         assicura_categoria_acquisto_config()
         assicura_ripartizione_produzione_parametri()
 
+    # Conto lavoro: il suo DDL NON gira all'avvio — salvo consenso esplicito
+    # dato impostando a mano su Railway CL_MIGRA_AUTO=<numero migrazione>
+    # (es. 0001). Idempotente, con lock Postgres; un errore non blocca l'app.
+    from blueprints.conto_lavoro.migra import applica_all_avvio
+    applica_all_avvio()
+
     return app
 
 app = create_app()

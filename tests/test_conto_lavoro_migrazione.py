@@ -95,6 +95,41 @@ class TestMigrazionePostgres(unittest.TestCase):
         self.assertFalse(self._schema_esiste())
         self._su()
 
+    def _avvio(self, valore):
+        vecchi = {k: os.environ.get(k) for k in ('CL_MIGRA_AUTO', 'CL_DATABASE_URL')}
+        try:
+            os.environ['CL_DATABASE_URL'] = PG_URL
+            if valore is None:
+                os.environ.pop('CL_MIGRA_AUTO', None)
+            else:
+                os.environ['CL_MIGRA_AUTO'] = valore
+            return migra.applica_all_avvio(out=lambda *_: None)
+        finally:
+            for k, v in vecchi.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_avvio_senza_consenso_non_fa_nulla(self):
+        self.assertIsNone(self._avvio(None))
+        self.assertIsNone(self._avvio(''))
+        self.assertIsNone(self._avvio('9999'))
+        self.assertIsNone(self._avvio('si'))
+        self.assertFalse(self._schema_esiste())
+
+    def test_avvio_con_consenso_e_due_worker_in_parallelo(self):
+        import threading
+        esiti = []
+        t = [threading.Thread(target=lambda: esiti.append(self._avvio('0001'))) for _ in range(2)]
+        # _avvio tocca os.environ: le due chiamate condividono lo stesso valore, va bene
+        for x in t: x.start()
+        for x in t: x.join()
+        self.assertEqual(esiti, [1, 1])
+        with self.eng.connect() as c:
+            self.assertEqual(c.execute(text('SELECT COUNT(*) FROM conto_lavoro.cl_schema_version')).scalar(), 1)
+        self.assertEqual(self._avvio('0001'), 1)   # al riavvio successivo: niente da fare
+
     def test_nessuna_tabella_fuori_dallo_schema(self):
         with self.eng.connect() as c:
             prima = set(inspect(c).get_table_names(schema='public'))

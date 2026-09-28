@@ -60,6 +60,64 @@ def _esegui_script(engine, sql):
         raw.close()
 
 
+LOCK_MIGRAZIONE = 506900001  # pg_advisory lock: una sola migrazione alla volta (più worker gunicorn)
+
+
+def applica_su_con_lock(url, versione_richiesta, out=print):
+    """
+    Applica le migrazioni fino a 'versione_richiesta' tenendo un advisory lock
+    Postgres per tutta la transazione: se più processi partono insieme (i 2
+    worker di gunicorn) solo il primo esegue, gli altri trovano lo schema già
+    aggiornato. Idempotente. Ritorna la versione finale.
+    """
+    engine = create_engine(url)
+    raw = engine.raw_connection()
+    try:
+        cur = raw.cursor()
+        cur.execute(f'SELECT pg_advisory_xact_lock({LOCK_MIGRAZIONE})')
+        cur.execute("SELECT 1 FROM information_schema.tables "
+                    "WHERE table_schema = 'conto_lavoro' AND table_name = 'cl_schema_version'")
+        attuale = 0
+        if cur.fetchone():
+            cur.execute('SELECT COALESCE(MAX(versione), 0) FROM conto_lavoro.cl_schema_version')
+            attuale = cur.fetchone()[0] or 0
+        for v in [m for m in MIGRAZIONI if attuale < m <= versione_richiesta]:
+            cur.execute(leggi_sql(v, 'up'))
+            out(f'[conto_lavoro] migrazione {v:04d} applicata su {descrivi_url(url)}')
+            attuale = v
+        raw.commit()
+        return attuale
+    except Exception:
+        raw.rollback()
+        raise
+    finally:
+        raw.close()
+        engine.dispose()
+
+
+def applica_all_avvio(out=print):
+    """
+    Chiamata da app.py SOLO se la variabile Railway CL_MIGRA_AUTO vale
+    esattamente il numero di una migrazione (es. '0001'): è il consenso
+    esplicito, dato a mano, per quella versione. Non blocca mai l'avvio
+    dell'app: un errore viene solo scritto nel log.
+    """
+    richiesta = (os.environ.get('CL_MIGRA_AUTO') or '').strip()
+    if not richiesta.isdigit() or int(richiesta) not in MIGRAZIONI:
+        return None
+    url = _url()
+    if not url.startswith('postgresql'):
+        out('[conto_lavoro] CL_MIGRA_AUTO ignorata: serve PostgreSQL')
+        return None
+    try:
+        finale = applica_su_con_lock(url, int(richiesta), out=out)
+        out(f'[conto_lavoro] schema conto_lavoro alla versione {finale} — ora puoi togliere CL_MIGRA_AUTO')
+        return finale
+    except Exception as e:
+        out(f'[conto_lavoro] ERRORE migrazione {richiesta}: {e} — nessuna modifica applicata (rollback)')
+        return None
+
+
 def versione_attuale(conn):
     esiste = conn.execute(text(
         "SELECT 1 FROM information_schema.tables WHERE table_schema = :s AND table_name = 'cl_schema_version'"),
@@ -99,7 +157,7 @@ def esegui(comando, url, esegui_davvero=False, conferma='', out=print):
                 if conferma != f'{v:04d}':
                     out(f'ERRORE: per eseguire la migrazione {v:04d} serve --conferma {v:04d}')
                     return 3
-                _esegui_script(engine, sql)
+                applica_su_con_lock(url, v, out=lambda *_: None)
                 out(f'OK: migrazione {v:04d} applicata.')
             return 0
 
