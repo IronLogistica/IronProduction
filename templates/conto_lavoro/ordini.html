@@ -1,0 +1,271 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🤝 Conto lavoro — Ordini</div>
+  <a class="btn btn-ghost" href="/conto-lavoro/" style="margin-left:auto">← Conto lavoro</a>
+</div>
+
+{% if schema < schema_richiesto %}
+<div class="mon-section" style="padding:14px;color:#c0392b;font-weight:700">
+  ⚠️ Tabelle degli Ordini non ancora create: imposta CL_MIGRA_AUTO = 0002 su Railway.
+</div>
+{% else %}
+
+<div class="mon-section" style="margin-bottom:16px">
+  <div style="padding:12px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)">
+    <b style="flex:1">Ordini cliente</b>
+    <button class="btn btn-primary" onclick="apriImportOrdine()">📄 Importa PDF</button>
+  </div>
+  <div style="padding:10px 14px;overflow-x:auto">
+    <table class="mon-table" style="width:100%">
+      <thead><tr><th>Numero ordine</th><th>Rif. cliente</th><th>Cliente</th><th>Data</th><th>Stato</th><th></th></tr></thead>
+      <tbody id="lista-ordini"><tr><td colspan="6" style="color:var(--text-dim)">Caricamento...</td></tr></tbody>
+    </table>
+  </div>
+</div>
+
+<!-- TRIPLE WATCH -->
+<div class="mon-section">
+  <div style="padding:12px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+    <b style="flex:1">🔭 Triple Watch — Ordine ↔ DDT di uscita ↔ Fattura</b>
+    <label style="font-size:12px;display:flex;gap:6px;align-items:center">
+      <input type="checkbox" id="tw-switch" onchange="toggleTripleWatch()"> Vuoi meccanismo Triple Watch?
+    </label>
+  </div>
+  <div style="padding:12px 14px">
+    <p style="font-size:12px;color:var(--text-dim)">
+      Spento: nessun effetto. Acceso: puoi caricare le fatture ed emergono qui gli ordini per cui numero ordine
+      cliente, numero DDT di spedizione e numero fattura sono tutti abbinati — comparirà quando sarà pronto anche
+      il DDT di uscita.
+    </p>
+    <div id="tw-corpo" style="display:none;margin-top:10px">
+      <button class="btn btn-ghost" onclick="apriFattura()">📤 Carica fattura</button>
+      <table class="mon-table" style="width:100%;margin-top:10px">
+        <thead><tr><th>Numero ordine cliente</th><th>Numero DDT spedizione</th><th>Numero fattura</th></tr></thead>
+        <tbody id="lista-triple-watch"><tr><td colspan="3" style="color:var(--text-dim)">—</td></tr></tbody>
+      </table>
+      <div style="margin-top:14px;font-size:12px;color:var(--text-dim)">Fatture caricate</div>
+      <table class="mon-table" style="width:100%;margin-top:6px">
+        <thead><tr><th>Numero</th><th>Cliente</th><th>Data</th><th>Importo</th></tr></thead>
+        <tbody id="lista-fatture"><tr><td colspan="4" style="color:var(--text-dim)">—</td></tr></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+{% endif %}
+
+<!-- MODAL IMPORT ORDINE -->
+<div class="modal-overlay" id="modalImportOrdine">
+  <div class="modal-box" style="width:760px">
+    <h3>📄 Importa ordine cliente da PDF</h3>
+    <input type="file" id="ord-file" accept=".pdf" onchange="document.getElementById('ord-esito').innerHTML='';document.getElementById('btn-ord-conferma').disabled=true">
+    <div id="ord-esito" style="font-size:12px;margin-top:10px;max-height:400px;overflow:auto"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalImportOrdine')">Chiudi</button>
+      <button class="btn btn-ghost" onclick="importaOrdine(false)">🔍 Anteprima</button>
+      <button class="btn btn-primary" id="btn-ord-conferma" onclick="importaOrdine(true)" disabled>✅ Conferma importazione</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL DETTAGLIO ORDINE -->
+<div class="modal-overlay" id="modalOrdine">
+  <div class="modal-box" style="width:640px">
+    <h3 id="titolo-ordine">Ordine</h3>
+    <div id="dettaglio-ordine"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalOrdine')">Chiudi</button>
+      <button class="btn btn-ghost" id="btn-ord-elimina" onclick="eliminaOrdineAperto()">🗑️ Elimina bozza</button>
+      <button class="btn btn-primary" id="btn-ord-conferma-apertura" onclick="confermaOrdineAperto()">✅ Conferma ordine</button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL FATTURA -->
+<div class="modal-overlay" id="modalFattura">
+  <div class="modal-box" style="width:480px">
+    <h3>📤 Carica fattura</h3>
+    <label class="modal-label">Cliente *</label>
+    <select class="modal-input" id="f-cliente"></select>
+    <label class="modal-label">Numero fattura *</label>
+    <input class="modal-input" id="f-numero" maxlength="50">
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+      <div><label class="modal-label">Data documento</label><input class="modal-input" type="date" id="f-data"></div>
+      <div><label class="modal-label">Importo</label><input class="modal-input" type="number" step="0.01" id="f-importo"></div>
+    </div>
+    <div id="esito-fattura" style="font-size:12px;color:#c0392b;min-height:16px;margin-top:6px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalFattura')">Annulla</button>
+      <button class="btn btn-primary" onclick="salvaFattura()">💾 Salva</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let ORDINI = [], ordineAperto = null, CLIENTI_TW = [];
+
+async function chiama(url, metodo, corpo){
+  const r = await fetch(url, {method: metodo || 'GET', headers: {'Content-Type':'application/json'},
+                              body: corpo ? JSON.stringify(corpo) : undefined});
+  const d = await r.json().catch(() => ({ok:false, error:'Risposta non valida'}));
+  if(!r.ok && d.ok !== false) d.ok = false;
+  return d;
+}
+
+const BADGE_STATO = {BOZZA: '#e0a800', CONFERMATO: '#1a9e5c', ANNULLATO: '#c0392b'};
+
+async function caricaOrdini(){
+  const d = await chiama('/conto-lavoro/api/ordini');
+  ORDINI = Array.isArray(d) ? d : [];
+  const tb = document.getElementById('lista-ordini');
+  tb.innerHTML = ORDINI.length ? ORDINI.map(o => `
+    <tr style="cursor:pointer" onclick="apriOrdine(${o.id})">
+      <td><b>${esc(o.numero_ordine)}</b></td><td>${esc(o.rif_cliente) || '—'}</td>
+      <td>${esc(o.cliente)}</td><td>${esc(o.data_documento) || '—'}</td>
+      <td><span style="color:${BADGE_STATO[o.stato] || '#999'};font-weight:700">${esc(o.stato)}</span></td>
+      <td>${esc(o.filename)}</td>
+    </tr>`).join('') : '<tr><td colspan="6" style="color:var(--text-dim)">Nessun ordine importato.</td></tr>';
+}
+
+function apriImportOrdine(){
+  document.getElementById('ord-file').value = '';
+  document.getElementById('ord-esito').innerHTML = '';
+  document.getElementById('btn-ord-conferma').disabled = true;
+  openModal('modalImportOrdine');
+}
+
+let ultimaAnteprimaOrdine = null;
+
+async function importaOrdine(conferma){
+  const esito = document.getElementById('ord-esito');
+  const file = document.getElementById('ord-file').files[0];
+  if(!file){ esito.innerHTML = '<span style="color:#c0392b">Scegli un file PDF.</span>'; return; }
+  const fd = new FormData();
+  fd.append('file', file);
+  if(ultimaAnteprimaOrdine && ultimaAnteprimaOrdine.cliente_id) fd.append('cliente_id', ultimaAnteprimaOrdine.cliente_id);
+  fd.append('conferma', conferma ? 'true' : 'false');
+  esito.innerHTML = conferma ? 'Importazione in corso…' : 'Lettura del PDF…';
+  let d;
+  try{ d = await (await fetch('/conto-lavoro/api/ordini/importa', {method:'POST', body: fd})).json(); }
+  catch(e){ esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete.</span>'; return; }
+  if(!d.ok){ esito.innerHTML = `<span style="color:#c0392b">❌ ${esc(d.error || 'Errore')}</span>`; return; }
+
+  if(d.anteprima){
+    ultimaAnteprimaOrdine = d;
+    esito.innerHTML = `
+      <div style="margin-bottom:8px">
+        Cliente: ${d.cliente_trovato ? `<b>${esc(d.cliente_nome)}</b> (riconosciuto da P.IVA)` :
+          `<span style="color:#c0392b">non riconosciuto</span> — P.IVA sul PDF: ${esc(d.cliente_piva_pdf) || '—'} (nome letto: ${esc(d.cliente_nome)})`}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:8px;font-size:12px">
+        <div>Numero ordine<br><b>${esc(d.numero_ordine) || '—'}</b></div>
+        <div>Rif. n. cliente<br><b>${esc(d.rif_cliente) || '—'}</b></div>
+        <div>Data documento<br><b>${esc(d.data_documento) || '—'}</b></div>
+      </div>
+      <table class="mon-table" style="width:100%"><thead><tr><th>Codice</th><th>Descrizione</th><th>U.M.</th><th>Quantità</th><th></th></tr></thead>
+      <tbody>${d.righe.map(r => `<tr><td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td><td>${r.udm}</td><td>${r.quantita}</td>
+        <td>${r.nuovo ? '<span style="color:#1a9e5c;font-weight:700">🆕 nuovo</span>' : ''}</td></tr>`).join('')}</tbody></table>
+      <div style="margin-top:6px;color:var(--text-dim)">${d.n_nuovi} codice/i nuovo/i verranno creati alla conferma.</div>`;
+    document.getElementById('btn-ord-conferma').disabled = !d.cliente_trovato;
+    return;
+  }
+  esito.innerHTML = `<span style="color:#1a9e5c;font-weight:700">✅ Ordine ${esc(d.ordine.numero_ordine)} importato.</span>`;
+  document.getElementById('btn-ord-conferma').disabled = true;
+  showToast('✅ Ordine importato');
+  ultimaAnteprimaOrdine = null;
+  caricaOrdini();
+}
+
+async function apriOrdine(id){
+  const d = await chiama('/conto-lavoro/api/ordini/' + id);
+  if(!d.id) return;
+  ordineAperto = d;
+  document.getElementById('titolo-ordine').textContent = `Ordine ${d.numero_ordine} — ${d.cliente}`;
+  document.getElementById('dettaglio-ordine').innerHTML = `
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
+      Rif. n. cliente: <b>${esc(d.rif_cliente) || '—'}</b> · Data: ${esc(d.data_documento) || '—'} ·
+      Stato: <span style="color:${BADGE_STATO[d.stato] || '#999'};font-weight:700">${esc(d.stato)}</span>
+    </div>
+    <table class="mon-table" style="width:100%"><thead><tr><th>Codice</th><th>Descrizione</th><th>Quantità</th></tr></thead>
+    <tbody>${d.righe.map(r => `<tr><td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td><td>${r.quantita}</td></tr>`).join('')}</tbody></table>`;
+  const bozza = d.stato === 'BOZZA';
+  document.getElementById('btn-ord-elimina').style.display = bozza ? '' : 'none';
+  document.getElementById('btn-ord-conferma-apertura').style.display = bozza ? '' : 'none';
+  openModal('modalOrdine');
+}
+
+async function confermaOrdineAperto(){
+  if(!ordineAperto) return;
+  const d = await chiama('/conto-lavoro/api/ordini/' + ordineAperto.id + '/conferma', 'PUT');
+  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
+  showToast('✅ Ordine confermato');
+  closeModal('modalOrdine');
+  caricaOrdini();
+}
+
+async function eliminaOrdineAperto(){
+  if(!ordineAperto || !confirm('Eliminare questa bozza di ordine?')) return;
+  const d = await chiama('/conto-lavoro/api/ordini/' + ordineAperto.id, 'DELETE');
+  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
+  showToast('🗑️ Bozza eliminata');
+  closeModal('modalOrdine');
+  caricaOrdini();
+}
+
+// ── Triple Watch ─────────────────────────────────────────────────────────
+async function caricaImpostazioni(){
+  const d = await chiama('/conto-lavoro/api/impostazioni');
+  document.getElementById('tw-switch').checked = !!d.triple_watch_attivo;
+  document.getElementById('tw-corpo').style.display = d.triple_watch_attivo ? '' : 'none';
+  if(d.triple_watch_attivo) caricaTripleWatch();
+}
+
+async function toggleTripleWatch(){
+  const acceso = document.getElementById('tw-switch').checked;
+  const d = await chiama('/conto-lavoro/api/impostazioni/triple-watch', 'POST', {attivo: acceso});
+  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); document.getElementById('tw-switch').checked = !acceso; return; }
+  document.getElementById('tw-corpo').style.display = acceso ? '' : 'none';
+  if(acceso) caricaTripleWatch();
+}
+
+async function caricaTripleWatch(){
+  const righe = await chiama('/conto-lavoro/api/triple-watch');
+  const tb = document.getElementById('lista-triple-watch');
+  tb.innerHTML = (Array.isArray(righe) && righe.length) ? righe.map(r => `
+    <tr><td>${esc(r.numero_ordine_cliente)}</td><td>${esc(r.numero_ddt_spedizione)}</td><td>${esc(r.numero_fattura)}</td></tr>`).join('')
+    : '<tr><td colspan="3" style="color:var(--text-dim)">Nessun abbinamento completo (il DDT di uscita non è ancora attivo).</td></tr>';
+  const fatture = await chiama('/conto-lavoro/api/fatture');
+  const tf = document.getElementById('lista-fatture');
+  tf.innerHTML = (Array.isArray(fatture) && fatture.length) ? fatture.map(f => `
+    <tr><td>${esc(f.numero)}</td><td>${esc(f.cliente)}</td><td>${esc(f.data_documento) || '—'}</td><td>${f.importo != null ? f.importo : '—'}</td></tr>`).join('')
+    : '<tr><td colspan="4" style="color:var(--text-dim)">Nessuna fattura caricata.</td></tr>';
+}
+
+async function apriFattura(){
+  if(!CLIENTI_TW.length) CLIENTI_TW = await chiama('/conto-lavoro/api/clienti?tutti=1');
+  const sel = document.getElementById('f-cliente');
+  sel.innerHTML = CLIENTI_TW.map(c => `<option value="${c.id}">${esc(c.ragione_sociale)}</option>`).join('');
+  document.getElementById('f-numero').value = '';
+  document.getElementById('f-data').value = '';
+  document.getElementById('f-importo').value = '';
+  document.getElementById('esito-fattura').textContent = '';
+  openModal('modalFattura');
+}
+
+async function salvaFattura(){
+  const corpo = {cliente_id: parseInt(document.getElementById('f-cliente').value, 10),
+                numero: document.getElementById('f-numero').value,
+                data_documento: document.getElementById('f-data').value ?
+                  document.getElementById('f-data').value.split('-').reverse().join('/') : '',
+                importo: document.getElementById('f-importo').value || null};
+  const d = await chiama('/conto-lavoro/api/fatture', 'POST', corpo);
+  if(!d.ok){ document.getElementById('esito-fattura').textContent = '❌ ' + (d.error || 'Errore'); return; }
+  closeModal('modalFattura');
+  showToast('✅ Fattura salvata');
+  caricaTripleWatch();
+}
+
+if(document.getElementById('lista-ordini')){ caricaOrdini(); caricaImpostazioni(); }
+{% endblock %}

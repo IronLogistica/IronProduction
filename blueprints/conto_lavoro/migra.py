@@ -28,7 +28,7 @@ def _log(msg):
     print(msg, file=sys.stderr, flush=True)
 
 CARTELLA_SQL = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'sql')
-MIGRAZIONI = [1]  # versioni disponibili, in ordine
+MIGRAZIONI = [1, 2]  # versioni disponibili, in ordine
 SCHEMA = 'conto_lavoro'
 
 
