@@ -929,7 +929,9 @@ def api_modifica_riga_ddt(rid):
     sono già stati applicati alla giacenza/agli ordini, modificarli qui
     non li correggerebbe più). Se cambia codice o numero d'ordine di
     riferimento, ricalcola l'abbinamento a un Ordine di Acquisto."""
-    r = RigaDDTCaricoWood.query.get_or_404(rid)
+    r = RigaDDTCaricoWood.query.get(rid)
+    if r is None:
+        return jsonify({'errore': True, 'messaggio': 'Riga non trovata (forse già eliminata).'}), 404
     if r.ddt.confermato:
         return jsonify({'errore': True, 'messaggio': 'DDT già confermato — non più modificabile da qui.'}), 409
     d = request.get_json(force=True)
@@ -967,7 +969,9 @@ def api_modifica_riga_ddt(rid):
 @acquisti_wood_bp.route('/api/ddt_carico_wood/righe/<int:rid>', methods=['DELETE'])
 def api_elimina_riga_ddt(rid):
     """Elimina una riga BOZZA (es. letta male dal PDF) — solo prima della conferma."""
-    r = RigaDDTCaricoWood.query.get_or_404(rid)
+    r = RigaDDTCaricoWood.query.get(rid)
+    if r is None:
+        return jsonify({'ok': True})
     if r.ddt.confermato:
         return jsonify({'errore': True, 'messaggio': 'DDT già confermato — non più modificabile da qui.'}), 409
     db.session.delete(r)

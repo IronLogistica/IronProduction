@@ -725,17 +725,35 @@ async function confermaAggiungiRiga(ddtId){
 }
 
 async function modificaRigaDdt(rigaId, campo, valore){
-  const r = await fetch('/api/ddt_carico_wood/righe/' + rigaId, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({[campo]: valore})});
-  const d = await r.json();
-  if(d.errore){ alert('❌ ' + d.messaggio); }
-  caricaListaDdt();
+ try{
+ const r = await fetch('/api/ddt_carico_wood/righe/' + rigaId, {method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify({[campo]: valore})});
+ if(r.status === 404){ alert('❌ Questa riga non esiste più (forse già eliminata) — ricarico la lista.'); caricaListaDdt(); return; }
+ const d = await r.json();
+ if(d.errore){ alert('❌ ' + d.messaggio); }
+ caricaListaDdt();
+ }catch(e){
+ alert('❌ Errore di rete — la modifica potrebbe non essere stata salvata. Ricontrolla.');
+ caricaListaDdt();
+ }
 }
 async function eliminaRigaDdt(rigaId, ddtId){
-  if(!confirm('Eliminare questa riga dalla bozza?')) return;
-  const r = await fetch('/api/ddt_carico_wood/righe/' + rigaId, {method:'DELETE'});
-  const d = await r.json();
-  if(d.errore){ alert('❌ ' + d.messaggio); }
-  caricaListaDdt();
+ if(!confirm('Eliminare questa riga dalla bozza?')) return;
+ try{
+ const r = await fetch('/api/ddt_carico_wood/righe/' + rigaId, {method:'DELETE'});
+ if(r.status === 404){ alert('❌ Questa riga non esiste più (forse già eliminata) — ricarico la lista.'); caricaListaDdt(); return; }
+ if(!r.ok){
+ let msg = 'Errore durante l\'eliminazione.';
+ try{ const d = await r.json(); if(d.messaggio) msg = d.messaggio; }catch(_){}
+ alert('❌ ' + msg);
+ return;
+ }
+ const d = await r.json();
+ if(d.errore){ alert('❌ ' + d.messaggio); return; }
+ caricaListaDdt();
+ }catch(e){
+ alert('❌ Errore di rete — l\'eliminazione potrebbe non essere stata completata. Ricontrolla.');
+ caricaListaDdt();
+ }
 }
 async function confermaDdt(ddtId){
   if(!confirm('Confermare questo DDT? Verrà caricata la Giacenza reale e aggiornati gli Ordini di Acquisto abbinati — non è reversibile da qui.')) return;
