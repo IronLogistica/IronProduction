@@ -47,5 +47,10 @@
     <div style="font-weight:800;margin-top:6px">Riepilogo ordini</div>
     <div style="font-size:12px;color:var(--text-dim);margin-top:4px">Stessi dati del monitor LIVE, in pagina normale da PC — ordini per cliente con avanzamento</div>
   </a>
+  <a href="/conto-lavoro/magazzino" class="mon-section" style="display:block;padding:16px;text-decoration:none;color:inherit{{ ';opacity:.45;pointer-events:none' if schema < schema_richiesto_ordini else '' }}">
+    <div style="font-size:26px">📦</div>
+    <div style="font-weight:800;margin-top:6px">Magazzino Conto lavoro</div>
+    <div style="font-size:12px;color:var(--text-dim);margin-top:4px">Tutti i codici dei clienti, con giacenza e avanzamento ordini — passano tutti da qui</div>
+  </a>
 </div>
 {% endblock %}

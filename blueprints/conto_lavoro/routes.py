@@ -38,15 +38,16 @@ from models import db, OrdineProduzione  # sola lettura, vedi eccezione document
 from blueprints.conto_lavoro.importa_articoli import analizza_file, crea_modello_xlsx
 from blueprints.conto_lavoro.importa_ordine import estrai_dati_ordine
 from blueprints.conto_lavoro.models import (ClAudit, ClArticoloCliente, ClCliente, ClDdt, ClFattura,
-                                            ClFotoArticolo, ClImpostazione, ClOrdine, ClOrdineRiga,
-                                            ClSchemaVersion, TRACCIAMENTI, UDM, _adesso)
+                                            ClFotoArticolo, ClImpostazione, ClLotto, ClMovimento, ClOrdine,
+                                            ClOrdineRiga, ClSchemaVersion, TRACCIAMENTI, UDM, _adesso)
 
 VERSIONE_MODULO = 'ordini'
 VERSIONE_SCHEMA_BASE = 1      # clienti/articoli — invariato dalla 0001, non deve regredire
 VERSIONE_SCHEMA_ORDINI = 2    # ordini, fatture, impostazioni/triple watch — dalla 0002
 VERSIONE_SCHEMA_LIVE = 3      # foto articolo + monitor LIVE — dalla 0003
 VERSIONE_SCHEMA_RICHIESTA = VERSIONE_SCHEMA_BASE  # compatibilità: usato dal cancello e dal tile "Clienti e articoli"
-PREFISSI_SCHEMA_ORDINI = ('/conto-lavoro/api/ordini', '/conto-lavoro/api/impostazioni', '/conto-lavoro/api/fatture')
+PREFISSI_SCHEMA_ORDINI = ('/conto-lavoro/api/ordini', '/conto-lavoro/api/impostazioni', '/conto-lavoro/api/fatture',
+                          '/conto-lavoro/api/magazzino')
 # Endpoint (non prefisso di path: l'id articolo sta in mezzo, es.
 # /api/articoli/12/foto) che richiedono la 0003 — il resto di /api/articoli/
 # (anagrafica base) resta alla 0001 e non deve regredire.
@@ -152,6 +153,18 @@ def pagina_riepilogo():
     questi numeri."""
     return render_template('conto_lavoro/riepilogo.html', active='conto_lavoro',
                            schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_LIVE)
+
+
+@cl_bp.get('/magazzino')
+def pagina_magazzino():
+    """Magazzino Conto lavoro — TUTTI i codici articolo dei clienti passano
+    da qui (indicazione di Mauri, 29/09/2026), raggruppati per cliente:
+    Giacenza (dai movimenti cl_movimento — 0 finché DDT ricezione/consumi
+    non sono costruiti, la tabella esiste dalla 0001 ma nessuno ci scrive
+    ancora) affiancata a Ordinata/Prodotta/Evasa/Saldo per dare un quadro
+    unico, non solo i codici con un ordine confermato."""
+    return render_template('conto_lavoro/magazzino.html', active='conto_lavoro',
+                           schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_ORDINI)
 
 
 @cl_bp.get('/live')
@@ -779,4 +792,51 @@ def api_live():
                           'quantita': ordinata, 'quantita_prodotta': prodotta, 'quantita_evasa': 0.0,
                           'saldo_da_produrre': saldo, 'pct': pct, 'ha_foto': r.articolo_id in con_foto})
         g['ordini'].append({'id': o.id, 'numero_ordine': o.numero_ordine, 'rif_cliente': o.rif_cliente, 'righe': righe})
+    return jsonify(sorted(gruppi.values(), key=lambda g: g['cliente']))
+
+
+# ── Magazzino Conto lavoro ──────────────────────────────────────────────────
+@cl_bp.get('/api/magazzino')
+def api_magazzino():
+    """
+    TUTTI i codici articolo attivi dei clienti conto lavoro, raggruppati per
+    cliente — non solo quelli con un ordine confermato (a differenza di
+    /api/live). Per ciascuno: Giacenza (somma cl_movimento per i suoi lotti
+    — 0 finché DDT ricezione/consumi non scrivono ancora movimenti, la
+    tabella esiste dalla 0001), più Ordinata/Prodotta/Evasa/Saldo sommati
+    su tutti i suoi ordini CONFERMATO (0 se non ne ha).
+    """
+    articoli = (ClArticoloCliente.query.filter(ClArticoloCliente.attivo.is_(True))
+               .order_by(ClArticoloCliente.codice).all())
+    if not articoli:
+        return jsonify([])
+    articolo_ids = [a.id for a in articoli]
+
+    giacenze = dict(db.session.query(ClLotto.articolo_id, db.func.coalesce(db.func.sum(ClMovimento.quantita), 0))
+                    .join(ClMovimento, ClMovimento.lotto_id == ClLotto.id)
+                    .filter(ClLotto.articolo_id.in_(articolo_ids))
+                    .group_by(ClLotto.articolo_id).all())
+
+    ordinate = {}
+    righe_ordine = (db.session.query(ClOrdineRiga.articolo_id, db.func.coalesce(db.func.sum(ClOrdineRiga.quantita), 0))
+                    .join(ClOrdine, ClOrdine.id == ClOrdineRiga.ordine_id)
+                    .filter(ClOrdine.stato == 'CONFERMATO', ClOrdineRiga.articolo_id.in_(articolo_ids))
+                    .group_by(ClOrdineRiga.articolo_id).all()) if versione_schema() >= VERSIONE_SCHEMA_ORDINI else []
+    ordinate = dict(righe_ordine)
+
+    con_foto = set()
+    if versione_schema() >= VERSIONE_SCHEMA_LIVE:
+        con_foto = {aid for (aid,) in db.session.query(ClFotoArticolo.articolo_id)
+                   .filter(ClFotoArticolo.articolo_id.in_(articolo_ids)).all()}
+
+    gruppi = {}
+    for a in articoli:
+        g = gruppi.setdefault(a.cliente_id, {'cliente_id': a.cliente_id,
+                                             'cliente': a.cliente.ragione_sociale if a.cliente else '', 'articoli': []})
+        ordinata = float(ordinate.get(a.id, 0) or 0)
+        prodotta = _quantita_prodotta(a.codice)
+        g['articoli'].append({'articolo_id': a.id, 'codice': a.codice, 'descrizione': a.descrizione, 'udm': a.udm,
+                              'giacenza': float(giacenze.get(a.id, 0) or 0), 'quantita_ordinata': ordinata,
+                              'quantita_prodotta': prodotta, 'quantita_evasa': 0.0,
+                              'saldo_da_produrre': round(ordinata - prodotta, 3), 'ha_foto': a.id in con_foto})
     return jsonify(sorted(gruppi.values(), key=lambda g: g['cliente']))

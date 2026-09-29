@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🤝 Conto lavoro — Magazzino</div>
+  <a class="btn btn-ghost" href="/conto-lavoro/" style="margin-left:auto">← Conto lavoro</a>
+</div>
+
+{% if schema < schema_richiesto %}
+<div class="mon-section" style="padding:14px;color:#c0392b;font-weight:700">
+  ⚠️ Tabelle non ancora alla versione {{ schema_richiesto }} (attuale: {{ schema }}) — imposta CL_MIGRA_AUTO = {{ '%04d'|format(schema_richiesto) }} su Railway.
+</div>
+{% else %}
+<p style="font-size:12px;color:var(--text-dim);margin:-4px 0 12px">
+  Tutti i codici articolo dei clienti in conto lavoro, raggruppati per cliente — anche quelli senza ancora un ordine confermato.
+  Giacenza = quanto risulta fisicamente presente dai movimenti di magazzino (carichi/scarichi); resta a 0 finché il modulo DDT di ricezione non è attivo.
+</p>
+<div id="magazzino-box">Caricamento...</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function caricaMagazzino(){
+  const box = document.getElementById('magazzino-box');
+  let gruppi;
+  try{ gruppi = await (await fetch('/conto-lavoro/api/magazzino')).json(); }
+  catch(e){ box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>'; return; }
+  if(!Array.isArray(gruppi) || !gruppi.length){
+    box.innerHTML = '<p style="color:var(--text-dim)">Nessun codice articolo attivo per ora.</p>';
+    return;
+  }
+  box.innerHTML = gruppi.map(g => `
+    <div class="mon-section" style="margin-bottom:16px">
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border)"><b>👥 ${esc(g.cliente)}</b>
+        <span style="font-size:11px;color:var(--text-dim)"> — ${g.articoli.length} codice/i</span></div>
+      <div style="padding:10px 14px;overflow-x:auto">
+        <table class="mon-table" style="width:100%">
+          <thead><tr><th></th><th>Codice</th><th>Descrizione</th><th>U.M.</th><th>Giacenza</th><th>Ordinata</th><th>Prodotta</th><th>Evasa</th><th>Saldo da produrre</th></tr></thead>
+          <tbody>${g.articoli.map(a => `<tr>
+              <td>${a.ha_foto ? `<img src="/conto-lavoro/api/articoli/${a.articolo_id}/foto" style="width:28px;height:28px;object-fit:cover;border-radius:4px">` : '📦'}</td>
+              <td><b>${esc(a.codice)}</b></td><td>${esc(a.descrizione)}</td><td>${esc(a.udm)}</td>
+              <td style="font-weight:800">${a.giacenza}</td>
+              <td>${a.quantita_ordinata}</td><td>${a.quantita_prodotta}</td><td>${a.quantita_evasa}</td>
+              <td style="font-weight:800;color:${a.saldo_da_produrre > 0 ? '#e0a800' : '#1a9e5c'}">${a.saldo_da_produrre}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`).join('');
+}
+if(document.getElementById('magazzino-box')) caricaMagazzino();
+{% endblock %}
