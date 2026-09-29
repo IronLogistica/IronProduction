@@ -40,6 +40,22 @@
 
 <div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-top:20px">
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+    <div style="font-weight:800;font-size:14px;color:var(--dark)">📋 Materiali da Trattare — pronti per il terzista</div>
+    <div style="display:flex;gap:8px">
+      <a class="btn btn-ghost" style="font-size:11px" href="/terzisti/da-trattare">🖨️ Apri / stampa</a>
+      <button class="btn btn-ghost" style="font-size:11px" onclick="caricaMaterialiDaTrattare()">🔄 Aggiorna</button>
+    </div>
+  </div>
+  <p style="font-size:11px;color:var(--text-dim);margin-bottom:12px">
+    Materiali grezzi già saldati (o rettificati manualmente) presenti a magazzino, pronti per essere spediti a
+    zincatura/verniciatura — stessa fonte del "Grezzo IW" di Magazzino/Kanban. Ultimo fornitore e ultimo trattamento
+    sono presi dall'ultima Scheda Trattamento creata per quel codice, se già spedito in passato.
+  </p>
+  <div id="materiali-da-trattare-box" style="overflow-x:auto">Caricamento...</div>
+</div>
+
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;margin-top:20px">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
     <div style="font-weight:800;font-size:14px;color:var(--dark)">✅ Commesse Appena Terminate</div>
     <button class="btn btn-ghost" style="font-size:11px" onclick="caricaAppenaTerminate()">🔄 Aggiorna</button>
   </div>
@@ -274,6 +290,27 @@ async function acDragFine(){
     showToast('❌ Errore di rete durante il salvataggio dell\'ordine');
   }
 }
+
+async function caricaMaterialiDaTrattare(){
+  const box = document.getElementById('materiali-da-trattare-box');
+  box.innerHTML = 'Caricamento...';
+  try{
+    const r = await fetch('/api/terzisti/materiali_da_trattare');
+    const righe = await r.json();
+    if(!righe.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun materiale grezzo pronto da trattare al momento.</p>'; return; }
+    box.innerHTML = '<table class="kanban-table"><thead><tr><th>Codice</th><th>Quantità</th><th>Ultimo fornitore</th><th>Ultimo trattamento eseguito</th><th>Data</th></tr></thead><tbody>' +
+      righe.map(r => `<tr style="background:#0d1b2e">
+        <td style="text-align:center;color:#fff;font-weight:800;padding:8px">${r.codice}</td>
+        <td style="text-align:center;color:#fff;font-weight:700;font-size:16px;padding:8px">${r.quantita}</td>
+        <td style="text-align:center;color:#fff;padding:8px">${r.ultimo_fornitore || '<span style="color:#9fb8d0;font-style:italic">mai trattato</span>'}</td>
+        <td style="text-align:center;color:#fff;padding:8px">${r.ultimo_trattamento || '—'}</td>
+        <td style="text-align:center;font-size:11px;color:#9fb8d0;padding:8px">${r.ultima_data || '—'}</td>
+      </tr>`).join('') + '</tbody></table>';
+  }catch(e){
+    box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete durante il caricamento.</p>';
+  }
+}
+caricaMaterialiDaTrattare();
 
 async function caricaAppenaTerminate(){
   const box = document.getElementById('appena-terminate-box');
