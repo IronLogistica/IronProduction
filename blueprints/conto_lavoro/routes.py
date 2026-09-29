@@ -5,9 +5,19 @@ e componenti di proprietà del CLIENTE.
 
 Regole di isolamento che valgono per tutto il modulo:
   - NON importa e NON chiama mai: _registra_movimento_giacenza /
-    GiacenzaWood / Kanban / OrdineProduzione / _registra_evento_consuntivo /
+    GiacenzaWood / Kanban / _registra_evento_consuntivo /
     MovimentoContabileWood / masterlogistic_client / masterledgerlight_client /
     requests. La merce del cliente non entra MAI nella giacenza Iron Wood.
+  - UNICA ECCEZIONE (decisione di Mauri, 29/09/2026): la quantità "Prodotta"
+    di una riga ordine si legge in SOLA LETTURA da OrdineProduzione.qta_buona,
+    filtrando per codice_articolo == codice dell'articolo cliente — MasterWork
+    traduce il proprio codice in un codice_articolo IronProduction tramite
+    MappaCodiceMasterWork, e per il conto lavoro quel codice_articolo È lo
+    stesso codice dell'ordine cliente (nessuna distinta base in ingresso, il
+    capo apre l'OP direttamente con quel codice). Nessuna scrittura, nessuna
+    creazione OP, nessun'altra funzione di produzione_pp viene mai chiamata
+    da qui: solo una query di lettura su OrdineProduzione per mostrare
+    "quanto è già stato dichiarato prodotto" nel dettaglio ordine.
   - Le tabelle del modulo vivono nello schema Postgres 'conto_lavoro'
     (bind 'conto_lavoro'): le crea solo migra.py, mai db.create_all() all'avvio.
   - Feature flag CL_ENABLED: spento, il blueprint non viene nemmeno
@@ -23,7 +33,7 @@ import PyPDF2
 from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
-from models import db
+from models import db, OrdineProduzione  # sola lettura, vedi eccezione documentata sopra
 from blueprints.conto_lavoro.importa_articoli import analizza_file, crea_modello_xlsx
 from blueprints.conto_lavoro.importa_ordine import estrai_dati_ordine
 from blueprints.conto_lavoro.models import (ClAudit, ClArticoloCliente, ClCliente, ClDdt, ClFattura, ClImpostazione,
@@ -344,6 +354,18 @@ def _data_ordine(s):
         return None
 
 
+def _quantita_prodotta(codice_articolo):
+    """SOLA LETTURA su OrdineProduzione — vedi eccezione documentata in cima
+    al file. Somma qta_buona di tutti gli OP con quel codice_articolo,
+    qualunque sia lo stato: una volta dichiarata prodotta, la quantità resta
+    valida anche se l'OP viene poi chiuso/archiviato."""
+    if not codice_articolo:
+        return 0.0
+    tot = (db.session.query(db.func.coalesce(db.func.sum(OrdineProduzione.qta_buona), 0))
+           .filter(OrdineProduzione.codice_articolo == codice_articolo).scalar())
+    return float(tot or 0)
+
+
 def _ordine_dict(o, con_righe=False):
     d = {'id': o.id, 'cliente_id': o.cliente_id, 'cliente': o.cliente.ragione_sociale if o.cliente else '',
         'numero_ordine': o.numero_ordine, 'rif_cliente': o.rif_cliente,
@@ -351,10 +373,21 @@ def _ordine_dict(o, con_righe=False):
         'stato': o.stato, 'filename': o.filename,
         'creato_il': o.creato_il.strftime('%d/%m/%Y %H:%M') if o.creato_il else ''}
     if con_righe:
-        d['righe'] = [{'id': r.id, 'n_riga': r.n_riga, 'codice': r.articolo.codice if r.articolo else '',
-                       'descrizione': r.descrizione, 'quantita': float(r.quantita),
-                       'prezzo_unitario': float(r.prezzo_unitario) if r.prezzo_unitario is not None else None}
-                      for r in o.righe]
+        righe = []
+        for r in o.righe:
+            codice = r.articolo.codice if r.articolo else ''
+            ordinata = float(r.quantita)
+            prodotta = _quantita_prodotta(codice)
+            # Evasa (consegnata con DDT di uscita) resta 0 finché quel modulo
+            # non esiste — vedi cl_ddt.ordine_id, predisposto ma non ancora
+            # popolato da nessuna scrittura reale.
+            evasa = 0.0
+            righe.append({'id': r.id, 'n_riga': r.n_riga, 'codice': codice,
+                          'descrizione': r.descrizione, 'quantita': ordinata,
+                          'quantita_prodotta': prodotta, 'quantita_evasa': evasa,
+                          'saldo_da_produrre': round(ordinata - prodotta, 3),
+                          'prezzo_unitario': float(r.prezzo_unitario) if r.prezzo_unitario is not None else None})
+        d['righe'] = righe
     return d
 
 

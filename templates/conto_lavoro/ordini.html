@@ -189,18 +189,26 @@ async function apriOrdine(id){
       Rif. n. cliente: <b>${esc(d.rif_cliente) || '—'}</b> · Data: ${esc(d.data_documento) || '—'} ·
       Stato: <span style="color:${BADGE_STATO[d.stato] || '#999'};font-weight:700">${esc(d.stato)}</span>
     </div>
-    <table class="mon-table" style="width:100%"><thead><tr><th>Codice</th><th>Descrizione</th><th>Quantità</th>${bozza ? '<th></th>' : ''}</tr></thead>
+    <table class="mon-table" style="width:100%"><thead><tr>
+        <th>Codice</th><th>Descrizione</th><th>Ordinata</th><th>Prodotta</th><th>Evasa</th><th>Saldo da produrre</th>${bozza ? '<th></th>' : ''}
+      </tr></thead>
     <tbody>${d.righe.map(r => `<tr id="riga-ordine-${r.id}">
         <td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td>
         <td>${bozza
           ? `<input type="number" min="0" step="0.001" value="${r.quantita}" style="width:80px" id="qta-riga-${r.id}"
                onkeydown="if(event.key==='Enter')salvaQuantitaRiga(${r.id})">`
           : r.quantita}</td>
+        <td>${r.quantita_prodotta}</td>
+        <td>${r.quantita_evasa}</td>
+        <td style="font-weight:800;color:${r.saldo_da_produrre > 0 ? '#e0a800' : '#1a9e5c'}">${r.saldo_da_produrre}</td>
         ${bozza ? `<td style="white-space:nowrap">
             <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="salvaQuantitaRiga(${r.id})">💾</button>
             <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="eliminaRigaOrdine(${r.id})">🗑️</button>
           </td>` : ''}
-      </tr>`).join('')}</tbody></table>`;
+      </tr>`).join('')}</tbody></table>
+    <div style="font-size:11px;color:var(--text-dim);margin-top:6px">
+      Prodotta: dichiarazioni di produzione già arrivate da MasterWork per questo codice. Evasa: 0 finché il modulo DDT di uscita non è attivo.
+    </div>`;
   document.getElementById('btn-ord-elimina').style.display = bozza ? '' : 'none';
   document.getElementById('btn-ord-conferma-apertura').style.display = bozza ? '' : 'none';
   openModal('modalOrdine');
