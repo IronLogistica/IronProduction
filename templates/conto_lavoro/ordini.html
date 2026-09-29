@@ -183,17 +183,50 @@ async function apriOrdine(id){
   if(!d.id) return;
   ordineAperto = d;
   document.getElementById('titolo-ordine').textContent = `Ordine ${d.numero_ordine} — ${d.cliente}`;
+  const bozza = d.stato === 'BOZZA';
   document.getElementById('dettaglio-ordine').innerHTML = `
     <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">
       Rif. n. cliente: <b>${esc(d.rif_cliente) || '—'}</b> · Data: ${esc(d.data_documento) || '—'} ·
       Stato: <span style="color:${BADGE_STATO[d.stato] || '#999'};font-weight:700">${esc(d.stato)}</span>
     </div>
-    <table class="mon-table" style="width:100%"><thead><tr><th>Codice</th><th>Descrizione</th><th>Quantità</th></tr></thead>
-    <tbody>${d.righe.map(r => `<tr><td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td><td>${r.quantita}</td></tr>`).join('')}</tbody></table>`;
-  const bozza = d.stato === 'BOZZA';
+    <table class="mon-table" style="width:100%"><thead><tr><th>Codice</th><th>Descrizione</th><th>Quantità</th>${bozza ? '<th></th>' : ''}</tr></thead>
+    <tbody>${d.righe.map(r => `<tr id="riga-ordine-${r.id}">
+        <td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td>
+        <td>${bozza
+          ? `<input type="number" min="0" step="0.001" value="${r.quantita}" style="width:80px" id="qta-riga-${r.id}"
+               onkeydown="if(event.key==='Enter')salvaQuantitaRiga(${r.id})">`
+          : r.quantita}</td>
+        ${bozza ? `<td style="white-space:nowrap">
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="salvaQuantitaRiga(${r.id})">💾</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="eliminaRigaOrdine(${r.id})">🗑️</button>
+          </td>` : ''}
+      </tr>`).join('')}</tbody></table>`;
   document.getElementById('btn-ord-elimina').style.display = bozza ? '' : 'none';
   document.getElementById('btn-ord-conferma-apertura').style.display = bozza ? '' : 'none';
   openModal('modalOrdine');
+}
+
+async function salvaQuantitaRiga(rid){
+  if(!ordineAperto) return;
+  const input = document.getElementById('qta-riga-' + rid);
+  const nuova = parseFloat(input.value);
+  if(isNaN(nuova) || nuova < 0){ showToast('❌ Quantità non valida'); return; }
+  const d = await chiama(`/conto-lavoro/api/ordini/${ordineAperto.id}/righe/${rid}`, 'PUT', {quantita: nuova});
+  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
+  showToast('✅ Quantità aggiornata');
+  ordineAperto = d.ordine;
+  apriOrdine(ordineAperto.id);
+  caricaOrdini();
+}
+
+async function eliminaRigaOrdine(rid){
+  if(!ordineAperto || !confirm('Eliminare questa riga dall\'ordine?')) return;
+  const d = await chiama(`/conto-lavoro/api/ordini/${ordineAperto.id}/righe/${rid}`, 'DELETE');
+  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
+  showToast('🗑️ Riga eliminata');
+  ordineAperto = d.ordine;
+  apriOrdine(ordineAperto.id);
+  caricaOrdini();
 }
 
 async function confermaOrdineAperto(){

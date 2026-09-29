@@ -351,7 +351,7 @@ def _ordine_dict(o, con_righe=False):
         'stato': o.stato, 'filename': o.filename,
         'creato_il': o.creato_il.strftime('%d/%m/%Y %H:%M') if o.creato_il else ''}
     if con_righe:
-        d['righe'] = [{'n_riga': r.n_riga, 'codice': r.articolo.codice if r.articolo else '',
+        d['righe'] = [{'id': r.id, 'n_riga': r.n_riga, 'codice': r.articolo.codice if r.articolo else '',
                        'descrizione': r.descrizione, 'quantita': float(r.quantita),
                        'prezzo_unitario': float(r.prezzo_unitario) if r.prezzo_unitario is not None else None}
                       for r in o.righe]
@@ -471,6 +471,45 @@ def api_conferma_ordine(oid):
     _audit('ORDINE_CONFERMATO', 'cl_ordine', o.id)
     db.session.commit()
     return jsonify(ok=True, ordine=_ordine_dict(o))
+
+
+@cl_bp.put('/api/ordini/<int:oid>/righe/<int:rid>')
+def api_modifica_riga_ordine(oid, rid):
+    """Corregge la quantità di una riga letta male dal PDF — solo finché
+    l'ordine è in BOZZA (confermato, la riga è bloccata come l'ordine)."""
+    o = db.session.get(ClOrdine, oid) or abort(404)
+    r = next((x for x in o.righe if x.id == rid), None) or abort(404)
+    if o.stato != 'BOZZA':
+        return jsonify(ok=False, error='Solo le righe di una bozza si possono modificare.'), 409
+    d = request.get_json(silent=True) or {}
+    try:
+        nuova_qta = float(d.get('quantita'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Quantità non valida.'), 400
+    if nuova_qta < 0:
+        return jsonify(ok=False, error='La quantità non può essere negativa.'), 400
+    prima = {'quantita': float(r.quantita)}
+    r.quantita = nuova_qta
+    _audit('ORDINE_RIGA_MODIFICATA', 'cl_ordine_riga', r.id, prima=prima, dopo={'quantita': nuova_qta})
+    db.session.commit()
+    return jsonify(ok=True, ordine=_ordine_dict(o, con_righe=True))
+
+
+@cl_bp.delete('/api/ordini/<int:oid>/righe/<int:rid>')
+def api_elimina_riga_ordine(oid, rid):
+    """Toglie una riga letta per errore dal PDF — solo in BOZZA, e solo se
+    non è l'ultima (un ordine senza righe non ha senso: si elimina l'ordine)."""
+    o = db.session.get(ClOrdine, oid) or abort(404)
+    r = next((x for x in o.righe if x.id == rid), None) or abort(404)
+    if o.stato != 'BOZZA':
+        return jsonify(ok=False, error='Solo le righe di una bozza si possono eliminare.'), 409
+    if len(o.righe) <= 1:
+        return jsonify(ok=False, error='Un ordine deve avere almeno una riga — elimina l\'intera bozza, se serve.'), 409
+    _audit('ORDINE_RIGA_ELIMINATA', 'cl_ordine_riga', r.id, prima={'codice': r.articolo.codice if r.articolo else '',
+                                                                    'quantita': float(r.quantita)})
+    db.session.delete(r)
+    db.session.commit()
+    return jsonify(ok=True, ordine=_ordine_dict(o, con_righe=True))
 
 
 @cl_bp.delete('/api/ordini/<int:oid>')
