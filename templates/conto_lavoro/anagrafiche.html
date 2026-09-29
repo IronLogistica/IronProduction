@@ -30,8 +30,8 @@
     </div>
     <div style="padding:10px 14px;overflow-x:auto">
       <table class="mon-table" style="width:100%">
-        <thead><tr><th>Codice</th><th>Descrizione</th><th>U.M.</th><th>Tracciamento</th><th></th></tr></thead>
-        <tbody id="lista-articoli"><tr><td colspan="5" style="color:var(--text-dim)">—</td></tr></tbody>
+        <thead><tr><th>Foto</th><th>Codice</th><th>Descrizione</th><th>U.M.</th><th>Tracciamento</th><th></th></tr></thead>
+        <tbody id="lista-articoli"><tr><td colspan="6" style="color:var(--text-dim)">—</td></tr></tbody>
       </table>
     </div>
   </div>
@@ -148,10 +148,17 @@ async function selezionaCliente(id){
   const tb = document.getElementById('lista-articoli');
   tb.innerHTML = ARTICOLI.length ? ARTICOLI.map(a => `
     <tr style="${a.attivo?'':'opacity:.5'}">
+      <td>
+        <label style="cursor:pointer" title="Carica/sostituisci la foto di riferimento">
+          ${a.ha_foto ? `<img src="/conto-lavoro/api/articoli/${a.id}/foto?t=${Date.now()}" style="width:32px;height:32px;object-fit:cover;border-radius:4px">`
+                      : `<span style="display:inline-flex;width:32px;height:32px;align-items:center;justify-content:center;background:var(--dark3);border-radius:4px">📦</span>`}
+          <input type="file" accept="image/jpeg,image/png,image/webp" style="display:none" onchange="caricaFotoArticolo(${a.id}, this)">
+        </label>
+      </td>
       <td class="codice"><b>${esc(a.codice)}</b></td><td>${esc(a.descrizione)}</td>
       <td>${esc(a.udm)}</td><td>${esc(a.tracciamento)}</td>
       <td><button class="btn btn-ghost" style="padding:2px 8px;font-size:11px" onclick="apriArticolo(${a.id})">✏️</button></td>
-    </tr>`).join('') : '<tr><td colspan="5" style="color:var(--text-dim)">Nessun articolo per questo cliente.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="6" style="color:var(--text-dim)">Nessun articolo per questo cliente.</td></tr>';
 }
 
 function apriCliente(id){
@@ -199,6 +206,19 @@ async function salvaArticolo(){
   if(!d.ok){ document.getElementById('esito-articolo').textContent = '❌ ' + (d.error || 'Errore'); return; }
   closeModal('modalArticolo');
   showToast('✅ Articolo salvato');
+  selezionaCliente(clienteSel);
+}
+
+async function caricaFotoArticolo(aid, input){
+  const file = input.files[0];
+  if(!file) return;
+  const fd = new FormData();
+  fd.append('file', file);
+  let d;
+  try{ d = await (await fetch('/conto-lavoro/api/articoli/' + aid + '/foto', {method:'POST', body: fd})).json(); }
+  catch(e){ showToast('❌ Errore di rete'); return; }
+  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
+  showToast('✅ Foto caricata');
   selezionaCliente(clienteSel);
 }
 

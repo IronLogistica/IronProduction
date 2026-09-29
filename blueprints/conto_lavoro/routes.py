@@ -26,6 +26,7 @@ Regole di isolamento che valgono per tutto il modulo:
     capo, entrando dal pulsante di IronProduction). Ogni scrittura resta
     comunque tracciata in cl_audit (solo inserimento), intestata a 'capo'.
 """
+import base64
 import io
 from datetime import datetime
 
@@ -36,14 +37,23 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from models import db, OrdineProduzione  # sola lettura, vedi eccezione documentata sopra
 from blueprints.conto_lavoro.importa_articoli import analizza_file, crea_modello_xlsx
 from blueprints.conto_lavoro.importa_ordine import estrai_dati_ordine
-from blueprints.conto_lavoro.models import (ClAudit, ClArticoloCliente, ClCliente, ClDdt, ClFattura, ClImpostazione,
-                                            ClOrdine, ClOrdineRiga, ClSchemaVersion, TRACCIAMENTI, UDM, _adesso)
+from blueprints.conto_lavoro.models import (ClAudit, ClArticoloCliente, ClCliente, ClDdt, ClFattura,
+                                            ClFotoArticolo, ClImpostazione, ClOrdine, ClOrdineRiga,
+                                            ClSchemaVersion, TRACCIAMENTI, UDM, _adesso)
 
 VERSIONE_MODULO = 'ordini'
 VERSIONE_SCHEMA_BASE = 1      # clienti/articoli — invariato dalla 0001, non deve regredire
 VERSIONE_SCHEMA_ORDINI = 2    # ordini, fatture, impostazioni/triple watch — dalla 0002
+VERSIONE_SCHEMA_LIVE = 3      # foto articolo + monitor LIVE — dalla 0003
 VERSIONE_SCHEMA_RICHIESTA = VERSIONE_SCHEMA_BASE  # compatibilità: usato dal cancello e dal tile "Clienti e articoli"
 PREFISSI_SCHEMA_ORDINI = ('/conto-lavoro/api/ordini', '/conto-lavoro/api/impostazioni', '/conto-lavoro/api/fatture')
+# Endpoint (non prefisso di path: l'id articolo sta in mezzo, es.
+# /api/articoli/12/foto) che richiedono la 0003 — il resto di /api/articoli/
+# (anagrafica base) resta alla 0001 e non deve regredire.
+ENDPOINT_SCHEMA_LIVE = {'conto_lavoro.api_foto_articolo_carica', 'conto_lavoro.api_foto_articolo_leggi',
+                        'conto_lavoro.api_foto_articolo_elimina', 'conto_lavoro.api_live'}
+MAX_FOTO_BYTES = 5 * 1024 * 1024
+TIPI_FOTO_AMMESSI = {'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp'}
 UTENTE_AUDIT = 'capo'
 
 cl_bp = Blueprint('conto_lavoro', __name__, url_prefix='/conto-lavoro')
@@ -71,7 +81,12 @@ def _cancello_modulo():
     # deve regredire una funzione già in uso solo perché non è ancora stata
     # applicata la migrazione successiva).
     if request.path.startswith('/conto-lavoro/api/') and request.endpoint != 'conto_lavoro.api_stato':
-        richiesta = VERSIONE_SCHEMA_ORDINI if request.path.startswith(PREFISSI_SCHEMA_ORDINI) else VERSIONE_SCHEMA_BASE
+        if request.endpoint in ENDPOINT_SCHEMA_LIVE:
+            richiesta = VERSIONE_SCHEMA_LIVE
+        elif request.path.startswith(PREFISSI_SCHEMA_ORDINI):
+            richiesta = VERSIONE_SCHEMA_ORDINI
+        else:
+            richiesta = VERSIONE_SCHEMA_BASE
         if versione_schema() < richiesta:
             return jsonify(ok=False, error=f'Tabelle del Conto lavoro non ancora alla versione {richiesta}: '
                                            f'impostare CL_MIGRA_AUTO={richiesta:04d} su Railway e riavviare.'), 503
@@ -98,9 +113,12 @@ def _cliente_dict(c):
             'citta': c.citta, 'provincia': c.provincia, 'nazione': c.nazione, 'attivo': c.attivo}
 
 
-def _articolo_dict(a):
-    return {'id': a.id, 'cliente_id': a.cliente_id, 'codice': a.codice, 'descrizione': a.descrizione,
-            'udm': a.udm, 'tracciamento': a.tracciamento, 'attivo': a.attivo}
+def _articolo_dict(a, con_foto=None):
+    d = {'id': a.id, 'cliente_id': a.cliente_id, 'codice': a.codice, 'descrizione': a.descrizione,
+        'udm': a.udm, 'tracciamento': a.tracciamento, 'attivo': a.attivo}
+    if con_foto is not None:
+        d['ha_foto'] = a.id in con_foto
+    return d
 
 
 # ── Pagine ────────────────────────────────────────────────────────────────────
@@ -108,7 +126,8 @@ def _articolo_dict(a):
 def pagina_indice():
     return render_template('conto_lavoro/index.html', active='conto_lavoro', versione=VERSIONE_MODULO,
                            schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_BASE,
-                           schema_richiesto_ordini=VERSIONE_SCHEMA_ORDINI)
+                           schema_richiesto_ordini=VERSIONE_SCHEMA_ORDINI,
+                           schema_richiesto_live=VERSIONE_SCHEMA_LIVE)
 
 
 @cl_bp.get('/anagrafiche')
@@ -121,6 +140,17 @@ def pagina_anagrafiche():
 def pagina_ordini():
     return render_template('conto_lavoro/ordini.html', active='conto_lavoro',
                            schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_ORDINI)
+
+
+@cl_bp.get('/live')
+def pagina_live():
+    """Monitor LIVE Conto lavoro — stile del monitor MasterWork (Saldatura,
+    ecc.): niente sidebar/topbar, pensato per un totem/monitor d'officina.
+    URL a parte apposta (indicazione di Mauri, 29/09/2026): dalla dashboard
+    del conto lavoro c'è solo il collegamento, questa pagina vive per conto
+    suo. Nessun login (stessa scelta di tutto il modulo)."""
+    return render_template('conto_lavoro/live.html', schema=versione_schema(),
+                           schema_richiesto=VERSIONE_SCHEMA_LIVE)
 
 
 @cl_bp.get('/api/stato')
@@ -210,7 +240,14 @@ def api_articoli():
         q = q.filter(ClArticoloCliente.cliente_id == cid)
     if request.args.get('tutti') != '1':
         q = q.filter(ClArticoloCliente.attivo.is_(True))
-    return jsonify([_articolo_dict(a) for a in q.order_by(ClArticoloCliente.codice).all()])
+    articoli = q.order_by(ClArticoloCliente.codice).all()
+    # "ha_foto" richiede la 0003: se non ancora applicata, la tabella non
+    # esiste — non deve rompere questa API, che resta valida dalla 0001.
+    con_foto = set()
+    if versione_schema() >= VERSIONE_SCHEMA_LIVE and articoli:
+        con_foto = {aid for (aid,) in db.session.query(ClFotoArticolo.articolo_id)
+                   .filter(ClFotoArticolo.articolo_id.in_([a.id for a in articoli])).all()}
+    return jsonify([_articolo_dict(a, con_foto=con_foto) for a in articoli])
 
 
 def _applica_articolo(a, d, nuovo):
@@ -335,6 +372,53 @@ def api_importa_articoli():
         db.session.rollback()
         return jsonify(ok=False, error='Conflitto sui codici: qualcuno li ha modificati nel frattempo, ripeti l\'anteprima.'), 409
     return jsonify(ok=True, anteprima=False, nuovi=len(nuovi), aggiornati=len(aggiornati), n_scartate=len(scartate))
+
+
+# ── Foto di riferimento articolo (riquadro immagine del monitor LIVE) ──────
+# Una sola foto corrente per articolo (uq_cl_foto_articolo_articolo): un
+# nuovo caricamento sostituisce il precedente, niente galleria da gestire.
+@cl_bp.post('/api/articoli/<int:aid>/foto')
+def api_foto_articolo_carica(aid):
+    a = db.session.get(ClArticoloCliente, aid) or abort(404)
+    f = request.files.get('file')
+    if not f or not f.filename:
+        return jsonify(ok=False, error='Nessun file selezionato.'), 400
+    raw = f.read()
+    if len(raw) > MAX_FOTO_BYTES:
+        return jsonify(ok=False, error=f'File troppo grande (massimo {MAX_FOTO_BYTES // (1024*1024)} MB).'), 400
+    tipo = (f.mimetype or '').lower()
+    if tipo not in TIPI_FOTO_AMMESSI:
+        return jsonify(ok=False, error='Formato non ammesso — solo JPG, PNG o WEBP.'), 400
+    foto = ClFotoArticolo.query.filter_by(articolo_id=aid).first()
+    if not foto:
+        foto = ClFotoArticolo(articolo_id=aid)
+        db.session.add(foto)
+    foto.nome_file = f.filename[:255]
+    foto.tipo_mime = tipo
+    foto.contenuto_base64 = base64.b64encode(raw).decode('ascii')
+    foto.caricato_il = _adesso()
+    _audit('FOTO_ARTICOLO_CARICATA', 'cl_articolo_cliente', aid, dopo={'codice': a.codice, 'file': f.filename[:200]})
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@cl_bp.get('/api/articoli/<int:aid>/foto')
+def api_foto_articolo_leggi(aid):
+    foto = ClFotoArticolo.query.filter_by(articolo_id=aid).first()
+    if not foto:
+        abort(404)
+    return Response(base64.b64decode(foto.contenuto_base64), mimetype=foto.tipo_mime)
+
+
+@cl_bp.delete('/api/articoli/<int:aid>/foto')
+def api_foto_articolo_elimina(aid):
+    foto = ClFotoArticolo.query.filter_by(articolo_id=aid).first()
+    if not foto:
+        return jsonify(ok=True)
+    db.session.delete(foto)
+    _audit('FOTO_ARTICOLO_ELIMINATA', 'cl_articolo_cliente', aid)
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 # ── Ordini cliente (import PDF) ────────────────────────────────────────────
@@ -649,3 +733,38 @@ def api_triple_watch():
             .filter(ClDdt.direzione == 'OUT').all())
     return jsonify([{'numero_ordine_cliente': o.numero_ordine, 'numero_ddt_spedizione': d.numero,
                      'numero_fattura': f.numero} for o, d, f in righe])
+
+
+# ── Monitor LIVE Conto lavoro ───────────────────────────────────────────────
+@cl_bp.get('/api/live')
+def api_live():
+    """
+    Dati per il monitor LIVE (pagina /conto-lavoro/live): ordini CONFERMATO
+    raggruppati per cliente, con Ordinata/Prodotta/Evasa/Saldo per riga e
+    l'indicazione se l'articolo ha una foto di riferimento caricata. Solo
+    lettura — stessa eccezione documentata in cima al file per "Prodotta".
+    """
+    ordini = (ClOrdine.query.filter(ClOrdine.stato == 'CONFERMATO')
+             .order_by(ClOrdine.cliente_id, ClOrdine.numero_ordine).all())
+    if not ordini:
+        return jsonify([])
+    articolo_ids = {r.articolo_id for o in ordini for r in o.righe}
+    con_foto = {aid for (aid,) in db.session.query(ClFotoArticolo.articolo_id)
+               .filter(ClFotoArticolo.articolo_id.in_(articolo_ids)).all()} if articolo_ids else set()
+
+    gruppi = {}
+    for o in ordini:
+        g = gruppi.setdefault(o.cliente_id, {'cliente_id': o.cliente_id,
+                                             'cliente': o.cliente.ragione_sociale if o.cliente else '', 'ordini': []})
+        righe = []
+        for r in o.righe:
+            codice = r.articolo.codice if r.articolo else ''
+            ordinata = float(r.quantita)
+            prodotta = _quantita_prodotta(codice)
+            saldo = round(ordinata - prodotta, 3)
+            pct = round(min(100, prodotta / ordinata * 100)) if ordinata > 0 else 100
+            righe.append({'articolo_id': r.articolo_id, 'codice': codice, 'descrizione': r.descrizione,
+                          'quantita': ordinata, 'quantita_prodotta': prodotta, 'quantita_evasa': 0.0,
+                          'saldo_da_produrre': saldo, 'pct': pct, 'ha_foto': r.articolo_id in con_foto})
+        g['ordini'].append({'id': o.id, 'numero_ordine': o.numero_ordine, 'rif_cliente': o.rif_cliente, 'righe': righe})
+    return jsonify(sorted(gruppi.values(), key=lambda g: g['cliente']))

@@ -92,6 +92,24 @@ class ClArticoloCliente(db.Model):
     cliente = db.relationship('ClCliente')
 
 
+class ClFotoArticolo(db.Model):
+    """Foto di riferimento (com'è fatto il pezzo) per un codice articolo
+    cliente — stesso pattern di FotoArticolo in IronProduction: base64 nel
+    DB, niente filesystem separato da gestire/perdere ai redeploy. Una sola
+    foto corrente per articolo (un nuovo caricamento sostituisce la
+    precedente); usata dal riquadro immagine del monitor LIVE Conto lavoro."""
+    __bind_key__ = BIND
+    __tablename__ = 'cl_foto_articolo'
+    id = db.Column(db.Integer, primary_key=True)
+    articolo_id = db.Column(db.Integer, db.ForeignKey('cl_articolo_cliente.id', ondelete='CASCADE'), nullable=False)
+    nome_file = db.Column(db.String(255), nullable=False)
+    tipo_mime = db.Column(db.String(100), nullable=False, default='application/octet-stream')
+    contenuto_base64 = db.Column(db.Text, nullable=False)
+    caricato_il = db.Column(db.DateTime(timezone=True), nullable=False, default=_adesso)
+    __table_args__ = (db.UniqueConstraint('articolo_id', name='uq_cl_foto_articolo_articolo'),)
+    articolo = db.relationship('ClArticoloCliente')
+
+
 class ClOrdine(db.Model):
     """Ordine del cliente (import PDF): è l'origine del 'codice di magazzino'
     (ClArticoloCliente) — un codice dell'ordine che non esiste ancora per
