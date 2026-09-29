@@ -42,5 +42,10 @@
     <div style="font-weight:800;margin-top:6px">LIVE Conto lavoro</div>
     <div style="font-size:12px;color:var(--text-dim);margin-top:4px">Monitor d'officina — ordini confermati, avanzamento e immagini per codice (si apre in una pagina a parte)</div>
   </a>
+  <a href="/conto-lavoro/riepilogo" class="mon-section" style="display:block;padding:16px;text-decoration:none;color:inherit{{ ';opacity:.45;pointer-events:none' if schema < schema_richiesto_live else '' }}">
+    <div style="font-size:26px">📊</div>
+    <div style="font-weight:800;margin-top:6px">Riepilogo ordini</div>
+    <div style="font-size:12px;color:var(--text-dim);margin-top:4px">Stessi dati del monitor LIVE, in pagina normale da PC — ordini per cliente con avanzamento</div>
+  </a>
 </div>
 {% endblock %}

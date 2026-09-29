@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🤝 Conto lavoro — Riepilogo ordini</div>
+  <a class="btn btn-ghost" href="/conto-lavoro/" style="margin-left:auto">← Conto lavoro</a>
+  <a class="btn btn-ghost" href="/conto-lavoro/live" target="_blank">🔴 Apri monitor LIVE</a>
+</div>
+
+{% if schema < schema_richiesto %}
+<div class="mon-section" style="padding:14px;color:#c0392b;font-weight:700">
+  ⚠️ Tabelle non ancora alla versione {{ schema_richiesto }} (attuale: {{ schema }}) — imposta CL_MIGRA_AUTO = {{ '%04d'|format(schema_richiesto) }} su Railway.
+</div>
+{% else %}
+<div id="riepilogo-box">Caricamento...</div>
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+async function caricaRiepilogo(){
+  const box = document.getElementById('riepilogo-box');
+  let gruppi;
+  try{ gruppi = await (await fetch('/conto-lavoro/api/live')).json(); }
+  catch(e){ box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>'; return; }
+  if(!Array.isArray(gruppi) || !gruppi.length){
+    box.innerHTML = '<p style="color:var(--text-dim)">Nessun ordine confermato al momento.</p>';
+    return;
+  }
+  box.innerHTML = gruppi.map(g => {
+    const righe = g.ordini.flatMap(o => o.righe.map(r => ({...r, numero_ordine: o.numero_ordine, rif_cliente: o.rif_cliente})));
+    const tot_ordinata = righe.reduce((s, r) => s + r.quantita, 0);
+    const tot_prodotta = righe.reduce((s, r) => s + r.quantita_prodotta, 0);
+    const tot_saldo = righe.reduce((s, r) => s + r.saldo_da_produrre, 0);
+    return `
+    <div class="mon-section" style="margin-bottom:16px">
+      <div style="padding:12px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
+        <b style="flex:1">👥 ${esc(g.cliente)}</b>
+        <span style="font-size:11px;color:var(--text-dim)">${g.ordini.length} ordine/i — ordinato ${tot_ordinata} · prodotto ${tot_prodotta} · saldo <b style="color:${tot_saldo > 0 ? '#e0a800' : '#1a9e5c'}">${tot_saldo}</b></span>
+      </div>
+      <div style="padding:10px 14px;overflow-x:auto">
+        <table class="mon-table" style="width:100%">
+          <thead><tr><th>Ordine</th><th>Rif. cliente</th><th>Codice</th><th>Descrizione</th><th>Ordinata</th><th>Prodotta</th><th>Evasa</th><th>Saldo</th><th>Avanz.</th></tr></thead>
+          <tbody>${righe.map(r => `<tr>
+              <td>${esc(r.numero_ordine)}</td><td>${esc(r.rif_cliente) || '—'}</td>
+              <td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td>
+              <td>${r.quantita}</td><td>${r.quantita_prodotta}</td><td>${r.quantita_evasa}</td>
+              <td style="font-weight:800;color:${r.saldo_da_produrre > 0 ? '#e0a800' : '#1a9e5c'}">${r.saldo_da_produrre}</td>
+              <td>${r.pct}%</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+  }).join('');
+}
+if(document.getElementById('riepilogo-box')) caricaRiepilogo();
+{% endblock %}

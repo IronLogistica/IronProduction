@@ -142,6 +142,18 @@ def pagina_ordini():
                            schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_ORDINI)
 
 
+@cl_bp.get('/riepilogo')
+def pagina_riepilogo():
+    """Riepilogo ordini — stessa vista d'insieme del monitor LIVE (ordini
+    CONFERMATO raggruppati per cliente, con Ordinata/Prodotta/Evasa/Saldo),
+    ma come pagina normale con sidebar/topbar per consultazione da PC
+    (indicazione di Mauri, 29/09/2026), non per un monitor/totem d'officina.
+    Usa la stessa /api/live del monitor LIVE — un solo posto che calcola
+    questi numeri."""
+    return render_template('conto_lavoro/riepilogo.html', active='conto_lavoro',
+                           schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_LIVE)
+
+
 @cl_bp.get('/live')
 def pagina_live():
     """Monitor LIVE Conto lavoro — stile del monitor MasterWork (Saldatura,
