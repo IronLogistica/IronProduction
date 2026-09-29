@@ -92,6 +92,78 @@ class ClArticoloCliente(db.Model):
     cliente = db.relationship('ClCliente')
 
 
+class ClOrdine(db.Model):
+    """Ordine del cliente (import PDF): è l'origine del 'codice di magazzino'
+    (ClArticoloCliente) — un codice dell'ordine che non esiste ancora per
+    quel cliente viene creato automaticamente all'importazione."""
+    __bind_key__ = BIND
+    __tablename__ = 'cl_ordine'
+    id = db.Column(db.Integer, primary_key=True)
+    cliente_id = db.Column(db.Integer, db.ForeignKey('cl_cliente.id'), nullable=False)
+    numero_ordine = db.Column(db.String(50), nullable=False)
+    rif_cliente = db.Column(db.String(50), nullable=False, default='')
+    data_documento = db.Column(db.Date)
+    stato = db.Column(db.String(20), nullable=False, default='BOZZA')
+    filename = db.Column(db.String(255), nullable=False, default='')
+    testo_grezzo_pdf = db.Column(db.Text, nullable=False, default='')
+    note = db.Column(db.Text, nullable=False, default='')
+    creato_il = db.Column(db.DateTime(timezone=True), nullable=False, default=_adesso)
+    confermato_il = db.Column(db.DateTime(timezone=True))
+    __table_args__ = (
+        db.UniqueConstraint('cliente_id', 'numero_ordine', name='uq_cl_ordine_cliente_numero'),
+        db.CheckConstraint("stato IN ('BOZZA','CONFERMATO','ANNULLATO')", name='ck_cl_ordine_stato'),
+    )
+    cliente = db.relationship('ClCliente')
+    righe = db.relationship('ClOrdineRiga', back_populates='ordine', order_by='ClOrdineRiga.n_riga',
+                            cascade='all, delete-orphan')
+
+
+class ClOrdineRiga(db.Model):
+    __bind_key__ = BIND
+    __tablename__ = 'cl_ordine_riga'
+    id = db.Column(db.Integer, primary_key=True)
+    ordine_id = db.Column(db.Integer, db.ForeignKey('cl_ordine.id', ondelete='CASCADE'), nullable=False)
+    n_riga = db.Column(db.Integer, nullable=False)
+    articolo_id = db.Column(db.Integer, db.ForeignKey('cl_articolo_cliente.id'), nullable=False)
+    descrizione = db.Column(db.String(300), nullable=False, default='')
+    quantita = db.Column(db.Numeric(14, 3), nullable=False)
+    prezzo_unitario = db.Column(db.Numeric(14, 4))
+    __table_args__ = (
+        db.UniqueConstraint('ordine_id', 'n_riga', name='uq_cl_ordine_riga'),
+        db.CheckConstraint('n_riga > 0', name='ck_cl_ordine_riga_n'),
+        db.CheckConstraint('quantita >= 0', name='ck_cl_ordine_riga_qta'),
+    )
+    ordine = db.relationship('ClOrdine', back_populates='righe')
+    articolo = db.relationship('ClArticoloCliente')
+
+
+class ClFattura(db.Model):
+    """Predisposta dalla 0002 per il Triple Watch — non ancora usata finché
+    non viene attivato l'interruttore (cl_impostazione.triple_watch_attivo)."""
+    __bind_key__ = BIND
+    __tablename__ = 'cl_fattura'
+    id = db.Column(db.Integer, primary_key=True)
+    cliente_id = db.Column(db.Integer, db.ForeignKey('cl_cliente.id'), nullable=False)
+    numero = db.Column(db.String(50), nullable=False)
+    data_documento = db.Column(db.Date)
+    importo = db.Column(db.Numeric(14, 2))
+    filename = db.Column(db.String(255), nullable=False, default='')
+    creato_il = db.Column(db.DateTime(timezone=True), nullable=False, default=_adesso)
+    __table_args__ = (
+        db.UniqueConstraint('cliente_id', 'numero', name='uq_cl_fattura_cliente_numero'),
+    )
+    cliente = db.relationship('ClCliente')
+
+
+class ClImpostazione(db.Model):
+    """Interruttori/impostazioni del modulo (es. triple_watch_attivo: 'on'/'off')."""
+    __bind_key__ = BIND
+    __tablename__ = 'cl_impostazione'
+    chiave = db.Column(db.String(60), primary_key=True)
+    valore = db.Column(db.String(200), nullable=False, default='')
+    aggiornato_il = db.Column(db.DateTime(timezone=True), nullable=False, default=_adesso)
+
+
 class ClDdt(db.Model):
     __bind_key__ = BIND
     __tablename__ = 'cl_ddt'
@@ -112,6 +184,10 @@ class ClDdt(db.Model):
     annullato_da = db.Column(db.Integer, db.ForeignKey('cl_utente.id'))
     annullato_il = db.Column(db.DateTime(timezone=True))
     motivo_annullamento = db.Column(db.Text)
+    # Predisposti dalla 0002 per il Triple Watch (Ordine <-> DDT uscita <-> Fattura),
+    # non ancora popolati/usati finché cl_impostazione.triple_watch_attivo = 'off'.
+    ordine_id = db.Column(db.Integer, db.ForeignKey('cl_ordine.id'))
+    fattura_id = db.Column(db.Integer, db.ForeignKey('cl_fattura.id'))
     __table_args__ = (
         db.CheckConstraint("direzione IN ('IN','OUT')", name='ck_cl_ddt_direzione'),
         db.CheckConstraint(

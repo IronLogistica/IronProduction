@@ -27,12 +27,15 @@
     <div style="font-weight:800;margin-top:6px">Clienti e articoli</div>
     <div style="font-size:12px;color:var(--text-dim);margin-top:4px">Anagrafica dei clienti in conto lavoro e dei loro codici articolo</div>
   </a>
-  {% for titolo, icona, testo in [('Ordini', '📄', 'Importa PDF'), ('DDT di uscita e resi', '📤', 'In arrivo')] %}
+  <a href="/conto-lavoro/ordini" class="mon-section" style="display:block;padding:16px;text-decoration:none;color:inherit{{ ';opacity:.45;pointer-events:none' if schema < schema_richiesto_ordini else '' }}">
+    <div style="font-size:26px">📄</div>
+    <div style="font-weight:800;margin-top:6px">Ordini</div>
+    <div style="font-size:12px;color:var(--text-dim);margin-top:4px">Importa PDF ordine cliente — genera i codici di magazzino mancanti</div>
+  </a>
   <div class="mon-section" style="padding:16px;opacity:.45">
-    <div style="font-size:26px">{{ icona }}</div>
-    <div style="font-weight:800;margin-top:6px">{{ titolo }}</div>
-    <div style="font-size:12px;color:var(--text-dim);margin-top:4px">{{ testo }}</div>
+    <div style="font-size:26px">📤</div>
+    <div style="font-weight:800;margin-top:6px">DDT di uscita e resi</div>
+    <div style="font-size:12px;color:var(--text-dim);margin-top:4px">In arrivo</div>
   </div>
-  {% endfor %}
 </div>
 {% endblock %}
