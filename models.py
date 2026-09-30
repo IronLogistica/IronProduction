@@ -2901,12 +2901,14 @@ class OrdineProduzione(db.Model):
     # questa autorizzazione: usa il nuovo comportamento da subito.
     contestuale_autorizzato_da_angelo = db.Column(db.Boolean, nullable=False, default=False)
     data_autorizzazione_contestuale = db.Column(db.DateTime, nullable=True)
-    # Etichetta di stato manuale (Nuova Commessa / Urgente / Sospesa / In
-    # Lavorazione) mostrata sul Cruscotto KPI, PRIMA della colonna del
-    # disegno — modificabile SOLO dalla schermata principale KPI di
-    # Angelo, di sola visualizzazione (mai editabile) nella copia dello
-    # stesso Cruscotto mostrata nei monitor/totem dell'officina.
-    BANDIERE_STATO_OP = ('NUOVA_COMMESSA', 'URGENTE', 'SOSPESA', 'IN_LAVORAZIONE')
+    # Etichetta di stato manuale (Nuova Commessa / Urgente / Sospesa /
+    # Attesa Materiali / In Lavorazione) mostrata sul Cruscotto KPI, PRIMA
+    # della colonna del disegno — modificabile SOLO dalla schermata
+    # principale KPI di Angelo, di sola visualizzazione (mai editabile)
+    # nella copia dello stesso Cruscotto mostrata nei monitor/totem
+    # dell'officina. ATTESA_MATERIALI = variante di Sospesa che dice che i
+    # componenti mancanti sono già in arrivo (non serve sollecitare nulla).
+    BANDIERE_STATO_OP = ('NUOVA_COMMESSA', 'URGENTE', 'SOSPESA', 'ATTESA_MATERIALI', 'IN_LAVORAZIONE')
     bandiera_stato = db.Column(db.String(30), nullable=True)
 
 class EventoConsuntivoPP(db.Model):

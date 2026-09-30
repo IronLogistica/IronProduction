@@ -151,10 +151,11 @@ function acCellaZona(pct){
 // qui (nei monitor/totem dell'officina): la modifica si fa unicamente
 // dalla pagina principale /kpi di Angelo, mai da questa copia.
 const BANDIERE_STATO = {
-  'NUOVA_COMMESSA': {label: '🆕 Nuova', bg: '#1e6fa5', fg: '#fff'},
-  'URGENTE':        {label: '🔴 Urgente', bg: '#c0392b', fg: '#fff'},
-  'SOSPESA':        {label: '⏸️ Sospesa', bg: '#666', fg: '#fff'},
-  'IN_LAVORAZIONE': {label: '🔧 In Lavorazione', bg: '#1a9e5c', fg: '#fff'},
+  'NUOVA_COMMESSA':   {label: '🆕 Nuova', bg: '#1e6fa5', fg: '#fff'},
+  'URGENTE':          {label: '🔴 Urgente', bg: '#c0392b', fg: '#fff'},
+  'SOSPESA':          {label: '⏸️ Sospesa', bg: '#666', fg: '#fff'},
+  'ATTESA_MATERIALI': {label: '🚚 Attesa Materiali', bg: '#b8860b', fg: '#fff'},
+  'IN_LAVORAZIONE':   {label: '🔧 In Lavorazione', bg: '#1a9e5c', fg: '#fff'},
 };
 function acCellaBandieraStatoSolaLettura(valore){
   if(!valore || !BANDIERE_STATO[valore]) return `<span style="color:#999;font-size:11px">—</span>`;

@@ -136,14 +136,15 @@ caricaGanttCommesse();
 // (Cruscotto KPI di Angelo) sia in quella di sola lettura (embed nei
 // monitor/totem dell'officina).
 const BANDIERE_STATO = {
-  'NUOVA_COMMESSA': {label: '🆕 Nuova', bg: '#1e6fa5', fg: '#fff'},
-  'URGENTE':        {label: '🔴 Urgente', bg: '#c0392b', fg: '#fff'},
-  'SOSPESA':        {label: '⏸️ Sospesa', bg: '#666', fg: '#fff'},
-  'IN_LAVORAZIONE': {label: '🔧 In Lavorazione', bg: '#1a9e5c', fg: '#fff'},
+  'NUOVA_COMMESSA':   {label: '🆕 Nuova', bg: '#1e6fa5', fg: '#fff'},
+  'URGENTE':          {label: '🔴 Urgente', bg: '#c0392b', fg: '#fff'},
+  'SOSPESA':          {label: '⏸️ Sospesa', bg: '#666', fg: '#fff'},
+  'ATTESA_MATERIALI': {label: '🚚 Attesa Materiali', bg: '#b8860b', fg: '#fff'},
+  'IN_LAVORAZIONE':   {label: '🔧 In Lavorazione', bg: '#1a9e5c', fg: '#fff'},
 };
 function acCellaBandieraStato(opCodice, valoreAttuale){
   // EDITABILE: select con onchange che salva subito.
-  const opzioni = ['', 'NUOVA_COMMESSA', 'URGENTE', 'SOSPESA', 'IN_LAVORAZIONE'].map(v => {
+  const opzioni = ['', 'NUOVA_COMMESSA', 'URGENTE', 'SOSPESA', 'ATTESA_MATERIALI', 'IN_LAVORAZIONE'].map(v => {
     const label = v ? BANDIERE_STATO[v].label : '— nessuna —';
     return `<option value="${v}" ${v===(valoreAttuale||'')?'selected':''}>${label}</option>`;
   }).join('');
