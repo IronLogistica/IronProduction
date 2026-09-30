@@ -17,7 +17,8 @@
       e — per quelli mancanti — da chi e quando arriva (se già ordinato).
     </p>
     <div id="stats" style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap"></div>
-    <div id="filtri" style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap"></div>
+    <div id="tabs-evasione" style="display:flex;gap:4px;margin-bottom:-1px"></div>
+    <div id="filtri" style="display:flex;gap:8px;padding:14px 0 16px;border-top:1px solid var(--border);flex-wrap:wrap"></div>
     <div id="op-cards" style="display:flex;flex-wrap:wrap;gap:12px">Caricamento...</div>
   </div>
 </div>
@@ -53,7 +54,18 @@
 {% block scripts %}
 let _ordiniCache = [];
 let _filtroAttivo = 'tutti';
+// Prima grande distinzione: EVASO (stato "Tecnicamente completato" — il
+// lavoro è finito, resta solo da chiudere formalmente) o NON EVASO (ordine
+// ancora da portare a termine, in una qualunque fase). Le card evase non
+// vanno più mischiate con quelle attive: sono un elenco a parte, aperto
+// solo su richiesta (richiesta di Mauri, 30/09/2026).
+let _vistaEvasi = false;
 
+const EVASO = o => o.stato === 'Tecnicamente completato';
+
+// Filtri per stato — visibili SOLO nella vista "Da evadere": una volta
+// evaso, lo stato materiale/esecuzione non è più interessante, quindi la
+// vista Evasi non ha sotto-filtri, solo l'elenco.
 const FILTRI = [
   {id:'tutti',       label:'TUTTI',          test:o => true},
   {id:'scaduti',     label:'⏰ SCADUTI',      test:o => o.scaduto},
@@ -63,14 +75,40 @@ const FILTRI = [
   {id:'in_arrivo',   label:'🚚 IN ARRIVO',    test:o => o.materiale_stato === 'IN_ARRIVO'},
   {id:'producibile', label:'⚡ PRODUCIBILE',  test:o => o.materiale_stato === 'PRODUCIBILE'},
   {id:'in_corso',    label:'⚙️ IN ESECUZIONE', test:o => o.in_esecuzione},
-  {id:'completati',  label:'🏁 COMPLETATI',   test:o => o.stato === 'Tecnicamente completato'},
   {id:'senza_ciclo',  label:'⚠️ SENZA CICLO',  test:o => o.ha_ciclo_lavoro === false},
 ];
 
+function _baseOrdini(){
+  return _ordiniCache.filter(o => _vistaEvasi ? EVASO(o) : !EVASO(o));
+}
+
+function renderTabsEvasione(){
+  const box = document.getElementById('tabs-evasione');
+  const nNonEvasi = _ordiniCache.filter(o => !EVASO(o)).length;
+  const nEvasi = _ordiniCache.filter(EVASO).length;
+  const tab = (attivo, label, n, onclick) => `<button onclick="${onclick}"
+      style="padding:8px 18px;border-radius:8px 8px 0 0;font-size:13px;font-weight:800;cursor:pointer;
+             border:1px solid var(--border);border-bottom:${attivo ? 'none' : '1px solid var(--border)'};
+             background:${attivo ? 'var(--dark3)' : 'transparent'};
+             color:${attivo ? 'var(--text)' : 'var(--text-dim)'}">${label} <span style="opacity:.75">${n}</span></button>`;
+  box.innerHTML = tab(!_vistaEvasi, '📦 Da evadere', nNonEvasi, 'impostaVista(false)') +
+                   tab(_vistaEvasi, '✅ Evasi', nEvasi, 'impostaVista(true)');
+}
+
+function impostaVista(evasi){
+  _vistaEvasi = evasi;
+  _filtroAttivo = 'tutti';
+  renderTabsEvasione();
+  renderFiltri();
+  renderCards();
+}
+
 function renderFiltri(){
   const box = document.getElementById('filtri');
+  if(_vistaEvasi){ box.innerHTML = ''; return; }   // niente sotto-filtri per gli evasi
+  const base = _baseOrdini();
   box.innerHTML = FILTRI.map(f => {
-    const n = _ordiniCache.filter(f.test).length;
+    const n = base.filter(f.test).length;
     const attivo = f.id === _filtroAttivo;
     return `<button onclick="impostaFiltro('${f.id}')"
       style="padding:6px 14px;border-radius:999px;font-size:11px;font-weight:700;cursor:pointer;
@@ -101,8 +139,11 @@ function _coloreBordoOP(o){
 function renderCards(){
   const box = document.getElementById('op-cards');
   const filtro = FILTRI.find(f => f.id === _filtroAttivo) || FILTRI[0];
-  const ordini = _ordiniCache.filter(filtro.test);
-  if(!ordini.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun Ordine di Produzione in questa categoria.</p>'; return; }
+  const ordini = _vistaEvasi ? _baseOrdini() : _baseOrdini().filter(filtro.test);
+  if(!ordini.length){
+    box.innerHTML = `<p style="color:#aaa;font-style:italic">Nessun Ordine di Produzione ${_vistaEvasi ? 'evaso' : 'in questa categoria'}.</p>`;
+    return;
+  }
 
   box.innerHTML = ordini.map(o => {
     const pctBuona = o.qta_pianificata > 0 ? Math.round((o.qta_buona / o.qta_pianificata) * 100) : 0;
@@ -176,19 +217,29 @@ async function carica(){
     const r = await fetch('/api/ordini-produzione/riepilogo_disponibilita');
     _ordiniCache = await r.json();
 
-    const pronti = _ordiniCache.filter(o => o.tutto_disponibile).length;
-    const bloccati = _ordiniCache.length - pronti;
+    // Le statistiche "tutto disponibile / manca qualcosa" hanno senso solo
+    // per chi va ancora evaso — un OP già "Tecnicamente completato" non ha
+    // più bisogno di essere contato lì dentro.
+    const daEvadere = _ordiniCache.filter(o => !EVASO(o));
+    const pronti = daEvadere.filter(o => o.tutto_disponibile).length;
+    const bloccati = daEvadere.length - pronti;
     stats.innerHTML = `
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center">
-        <div style="font-size:22px;font-weight:800">${_ordiniCache.length}</div><div style="font-size:11px;color:var(--text-dim)">OP aperti</div></div>
+        <div style="font-size:22px;font-weight:800">${_ordiniCache.length}</div><div style="font-size:11px;color:var(--text-dim)">OP aperti (totale)</div></div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center">
-        <div style="font-size:22px;font-weight:800;color:#2a9d5c">${pronti}</div><div style="font-size:11px;color:var(--text-dim)">✅ Tutto disponibile</div></div>
+        <div style="font-size:22px;font-weight:800;color:#2a9d5c">${pronti}</div><div style="font-size:11px;color:var(--text-dim)">✅ Tutto disponibile (da evadere)</div></div>
       <div style="background:var(--bg);border:1px solid var(--border);border-radius:8px;padding:10px 16px;text-align:center">
-        <div style="font-size:22px;font-weight:800;color:${bloccati?'#c0392b':'inherit'}">${bloccati}</div><div style="font-size:11px;color:var(--text-dim)">❌ Manca qualcosa</div></div>
+        <div style="font-size:22px;font-weight:800;color:${bloccati?'#c0392b':'inherit'}">${bloccati}</div><div style="font-size:11px;color:var(--text-dim)">❌ Manca qualcosa (da evadere)</div></div>
     `;
 
-    if(!_ordiniCache.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun Ordine di Produzione aperto.</p>'; document.getElementById('filtri').innerHTML=''; return; }
+    if(!_ordiniCache.length){
+      box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessun Ordine di Produzione aperto.</p>';
+      document.getElementById('filtri').innerHTML = '';
+      document.getElementById('tabs-evasione').innerHTML = '';
+      return;
+    }
 
+    renderTabsEvasione();
     renderFiltri();
     renderCards();
   }catch(e){
