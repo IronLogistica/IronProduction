@@ -5262,6 +5262,68 @@ def api_dichiarazione_approva(eid):
     return jsonify(ok=True, avviso_magazzino=avviso_magazzino)
 
 
+@pp_bp.get('/api/dichiarazione-produzione/masterwork-pendenti')
+def api_masterwork_pendenti():
+    """
+    "Produzioni dichiarate in officina" — richiesta di Mauri (30/09/2026):
+    elenco delle dichiarazioni arrivate da MasterWork (/api/pp/events) non
+    ancora VISIONATE (vedi EventoConsuntivoPP.visionato) — indipendente da
+    approvato_direzione, che resta per il vecchio meccanismo di
+    carico/approvazione automatica (non più esposto in interfaccia, vedi
+    api_dichiarazione_approva). Qui si legge e basta, nessun PIN: Angelo
+    guarda cosa è arrivato, lo confronta con quello che ha davanti in
+    officina, e carica LUI la produzione reale con la Dichiarazione di
+    Produzione — poi spunta questa riga come vista (api_masterwork_visiona).
+    Alimenta sia il pannello in cima alla pagina sia la tile lampeggiante
+    della dashboard principale (vedi api_masterwork_pendenti_conteggio).
+    """
+    eventi = (EventoConsuntivoPP.query.filter_by(visionato=False)
+              .order_by(EventoConsuntivoPP.timestamp_evento.desc()).limit(300).all())
+    op_codes = {e.op_code for e in eventi}
+    op_per_codice = {o.codice: o for o in OrdineProduzione.query.filter(OrdineProduzione.codice.in_(op_codes)).all()} if op_codes else {}
+    return jsonify(ok=True, eventi=[{
+        'id': e.id, 'event_id': e.event_id, 'op_code': e.op_code,
+        'codice_articolo': (op_per_codice.get(e.op_code).codice_articolo if op_per_codice.get(e.op_code) else '—'),
+        'descrizione': (op_per_codice.get(e.op_code).descrizione if op_per_codice.get(e.op_code) else ''),
+        'fase': e.fase, 'componente': e.componente,
+        'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M') if e.timestamp_evento else '',
+        'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto, 'tempo_minuti': e.tempo_minuti,
+        'operatore': e.operatore or '',
+    } for e in eventi])
+
+
+@pp_bp.get('/api/dichiarazione-produzione/masterwork-pendenti/conteggio')
+def api_masterwork_pendenti_conteggio():
+    """Solo il numero — per la tile lampeggiante della dashboard principale,
+    senza dover scaricare l'elenco completo a ogni apertura del programma."""
+    n = EventoConsuntivoPP.query.filter_by(visionato=False).count()
+    return jsonify(ok=True, n=n)
+
+
+@pp_bp.post('/api/dichiarazione-produzione/eventi/<int:eid>/visiona')
+def api_masterwork_visiona(eid):
+    """
+    "La dichiaro visionata e registrata" — SOLO bookkeeping: segna che
+    Angelo ha visto questa dichiarazione MasterWork e ha GIA' caricato lui
+    stesso la produzione reale altrove (Dichiarazione di Produzione). NON
+    chiama _applica_effetti_evento_consuntivo, non tocca OP né magazzino —
+    quella era la vecchia Approvazione Direzione (carico automatico), che
+    Mauri ha chiesto di eliminare dall'uso corrente. Toggle: con
+    {'visionato': false} si può anche togliere la spunta per errore.
+    """
+    e = EventoConsuntivoPP.query.get_or_404(eid)
+    d = request.get_json(silent=True) or {}
+    visiona = d.get('visionato', True)
+    e.visionato = bool(visiona)
+    e.visionato_da = (d.get('visionato_da') or '').strip() or None if visiona else None
+    e.visionato_il = datetime.utcnow() if visiona else None
+    db.session.add(AuditPP(op_code=e.op_code, event_id=e.event_id,
+                            azione='MASTERWORK_VISIONATA' if visiona else 'MASTERWORK_VISIONATA_ANNULLATA',
+                            dettaglio=f'dichiarazione {e.event_id}' + (f' segnata vista/registrata da {e.visionato_da}' if e.visionato_da else ' segnata vista/registrata') if visiona else f'dichiarazione {e.event_id} rimessa tra le non visionate'))
+    db.session.commit()
+    return jsonify(ok=True)
+
+
 def _storna_evento_consuntivo(e, o):
     """
     Nucleo dello storno di UNA dichiarazione — condiviso dallo storno
