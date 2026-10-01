@@ -34,8 +34,8 @@
   .commessa{font-family:'Consolas',monospace;font-size:.95rem;color:var(--text)}
   .num-grande{font-size:1.4rem;font-weight:800;color:var(--text)}
 
-  /* Pz da fare / Pz fatti comprendono anche i componenti: NON in grassetto,
-     per non confonderli coi prodotti finiti. Il SALDO invece va in un riquadro. */
+  /* Pz Necessari / Prodotti comprendono anche i componenti: NON in grassetto,
+     per non confonderli coi prodotti finiti. Il DA PRODURRE invece va in un riquadro. */
   .num-leggero{font-size:1.15rem;font-weight:400;color:var(--text)}
   .saldo-box{display:inline-block;min-width:64px;text-align:center;font-size:1.5rem;font-weight:900;color:#fff;
              border:2px solid var(--warn);background:rgba(245,158,11,.14);border-radius:8px;padding:4px 10px}
@@ -111,8 +111,8 @@
   </div>
 <table class="tabella-totem">
   <thead><tr>
-    <th>Priority</th><th>N° Commessa</th><th>N° pz in produzione</th><th>Saldo</th><th>Codice e Immagine</th>
-    <th>Pz da Fare{{ '*' if saldatura_nota else '' }}</th><th>Pz Fatti</th><th>% Avanzamento</th>
+    <th>Priority</th><th>N° Commessa</th><th>N° pz in produzione</th><th>Da Produrre</th><th>Codice e Immagine</th>
+    <th>Pz Necessari{{ '*' if saldatura_nota else '' }}</th><th>Prodotti</th><th>% Avanzamento</th>
   </tr></thead>
   <tbody>
     {% for g in gruppi %}
@@ -145,7 +145,7 @@
       <td colspan="8">
         <table class="tabella-dettaglio">
           <thead><tr>
-            <th>Codice lavorato</th><th>Descrizione</th><th>Da fare</th><th>Fatti</th><th>Saldo</th>
+            <th>Codice lavorato</th><th>Descrizione</th><th>Pz Necessari</th><th>Prodotti</th><th>Da Produrre</th>
             {% for col in colonne_parametri %}<th>{{ col.etichetta }}</th>{% endfor %}
           </tr></thead>
           <tbody>
@@ -155,7 +155,7 @@
               <td class="muted">{{ c.descrizione_lavorata or '—' }}</td>
               <td>{{ c.totale | round | int }}</td>
               <td>{{ c.pezzi_fatti | round | int }}</td>
-              <td>{{ c.saldo | round | int }}</td>
+              <td style="font-weight:700">{{ c.saldo | round | int }}</td>
               {% for col in colonne_parametri %}<td>{{ c.parametri[col.chiave] or '—' }}</td>{% endfor %}
             </tr>
             {% endfor %}
