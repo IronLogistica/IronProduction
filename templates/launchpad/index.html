@@ -17,6 +17,8 @@
   .lp-tile:hover{background:rgba(255,255,255,.06)}
   .lp-tile .icona{font-size:16px;width:20px;text-align:center;flex-shrink:0}
   .lp-tile .badge{margin-left:auto;font-size:10px;font-weight:700;background:rgba(30,111,165,.35);color:var(--steel2,#4d9fd6);border-radius:8px;padding:1px 6px}
+  @keyframes lpLampeggioMasterwork{ 0%,100%{opacity:1} 50%{opacity:.5} }
+  #lp-tile-masterwork.attiva{ animation: lpLampeggioMasterwork 1s infinite; }
 </style>
 
 <div class="page-toolbar">
@@ -24,6 +26,12 @@
 </div>
 
 <div class="lp-wrap">
+  <a id="lp-tile-masterwork" href="/dichiarazione-produzione" style="display:none;align-items:center;gap:12px;text-decoration:none;color:#fff;
+       background:#b8860b;border-radius:10px;padding:14px 18px;margin-bottom:18px;font-weight:800;font-size:14px;box-shadow:0 4px 16px rgba(184,134,11,.4)">
+    <span style="font-size:22px">🏭</span>
+    <span>DICHIARAZIONI PRODUZIONE MASTERWORK — <span id="lp-masterwork-n">0</span> da visionare</span>
+    <span style="margin-left:auto;font-size:12px;font-weight:600;opacity:.85">apri →</span>
+  </a>
   <p class="lp-intro">Tutte le pagine di IronProduction, raggruppate — tocca una tile per andarci.</p>
 
   <div class="lp-grid">
@@ -67,4 +75,22 @@
     </div>
   </div>
 </div>
+{% endblock %}
+{% block scripts %}
+// Tile lampeggiante "Dichiarazioni Produzione MasterWork" — appena si apre
+// il programma, se ci sono dichiarazioni arrivate dall'officina via
+// MasterWork ancora da visionare (richiesta di Mauri, 30/09/2026: il
+// carico automatico non è più affidabile, ora è Angelo a guardarle e
+// caricare lui la produzione reale in Dichiarazione di Produzione).
+(async function caricaTileMasterwork(){
+  try{
+    const r = await fetch('/api/dichiarazione-produzione/masterwork-pendenti/conteggio');
+    const d = await r.json();
+    if(!d.ok || !d.n) return;
+    const tile = document.getElementById('lp-tile-masterwork');
+    document.getElementById('lp-masterwork-n').textContent = d.n;
+    tile.style.display = 'flex';
+    tile.classList.add('attiva');
+  }catch(e){ /* silenzioso: la tile semplicemente non compare */ }
+})();
 {% endblock %}
