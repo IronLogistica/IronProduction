@@ -1769,6 +1769,32 @@ def assicura_operatore_evento_consuntivo():
             db.session.commit()
 
 
+def assicura_visionato_evento_consuntivo():
+    """Migrazione compatibile con DB già esistenti: aggiunge
+    pp_eventi_consuntivi.visionato/visionato_da/visionato_il — la spunta
+    "visionata e registrata" del nuovo elenco Produzioni dichiarate in
+    officina (vedi modello EventoConsuntivoPP), separata e indipendente
+    da approvato_direzione."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS visionato BOOLEAN NOT NULL DEFAULT FALSE"))
+            db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS visionato_da VARCHAR(100)"))
+            db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS visionato_il TIMESTAMP"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('pp_eventi_consuntivi')}
+        if 'visionato' not in colonne:
+            db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN visionato BOOLEAN NOT NULL DEFAULT 0"))
+        if 'visionato_da' not in colonne:
+            db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN visionato_da VARCHAR(100)"))
+        if 'visionato_il' not in colonne:
+            db.session.execute(text("ALTER TABLE pp_eventi_consuntivi ADD COLUMN visionato_il TIMESTAMP"))
+        db.session.commit()
+
+
 def assicura_contapieghe_matrici():
     """Migrazione compatibile con DB già esistenti: aggiunge
     matrici_wood.contapieghe/vita_max_pieghe e
@@ -2941,6 +2967,22 @@ class EventoConsuntivoPP(db.Model):
     # lo manda (campo opzionale: le dichiarazioni più vecchie e quelle dal
     # totem a bordo macchina restano senza, mai un errore per questo).
     operatore = db.Column(db.String(100), nullable=True)
+    # "Visionata e registrata" (30/09/2026, richiesta di Mauri): flag
+    # SEPARATO da approvato_direzione — Angelo spunta che ha VISTO questa
+    # dichiarazione arrivata da MasterWork e che ha GIA' caricato lui
+    # stesso la produzione reale a mano (Dichiarazione di Produzione),
+    # dopo aver controllato/corretto il codice. Spuntare qui NON applica
+    # nessun effetto automatico (non chiama _applica_effetti_evento_
+    # consuntivo, non tocca OP né magazzino) — è solo la spunta che fa
+    # sparire la riga dall'elenco "Produzioni dichiarate in officina" e
+    # dalla tile lampeggiante della dashboard. Il "carico automatico"
+    # (il vecchio pulsante Approva che applicava da solo il codice
+    # mappato dal sistema) resta nel codice ma non più esposto in
+    # interfaccia: ogni caricamento reale passa ora SEMPRE dalla mano di
+    # chi dichiara, qui o nel conto lavoro.
+    visionato = db.Column(db.Boolean, nullable=False, default=False)
+    visionato_da = db.Column(db.String(100), nullable=True)
+    visionato_il = db.Column(db.DateTime, nullable=True)
 
 class AuditPP(db.Model):
     __tablename__ = "pp_audit"
