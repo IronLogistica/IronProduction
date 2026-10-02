@@ -220,6 +220,43 @@ def _righe_macchina(centro):
             # maggiore priorità) già se ne contendono — 'giacenza_di_op' è
             # esattamente lo stesso residuo già calcolato qui sotto per il
             # controllo materiale, va solo letto PRIMA anziché dopo.
+            # Producibilità — richiesta di Mauri (02/10/2026): su queste righe
+            # la Priority non dice se si PUÒ lavorare ORA, solo in che ordine.
+            # Lean/Kanban di quantità, trasferito a codici diversi: ogni
+            # (codice, fase) ha il proprio ciclo (fasi_ciclo, già caricato
+            # sopra) — la fase PRECEDENTE nello STESSO ciclo di QUESTO codice
+            # è quella che conta, non una fase fissa uguale per tutti.
+            # 'lotto_trasferimento_minimo' della fase precedente (già in
+            # CicloLavoroWood, usato finora solo dal Gantt) è esattamente la
+            # taglia del cartellino kanban per quel codice in quel passaggio:
+            # non configurato = nessun overlap, serve che la fase precedente
+            # abbia già coperto TUTTO il fabbisogno residuo di qui.
+            # 'disponibile_da_monte' = quanto la fase precedente ha già
+            # prodotto per QUESTO componente/commessa e non ancora consumato
+            # da questa fase (stesso calcolo pezzi_fase, sulla fase di prima).
+            if idx == 0:
+                stato_producibilita = 'producibile'  # prima fase del ciclo: dipende solo da materiale (vedi colonna a parte)
+                fase_precedente_nome = None
+                disponibile_da_monte = None
+                soglia_kanban = None
+            else:
+                fase_prec = fasi_ciclo[idx - 1]
+                fase_precedente_nome = fase_prec.centro_costo.nome if fase_prec.centro_costo else None
+                pezzi_fase_precedente = _pezzi_fase_cached(o.codice, fase_precedente_nome, componente=componente_param) \
+                                         if fase_precedente_nome else 0
+                disponibile_da_monte = max(pezzi_fase_precedente - pezzi_fase, 0)
+                residuo_qui = max(qta_necessaria - pezzi_fase, 0)
+                soglia_kanban = min(fase_prec.lotto_trasferimento_minimo, residuo_qui) \
+                                 if fase_prec.lotto_trasferimento_minimo else residuo_qui
+                if residuo_qui <= 0:
+                    stato_producibilita = 'producibile'
+                elif disponibile_da_monte <= 0:
+                    stato_producibilita = 'in_attesa'
+                elif disponibile_da_monte >= soglia_kanban:
+                    stato_producibilita = 'producibile'
+                else:
+                    stato_producibilita = 'parziale'
+
             giacenza_di_op = residuo_per_op.get(o.id, residuo_finale)
             saldo_prima_giacenza = max(qta_necessaria - pezzi_fase, 0)
             # BUG REALE TROVATO E CORRETTO (segnalato: pianificato alzato,
@@ -293,6 +330,10 @@ def _righe_macchina(centro):
                 'consumi_standard': consumi_standard,
                 'non_rilasciato': False,
                 'completato': saldo_fase <= 0,
+                'stato_producibilita': stato_producibilita,
+                'fase_precedente': fase_precedente_nome,
+                'disponibile_da_monte': disponibile_da_monte,
+                'soglia_kanban': soglia_kanban,
                 '_chiave_ordine': chiave_ordine,
             })
 
@@ -322,6 +363,8 @@ def _righe_macchina(centro):
                 'tempo_standard_min_pz': round(tempo_standard_min_pz, 2) if tempo_standard_min_pz else None,
                 'scarto_max_pct': fase_ciclo.scarto_max_pct, 'scarto_max_pezzi': None,
                 'consumi_standard': [], 'non_rilasciato': True,
+                'stato_producibilita': 'in_attesa', 'fase_precedente': None, 'disponibile_da_monte': None,
+                'soglia_kanban': None,
                 '_chiave_ordine': (2, o.priorita, o.data_prevista or datetime.max.date(), o.id, codice_comp),
             })
 
@@ -382,6 +425,17 @@ def _raggruppa_per_op(righe):
         g['materiale_disponibile'] = g['materiale_disponibile'] and r['materiale_disponibile']
     for g in gruppi:
         g['pct_aggregato'] = round(100 * (g['totale_totale'] - g['saldo_totale']) / g['totale_totale']) if g['totale_totale'] else 0
+        # Producibilità del gruppo (OP): quella MIGLIORE fra le sue righe non
+        # ancora terminate — basta un solo componente lavorabile ora perché
+        # l'operaio possa mettere mano a questa commessa, anche se gli altri
+        # suoi componenti sono ancora in attesa. Un gruppo con tutto già
+        # terminato (saldo_totale 0) non mostra badge: sta nella sezione
+        # "terminati", non più in coda.
+        priorita_stato = {'producibile': 0, 'parziale': 1, 'in_attesa': 2}
+        non_terminate = [c for c in g['componenti'] if c.get('saldo', 0) > 0]
+        g['stato_producibilita'] = (min((c['stato_producibilita'] for c in non_terminate),
+                                        key=lambda s: priorita_stato.get(s, 9))
+                                    if non_terminate else None)
     return gruppi
 
 
