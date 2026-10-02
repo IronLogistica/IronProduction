@@ -45,6 +45,13 @@ VERSIONE_MODULO = 'ordini'
 VERSIONE_SCHEMA_BASE = 1      # clienti/articoli — invariato dalla 0001, non deve regredire
 VERSIONE_SCHEMA_ORDINI = 2    # ordini, fatture, impostazioni/triple watch — dalla 0002
 VERSIONE_SCHEMA_LIVE = 3      # foto articolo + monitor LIVE — dalla 0003
+# Quantità evasa reale + correzione manuale quantità prodotta, righe
+# aggiungibili/eliminabili/modificabili sempre (non solo in BOZZA), ordine
+# eliminabile anche da CONFERMATO se non movimentato — dalla 0004 (Mauri,
+# 02/10/2026). _ordine_dict legge le nuove colonne per OGNI endpoint che
+# tocca righe ordine: il cancello qui sotto richiede questa versione per
+# tutto il prefisso ordini/magazzino, non solo le rotte nuove.
+VERSIONE_SCHEMA_RIGHE_MODIFICABILI = 4
 VERSIONE_SCHEMA_RICHIESTA = VERSIONE_SCHEMA_BASE  # compatibilità: usato dal cancello e dal tile "Clienti e articoli"
 PREFISSI_SCHEMA_ORDINI = ('/conto-lavoro/api/ordini', '/conto-lavoro/api/impostazioni', '/conto-lavoro/api/fatture',
                           '/conto-lavoro/api/magazzino')
@@ -85,7 +92,7 @@ def _cancello_modulo():
         if request.endpoint in ENDPOINT_SCHEMA_LIVE:
             richiesta = VERSIONE_SCHEMA_LIVE
         elif request.path.startswith(PREFISSI_SCHEMA_ORDINI):
-            richiesta = VERSIONE_SCHEMA_ORDINI
+            richiesta = VERSIONE_SCHEMA_RIGHE_MODIFICABILI
         else:
             richiesta = VERSIONE_SCHEMA_BASE
         if versione_schema() < richiesta:
@@ -140,7 +147,7 @@ def pagina_anagrafiche():
 @cl_bp.get('/ordini')
 def pagina_ordini():
     return render_template('conto_lavoro/ordini.html', active='conto_lavoro',
-                           schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_ORDINI)
+                           schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_RIGHE_MODIFICABILI)
 
 
 @cl_bp.get('/riepilogo')
@@ -475,25 +482,44 @@ def _quantita_prodotta(codice_articolo):
     return float(tot or 0)
 
 
+def _prodotta_riga(r):
+    """'Prodotta' di una riga: il calcolo automatico da OrdineProduzione
+    (sola lettura, vedi eccezione in testata file), SALVO che il capo abbia
+    inserito una correzione manuale per questa riga (quantita_prodotta_manuale
+    non NULL) — in quel caso vale quella, sempre (dalla 0004)."""
+    if r.quantita_prodotta_manuale is not None:
+        return float(r.quantita_prodotta_manuale)
+    codice = r.articolo.codice if r.articolo else ''
+    return _quantita_prodotta(codice)
+
+
+def _ordine_movimentato(o):
+    """True se almeno una riga ha già qualcosa di 'reale' sopra (prodotta >0
+    o evasa >0) — da quel momento l'ordine non si elimina più, né dalla lista
+    né dal popup, qualunque sia il suo stato (anche se ancora BOZZA): quei
+    numeri verrebbero persi senza lasciar traccia. Un ordine BOZZA o
+    CONFERMATO senza nulla sopra resta eliminabile."""
+    return any(_prodotta_riga(r) > 0 or float(r.quantita_evasa or 0) > 0 for r in o.righe)
+
+
 def _ordine_dict(o, con_righe=False):
     d = {'id': o.id, 'cliente_id': o.cliente_id, 'cliente': o.cliente.ragione_sociale if o.cliente else '',
         'numero_ordine': o.numero_ordine, 'rif_cliente': o.rif_cliente,
         'data_documento': o.data_documento.strftime('%d/%m/%Y') if o.data_documento else '',
         'stato': o.stato, 'filename': o.filename,
-        'creato_il': o.creato_il.strftime('%d/%m/%Y %H:%M') if o.creato_il else ''}
+        'creato_il': o.creato_il.strftime('%d/%m/%Y %H:%M') if o.creato_il else '',
+        'movimentato': _ordine_movimentato(o)}
     if con_righe:
         righe = []
         for r in o.righe:
             codice = r.articolo.codice if r.articolo else ''
             ordinata = float(r.quantita)
-            prodotta = _quantita_prodotta(codice)
-            # Evasa (consegnata con DDT di uscita) resta 0 finché quel modulo
-            # non esiste — vedi cl_ddt.ordine_id, predisposto ma non ancora
-            # popolato da nessuna scrittura reale.
-            evasa = 0.0
+            prodotta = _prodotta_riga(r)
+            evasa = float(r.quantita_evasa or 0)
             righe.append({'id': r.id, 'n_riga': r.n_riga, 'codice': codice,
                           'descrizione': r.descrizione, 'quantita': ordinata,
-                          'quantita_prodotta': prodotta, 'quantita_evasa': evasa,
+                          'quantita_prodotta': prodotta, 'prodotta_manuale': r.quantita_prodotta_manuale is not None,
+                          'quantita_evasa': evasa,
                           'saldo_da_produrre': round(ordinata - prodotta, 3),
                           'prezzo_unitario': float(r.prezzo_unitario) if r.prezzo_unitario is not None else None})
         d['righe'] = righe
@@ -615,38 +641,147 @@ def api_conferma_ordine(oid):
     return jsonify(ok=True, ordine=_ordine_dict(o))
 
 
+def _numero_opzionale(d, chiave, etichetta):
+    """Legge un numero opzionale dal payload: chiave assente = non toccare
+    (None, sentinella 'non passato'); chiave presente ma vuota/null = azzera
+    esplicitamente (0.0, usato per quantita/evasa) — vedi i due chiamanti per
+    come trattano questi due casi diversamente da 'numero non valido'."""
+    if chiave not in d:
+        return None
+    v = d.get(chiave)
+    if v in (None, ''):
+        return 0.0
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        raise ValueError(f'{etichetta} non valida.')
+    if v < 0:
+        raise ValueError(f'{etichetta} non può essere negativa.')
+    return v
+
+
 @cl_bp.put('/api/ordini/<int:oid>/righe/<int:rid>')
 def api_modifica_riga_ordine(oid, rid):
-    """Corregge la quantità di una riga letta male dal PDF — solo finché
-    l'ordine è in BOZZA (confermato, la riga è bloccata come l'ordine)."""
+    """
+    Corregge una riga ordine — richiesta di Mauri (02/10/2026): NON più solo
+    in BOZZA, sempre (un CONFERMATO può aver bisogno di una correzione tanto
+    quanto una bozza). Tre campi indipendenti, tutti opzionali — si manda solo
+    quello che si vuole cambiare:
+      - 'quantita': l'Ordinata.
+      - 'quantita_prodotta': correzione manuale della Prodotta — stringa
+        vuota/null per TOGLIERE la correzione e tornare al calcolo automatico
+        da MasterWork (quantita_prodotta_manuale = NULL), un numero per
+        impostarla.
+      - 'quantita_evasa': colonna vera dalla 0004 (prima sempre 0.0).
+    """
     o = db.session.get(ClOrdine, oid) or abort(404)
     r = next((x for x in o.righe if x.id == rid), None) or abort(404)
-    if o.stato != 'BOZZA':
-        return jsonify(ok=False, error='Solo le righe di una bozza si possono modificare.'), 409
     d = request.get_json(silent=True) or {}
+    prima = {'quantita': float(r.quantita), 'quantita_evasa': float(r.quantita_evasa or 0),
+             'quantita_prodotta_manuale': float(r.quantita_prodotta_manuale) if r.quantita_prodotta_manuale is not None else None}
+    dopo = {}
     try:
-        nuova_qta = float(d.get('quantita'))
-    except (TypeError, ValueError):
-        return jsonify(ok=False, error='Quantità non valida.'), 400
-    if nuova_qta < 0:
-        return jsonify(ok=False, error='La quantità non può essere negativa.'), 400
-    prima = {'quantita': float(r.quantita)}
-    r.quantita = nuova_qta
-    _audit('ORDINE_RIGA_MODIFICATA', 'cl_ordine_riga', r.id, prima=prima, dopo={'quantita': nuova_qta})
+        if 'quantita' in d:
+            try:
+                nuova_qta = float(d.get('quantita'))
+            except (TypeError, ValueError):
+                raise ValueError('Quantità ordinata non valida.')
+            if nuova_qta < 0:
+                raise ValueError('La quantità ordinata non può essere negativa.')
+            r.quantita = nuova_qta
+            dopo['quantita'] = nuova_qta
+        if 'quantita_evasa' in d:
+            nuova_evasa = _numero_opzionale(d, 'quantita_evasa', 'Quantità evasa')
+            r.quantita_evasa = nuova_evasa
+            dopo['quantita_evasa'] = nuova_evasa
+        if 'quantita_prodotta' in d:
+            v = d.get('quantita_prodotta')
+            if v in (None, ''):
+                r.quantita_prodotta_manuale = None
+                dopo['quantita_prodotta_manuale'] = None
+            else:
+                try:
+                    nuova_prodotta = float(v)
+                except (TypeError, ValueError):
+                    raise ValueError('Quantità prodotta non valida.')
+                if nuova_prodotta < 0:
+                    raise ValueError('La quantità prodotta non può essere negativa.')
+                r.quantita_prodotta_manuale = nuova_prodotta
+                dopo['quantita_prodotta_manuale'] = nuova_prodotta
+    except ValueError as e:
+        db.session.rollback()
+        return jsonify(ok=False, error=str(e)), 400
+    if not dopo:
+        return jsonify(ok=False, error='Nessun campo da modificare.'), 400
+    _audit('ORDINE_RIGA_MODIFICATA', 'cl_ordine_riga', r.id, prima=prima, dopo=dopo)
     db.session.commit()
     return jsonify(ok=True, ordine=_ordine_dict(o, con_righe=True))
 
 
+@cl_bp.post('/api/ordini/<int:oid>/righe')
+def api_aggiungi_riga_ordine(oid):
+    """
+    Aggiunge una riga a un ordine esistente — richiesta di Mauri
+    (02/10/2026), stesso "menù intelligente" usato per gli altri codici
+    cliente: si manda 'codice' (obbligatorio, maiuscolo) scelto dal catalogo
+    del cliente (/api/articoli?cliente_id=...) oppure digitato nuovo — in tal
+    caso va passata anche 'descrizione' e viene creato il codice di
+    magazzino (ClArticoloCliente) al volo, stesso comportamento
+    dell'importazione PDF. 'quantita' obbligatoria, 'prezzo_unitario'
+    opzionale. Nessun vincolo di stato: si può aggiungere una riga a un
+    ordine in qualunque stato, anche CONFERMATO (correzione).
+    """
+    o = db.session.get(ClOrdine, oid) or abort(404)
+    d = request.get_json(silent=True) or {}
+    try:
+        codice = _testo(d, 'codice', 100, True).upper()
+        quantita = float(d.get('quantita'))
+    except (ValueError, TypeError):
+        return jsonify(ok=False, error='Codice e quantità sono obbligatori.'), 400
+    if quantita < 0:
+        return jsonify(ok=False, error='La quantità non può essere negativa.'), 400
+    prezzo_unitario = None
+    if d.get('prezzo_unitario') not in (None, ''):
+        try:
+            prezzo_unitario = float(d['prezzo_unitario'])
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error='Prezzo unitario non valido.'), 400
+
+    articolo = ClArticoloCliente.query.filter_by(cliente_id=o.cliente_id, codice=codice).first()
+    nuovo_codice = False
+    if not articolo:
+        descrizione = _testo(d, 'descrizione', 300)
+        if not descrizione:
+            return jsonify(ok=False, error=f'Codice "{codice}" non ancora a catalogo per questo cliente — indica anche la descrizione per crearlo.'), 400
+        udm = (d.get('udm') or 'PZ').upper()
+        if udm not in UDM:
+            udm = 'PZ'
+        articolo = ClArticoloCliente(cliente_id=o.cliente_id, codice=codice, descrizione=descrizione,
+                                     udm=udm, tracciamento='LOTTO', attivo=True)
+        db.session.add(articolo)
+        db.session.flush()
+        nuovo_codice = True
+
+    prossimo_n = (max((r.n_riga for r in o.righe), default=0)) + 1
+    riga = ClOrdineRiga(ordine_id=o.id, n_riga=prossimo_n, articolo_id=articolo.id,
+                        descrizione=d.get('descrizione') or articolo.descrizione,
+                        quantita=quantita, prezzo_unitario=prezzo_unitario)
+    db.session.add(riga)
+    _audit('ORDINE_RIGA_AGGIUNTA', 'cl_ordine_riga', '', dopo={'ordine_id': o.id, 'codice': codice,
+                                                               'quantita': quantita, 'codice_nuovo': nuovo_codice})
+    db.session.commit()
+    return jsonify(ok=True, ordine=_ordine_dict(o, con_righe=True)), 201
+
+
 @cl_bp.delete('/api/ordini/<int:oid>/righe/<int:rid>')
 def api_elimina_riga_ordine(oid, rid):
-    """Toglie una riga letta per errore dal PDF — solo in BOZZA, e solo se
-    non è l'ultima (un ordine senza righe non ha senso: si elimina l'ordine)."""
+    """Toglie una riga dall'ordine — richiesta di Mauri (02/10/2026): NON più
+    solo in BOZZA, sempre. Resta il vincolo che non può essere l'ultima (un
+    ordine senza righe non ha senso: si elimina l'intero ordine, se serve)."""
     o = db.session.get(ClOrdine, oid) or abort(404)
     r = next((x for x in o.righe if x.id == rid), None) or abort(404)
-    if o.stato != 'BOZZA':
-        return jsonify(ok=False, error='Solo le righe di una bozza si possono eliminare.'), 409
     if len(o.righe) <= 1:
-        return jsonify(ok=False, error='Un ordine deve avere almeno una riga — elimina l\'intera bozza, se serve.'), 409
+        return jsonify(ok=False, error='Un ordine deve avere almeno una riga — elimina l\'intero ordine, se serve.'), 409
     _audit('ORDINE_RIGA_ELIMINATA', 'cl_ordine_riga', r.id, prima={'codice': r.articolo.codice if r.articolo else '',
                                                                     'quantita': float(r.quantita)})
     db.session.delete(r)
@@ -656,11 +791,16 @@ def api_elimina_riga_ordine(oid, rid):
 
 @cl_bp.delete('/api/ordini/<int:oid>')
 def api_elimina_ordine(oid):
-    """Elimina un ordine SOLO se ancora in BOZZA (letto male dal PDF, o
-    caricato per errore) — un ordine CONFERMATO non si tocca più da qui."""
+    """
+    Elimina un intero ordine — richiesta di Mauri (02/10/2026): PRIMA solo se
+    ancora in BOZZA, ora consentito qualunque sia lo stato (anche
+    CONFERMATO) PURCHÉ non sia già movimentato (vedi _ordine_movimentato:
+    nessuna riga con Prodotta o Evasa sopra zero) — un ordine con produzione
+    o evasione reale sopra non si tocca più da qui, si annullerebbe un dato
+    che altrove (OrdineProduzione/DDT) resta vero."""
     o = db.session.get(ClOrdine, oid) or abort(404)
-    if o.stato != 'BOZZA':
-        return jsonify(ok=False, error='Solo una bozza può essere eliminata.'), 409
+    if _ordine_movimentato(o):
+        return jsonify(ok=False, error='Ordine già movimentato (produzione o evasione registrata) — non eliminabile.'), 409
     _audit('ORDINE_ELIMINATO', 'cl_ordine', o.id, prima=_ordine_dict(o, con_righe=True))
     db.session.delete(o)
     db.session.commit()
@@ -785,11 +925,12 @@ def api_live():
         for r in o.righe:
             codice = r.articolo.codice if r.articolo else ''
             ordinata = float(r.quantita)
-            prodotta = _quantita_prodotta(codice)
+            prodotta = _prodotta_riga(r)
             saldo = round(ordinata - prodotta, 3)
             pct = round(min(100, prodotta / ordinata * 100)) if ordinata > 0 else 100
             righe.append({'articolo_id': r.articolo_id, 'codice': codice, 'descrizione': r.descrizione,
-                          'quantita': ordinata, 'quantita_prodotta': prodotta, 'quantita_evasa': 0.0,
+                          'quantita': ordinata, 'quantita_prodotta': prodotta,
+                          'quantita_evasa': float(r.quantita_evasa or 0),
                           'saldo_da_produrre': saldo, 'pct': pct, 'ha_foto': r.articolo_id in con_foto})
         g['ordini'].append({'id': o.id, 'numero_ordine': o.numero_ordine, 'rif_cliente': o.rif_cliente, 'righe': righe})
     return jsonify(sorted(gruppi.values(), key=lambda g: g['cliente']))
@@ -818,11 +959,19 @@ def api_magazzino():
                     .group_by(ClLotto.articolo_id).all())
 
     ordinate = {}
-    righe_ordine = (db.session.query(ClOrdineRiga.articolo_id, db.func.coalesce(db.func.sum(ClOrdineRiga.quantita), 0))
-                    .join(ClOrdine, ClOrdine.id == ClOrdineRiga.ordine_id)
-                    .filter(ClOrdine.stato == 'CONFERMATO', ClOrdineRiga.articolo_id.in_(articolo_ids))
-                    .group_by(ClOrdineRiga.articolo_id).all()) if versione_schema() >= VERSIONE_SCHEMA_ORDINI else []
-    ordinate = dict(righe_ordine)
+    evase = {}
+    if versione_schema() >= VERSIONE_SCHEMA_ORDINI:
+        righe_ordine = (db.session.query(ClOrdineRiga.articolo_id, db.func.coalesce(db.func.sum(ClOrdineRiga.quantita), 0))
+                        .join(ClOrdine, ClOrdine.id == ClOrdineRiga.ordine_id)
+                        .filter(ClOrdine.stato == 'CONFERMATO', ClOrdineRiga.articolo_id.in_(articolo_ids))
+                        .group_by(ClOrdineRiga.articolo_id).all())
+        ordinate = dict(righe_ordine)
+    if versione_schema() >= VERSIONE_SCHEMA_RIGHE_MODIFICABILI:
+        righe_evase = (db.session.query(ClOrdineRiga.articolo_id, db.func.coalesce(db.func.sum(ClOrdineRiga.quantita_evasa), 0))
+                       .join(ClOrdine, ClOrdine.id == ClOrdineRiga.ordine_id)
+                       .filter(ClOrdine.stato == 'CONFERMATO', ClOrdineRiga.articolo_id.in_(articolo_ids))
+                       .group_by(ClOrdineRiga.articolo_id).all())
+        evase = dict(righe_evase)
 
     con_foto = set()
     if versione_schema() >= VERSIONE_SCHEMA_LIVE:
@@ -837,6 +986,6 @@ def api_magazzino():
         prodotta = _quantita_prodotta(a.codice)
         g['articoli'].append({'articolo_id': a.id, 'codice': a.codice, 'descrizione': a.descrizione, 'udm': a.udm,
                               'giacenza': float(giacenze.get(a.id, 0) or 0), 'quantita_ordinata': ordinata,
-                              'quantita_prodotta': prodotta, 'quantita_evasa': 0.0,
+                              'quantita_prodotta': prodotta, 'quantita_evasa': float(evase.get(a.id, 0) or 0),
                               'saldo_da_produrre': round(ordinata - prodotta, 3), 'ha_foto': a.id in con_foto})
     return jsonify(sorted(gruppi.values(), key=lambda g: g['cliente']))

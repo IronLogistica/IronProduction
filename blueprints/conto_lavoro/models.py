@@ -146,10 +146,23 @@ class ClOrdineRiga(db.Model):
     descrizione = db.Column(db.String(300), nullable=False, default='')
     quantita = db.Column(db.Numeric(14, 3), nullable=False)
     prezzo_unitario = db.Column(db.Numeric(14, 4))
+    # Dalla 0004 (richiesta di Mauri, 02/10/2026): "Evasa" era sempre 0.0
+    # calcolato al volo (il modulo DDT di uscita non esiste ancora) — ora è
+    # una colonna vera, correggibile a mano dal capo nel frattempo.
+    quantita_evasa = db.Column(db.Numeric(14, 3), nullable=False, default=0)
+    # "Prodotta" resta di norma calcolata in sola lettura da
+    # OrdineProduzione.qta_buona (vedi testata di routes.py) — se
+    # valorizzata, questa colonna la SOVRASCRIVE per questa riga (correzione
+    # manuale quando MasterWork non ha ancora dichiarato o la dichiarazione
+    # non corrisponde). NULL = nessuna correzione, resta il calcolo automatico.
+    quantita_prodotta_manuale = db.Column(db.Numeric(14, 3), nullable=True)
     __table_args__ = (
         db.UniqueConstraint('ordine_id', 'n_riga', name='uq_cl_ordine_riga'),
         db.CheckConstraint('n_riga > 0', name='ck_cl_ordine_riga_n'),
         db.CheckConstraint('quantita >= 0', name='ck_cl_ordine_riga_qta'),
+        db.CheckConstraint('quantita_evasa >= 0', name='ck_cl_ordine_riga_evasa'),
+        db.CheckConstraint('quantita_prodotta_manuale IS NULL OR quantita_prodotta_manuale >= 0',
+                           name='ck_cl_ordine_riga_prodotta_manuale'),
     )
     ordine = db.relationship('ClOrdine', back_populates='righe')
     articolo = db.relationship('ClArticoloCliente')
