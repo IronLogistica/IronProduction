@@ -315,12 +315,28 @@ def _righe_macchina(centro):
             # fase a monte già pronta, può mancare materiale DIRETTO di
             # questo stesso componente (es. un componente d'acquisto) — vince
             # sempre lo stato peggiore fra i due controlli.
+            #
+            # SECONDO BUG REALE TROVATO E CORRETTO (segnalato: alla SALDATURA
+            # alcuni pezzi venivano effettivamente saldati — il materiale
+            # c'era, solo non ancora nella quantità PIENA richiesta da tutto
+            # l'OP — ma il badge diceva IN ATTESA): 'materiale_disponibile_riga'
+            # sopra è un AND secco (tutto o niente) su ogni codice figlio, va
+            # benissimo per colorare la riga ("completo sì/no"), ma usato da
+            # solo per il badge si comportava come se bastasse un solo pezzo
+            # mancante su un solo materiale per bloccare TUTTO, anche quando
+            # c'è già abbastanza per iniziare a lavorare in parte. Come per la
+            # fase a monte: PARZIALMENTE PRODUCIBILE appena c'è una quantità
+            # minima (anche solo in parte) disponibile per OGNI codice figlio,
+            # IN ATTESA solo se ALMENO UN codice figlio è a zero.
             if materiale_disponibile_riga:
-                stato_producibilita = stato_upstream
+                stato_materiale = 'producibile'
+            elif consumi_standard and any(giacenza_di_op.get(cs['codice'], 0) <= 0 for cs in consumi_standard):
+                stato_materiale = 'in_attesa'
             else:
-                _priorita_stato = {'producibile': 0, 'parziale': 1, 'in_attesa': 2}
-                stato_producibilita = max(stato_upstream, 'in_attesa',
-                                           key=lambda s: _priorita_stato[s])
+                stato_materiale = 'parziale'
+
+            _priorita_stato = {'producibile': 0, 'parziale': 1, 'in_attesa': 2}
+            stato_producibilita = max(stato_upstream, stato_materiale, key=lambda s: _priorita_stato[s])
 
             posizione_manuale = posizioni_manuali_kpi.get(o.id)
             chiave_ordine = (0, posizione_manuale) if posizione_manuale is not None else (
@@ -351,6 +367,7 @@ def _righe_macchina(centro):
                 'non_rilasciato': False,
                 'completato': saldo_fase <= 0,
                 'stato_producibilita': stato_producibilita,
+                'stato_materiale': stato_materiale,
                 'fase_precedente': fase_precedente_nome,
                 'disponibile_da_monte': disponibile_da_monte,
                 'soglia_kanban': soglia_kanban,
@@ -383,7 +400,8 @@ def _righe_macchina(centro):
                 'tempo_standard_min_pz': round(tempo_standard_min_pz, 2) if tempo_standard_min_pz else None,
                 'scarto_max_pct': fase_ciclo.scarto_max_pct, 'scarto_max_pezzi': None,
                 'consumi_standard': [], 'non_rilasciato': True,
-                'stato_producibilita': 'in_attesa', 'fase_precedente': None, 'disponibile_da_monte': None,
+                'stato_producibilita': 'in_attesa', 'stato_materiale': 'in_attesa',
+                'fase_precedente': None, 'disponibile_da_monte': None,
                 'soglia_kanban': None,
                 '_chiave_ordine': (2, o.priorita, o.data_prevista or datetime.max.date(), o.id, codice_comp),
             })
