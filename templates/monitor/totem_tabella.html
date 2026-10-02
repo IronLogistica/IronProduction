@@ -170,6 +170,8 @@
                 <div style="font-size:.68rem;color:var(--muted);margin-top:3px">
                   {{ c.disponibile_da_monte | round | int }}{{ '/' + (c.soglia_kanban | round | int)|string if c.soglia_kanban else '' }} pronti da «{{ c.fase_precedente }}»
                 </div>
+                {% elif c.stato_producibilita != 'producibile' and not c.materiale_disponibile %}
+                <div style="font-size:.68rem;color:var(--muted);margin-top:3px">materiale mancante</div>
                 {% endif %}
               {% endif %}</td>
               <td>{{ c.totale | round | int }}</td>
