@@ -220,43 +220,6 @@ def _righe_macchina(centro):
             # maggiore priorità) già se ne contendono — 'giacenza_di_op' è
             # esattamente lo stesso residuo già calcolato qui sotto per il
             # controllo materiale, va solo letto PRIMA anziché dopo.
-            # Producibilità — richiesta di Mauri (02/10/2026): su queste righe
-            # la Priority non dice se si PUÒ lavorare ORA, solo in che ordine.
-            # Lean/Kanban di quantità, trasferito a codici diversi: ogni
-            # (codice, fase) ha il proprio ciclo (fasi_ciclo, già caricato
-            # sopra) — la fase PRECEDENTE nello STESSO ciclo di QUESTO codice
-            # è quella che conta, non una fase fissa uguale per tutti.
-            # 'lotto_trasferimento_minimo' della fase precedente (già in
-            # CicloLavoroWood, usato finora solo dal Gantt) è esattamente la
-            # taglia del cartellino kanban per quel codice in quel passaggio:
-            # non configurato = nessun overlap, serve che la fase precedente
-            # abbia già coperto TUTTO il fabbisogno residuo di qui.
-            # 'disponibile_da_monte' = quanto la fase precedente ha già
-            # prodotto per QUESTO componente/commessa e non ancora consumato
-            # da questa fase (stesso calcolo pezzi_fase, sulla fase di prima).
-            if idx == 0:
-                stato_producibilita = 'producibile'  # prima fase del ciclo: dipende solo da materiale (vedi colonna a parte)
-                fase_precedente_nome = None
-                disponibile_da_monte = None
-                soglia_kanban = None
-            else:
-                fase_prec = fasi_ciclo[idx - 1]
-                fase_precedente_nome = fase_prec.centro_costo.nome if fase_prec.centro_costo else None
-                pezzi_fase_precedente = _pezzi_fase_cached(o.codice, fase_precedente_nome, componente=componente_param) \
-                                         if fase_precedente_nome else 0
-                disponibile_da_monte = max(pezzi_fase_precedente - pezzi_fase, 0)
-                residuo_qui = max(qta_necessaria - pezzi_fase, 0)
-                soglia_kanban = min(fase_prec.lotto_trasferimento_minimo, residuo_qui) \
-                                 if fase_prec.lotto_trasferimento_minimo else residuo_qui
-                if residuo_qui <= 0:
-                    stato_producibilita = 'producibile'
-                elif disponibile_da_monte <= 0:
-                    stato_producibilita = 'in_attesa'
-                elif disponibile_da_monte >= soglia_kanban:
-                    stato_producibilita = 'producibile'
-                else:
-                    stato_producibilita = 'parziale'
-
             giacenza_di_op = residuo_per_op.get(o.id, residuo_finale)
             saldo_prima_giacenza = max(qta_necessaria - pezzi_fase, 0)
             # BUG REALE TROVATO E CORRETTO (segnalato: pianificato alzato,
@@ -301,6 +264,63 @@ def _righe_macchina(centro):
                 giacenza_di_op.get(cs['codice'], 0) >= round(qta_necessaria * cs['quantita'], 4)
                 for cs in consumi_standard
             ) if consumi_standard else True
+
+            # Producibilità — richiesta di Mauri (02/10/2026): su queste righe
+            # la Priority non dice se si PUÒ lavorare ORA, solo in che ordine.
+            # Lean/Kanban di quantità, trasferito a codici diversi: ogni
+            # (codice, fase) ha il proprio ciclo (fasi_ciclo, già caricato
+            # sopra) — la fase PRECEDENTE nello STESSO ciclo di QUESTO codice
+            # è quella che conta, non una fase fissa uguale per tutti.
+            # 'lotto_trasferimento_minimo' della fase precedente (già in
+            # CicloLavoroWood, usato finora solo dal Gantt) è esattamente la
+            # taglia del cartellino kanban per quel codice in quel passaggio:
+            # non configurato = nessun overlap, serve che la fase precedente
+            # abbia già coperto TUTTO il fabbisogno residuo di qui.
+            # 'disponibile_da_monte' = quanto la fase precedente ha già
+            # prodotto per QUESTO componente/commessa e non ancora consumato
+            # da questa fase (stesso calcolo pezzi_fase, sulla fase di prima).
+            if idx == 0:
+                # Prima fase del ciclo: non esiste una fase a monte da
+                # controllare, quindi la producibilità dipende SOLO dal
+                # materiale diretto appena calcolato sopra.
+                stato_upstream = 'producibile'
+                fase_precedente_nome = None
+                disponibile_da_monte = None
+                soglia_kanban = None
+            else:
+                fase_prec = fasi_ciclo[idx - 1]
+                fase_precedente_nome = fase_prec.centro_costo.nome if fase_prec.centro_costo else None
+                pezzi_fase_precedente = _pezzi_fase_cached(o.codice, fase_precedente_nome, componente=componente_param) \
+                                         if fase_precedente_nome else 0
+                disponibile_da_monte = max(pezzi_fase_precedente - pezzi_fase, 0)
+                residuo_qui = max(qta_necessaria - pezzi_fase, 0)
+                soglia_kanban = min(fase_prec.lotto_trasferimento_minimo, residuo_qui) \
+                                 if fase_prec.lotto_trasferimento_minimo else residuo_qui
+                if residuo_qui <= 0:
+                    stato_upstream = 'producibile'
+                elif disponibile_da_monte <= 0:
+                    stato_upstream = 'in_attesa'
+                elif disponibile_da_monte >= soglia_kanban:
+                    stato_upstream = 'producibile'
+                else:
+                    stato_upstream = 'parziale'
+
+            # BUG REALE TROVATO E CORRETTO (segnalato con screenshot: ZTR-01
+            # al Taglio risultava PRODUCIBILE pur mancando il piatto P1004 da
+            # ordinare, perché la prima fase del ciclo veniva sempre fissata
+            # 'producibile' senza mai guardare 'materiale_disponibile_riga',
+            # calcolato qui sopra ma usato finora solo per il colore della
+            # riga, mai per il badge). "I codici che hanno padre e figlio
+            # devi guardare tutto" (Mauri): anche a fase avanzata, con la
+            # fase a monte già pronta, può mancare materiale DIRETTO di
+            # questo stesso componente (es. un componente d'acquisto) — vince
+            # sempre lo stato peggiore fra i due controlli.
+            if materiale_disponibile_riga:
+                stato_producibilita = stato_upstream
+            else:
+                _priorita_stato = {'producibile': 0, 'parziale': 1, 'in_attesa': 2}
+                stato_producibilita = max(stato_upstream, 'in_attesa',
+                                           key=lambda s: _priorita_stato[s])
 
             posizione_manuale = posizioni_manuali_kpi.get(o.id)
             chiave_ordine = (0, posizione_manuale) if posizione_manuale is not None else (
