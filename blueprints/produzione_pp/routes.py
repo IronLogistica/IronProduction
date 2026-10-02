@@ -5267,17 +5267,28 @@ def api_masterwork_pendenti():
     """
     "Produzioni dichiarate in officina" — richiesta di Mauri (30/09/2026):
     elenco delle dichiarazioni arrivate da MasterWork (/api/pp/events) non
-    ancora VISIONATE (vedi EventoConsuntivoPP.visionato) — indipendente da
-    approvato_direzione, che resta per il vecchio meccanismo di
-    carico/approvazione automatica (non più esposto in interfaccia, vedi
-    api_dichiarazione_approva). Qui si legge e basta, nessun PIN: Angelo
-    guarda cosa è arrivato, lo confronta con quello che ha davanti in
-    officina, e carica LUI la produzione reale con la Dichiarazione di
-    Produzione — poi spunta questa riga come vista (api_masterwork_visiona).
-    Alimenta sia il pannello in cima alla pagina sia la tile lampeggiante
-    della dashboard principale (vedi api_masterwork_pendenti_conteggio).
+    ancora VISIONATE (vedi EventoConsuntivoPP.visionato). Qui si legge e
+    basta, nessun PIN: Angelo guarda cosa è arrivato, lo confronta con
+    quello che ha davanti in officina, e carica LUI la produzione reale con
+    la Dichiarazione di Produzione — poi spunta questa riga come vista
+    (api_masterwork_visiona). Alimenta sia il pannello in cima alla pagina
+    sia la tile lampeggiante della dashboard principale (vedi
+    api_masterwork_pendenti_conteggio).
+
+    BUG CORRETTO (01/10/2026, segnalato da Mauri): filtrava solo per
+    visionato=False, che parte sempre False per QUALSIASI evento — anche
+    quelli creati dalla Dichiarazione di Produzione stessa (dashboard o
+    totem Alessandro), che passano dalla stessa _registra_evento_consuntivo.
+    Risultato: nel pannello finivano anche dichiarazioni già fatte a mano
+    da Alessandro, già affidabili e già applicate — non da "rivedere".
+    Il filtro giusto è approvato_direzione=False: SOLO MasterWork
+    (/api/pp/events) lo lascia False di default (stand-by, da approvare) —
+    la Dichiarazione di Produzione manuale (dashboard/totem Alessandro) lo
+    passa sempre True, entra già approvata (vedi _registra_evento_consuntivo
+    e api_dichiarazione_crea). Così il pannello mostra solo ciò che
+    arriva davvero da MasterWork.
     """
-    eventi = (EventoConsuntivoPP.query.filter_by(visionato=False)
+    eventi = (EventoConsuntivoPP.query.filter_by(visionato=False, approvato_direzione=False)
               .order_by(EventoConsuntivoPP.timestamp_evento.desc()).limit(300).all())
     op_codes = {e.op_code for e in eventi}
     op_per_codice = {o.codice: o for o in OrdineProduzione.query.filter(OrdineProduzione.codice.in_(op_codes)).all()} if op_codes else {}
@@ -5295,8 +5306,10 @@ def api_masterwork_pendenti():
 @pp_bp.get('/api/dichiarazione-produzione/masterwork-pendenti/conteggio')
 def api_masterwork_pendenti_conteggio():
     """Solo il numero — per la tile lampeggiante della dashboard principale,
-    senza dover scaricare l'elenco completo a ogni apertura del programma."""
-    n = EventoConsuntivoPP.query.filter_by(visionato=False).count()
+    senza dover scaricare l'elenco completo a ogni apertura del programma.
+    Stesso filtro di api_masterwork_pendenti (vedi lì per il bug corretto
+    01/10/2026): solo eventi MasterWork, non quelli già dichiarati a mano."""
+    n = EventoConsuntivoPP.query.filter_by(visionato=False, approvato_direzione=False).count()
     return jsonify(ok=True, n=n)
 
 
