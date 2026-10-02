@@ -44,6 +44,13 @@
   tr.materiale-ok{box-shadow:inset 0 0 0 3px var(--warn);animation:lampeggio-giallo 2s infinite}
   @keyframes lampeggio-giallo{0%,100%{box-shadow:inset 0 0 0 3px var(--warn), 0 0 14px 4px rgba(245,158,11,.7)}50%{box-shadow:inset 0 0 0 3px var(--warn), 0 0 4px 1px rgba(245,158,11,.2)}}
   .prio-badge{font-size:1.2rem;font-weight:800;color:var(--muted)}
+  /* Producibilità — vedi stesso commento in totem_tabella.html: sostituisce
+     la Priority qui, l'operaio deve sapere SE può lavorare ORA. */
+  .prod-badge{display:inline-block;font-size:.62rem;font-weight:800;letter-spacing:.3px;text-transform:uppercase;
+              border-radius:6px;padding:3px 7px;text-align:center;white-space:nowrap}
+  .prod-badge.producibile{color:var(--ok);background:rgba(34,197,94,.14);border:1px solid var(--ok)}
+  .prod-badge.parziale{color:var(--warn);background:rgba(245,158,11,.14);border:1px solid var(--warn)}
+  .prod-badge.in_attesa{color:var(--danger);background:rgba(239,68,68,.14);border:1px solid var(--danger)}
   .commessa{font-family:'Consolas',monospace;font-size:.85rem;display:block}
   .pz-prod{font-size:.72rem;color:var(--muted)}
   .pz-prod b{font-size:1rem;color:var(--text)}
@@ -113,13 +120,14 @@
     <div class="scorri">
       <table class="tabella-totem">
         <thead><tr>
-          <th>Prio</th><th>Commessa</th><th>Da Produrre</th><th>Codice e immagine</th>
+          <th>Producibilità</th><th>Commessa</th><th>Da Produrre</th><th>Codice e immagine</th>
           <th>Pz Necessari{{ '*' if s.saldatura_nota else '' }}</th><th>Prodotti</th><th>%</th>
         </tr></thead>
         <tbody>
+        {% set ETICHETTA_PRODUCIBILITA = {'producibile': 'PRODUCIBILE', 'parziale': 'PARZIALMENTE PRODUCIBILE', 'in_attesa': 'IN ATTESA'} %}
         {% for g in s.gruppi %}
           <tr class="{{ 'completa' if g.saldo_totale <= 0 else ('materiale-ok' if g.materiale_disponibile else '') }}">
-            <td><span class="prio-badge">{{ g.priorita }}</span></td>
+            <td>{% if g.stato_producibilita %}<span class="prod-badge {{ g.stato_producibilita }}">{{ ETICHETTA_PRODUCIBILITA[g.stato_producibilita] }}</span>{% endif %}</td>
             <td><span class="commessa">{{ g.commessa or g.op_codice }}</span><span class="pz-prod">pz in prod. <b>{{ g.qta_pianificata }}</b></span></td>
             <td><span class="saldo-box{{ ' zero' if g.saldo_totale <= 0 else '' }}">{{ g.saldo_totale | round | int }}</span></td>
             <td>
@@ -140,7 +148,7 @@
           <tr class="dettaglio-codici"><td colspan="7">
             <table class="tabella-dettaglio">
               <thead><tr>
-                <th>Codice lavorato</th><th>Descrizione</th><th>Pz Necessari</th><th>Prodotti</th><th>Da Produrre</th>
+                <th>Codice lavorato</th><th>Descrizione</th><th>Producibilità</th><th>Pz Necessari</th><th>Prodotti</th><th>Da Produrre</th>
                 {% for col in s.colonne_parametri %}<th>{{ col.etichetta }}</th>{% endfor %}
               </tr></thead>
               <tbody>
@@ -148,6 +156,13 @@
                 <tr class="{{ 'componente-completo' if c.completato else '' }}">
                   <td class="codice-cell">{{ c.codice_lavorato }}{{ ' ✅' if c.completato else '' }}</td>
                   <td class="muted">{{ c.descrizione_lavorata or '—' }}</td>
+                  <td>{% if not c.completato %}<span class="prod-badge {{ c.stato_producibilita }}">{{ ETICHETTA_PRODUCIBILITA[c.stato_producibilita] }}</span>
+                    {% if c.stato_producibilita != 'producibile' and c.fase_precedente %}
+                    <div style="font-size:.62rem;color:var(--muted);margin-top:2px">
+                      {{ c.disponibile_da_monte | round | int }}{{ '/' + (c.soglia_kanban | round | int)|string if c.soglia_kanban else '' }} pronti da «{{ c.fase_precedente }}»
+                    </div>
+                    {% endif %}
+                  {% endif %}</td>
                   <td>{{ c.totale | round | int }}</td><td>{{ c.pezzi_fatti | round | int }}</td><td style="font-weight:700">{{ c.saldo | round | int }}</td>
                   {% for col in s.colonne_parametri %}<td>{{ c.parametri[col.chiave] or '—' }}</td>{% endfor %}
                 </tr>
