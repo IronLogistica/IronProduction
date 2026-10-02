@@ -7,7 +7,7 @@
 
 {% if schema < schema_richiesto %}
 <div class="mon-section" style="padding:14px;color:#c0392b;font-weight:700">
-  ⚠️ Tabelle degli Ordini non ancora create: imposta CL_MIGRA_AUTO = 0002 su Railway.
+  ⚠️ Tabelle degli Ordini non ancora alla versione richiesta: imposta CL_MIGRA_AUTO = {{ '%04d' % schema_richiesto }} su Railway.
 </div>
 {% else %}
 
@@ -18,8 +18,8 @@
   </div>
   <div style="padding:10px 14px;overflow-x:auto">
     <table class="mon-table" style="width:100%">
-      <thead><tr><th>Numero ordine</th><th>Rif. cliente</th><th>Cliente</th><th>Data</th><th>Stato</th><th></th></tr></thead>
-      <tbody id="lista-ordini"><tr><td colspan="6" style="color:var(--text-dim)">Caricamento...</td></tr></tbody>
+      <thead><tr><th>Numero ordine</th><th>Rif. cliente</th><th>Cliente</th><th>Data</th><th>Stato</th><th>File</th><th></th></tr></thead>
+      <tbody id="lista-ordini"><tr><td colspan="7" style="color:var(--text-dim)">Caricamento...</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -75,7 +75,7 @@
     <div id="dettaglio-ordine"></div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modalOrdine')">Chiudi</button>
-      <button class="btn btn-ghost" id="btn-ord-elimina" onclick="eliminaOrdineAperto()">🗑️ Elimina bozza</button>
+      <button class="btn btn-ghost" id="btn-ord-elimina" onclick="eliminaOrdineAperto()">🗑️ Elimina ordine</button>
       <button class="btn btn-primary" id="btn-ord-conferma-apertura" onclick="confermaOrdineAperto()">✅ Conferma ordine</button>
     </div>
   </div>
@@ -126,7 +126,19 @@ async function caricaOrdini(){
       <td>${esc(o.cliente)}</td><td>${esc(o.data_documento) || '—'}</td>
       <td><span style="color:${BADGE_STATO[o.stato] || '#999'};font-weight:700">${esc(o.stato)}</span></td>
       <td>${esc(o.filename)}</td>
-    </tr>`).join('') : '<tr><td colspan="6" style="color:var(--text-dim)">Nessun ordine importato.</td></tr>';
+      <td>${o.movimentato
+          ? `<span style="font-size:11px;color:var(--text-dim)" title="Ha produzione o evasione registrata — non eliminabile">🔒</span>`
+          : `<button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" title="Elimina ordine"
+               onclick="event.stopPropagation(); eliminaOrdineLista(${o.id})">🗑️</button>`}</td>
+    </tr>`).join('') : '<tr><td colspan="7" style="color:var(--text-dim)">Nessun ordine importato.</td></tr>';
+}
+
+async function eliminaOrdineLista(id){
+  if(!confirm('Eliminare questo ordine? Operazione irreversibile.')) return;
+  const d = await chiama('/conto-lavoro/api/ordini/' + id, 'DELETE');
+  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
+  showToast('🗑️ Ordine eliminato');
+  caricaOrdini();
 }
 
 function apriImportOrdine(){
@@ -178,6 +190,8 @@ async function importaOrdine(conferma){
   caricaOrdini();
 }
 
+let CATALOGO_ORDINE_APERTO = [];  // articoli del cliente dell'ordine aperto — per il menù intelligente "+ Aggiungi riga"
+
 async function apriOrdine(id){
   const d = await chiama('/conto-lavoro/api/ordini/' + id);
   if(!d.id) return;
@@ -190,38 +204,104 @@ async function apriOrdine(id){
       Stato: <span style="color:${BADGE_STATO[d.stato] || '#999'};font-weight:700">${esc(d.stato)}</span>
     </div>
     <table class="mon-table" style="width:100%"><thead><tr>
-        <th>Codice</th><th>Descrizione</th><th>Ordinata</th><th>Prodotta</th><th>Evasa</th><th>Saldo da produrre</th>${bozza ? '<th></th>' : ''}
+        <th>Codice</th><th>Descrizione</th><th>Ordinata</th><th>Prodotta</th><th>Evasa</th><th>Saldo da produrre</th><th></th>
       </tr></thead>
     <tbody>${d.righe.map(r => `<tr id="riga-ordine-${r.id}">
         <td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td>
-        <td>${bozza
-          ? `<input type="number" min="0" step="0.001" value="${r.quantita}" style="width:80px" id="qta-riga-${r.id}"
-               onkeydown="if(event.key==='Enter')salvaQuantitaRiga(${r.id})">`
-          : r.quantita}</td>
-        <td>${r.quantita_prodotta}</td>
-        <td>${r.quantita_evasa}</td>
+        <td><input type="number" min="0" step="0.001" value="${r.quantita}" style="width:75px" id="qta-riga-${r.id}"
+             onkeydown="if(event.key==='Enter')salvaRigaOrdine(${r.id})"></td>
+        <td>
+          <input type="number" min="0" step="0.001" value="${r.quantita_prodotta}" style="width:75px" id="prodotta-riga-${r.id}"
+             onkeydown="if(event.key==='Enter')salvaRigaOrdine(${r.id})">
+          ${r.prodotta_manuale
+            ? `<div style="font-size:10px;color:#e0a800;margin-top:2px">manuale
+                 <a href="#" onclick="event.preventDefault(); resettaProdottaRiga(${r.id})" style="color:#4a9fd6">↺ auto</a></div>`
+            : `<div style="font-size:10px;color:var(--text-dim);margin-top:2px">da MasterWork</div>`}
+        </td>
+        <td><input type="number" min="0" step="0.001" value="${r.quantita_evasa}" style="width:75px" id="evasa-riga-${r.id}"
+             onkeydown="if(event.key==='Enter')salvaRigaOrdine(${r.id})"></td>
         <td style="font-weight:800;color:${r.saldo_da_produrre > 0 ? '#e0a800' : '#1a9e5c'}">${r.saldo_da_produrre}</td>
-        ${bozza ? `<td style="white-space:nowrap">
-            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="salvaQuantitaRiga(${r.id})">💾</button>
-            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="eliminaRigaOrdine(${r.id})">🗑️</button>
-          </td>` : ''}
+        <td style="white-space:nowrap">
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" title="Salva" onclick="salvaRigaOrdine(${r.id})">💾</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" title="Elimina riga" onclick="eliminaRigaOrdine(${r.id})">🗑️</button>
+          </td>
       </tr>`).join('')}</tbody></table>
-    <div style="font-size:11px;color:var(--text-dim);margin-top:6px">
-      Prodotta: dichiarazioni di produzione già arrivate da MasterWork per questo codice. Evasa: 0 finché il modulo DDT di uscita non è attivo.
+    <div style="font-size:11px;color:var(--text-dim);margin:6px 0 10px">
+      Prodotta: dichiarazioni di produzione già arrivate da MasterWork per questo codice (correggibile a mano, es. se MasterWork non ha ancora dichiarato).
+      Evasa: da aggiornare a mano finché il modulo DDT di uscita non è attivo.
+    </div>
+    <div style="border-top:1px solid var(--border);padding-top:10px">
+      <div style="font-size:12px;font-weight:700;margin-bottom:6px">➕ Aggiungi riga</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end">
+        <div><label class="modal-label" style="margin:0">Codice</label>
+          <input class="modal-input" id="nr-codice" list="dl-articoli-ordine" style="width:150px"
+                 oninput="aggiornaDescrizioneNuovaRiga()" placeholder="cerca o digita nuovo">
+          <datalist id="dl-articoli-ordine"></datalist></div>
+        <div id="nr-descrizione-box" style="display:none">
+          <label class="modal-label" style="margin:0">Descrizione (nuovo codice)</label>
+          <input class="modal-input" id="nr-descrizione" style="width:200px"></div>
+        <div><label class="modal-label" style="margin:0">Quantità</label>
+          <input class="modal-input" type="number" min="0" step="0.001" id="nr-quantita" style="width:90px"></div>
+        <button class="btn btn-primary" onclick="aggiungiRigaOrdine()">➕ Aggiungi</button>
+      </div>
+      <div id="nr-esito" style="font-size:12px;color:#c0392b;margin-top:6px"></div>
     </div>`;
-  document.getElementById('btn-ord-elimina').style.display = bozza ? '' : 'none';
+  document.getElementById('btn-ord-elimina').style.display = d.movimentato ? 'none' : '';
   document.getElementById('btn-ord-conferma-apertura').style.display = bozza ? '' : 'none';
   openModal('modalOrdine');
+  CATALOGO_ORDINE_APERTO = await chiama('/conto-lavoro/api/articoli?cliente_id=' + d.cliente_id + '&tutti=1');
+  const dl = document.getElementById('dl-articoli-ordine');
+  if(dl) dl.innerHTML = (Array.isArray(CATALOGO_ORDINE_APERTO) ? CATALOGO_ORDINE_APERTO : [])
+    .map(a => `<option value="${esc(a.codice)}">${esc(a.descrizione) || ''}</option>`).join('');
 }
 
-async function salvaQuantitaRiga(rid){
+function aggiornaDescrizioneNuovaRiga(){
+  const codice = (document.getElementById('nr-codice').value || '').trim().toUpperCase();
+  const trovato = CATALOGO_ORDINE_APERTO.find(a => a.codice === codice);
+  document.getElementById('nr-descrizione-box').style.display = (codice && !trovato) ? '' : 'none';
+}
+
+async function aggiungiRigaOrdine(){
   if(!ordineAperto) return;
-  const input = document.getElementById('qta-riga-' + rid);
-  const nuova = parseFloat(input.value);
-  if(isNaN(nuova) || nuova < 0){ showToast('❌ Quantità non valida'); return; }
-  const d = await chiama(`/conto-lavoro/api/ordini/${ordineAperto.id}/righe/${rid}`, 'PUT', {quantita: nuova});
+  const esito = document.getElementById('nr-esito');
+  const codice = (document.getElementById('nr-codice').value || '').trim();
+  const quantita = parseFloat(document.getElementById('nr-quantita').value);
+  const descrizione = (document.getElementById('nr-descrizione').value || '').trim();
+  if(!codice){ esito.textContent = 'Scegli o digita un codice.'; return; }
+  if(isNaN(quantita) || quantita < 0){ esito.textContent = 'Quantità non valida.'; return; }
+  esito.textContent = '';
+  const d = await chiama(`/conto-lavoro/api/ordini/${ordineAperto.id}/righe`, 'POST',
+                         {codice, quantita, descrizione});
+  if(!d.ok){ esito.textContent = '❌ ' + (d.error || 'Errore'); return; }
+  showToast('✅ Riga aggiunta');
+  ordineAperto = d.ordine;
+  apriOrdine(ordineAperto.id);
+  caricaOrdini();
+}
+
+async function salvaRigaOrdine(rid){
+  if(!ordineAperto) return;
+  const qta = parseFloat(document.getElementById('qta-riga-' + rid).value);
+  const prodotta = parseFloat(document.getElementById('prodotta-riga-' + rid).value);
+  const evasa = parseFloat(document.getElementById('evasa-riga-' + rid).value);
+  if(isNaN(qta) || qta < 0 || isNaN(prodotta) || prodotta < 0 || isNaN(evasa) || evasa < 0){
+    showToast('❌ Quantità non valida'); return;
+  }
+  const d = await chiama(`/conto-lavoro/api/ordini/${ordineAperto.id}/righe/${rid}`, 'PUT',
+                         {quantita: qta, quantita_prodotta: prodotta, quantita_evasa: evasa});
   if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
-  showToast('✅ Quantità aggiornata');
+  showToast('✅ Riga aggiornata');
+  ordineAperto = d.ordine;
+  apriOrdine(ordineAperto.id);
+  caricaOrdini();
+}
+
+async function resettaProdottaRiga(rid){
+  if(!ordineAperto) return;
+  const d = await chiama(`/conto-lavoro/api/ordini/${ordineAperto.id}/righe/${rid}`, 'PUT',
+                         {quantita_prodotta: null});
+  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
+  showToast('↺ Tornata al calcolo automatico');
   ordineAperto = d.ordine;
   apriOrdine(ordineAperto.id);
   caricaOrdini();
@@ -247,10 +327,10 @@ async function confermaOrdineAperto(){
 }
 
 async function eliminaOrdineAperto(){
-  if(!ordineAperto || !confirm('Eliminare questa bozza di ordine?')) return;
+  if(!ordineAperto || !confirm('Eliminare questo ordine? Operazione irreversibile.')) return;
   const d = await chiama('/conto-lavoro/api/ordini/' + ordineAperto.id, 'DELETE');
   if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
-  showToast('🗑️ Bozza eliminata');
+  showToast('🗑️ Ordine eliminato');
   closeModal('modalOrdine');
   caricaOrdini();
 }
