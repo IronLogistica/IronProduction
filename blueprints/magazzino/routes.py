@@ -3359,6 +3359,54 @@ def _costo_standard_serializzabile(r):
     return out
 
 
+def _valore_wip_a_fase(codice, centro_costo_id):
+    """
+    Costo standard CONGELATO (richiesta Mauri, 03/10/2026: "ci servirà per
+    calcolare le scorte finali") accumulato per 1 pezzo di 'codice' fermo
+    ALMENO alla fase 'centro_costo_id' — materiali per intero (si consumano
+    alla prima fase, quindi pesano su ogni fase successiva) + lavorazione/
+    manodopera/overhead SOLO delle fasi già fatte fino a qui, non di quelle
+    ancora da fare. Stessa filosofia di LegameCostoStandardOrdineWood: usa
+    l'ULTIMA versione di Costo Standard SALVATA per quel codice (le tariffe
+    congelate in quel momento, CostoStandardVersioneFaseWood), non le
+    tariffe correnti di CentroCostoWood — un conguaglio tariffe si vede solo
+    al prossimo "Ricalcola e salva" di quel codice, non istante per istante.
+
+    Ritorna (valore_unitario, versione_id) — (None, None) se per 'codice'
+    non è mai stato salvato un Costo Standard: niente da cui valorizzare,
+    non si inventa un numero (stessa filosofia di 'codici_senza_costo' in
+    _calcola_costo_standard — si segnala, non si stima).
+
+    La sequenza che identifica "fino a quale fase" è quella ATTUALE del
+    Ciclo di Lavoro (CicloLavoroWood) — se il ciclo è cambiato DOPO l'ultimo
+    salvataggio del Costo Standard, il confronto può non essere più esatto:
+    rischio accettato, stesso compromesso di ogni dato "congelato" nell'app
+    (si aggiorna solo ricalcolando lo standard, mai da solo).
+    """
+    sequenza_richiesta = (CicloLavoroWood.query
+                           .filter_by(codice=codice, centro_costo_id=centro_costo_id)
+                           .with_entities(CicloLavoroWood.sequenza).scalar())
+    if sequenza_richiesta is None:
+        return None, None
+    versione = (CostoStandardVersioneWood.query.filter_by(codice=codice)
+                .order_by(CostoStandardVersioneWood.versione.desc()).first())
+    if not versione:
+        return None, None
+
+    lavorazione_cum = manodopera_cum = 0.0
+    for f in versione.fasi:
+        if f.sequenza is not None and f.sequenza <= sequenza_richiesta and f.produttivita_oraria_congelata:
+            ore_pz = 1.0 / f.produttivita_oraria_congelata
+            lavorazione_cum += ore_pz * (f.costo_orario_congelato or 0)
+            manodopera_cum += ore_pz * (f.tariffa_manodopera_congelata or 0)
+
+    costo_materiali = versione.costo_materiali or 0.0
+    overhead_materiali_cum = versione.costo_overhead_materiali or 0.0  # pesa per intero da subito (materiali interi)
+    overhead_produzione_cum = (lavorazione_cum + manodopera_cum) * ((versione.overhead_produzione_pct_usata or 0) / 100.0)
+    valore_unitario = costo_materiali + overhead_materiali_cum + lavorazione_cum + manodopera_cum + overhead_produzione_cum
+    return round(valore_unitario, 4), versione.id
+
+
 def _annota_costo_albero(componenti, _cache):
     """
     Cammina l'albero già costruito da _esplodi_bom_wood e annota, per ogni

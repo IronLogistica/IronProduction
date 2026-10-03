@@ -21,6 +21,11 @@
       Un codice che non ha mai avuto nessuna riga qui (né manuale né automatica) continua a funzionare esattamente
       come prima: tutta la sua giacenza vale come "già fatto" per ogni fase.
     </p>
+    <p style="font-size:12px;color:var(--text-dim)">
+      Ogni riga è valorizzata in automatico col Costo Standard <b>congelato</b> di quel codice (materiali per
+      intero + lavorazione/manodopera/overhead solo delle fasi già fatte) — per le scorte finali. Un codice senza
+      Costo Standard mai salvato resta senza valore: nessun numero inventato.
+    </p>
   </div>
 </div>
 
@@ -39,6 +44,10 @@ async function caricaWipStation(){
   box.innerHTML = righe.map(r => renderCard(r)).join('');
 }
 
+function fmtEuro(v){
+  return v === null || v === undefined ? '—' : '€ ' + v.toLocaleString('it-IT', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+}
+
 function renderCard(r){
   const fasiHtml = r.fasi.map(f => `
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
@@ -47,6 +56,9 @@ function renderCard(r){
              data-centro="${f.centro_costo_id}"
              style="width:100px" class="wip-input">
       <span style="font-size:11px;color:var(--text-dim)">pz già ad almeno questa fase</span>
+      <span style="font-size:11px;color:var(--text-dim);margin-left:auto">
+        ${f.valore_unitario !== null ? fmtEuro(f.valore_unitario) + '/pz · ' + fmtEuro(f.valore_totale) : '⚠️ nessun Costo Standard salvato per questo codice'}
+      </span>
     </div>`).join('');
   const scompensato = r.wip_totale_inserito > 0 && r.wip_totale_inserito !== r.giacenza_totale;
   return `
@@ -57,6 +69,7 @@ function renderCard(r){
           <div style="font-size:12px;color:var(--text-dim)">Giacenza totale: <b>${r.giacenza_totale}</b></div>
         </div>
         <div style="margin-top:10px">${fasiHtml}</div>
+        <div style="margin-top:8px;font-size:12px">Valore WIP di questo codice: <b>${fmtEuro(r.valore_totale_wip)}</b></div>
         ${scompensato ? `<div style="font-size:11px;color:#e6b800;margin-top:4px">⚠️ La somma inserita (${r.wip_totale_inserito}) non coincide con la giacenza totale (${r.giacenza_totale}) — controlla i numeri, non è bloccante.</div>` : ''}
         <div style="margin-top:10px">
           <button class="btn btn-primary" style="font-size:11px" onclick="salvaWip('${r.codice}', this)">💾 Salva</button>

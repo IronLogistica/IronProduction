@@ -254,8 +254,22 @@ class WipFaseWood(db.Model):
     codice          = db.Column(db.String(50), nullable=False, index=True)
     centro_costo_id = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
     quantita        = db.Column(db.Float, default=0)
+    # Valorizzazione (richiesta Mauri, 03/10/2026 — "ci servirà per calcolare
+    # le scorte finali"): costo standard CONGELATO (stessa filosofia di
+    # LegameCostoStandardOrdineWood — la versione usata per le varianze OP,
+    # non le tariffe correnti di CentroCostoWood) accumulato sulle fasi GIÀ
+    # fatte fino a questa (compresa) — materiali per intero (si consumano
+    # alla prima fase) + lavorazione/manodopera/overhead solo delle fasi
+    # fino a qui, non di quelle ancora da fare. None = nessuna versione di
+    # Costo Standard salvata per questo codice: non si inventa un valore,
+    # resta esplicitamente "da valorizzare" (vedi _valore_wip_a_fase).
+    # Ricalcolato ad ogni movimento (automatico o manuale), mai lasciato
+    # fermo a un numero vecchio quando la quantità cambia.
+    valore_unitario    = db.Column(db.Float, nullable=True)
+    versione_costo_id  = db.Column(db.Integer, db.ForeignKey('costo_standard_versioni_wood.id'), nullable=True)
     aggiornato_il   = db.Column(db.DateTime, default=datetime.utcnow)
     centro_costo    = db.relationship('CentroCostoWood')
+    versione_costo  = db.relationship('CostoStandardVersioneWood')
     __table_args__ = (db.UniqueConstraint('codice', 'centro_costo_id', name='_wip_fase_codice_centro_uc'),)
 
 
@@ -2894,6 +2908,9 @@ def init_db():
         # ── Dichiarazione di Produzione: approvazione Direzione ──
         "ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS approvato_direzione BOOLEAN DEFAULT FALSE",
         "ALTER TABLE pp_eventi_consuntivi ADD COLUMN IF NOT EXISTS approvato_il TIMESTAMP",
+        # ── WIP Station: valorizzazione per fase (richiesta Mauri, 03/10/2026) ──
+        "ALTER TABLE wip_fase_wood ADD COLUMN IF NOT EXISTS valore_unitario DOUBLE PRECISION",
+        "ALTER TABLE wip_fase_wood ADD COLUMN IF NOT EXISTS versione_costo_id INTEGER",
     ]
     db_url = os.environ.get('DATABASE_URL', '')
     if 'postgresql' in db_url or 'postgres' in db_url:

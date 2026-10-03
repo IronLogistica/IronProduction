@@ -28,7 +28,7 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
                     _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
                     _contestuale_attivo_per_op, _saldo_materiale_op, calcola_alert_fabbisogno_codici_padre,
-                    _wip_fase_per_codice, _gia_disponibile_per_fase)
+                    _wip_fase_per_codice, _gia_disponibile_per_fase, _valore_wip_a_fase)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 from blueprints.produzione_pp.avanzamento import (calcola_avanzamento_commesse,
@@ -2593,12 +2593,20 @@ def _avanza_wip_fase_automatico(codice, fase_nome, good, scrap):
                 riga_prec.quantita = max((riga_prec.quantita or 0) - movimentati, 0)
                 riga_prec.aggiornato_il = datetime.utcnow()
         if good > 0:
+            # Valorizzazione (richiesta Mauri, 03/10/2026 — "ci servirà per
+            # calcolare le scorte finali"): costo standard congelato
+            # accumulato fino a QUESTA fase — None se il codice non ha mai
+            # avuto un Costo Standard salvato, non si inventa un numero.
+            valore_unitario, versione_costo_id = _valore_wip_a_fase(codice, centro_corrente_id)
             riga_corrente = WipFaseWood.query.filter_by(codice=codice, centro_costo_id=centro_corrente_id).first()
             if riga_corrente:
                 riga_corrente.quantita = (riga_corrente.quantita or 0) + good
+                riga_corrente.valore_unitario = valore_unitario
+                riga_corrente.versione_costo_id = versione_costo_id
                 riga_corrente.aggiornato_il = datetime.utcnow()
             else:
-                db.session.add(WipFaseWood(codice=codice, centro_costo_id=centro_corrente_id, quantita=good))
+                db.session.add(WipFaseWood(codice=codice, centro_costo_id=centro_corrente_id, quantita=good,
+                                            valore_unitario=valore_unitario, versione_costo_id=versione_costo_id))
     except Exception as e:
         log(f'AVVISO avanzamento automatico WIP per fase non riuscito — {codice}/{fase_nome}: {e}')
 
@@ -4043,7 +4051,11 @@ def api_wip_station():
     """
     Un elenco per ogni codice multi-fase: le sue fasi in ordine (sequenza),
     la giacenza totale attuale (GiacenzaWood, per riferimento — non è
-    toccata da questa pagina) e le quantità WIP già inserite per fase.
+    toccata da questa pagina), le quantità WIP già tracciate per fase
+    (automatiche o dal seed manuale) e il loro valore (costo standard
+    congelato — richiesta Mauri, 03/10/2026: "ci servirà per calcolare le
+    scorte finali"; None = nessun Costo Standard mai salvato per quel
+    codice, quindi non valorizzabile).
     """
     codici = _codici_multi_fase()
     out = []
@@ -4054,22 +4066,33 @@ def api_wip_station():
             cicli_per_codice.setdefault(c.codice, []).append(c)
         giacenze = {g.codice: g.quantita for g in
                     GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici)).all()}
-        wip_per_codice = _wip_fase_per_codice(codici)
+        wip_righe_per_codice = {}
+        for w in WipFaseWood.query.filter(WipFaseWood.codice.in_(codici)).all():
+            wip_righe_per_codice.setdefault(w.codice, {})[w.centro_costo_id] = w
         descrizioni = {d.codice: d.descrizione for d in
                        DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici)).all()}
         for codice in sorted(codici):
             fasi = cicli_per_codice.get(codice, [])
-            wip_righe = wip_per_codice.get(codice, {})
-            fasi_out = [{
-                'centro_costo_id': f.centro_costo_id,
-                'centro_nome': f.centro_costo.nome if f.centro_costo else '?',
-                'sequenza': f.sequenza,
-                'quantita_wip': wip_righe.get(f.centro_costo_id, 0),
-            } for f in fasi]
+            wip_righe = wip_righe_per_codice.get(codice, {})
+            fasi_out = []
+            for f in fasi:
+                w = wip_righe.get(f.centro_costo_id)
+                quantita_wip = w.quantita if w else 0
+                valore_unitario = w.valore_unitario if w else None
+                fasi_out.append({
+                    'centro_costo_id': f.centro_costo_id,
+                    'centro_nome': f.centro_costo.nome if f.centro_costo else '?',
+                    'sequenza': f.sequenza,
+                    'quantita_wip': quantita_wip,
+                    'valore_unitario': valore_unitario,
+                    'valore_totale': round(quantita_wip * valore_unitario, 2) if valore_unitario is not None else None,
+                })
+            valori_noti = [f['valore_totale'] for f in fasi_out if f['valore_totale'] is not None]
             out.append({
                 'codice': codice, 'descrizione': descrizioni.get(codice, ''),
                 'giacenza_totale': giacenze.get(codice, 0),
                 'wip_totale_inserito': sum(f['quantita_wip'] for f in fasi_out),
+                'valore_totale_wip': round(sum(valori_noti), 2) if valori_noti else None,
                 'fasi': fasi_out,
             })
     return jsonify(out)
@@ -4099,7 +4122,13 @@ def api_salva_wip_station(codice):
             continue
         if centro_id not in fasi_valide or quantita <= 0:
             continue
-        db.session.add(WipFaseWood(codice=codice, centro_costo_id=centro_id, quantita=quantita))
+        # Valorizzazione automatica anche qui — nessun campo valore da
+        # inserire a mano, nemmeno per il seed una tantum della giacenza
+        # storica (vedi _avanza_wip_fase_automatico per lo stesso calcolo
+        # usato ad ogni movimento futuro).
+        valore_unitario, versione_costo_id = _valore_wip_a_fase(codice, centro_id)
+        db.session.add(WipFaseWood(codice=codice, centro_costo_id=centro_id, quantita=quantita,
+                                    valore_unitario=valore_unitario, versione_costo_id=versione_costo_id))
     db.session.commit()
     log(f'WIP Station: aggiornata suddivisione per fase di {codice}')
     return jsonify(ok=True)
