@@ -2544,6 +2544,65 @@ def _registra_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id, 
         o, fase_nome, ts, good, scrap, tempo, event_id, componente_finale, codice_lavorato, avanza_op, consumi_override)
 
 
+def _avanza_wip_fase_automatico(codice, fase_nome, good, scrap):
+    """
+    Avanzamento AUTOMATICO del WIP per fase (WipFaseWood) ad ogni
+    dichiarazione approvata — "le WIP devono essere automatiche mica
+    manuali" (Mauri, 03/10/2026). Per un codice con Ciclo di Lavoro a più
+    fasi (es. Segatrice poi Satinatrice), dichiarare N pezzi buoni a una
+    fase significa che N pezzi che erano fermi alla fase PRECEDENTE sono
+    appena avanzati a questa: li si sposta da una riga WIP all'altra,
+    nessun inserimento a mano richiesto per la produzione da qui in avanti.
+
+    Lo scarto (scrap) "esce" comunque dalla fase precedente (quei pezzi
+    sono stati lavorati, non restano più in attesa lì) ma non avanza da
+    nessuna parte: solo i pezzi BUONI proseguono alla fase dichiarata.
+
+    Nessun effetto per: un codice mono-fase o senza Ciclo di Lavoro (niente
+    da spezzare tra fasi diverse — la singola riga di giacenza resta
+    l'unica fonte), o una fase dichiarata non riconosciuta nel ciclo di
+    quel codice (testo libero di MasterWork che non corrisponde a nessun
+    centro — vedi _fasi_corrispondono, stesso confronto tollerante usato
+    ovunque per questo).
+
+    Resta MANUALE solo la giacenza che esisteva già PRIMA che questo
+    aggancio entrasse in funzione (vedi pagina "WIP Station"): per quella
+    il sistema non ha mai registrato a che fase fosse arrivata, quindi va
+    detto una volta — da lì in poi la tiene aggiornata da sola.
+
+    Non deve MAI bloccare la registrazione di un consuntivo: qualunque
+    errore resta qui, solo loggato.
+    """
+    if good <= 0 and scrap <= 0:
+        return
+    try:
+        fasi = (CicloLavoroWood.query.filter_by(codice=codice)
+                .order_by(CicloLavoroWood.sequenza).all())
+        if len(fasi) < 2:
+            return
+        indice_corrente = next((i for i, f in enumerate(fasi)
+                                 if f.centro_costo and _fasi_corrispondono(f.centro_costo.nome, fase_nome)), None)
+        if indice_corrente is None:
+            return
+        centro_corrente_id = fasi[indice_corrente].centro_costo_id
+        movimentati = good + scrap  # entrambi "escono" dalla fase precedente; solo i buoni avanzano
+        if indice_corrente > 0:
+            centro_precedente_id = fasi[indice_corrente - 1].centro_costo_id
+            riga_prec = WipFaseWood.query.filter_by(codice=codice, centro_costo_id=centro_precedente_id).first()
+            if riga_prec:
+                riga_prec.quantita = max((riga_prec.quantita or 0) - movimentati, 0)
+                riga_prec.aggiornato_il = datetime.utcnow()
+        if good > 0:
+            riga_corrente = WipFaseWood.query.filter_by(codice=codice, centro_costo_id=centro_corrente_id).first()
+            if riga_corrente:
+                riga_corrente.quantita = (riga_corrente.quantita or 0) + good
+                riga_corrente.aggiornato_il = datetime.utcnow()
+            else:
+                db.session.add(WipFaseWood(codice=codice, centro_costo_id=centro_corrente_id, quantita=good))
+    except Exception as e:
+        log(f'AVVISO avanzamento automatico WIP per fase non riuscito — {codice}/{fase_nome}: {e}')
+
+
 def _applica_effetti_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id,
                                         componente_finale, codice_lavorato, avanza_op, consumi_override=None):
     """
@@ -2699,6 +2758,17 @@ def _applica_effetti_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, eve
             avviso_magazzino = (avviso_magazzino + ' | ' if avviso_magazzino else '') + f'Carico prodotto FALLITO: {e}'
             log(f'ERRORE carico giacenza — OP {o.codice}, {codice_lavorato}, evento {event_id}: {e}')
             _audit(o, 'ERRORE_CARICO_GIACENZA', f'{codice_lavorato}: {e}', event_id)
+
+    # WIP Station AUTOMATICA (richiesta Mauri, 03/10/2026: "le WIP devono
+    # essere automatiche mica manuali") — SEMPRE per ogni fase dichiarata,
+    # indipendentemente da _e_prima_fase_del_ciclo: ogni dichiarazione
+    # sposta fisicamente dei pezzi da una fase del ciclo alla successiva
+    # (vedi _avanza_wip_fase_automatico). Da qui in avanti un codice
+    # multi-fase non richiede più nessun inserimento manuale — resta
+    # manuale SOLO la giacenza che esisteva GIÀ prima di questa modifica
+    # (es. i 287 PINXTT110 del caso segnalato), perché per quella il
+    # sistema non ha mai registrato a che fase fosse arrivata.
+    _avanza_wip_fase_automatico(codice_lavorato, fase_nome, good, scrap)
 
     # Varianza di lavorazione: SEMPRE per ogni fase dichiarata (tempo
     # reale vs standard), indipendentemente da _e_prima_fase_del_ciclo — a

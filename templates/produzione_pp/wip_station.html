@@ -7,14 +7,19 @@
 <div class="mon-section">
   <div style="padding:14px">
     <p style="font-size:12px;color:var(--text-dim)">
-      Solo per i codici con un <b>Ciclo di Lavoro a più fasi</b> (es. Segatrice poi Satinatrice): la giacenza di
-      questi codici è un totale unico, ma fisicamente può essere <b>spezzata tra fasi diverse</b> (es. una parte già
-      satinata, una parte solo tagliata). Qui dici al sistema quanti pezzi sono fermi ad almeno quale fase, così il
-      Lancio Produzione/Liste di Lavoro non considera "già fatta" una fase che in realtà aspetta ancora dei pezzi.
+      Da qui in avanti questa pagina si aggiorna <b>da sola</b> ad ogni dichiarazione di produzione approvata: ogni
+      volta che si dichiarano pezzi buoni a una fase, il sistema li sposta automaticamente dalla fase precedente a
+      quella appena dichiarata. Nessun inserimento manuale richiesto per la produzione da oggi in poi.
     </p>
     <p style="font-size:12px;color:var(--text-dim)">
-      Un codice che non ha mai una suddivisione inserita qui continua a funzionare esattamente come prima: tutta
-      la sua giacenza vale come "già fatto" per ogni fase.
+      Serve un inserimento <b>manuale una tantum</b> solo per la giacenza che esisteva <b>già prima</b> di questo
+      aggancio automatico (es. un codice con pezzi già a magazzino, di cui una parte già oltre una fase e una parte
+      no) — il sistema non ha mai registrato a che fase fosse arrivata quella giacenza storica, quindi va detto una
+      volta qui sotto; da quel momento in poi la tiene aggiornata lui.
+    </p>
+    <p style="font-size:12px;color:var(--text-dim)">
+      Un codice che non ha mai avuto nessuna riga qui (né manuale né automatica) continua a funzionare esattamente
+      come prima: tutta la sua giacenza vale come "già fatto" per ogni fase.
     </p>
   </div>
 </div>
