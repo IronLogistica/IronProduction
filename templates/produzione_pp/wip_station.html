@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🧮 WIP Station</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:14px">
+    <p style="font-size:12px;color:var(--text-dim)">
+      Solo per i codici con un <b>Ciclo di Lavoro a più fasi</b> (es. Segatrice poi Satinatrice): la giacenza di
+      questi codici è un totale unico, ma fisicamente può essere <b>spezzata tra fasi diverse</b> (es. una parte già
+      satinata, una parte solo tagliata). Qui dici al sistema quanti pezzi sono fermi ad almeno quale fase, così il
+      Lancio Produzione/Liste di Lavoro non considera "già fatta" una fase che in realtà aspetta ancora dei pezzi.
+    </p>
+    <p style="font-size:12px;color:var(--text-dim)">
+      Un codice che non ha mai una suddivisione inserita qui continua a funzionare esattamente come prima: tutta
+      la sua giacenza vale come "già fatto" per ogni fase.
+    </p>
+  </div>
+</div>
+
+<div id="wip-lista" style="margin-top:14px">Caricamento...</div>
+{% endblock %}
+{% block scripts %}
+async function caricaWipStation(){
+  const r = await fetch('/api/wip-station');
+  const righe = await r.json();
+  const box = document.getElementById('wip-lista');
+  if(!righe.length){
+    box.innerHTML = '<div class="mon-section"><div style="padding:14px;font-size:12px;color:var(--text-dim)">'
+      + 'Nessun codice con Ciclo di Lavoro a più fasi trovato.</div></div>';
+    return;
+  }
+  box.innerHTML = righe.map(r => renderCard(r)).join('');
+}
+
+function renderCard(r){
+  const fasiHtml = r.fasi.map(f => `
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
+      <div style="width:160px;font-size:12px">${f.sequenza}. ${f.centro_nome}</div>
+      <input type="number" min="0" step="1" value="${f.quantita_wip}"
+             data-centro="${f.centro_costo_id}"
+             style="width:100px" class="wip-input">
+      <span style="font-size:11px;color:var(--text-dim)">pz già ad almeno questa fase</span>
+    </div>`).join('');
+  const scompensato = r.wip_totale_inserito > 0 && r.wip_totale_inserito !== r.giacenza_totale;
+  return `
+    <div class="mon-section" style="margin-bottom:12px" data-codice="${r.codice}">
+      <div style="padding:14px">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;flex-wrap:wrap;gap:8px">
+          <div><b>${r.codice}</b> <span style="color:var(--text-dim);font-size:12px">${r.descrizione || ''}</span></div>
+          <div style="font-size:12px;color:var(--text-dim)">Giacenza totale: <b>${r.giacenza_totale}</b></div>
+        </div>
+        <div style="margin-top:10px">${fasiHtml}</div>
+        ${scompensato ? `<div style="font-size:11px;color:#e6b800;margin-top:4px">⚠️ La somma inserita (${r.wip_totale_inserito}) non coincide con la giacenza totale (${r.giacenza_totale}) — controlla i numeri, non è bloccante.</div>` : ''}
+        <div style="margin-top:10px">
+          <button class="btn btn-primary" style="font-size:11px" onclick="salvaWip('${r.codice}', this)">💾 Salva</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+async function salvaWip(codice, btn){
+  const card = btn.closest('[data-codice]');
+  const fasi = {};
+  card.querySelectorAll('.wip-input').forEach(inp => { fasi[inp.dataset.centro] = inp.value; });
+  const r = await fetch(`/api/wip-station/${encodeURIComponent(codice)}`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({fasi}),
+  });
+  const d = await r.json();
+  if(d.ok){ showToast(`💾 ${codice} salvato`); caricaWipStation(); }
+  else showToast('❌ ' + (d.messaggio || 'Errore'), true);
+}
+
+caricaWipStation();
+{% endblock %}

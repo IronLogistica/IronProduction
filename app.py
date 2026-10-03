@@ -8,6 +8,7 @@ LAUNCHPAD_GRUPPI = [
     {'nome': 'Produzione', 'icona': '🏭', 'colore': '#1e6fa5', 'voci': [
         {'label': 'Ordini Produzione', 'icona': '🏭', 'url': '/ordini-produzione'},
         {'label': 'Ordini di Lavoro', 'icona': '📋', 'url': '/liste-lavoro'},
+        {'label': 'WIP Station', 'icona': '🧮', 'url': '/wip-station'},
         {'label': 'Situazione (card)', 'icona': '🗂️', 'url': '/ordini-produzione/situazione'},
         {'label': 'Dichiarazione Produzione', 'icona': '✅', 'url': '/dichiarazione-produzione'},
         {'label': 'Totem Alessandro', 'icona': '🖥️', 'url': '/totem/alessandro'},

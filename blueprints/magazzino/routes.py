@@ -20,7 +20,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log,
                     KanbanProdotto, MappaCodiceMasterWork, ParametriLavorazioneWood, CategoriaAcquistoConfig,
                     GruppoInventarioWood, SottogruppoInventarioWood, CodiceInventarioWood,
-                    ScartoFornitoreWood, VarianzaMaterialeWood)
+                    ScartoFornitoreWood, VarianzaMaterialeWood, WipFaseWood)
 
 magazzino_bp = Blueprint('magazzino', __name__)
 
@@ -2697,6 +2697,70 @@ def _residuo_giacenza_progressivo(op_aperti=None, mappa=None):
         if saldo > 0:
             _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza, {}, mappa=mappa)
     return residuo_per_op, giacenza
+
+
+def _wip_fase_per_codice(codici=None):
+    """
+    {codice: {centro_costo_id: quantita}} dalle righe WipFaseWood — "WIP
+    Station" (richiesta Mauri, 03/10/2026). SOLO i codici che hanno almeno
+    una riga compaiono nel dict: l'ASSENZA di righe per un codice significa
+    "nessuna suddivisione per fase inserita ancora", e chi usa questo dict
+    (vedi _gia_disponibile_per_fase) deve allora trattare tutta la giacenza
+    di quel codice come valida per ogni fase del suo ciclo — comportamento
+    identico a prima dell'introduzione di questa tabella, per tutti i
+    codici mono-fase (la grande maggioranza).
+    """
+    q = WipFaseWood.query
+    if codici is not None:
+        codici = list(codici)
+        if not codici:
+            return {}
+        q = q.filter(WipFaseWood.codice.in_(codici))
+    risultato = {}
+    for w in q.all():
+        risultato.setdefault(w.codice, {})[w.centro_costo_id] = w.quantita or 0
+    return risultato
+
+
+def _gia_disponibile_per_fase(codice, centro_id, gia_disponibile_flat, wip_per_codice):
+    """
+    Quanto della giacenza già disponibile (calcolata come sempre, a monte di
+    questa funzione — impegni/priorità tra OP compresi) vale davvero come
+    "già fatto" per QUESTA specifica fase (centro_id) del Ciclo di Lavoro di
+    'codice'.
+
+    BUG REALE TROVATO E CORRETTO (segnalato: PINX110/PINXTT110, Mauri
+    03/10/2026): un codice con ciclo a più fasi (es. Segatrice poi
+    Satinatrice) applicava la STESSA giacenza totale come "già fatto" a
+    OGNI fase — con 287 pezzi totali di cui 191 già oltre la Satinatrice e
+    96 fermi dopo la sola Segatrice, la Satinatrice veniva considerata
+    chiusa (saldo 0) tanto quanto la Segatrice, quando in realtà mancavano
+    ancora 96 pezzi da satinare. Usa le righe inserite in "WIP Station"
+    (WipFaseWood, vedi _wip_fase_per_codice) per sapere quanto è fermo ad
+    ALMENO questa fase: una riga registrata su una fase con sequenza >= a
+    quella richiesta vale come già disponibile anche qui (chi ha già
+    superato la Satinatrice, sequenza 2, ha ovviamente già superato anche
+    la Segatrice, sequenza 1).
+
+    Se per 'codice' non è stata inserita nessuna riga WIP, ritorna
+    gia_disponibile_flat INVARIATO — nessun comportamento esistente cambia
+    per i codici senza suddivisione per fase.
+
+    Il risultato non supera mai gia_disponibile_flat: la suddivisione per
+    fase può solo RESTRINGERE quanto già calcolato a monte (es. da impegni
+    di OP a priorità più alta), mai aumentarlo.
+    """
+    wip_righe = wip_per_codice.get(codice)
+    if not wip_righe:
+        return gia_disponibile_flat
+    sequenza_per_centro = {c.centro_costo_id: c.sequenza for c in
+                            CicloLavoroWood.query.filter_by(codice=codice).all()}
+    sequenza_richiesta = sequenza_per_centro.get(centro_id)
+    if sequenza_richiesta is None:
+        return gia_disponibile_flat
+    totale_fase_o_oltre = sum(q for cid, q in wip_righe.items()
+                               if sequenza_per_centro.get(cid, -1) >= sequenza_richiesta)
+    return min(gia_disponibile_flat, totale_fase_o_oltre)
 
 
 @magazzino_bp.route('/api/fabbisogno_disponibilita')

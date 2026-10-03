@@ -20,14 +20,15 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     ParametriLavorazioneWood, OperatoreWood, CompetenzaOperatoreWood,
                     AssegnazioneOperatoreCentroWood, SequenzaMonitorMacchina, SequenzaAvanzamentoKPI,
                     SessioneLavoroMacchina, FotoLavorazioneMacchina, LavorazioneTerzista,
-                    DDTCaricoWood, RigaDDTCaricoWood)
+                    DDTCaricoWood, RigaDDTCaricoWood, WipFaseWood)
 from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
                     _grezzo_iw_per_codici,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
                     _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
-                    _contestuale_attivo_per_op, _saldo_materiale_op, calcola_alert_fabbisogno_codici_padre)
+                    _contestuale_attivo_per_op, _saldo_materiale_op, calcola_alert_fabbisogno_codici_padre,
+                    _wip_fase_per_codice, _gia_disponibile_per_fase)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 from blueprints.produzione_pp.avanzamento import (calcola_avanzamento_commesse,
@@ -1527,6 +1528,10 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
     # in vigore ovunque nell'app, indipendente da cosa il chiamante
     # specifico sta iterando qui per la vista.
     residuo_per_op_id, residuo_finale = _residuo_giacenza_progressivo(mappa=mappa_distinta)
+    # "WIP Station" (richiesta Mauri, 03/10/2026) — vedi stesso uso in
+    # _lista_lavoro_op: nessun comportamento cambia per i codici senza
+    # suddivisione per fase.
+    wip_per_codice = _wip_fase_per_codice(tutti_i_codici)
 
     for o in ordini:
         # Un OP che non impegna nulla (es. ancora 'Creato', non
@@ -1557,6 +1562,7 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
                 # 'già fatto' ai fini del residuo — non serve rifare un
                 # lavoro il cui risultato è già pronto a magazzino.
                 gia_disponibile = max(residuo_giacenza_op.get(codice_comp, 0), 0)
+                gia_disponibile = _gia_disponibile_per_fase(codice_comp, centro_id, gia_disponibile, wip_per_codice)
                 acc['pz_effettuati'] += min(pezzi_fatti + gia_disponibile, nr_pz_da_fare)
         for v in per_centro.values():
             v['residuo_pz'] = max(v['totale_pz'] - v['pz_effettuati'], 0)
@@ -3734,6 +3740,10 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
     # di 'Impegnato/Disponibile' già in uso in Magazzino, non un nuovo
     # calcolo isolato.
     residuo_giacenza_per_op = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
+    # "WIP Station" (richiesta Mauri, 03/10/2026): suddivisione per fase
+    # della giacenza, SOLO per i codici che l'hanno — vedi
+    # _gia_disponibile_per_fase più sotto.
+    wip_per_codice = _wip_fase_per_codice(componenti_di_centro)
 
     righe_per_materiale = {}
     for codice_comp in componenti_di_centro:
@@ -3783,6 +3793,11 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         #'ricalcolo BOM' su un OP con priorità superiore che libera stock
         # non suo) rappresenta davvero un risparmio di taglio.
         gia_disponibile = max(residuo_giacenza_per_op.get(codice_comp, 0) - pezzi_fatti, 0)
+        # "WIP Station": se per questo codice è stata inserita una
+        # suddivisione per fase, restringe 'già disponibile' a quanto è
+        # fermo ad ALMENO questa fase — non il totale, che varrebbe anche
+        # per fasi successive mai davvero raggiunte (caso reale PINX110).
+        gia_disponibile = _gia_disponibile_per_fase(codice_comp, centro.id, gia_disponibile, wip_per_codice)
         saldo = max(saldo_prima_giacenza - gia_disponibile, 0)
 
         # 'Materiale' mostrato in tabella è SEMPRE il primo figlio diretto in
@@ -3929,6 +3944,95 @@ def pagina_liste_lavoro(cid):
                           ) if id_mostrati else []
     return render_template('produzione_pp/liste_lavoro.html', active='liste_lavoro',
         centro=centro, macchine=macchine, centri_senza_ciclo=centri_senza_ciclo)
+
+
+@pp_bp.get('/wip-station')
+def pagina_wip_station():
+    """
+    "WIP Station" (richiesta Mauri, 03/10/2026 — caso reale PINX110): dove
+    si corregge la suddivisione per fase della giacenza di un codice con
+    Ciclo di Lavoro a più fasi, così il Lancio Produzione/Liste di Lavoro
+    sa quanti pezzi sono fermi a quale fase invece di considerare tutta la
+    giacenza come "già fatto" per ogni fase (vedi WipFaseWood in models.py
+    e _gia_disponibile_per_fase in blueprints/magazzino/routes.py).
+    """
+    return render_template('produzione_pp/wip_station.html', active='wip_station')
+
+
+def _codici_multi_fase():
+    """Codici con almeno 2 fasi distinte nel Ciclo di Lavoro — solo quelli
+    possono avere una giacenza "spezzata" tra fasi, quindi solo quelli
+    hanno senso su questa pagina."""
+    righe = (db.session.query(CicloLavoroWood.codice, db.func.count(CicloLavoroWood.id))
+             .group_by(CicloLavoroWood.codice).all())
+    return {codice for codice, n in righe if n >= 2}
+
+
+@pp_bp.get('/api/wip-station')
+def api_wip_station():
+    """
+    Un elenco per ogni codice multi-fase: le sue fasi in ordine (sequenza),
+    la giacenza totale attuale (GiacenzaWood, per riferimento — non è
+    toccata da questa pagina) e le quantità WIP già inserite per fase.
+    """
+    codici = _codici_multi_fase()
+    out = []
+    if codici:
+        cicli_per_codice = {}
+        for c in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(codici))
+                  .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()):
+            cicli_per_codice.setdefault(c.codice, []).append(c)
+        giacenze = {g.codice: g.quantita for g in
+                    GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici)).all()}
+        wip_per_codice = _wip_fase_per_codice(codici)
+        descrizioni = {d.codice: d.descrizione for d in
+                       DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici)).all()}
+        for codice in sorted(codici):
+            fasi = cicli_per_codice.get(codice, [])
+            wip_righe = wip_per_codice.get(codice, {})
+            fasi_out = [{
+                'centro_costo_id': f.centro_costo_id,
+                'centro_nome': f.centro_costo.nome if f.centro_costo else '?',
+                'sequenza': f.sequenza,
+                'quantita_wip': wip_righe.get(f.centro_costo_id, 0),
+            } for f in fasi]
+            out.append({
+                'codice': codice, 'descrizione': descrizioni.get(codice, ''),
+                'giacenza_totale': giacenze.get(codice, 0),
+                'wip_totale_inserito': sum(f['quantita_wip'] for f in fasi_out),
+                'fasi': fasi_out,
+            })
+    return jsonify(out)
+
+
+@pp_bp.post('/api/wip-station/<codice>')
+def api_salva_wip_station(codice):
+    """
+    Sostituisce TUTTE le righe WIP di 'codice' con quelle passate — niente
+    merge parziale, la UI manda sempre lo stato completo delle sue fasi.
+    Payload: {"fasi": {"<centro_costo_id>": quantita, ...}}.
+    Nessun vincolo che la somma debba coincidere con GiacenzaWood.quantita:
+    è un aiuto per chi inserisce i dati, mostrato in UI, non un blocco — la
+    giacenza reale resta l'unica fonte di verità per il totale.
+    """
+    body = request.get_json(silent=True) or {}
+    fasi = body.get('fasi') or {}
+    if not isinstance(fasi, dict):
+        return jsonify(errore=True, messaggio='Formato fasi non valido'), 400
+    fasi_valide = {c.centro_costo_id for c in CicloLavoroWood.query.filter_by(codice=codice).all()}
+    WipFaseWood.query.filter_by(codice=codice).delete()
+    for centro_id_str, quantita in fasi.items():
+        try:
+            centro_id = int(centro_id_str)
+            quantita = float(quantita or 0)
+        except (TypeError, ValueError):
+            continue
+        if centro_id not in fasi_valide or quantita <= 0:
+            continue
+        db.session.add(WipFaseWood(codice=codice, centro_costo_id=centro_id, quantita=quantita))
+    db.session.commit()
+    log(f'WIP Station: aggiornata suddivisione per fase di {codice}')
+    return jsonify(ok=True)
 
 
 @pp_bp.get('/api/liste-lavoro/<int:cid>')

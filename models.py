@@ -224,6 +224,41 @@ class GiacenzaWood(db.Model):
     finiti_is_wms_aggiornato_il = db.Column(db.DateTime, nullable=True)
 
 
+class WipFaseWood(db.Model):
+    """
+    Suddivisione PER FASE della giacenza di un codice con Ciclo di Lavoro a
+    più fasi — "WIP Station" (richiesta Mauri, 03/10/2026, caso reale
+    PINX110/PINXTT110).
+
+    BUG REALE TROVATO: GiacenzaWood.quantita è UN SOLO numero per codice
+    (es. PINXTT110 = 287), senza sapere a che fase del ciclo (Segatrice poi
+    Satinatrice) sono arrivati quei pezzi. Il Lancio Produzione/Liste di
+    Lavoro usava quel totale come "già fatto" per OGNI fase del ciclo allo
+    stesso modo: con 191 pezzi già oltre la Satinatrice e 96 fermi dopo la
+    sola Segatrice, la Segatrice segnava correttamente saldo 0 (287 >= 287
+    richiesti), ma lo stesso succedeva ERRONEAMENTE anche per la
+    Satinatrice, che invece avrebbe dovuto chiedere ancora 96 pezzi.
+
+    Una riga qui = "di questo codice, N pezzi sono fermi ALMENO a questa
+    fase" (hanno completato questo centro di costo, non necessariamente i
+    successivi). Nessuna riga per un codice = nessuna suddivisione inserita
+    ancora: chi legge deve allora trattare tutta la giacenza come valida per
+    ogni fase, esattamente come prima di questa tabella (vedi
+    _gia_disponibile_per_fase in blueprints/magazzino/routes.py) — questa
+    tabella è quindi puramente ADDITIVA, non sostituisce né tocca
+    GiacenzaWood.quantita (letta da ~150 punti del codice come "totale del
+    codice").
+    """
+    __tablename__ = 'wip_fase_wood'
+    id              = db.Column(db.Integer, primary_key=True)
+    codice          = db.Column(db.String(50), nullable=False, index=True)
+    centro_costo_id = db.Column(db.Integer, db.ForeignKey('centri_costo_wood.id'), nullable=False)
+    quantita        = db.Column(db.Float, default=0)
+    aggiornato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+    centro_costo    = db.relationship('CentroCostoWood')
+    __table_args__ = (db.UniqueConstraint('codice', 'centro_costo_id', name='_wip_fase_codice_centro_uc'),)
+
+
 class CodicePadreManuale(db.Model):
     """
     Marcatura manuale "Codice Padre" per codici che NON hanno ancora un
