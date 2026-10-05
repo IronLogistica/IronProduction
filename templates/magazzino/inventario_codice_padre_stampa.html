@@ -38,7 +38,7 @@
   <span>Data: <span class="compila">&nbsp;</span></span>
   <span>Operatore: <span class="compila">&nbsp;</span></span>
 </div>
-<div class="avviso">Le righe <span class="tag-wip">WIP</span> sono per i codici con più fasi di lavorazione: contare separatamente quanti pezzi sono fermi ad ALMENO quella fase.</div>
+<div class="avviso">Le righe <span class="tag-wip">WIP</span> sono per i codici con più fasi di lavorazione: per ogni fase scrivere SOLO i pezzi fermi esattamente lì (hanno finito quella fase ma non ancora la successiva) — NON il totale di quanti l'hanno già superata. Un pezzo compare in UNA sola riga WIP, quella della fase più avanzata che ha raggiunto. La riga del codice in alto (senza WIP) è invece per i pezzi GIÀ COMPLETI di tutte le fasi e pronti a magazzino.</div>
 
 <table>
   <thead>
@@ -60,7 +60,7 @@
     {% for f in r.fasi %}
     <tr class="riga-fase">
       <td class="col-codice">{{ r.codice }}</td>
-      <td class="col-desc"><span class="tag-wip">WIP</span>fermi ad almeno «{{ f.centro_nome }}»</td>
+      <td class="col-desc"><span class="tag-wip">WIP</span>fermi A «{{ f.centro_nome }}» (fatta questa, non ancora la fase dopo)</td>
       <td class="col-um">{{ r.unita_misura or '' }}</td>
       <td class="col-conteggio"><span class="riga-conteggio"></span></td>
     </tr>

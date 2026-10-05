@@ -107,8 +107,8 @@ class TestInventarioCodicePadre(unittest.TestCase):
         t = r.get_data(as_text=True)
         self.assertIn('PINXTT110', t)
         self.assertIn('BARRA-GREZZA', t)
-        self.assertIn('fermi ad almeno «Segatrice»', t)
-        self.assertIn('fermi ad almeno «Satinatrice»', t)
+        self.assertIn('fermi A «Segatrice»', t)
+        self.assertIn('fermi A «Satinatrice»', t)
         # Vuoto per davvero: il template non deve mai referenziare i campi
         # con le quantità attuali del sistema (solo usati nel modulo di
         # inserimento dati, pagina diversa) — non deve "suggerire" il

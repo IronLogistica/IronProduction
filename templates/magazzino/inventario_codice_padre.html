@@ -27,10 +27,16 @@
       <a id="link-stampa" href="#" target="_blank" class="btn btn-ghost" style="padding:12px 18px;font-size:14px">🖨️ Stampa foglio vuoto</a>
       <button class="btn btn-primary" style="padding:12px 18px;font-size:14px;margin-left:auto" onclick="salvaConteggi()">💾 Salva conteggi</button>
     </div>
-    <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:6px">
       La giacenza/WIP attuale è mostrata solo come riferimento per chi inserisce i dati — il foglio stampato per
       chi va a contare fisicamente NON la mostra, per non condizionare il conteggio. Lascia vuoto un campo per non
       toccare quel codice/fase.
+    </p>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
+      ⚠️ Le quantità per fase (WIP) <b>non sono cumulative</b>: per ogni fase va scritto SOLO quanti pezzi sono
+      fermi esattamente lì (hanno finito quella fase, non ancora la successiva) — un pezzo compare in UNA sola
+      riga WIP, quella della fase più avanzata raggiunta. La riga del codice (senza WIP) è invece per i pezzi
+      GIÀ COMPLETI di tutte le fasi e pronti a magazzino.
     </p>
     <table style="width:100%;border-collapse:collapse;font-size:13px" id="tabella-codici">
       <thead>
@@ -97,7 +103,7 @@ function renderRighe() {
         <td style="padding:6px 8px 6px 26px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:12px">↳ ${r.codice}</td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px">
           <span style="display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--accent2);border-radius:4px;padding:1px 6px;margin-right:6px">WIP</span>
-          fermi ad almeno «${f.centro_nome}»</td>
+          fermi A «${f.centro_nome}» (fatta questa, non ancora la fase dopo)</td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border)"></td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text-dim);font-size:12px">${f.quantita_wip_attuale}</td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">
