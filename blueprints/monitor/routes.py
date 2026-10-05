@@ -273,14 +273,43 @@ def _righe_macchina(centro):
             consumi_standard = [{'codice': rb.codice_figlio, 'quantita': rb.quantita}
                                 for rb in _righe_bom_attive_wood(codice_comp, mappa=mappa_distinta)]
 
+            # BUG REALE TROVATO E CORRETTO (segnalato: Satinatrice IN ATTESA
+            # con "287/287 pronti da «Segatrice»" — fase a monte già
+            # chiusa, eppure il badge restava bloccato): il controllo
+            # materiale sotto confrontava la giacenza del materiale DIRETTO
+            # di questo componente (es. la barra grezza tagliata alla prima
+            # fase) con l'INTERA qta_necessaria, su OGNI fase del ciclo —
+            # non solo sulla prima. Una volta tagliati tutti i 287 pezzi,
+            # la barra grezza risulta CORRETTAMENTE esaurita (è stata
+            # consumata per produrli): controllarla di nuovo anche alla
+            # Satinatrice, confrontandola con l'intera quantità originale
+            # anziché con quanto ancora NON tagliato, la faceva risultare
+            # sempre "mancante" anche a taglio completato al 100%.
+            # Fix: il fabbisogno di materiale grezzo si applica solo alla
+            # quota ancora da tagliare (qta_necessaria meno quanto risulta
+            # già fatto/fermo alla PRIMA fase del ciclo, dichiarato o via
+            # WIP Station) — a taglio completo, questa quota è 0 e nessun
+            # materiale grezzo "manca" più, su nessuna fase successiva.
+            fase0 = fasi_ciclo[0]
+            pezzi_fatti_fase0 = _pezzi_fase_cached(o.codice, fase0.centro_costo.nome, componente=componente_param) \
+                                if fase0.centro_costo else 0
+            wip_righe_comp = wip_per_codice.get(codice_comp)
+            if wip_righe_comp:
+                sequenza_per_centro_comp = {f.centro_costo_id: f.sequenza for f in fasi_ciclo}
+                pezzi_wip_fase0_o_oltre = sum(q for cid, q in wip_righe_comp.items()
+                                              if sequenza_per_centro_comp.get(cid, -1) >= fase0.sequenza)
+                pezzi_fatti_fase0 = max(pezzi_fatti_fase0, min(pezzi_wip_fase0_o_oltre, qta_necessaria))
+            qta_ancora_da_tagliare = max(qta_necessaria - pezzi_fatti_fase0, 0)
+
             # Materiale per lavorare QUESTA riga ORA: giacenza residua (dopo
             # aver già servito chi ha priorità pari/superiore) sufficiente per
             # coprire il fabbisogno di ogni materiale diretto di questo
-            # componente. Nessun consumo noto registrato → non blocca
-            # l'evidenza (stessa tolleranza già usata nelle Liste di Lavoro
-            # quando Parametri di Lavorazione non è ancora compilato).
+            # componente, SOLO per la quota ancora da tagliare (vedi sopra).
+            # Nessun consumo noto registrato → non blocca l'evidenza (stessa
+            # tolleranza già usata nelle Liste di Lavoro quando Parametri di
+            # Lavorazione non è ancora compilato).
             materiale_disponibile_riga = all(
-                giacenza_di_op.get(cs['codice'], 0) >= round(qta_necessaria * cs['quantita'], 4)
+                giacenza_di_op.get(cs['codice'], 0) >= round(qta_ancora_da_tagliare * cs['quantita'], 4)
                 for cs in consumi_standard
             ) if consumi_standard else True
 
