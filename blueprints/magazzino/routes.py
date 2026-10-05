@@ -4006,6 +4006,210 @@ def api_inventario_salva():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  INVENTARIO CODICE PADRE — richiesta Mauri, 05/10/2026: a differenza
+#  dell'Inventario Magazzino sopra (per gruppo merceologico, fatto una
+#  volta al mese), qui il perimetro è UN codice padre e TUTTA la sua
+#  distinta base a cascata — comodo per riallineare il magazzino prima di
+#  lanciare una commessa su quel codice (eventuali avanzi da produzioni
+#  precedenti) o subito dopo averla chiusa, senza aspettare il giro
+#  mensile. Per i codici con Ciclo di Lavoro a più fasi, l'inventario è
+#  ANCHE per fase/centro di costo (stesso meccanismo di WIP Station —
+#  vedi WipFaseWood, _wip_fase_per_codice), non solo sul totale: chi va
+#  a contare in reparto deve poter scrivere "12 pezzi fermi dopo la
+#  Segatrice" e "8 pezzi già oltre i Trapani" separatamente.
+# ══════════════════════════════════════════════════════════════════════════════
+def _esplodi_codici_per_inventario(codice_padre):
+    """
+    Esplode la distinta base di 'codice_padre' A CASCATA (tutti i livelli,
+    via _esplodi_bom_wood) e ritorna un elenco PIATTO, una riga per codice
+    univoco incontrato (il codice padre compreso, in testa), con le info
+    utili all'inventario mirato: descrizione, U.M., giacenza attuale (solo
+    per il modulo di inserimento — il foglio STAMPATO non la mostra mai,
+    per non "suggerire" il conteggio a chi va fisicamente a contare), ed
+    eventuale suddivisione per fase per i codici con 2+ fasi nel Ciclo di
+    Lavoro (stessa soglia di _codici_multi_fase in produzione_pp/routes.py).
+    Un codice riusato in più punti dell'albero compare una SOLA volta.
+    """
+    codice_padre = (codice_padre or '').strip().upper()
+    componenti = _esplodi_bom_wood(codice_padre)
+
+    ordine = [codice_padre]
+
+    def _ordina(nodi):
+        for c in nodi:
+            ordine.append(c['codice'])
+            _ordina(c.get('figli', []))
+
+    _ordina(componenti)
+    codici_ordinati = []
+    gia_visti = set()
+    for c in ordine:
+        if c not in gia_visti:
+            gia_visti.add(c)
+            codici_ordinati.append(c)
+
+    descrizioni = {d.codice: d.descrizione for d in
+                   DescrizioneCodiceWood.query.filter(DescrizioneCodiceWood.codice.in_(codici_ordinati)).all()}
+    unita = {a.codice: a.unita_misura for a in
+             ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici_ordinati)).all()}
+    giacenze = {g.codice: g.quantita for g in
+                GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici_ordinati)).all()}
+    cicli_per_codice = {}
+    for f in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(codici_ordinati))
+              .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()):
+        cicli_per_codice.setdefault(f.codice, []).append(f)
+    wip_per_codice = _wip_fase_per_codice(codici_ordinati)
+
+    righe = []
+    for codice in codici_ordinati:
+        fasi = cicli_per_codice.get(codice, [])
+        fasi_out = []
+        if len(fasi) >= 2:
+            wip_righe = wip_per_codice.get(codice, {})
+            for f in fasi:
+                fasi_out.append({
+                    'centro_costo_id': f.centro_costo_id,
+                    'centro_nome': f.centro_costo.nome if f.centro_costo else '?',
+                    'sequenza': f.sequenza,
+                    'quantita_wip_attuale': wip_righe.get(f.centro_costo_id, 0),
+                })
+        righe.append({
+            'codice': codice,
+            'descrizione': descrizioni.get(codice, ''),
+            'unita_misura': unita.get(codice, '') or '',
+            'giacenza_attuale': giacenze.get(codice, 0) or 0,
+            'multi_fase': len(fasi_out) > 0,
+            'fasi': fasi_out,
+        })
+    return righe
+
+
+@magazzino_bp.route('/inventario-codice-padre')
+def pagina_inventario_codice_padre():
+    """
+    "Inventario Codice Padre" (richiesta Mauri, 05/10/2026): si digita un
+    codice padre, si vede a cascata tutta la sua distinta base (e, per i
+    codici multi-fase, anche la suddivisione per fase), si stampa il foglio
+    VUOTO per andare a contare in reparto/magazzino, e poi si rientrano qui
+    le quantità rilevate per aggiornare giacenza e WIP Station in un colpo
+    solo.
+    """
+    return render_template('magazzino/inventario_codice_padre.html', active='inventario_codice_padre')
+
+
+@magazzino_bp.route('/api/inventario-codice-padre/<codice_padre>')
+def api_inventario_codice_padre(codice_padre):
+    codice_padre = codice_padre.strip().upper()
+    if not _righe_bom_attive_wood(codice_padre) and not GiacenzaWood.query.get(codice_padre) \
+            and not DescrizioneCodiceWood.query.get(codice_padre):
+        return jsonify({'trovato': False, 'codice_padre': codice_padre, 'righe': []})
+    righe = _esplodi_codici_per_inventario(codice_padre)
+    return jsonify({'trovato': True, 'codice_padre': codice_padre, 'righe': righe})
+
+
+@magazzino_bp.route('/inventario-codice-padre-stampa/<codice_padre>')
+def pagina_inventario_codice_padre_stampa(codice_padre):
+    """
+    Foglio stampabile e VUOTO (richiesta esplicita di Mauri) per fare
+    l'inventario a cascata di un codice padre: un rigo per ogni codice
+    della sua distinta base con una colonna bianca per la quantità
+    contata, e — per i codici con Ciclo di Lavoro a più fasi — un rigo
+    IN PIÙ per ciascuna fase/centro di costo (WIP), così chi va in
+    officina con questo foglio può scrivere separatamente "fermi dopo la
+    Segatrice" e "già oltre i Trapani" invece di un unico totale ambiguo.
+    """
+    codice_padre = codice_padre.strip().upper()
+    righe = _esplodi_codici_per_inventario(codice_padre)
+    return render_template('magazzino/inventario_codice_padre_stampa.html',
+        codice_padre=codice_padre, righe=righe)
+
+
+@magazzino_bp.route('/api/inventario-codice-padre/salva', methods=['POST'])
+def api_inventario_codice_padre_salva():
+    """
+    Salva un giro di conteggio mirato a un codice padre.
+
+    Giacenze piane ('conteggi': {codice: quantita}) — stesso meccanismo
+    audit-trail dell'Inventario Magazzino mensile: calcola il delta col
+    valore precedente e lo registra come movimento di rettifica
+    (_registra_movimento_giacenza, tipo 'rettifica_inventario'), MAI una
+    sovrascrittura cieca.
+
+    Suddivisione per fase ('conteggi_fasi': {codice: {centro_costo_id:
+    quantita}}) — per i codici multi-fase: il foglio stampato elenca
+    SEMPRE tutte le fasi di un codice multi-fase, quindi un conteggio
+    inviato per quel codice è per definizione completo. Aggiorna (o crea)
+    la riga WipFaseWood di ogni fase ricevuta con quantità > 0, rivalorizzata
+    con lo stesso costo standard congelato usato da WIP Station
+    (_valore_wip_a_fase); una fase ricevuta a 0 cancella la riga esistente
+    (nessuna giacenza WIP = nessuna riga, stessa convenzione di
+    _wip_fase_per_codice). Le fasi NON incluse nel payload restano
+    invariate.
+    """
+    d = request.get_json(force=True)
+    conteggi = d.get('conteggi') or {}
+    conteggi_fasi = d.get('conteggi_fasi') or {}
+    if not conteggi and not conteggi_fasi:
+        return jsonify(ok=False, error='Nessun conteggio da salvare'), 400
+
+    aggiornati = 0
+    for codice, valore in conteggi.items():
+        try:
+            qta_contata = float(valore)
+        except (TypeError, ValueError):
+            continue
+        codice = (codice or '').strip().upper()
+        if not codice:
+            continue
+        g = GiacenzaWood.query.get(codice)
+        qta_precedente = (g.quantita if g else 0) or 0
+        delta = qta_contata - qta_precedente
+        if delta == 0:
+            continue
+        _registra_movimento_giacenza(codice, delta, 'rettifica_inventario',
+                                      note=f'Inventario Codice Padre — da {qta_precedente} a {qta_contata}')
+        aggiornati += 1
+
+    fasi_aggiornate = 0
+    for codice, fasi in conteggi_fasi.items():
+        if not isinstance(fasi, dict) or not fasi:
+            continue
+        codice = (codice or '').strip().upper()
+        fasi_valide = {c.centro_costo_id for c in CicloLavoroWood.query.filter_by(codice=codice).all()}
+        if not fasi_valide:
+            continue
+        esistenti = {w.centro_costo_id: w for w in WipFaseWood.query.filter_by(codice=codice).all()}
+        for centro_id_str, quantita in fasi.items():
+            try:
+                centro_id = int(centro_id_str)
+                quantita = float(quantita or 0)
+            except (TypeError, ValueError):
+                continue
+            if centro_id not in fasi_valide:
+                continue
+            w = esistenti.get(centro_id)
+            if quantita <= 0:
+                if w:
+                    db.session.delete(w)
+                    fasi_aggiornate += 1
+                continue
+            if w and w.quantita == quantita:
+                continue  # nessuna variazione: non rivalorizzare inutilmente
+            valore_unitario, versione_costo_id = _valore_wip_a_fase(codice, centro_id)
+            if w:
+                w.quantita = quantita
+                w.valore_unitario = valore_unitario
+                w.versione_costo_id = versione_costo_id
+            else:
+                db.session.add(WipFaseWood(codice=codice, centro_costo_id=centro_id, quantita=quantita,
+                                            valore_unitario=valore_unitario, versione_costo_id=versione_costo_id))
+            fasi_aggiornate += 1
+    db.session.commit()
+    log(f'Inventario Codice Padre: {aggiornati} giacenze rettificate, {fasi_aggiornate} righe WIP aggiornate')
+    return jsonify(ok=True, aggiornati=aggiornati, fasi_aggiornate=fasi_aggiornate)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  KANBAN INVENTARIO — gruppi ARBITRARI decisi liberamente da Angelo, in
 #  aggiunta (non in sostituzione) alle categorie fisse sopra. Un codice
 #  qualunque tipo di approvvigionamento sia può finire nello stesso gruppo

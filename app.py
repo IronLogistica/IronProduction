@@ -27,6 +27,7 @@ LAUNCHPAD_GRUPPI = [
         {'label': 'Magazzino', 'icona': '📦', 'url': '/magazzino'},
         {'label': 'Giacenza Iron Wood', 'icona': '📊', 'url': '/giacenza-wood'},
         {'label': 'Inventario', 'icona': '📋', 'url': '/inventario'},
+        {'label': 'Inventario Codice Padre', 'icona': '🧾', 'url': '/inventario-codice-padre'},
         {'label': 'Kanban Inventario', 'icona': '🗂️', 'url': '/inventario/kanban'},
         {'label': 'Scheda di Magazzino', 'icona': '📒', 'url': '/scheda-magazzino'},
         {'label': 'Varianza Materiale', 'icona': '⚖️', 'url': '/varianza-materiale'},

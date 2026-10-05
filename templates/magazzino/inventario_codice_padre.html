@@ -1,0 +1,155 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">🧾 Inventario Codice Padre</div>
+</div>
+
+<div class="mon-section">
+  <div style="padding:16px">
+    <p style="font-size:13px;color:var(--text-dim);margin-bottom:16px">
+      Inventario mirato a UN codice padre: esplode a cascata tutta la sua distinta base (e, per i codici con più
+      fasi di lavorazione, anche la loro suddivisione per fase/centro di costo) — utile prima di lanciare una
+      commessa su quel codice o subito dopo averla chiusa, senza aspettare il giro mensile completo.
+    </p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+      <input id="input-codice-padre" type="text" placeholder="Codice padre (es. PINX110)..." autocomplete="off"
+             style="flex:1;min-width:220px;padding:12px 14px;font-size:15px;border-radius:8px;border:1px solid var(--border);text-transform:uppercase">
+      <button class="btn btn-primary" style="padding:12px 20px;font-size:14px" onclick="cercaCodicePadre()">🔍 Esplodi distinta</button>
+    </div>
+    <div id="esito-ricerca" style="font-size:13px;margin-top:10px;color:var(--danger)"></div>
+  </div>
+</div>
+
+<div class="mon-section" id="box-elenco" style="display:none">
+  <div style="padding:16px">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <div class="page-title" style="margin:0;font-size:20px" id="titolo-codice-padre"></div>
+      <a id="link-stampa" href="#" target="_blank" class="btn btn-ghost" style="padding:12px 18px;font-size:14px">🖨️ Stampa foglio vuoto</a>
+      <button class="btn btn-primary" style="padding:12px 18px;font-size:14px;margin-left:auto" onclick="salvaConteggi()">💾 Salva conteggi</button>
+    </div>
+    <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
+      La giacenza/WIP attuale è mostrata solo come riferimento per chi inserisce i dati — il foglio stampato per
+      chi va a contare fisicamente NON la mostra, per non condizionare il conteggio. Lascia vuoto un campo per non
+      toccare quel codice/fase.
+    </p>
+    <table style="width:100%;border-collapse:collapse;font-size:13px" id="tabella-codici">
+      <thead>
+        <tr style="background:rgba(255,255,255,.04)">
+          <th style="text-align:left;padding:9px 8px;border-bottom:1px solid var(--border)">Codice</th>
+          <th style="text-align:left;padding:9px 8px;border-bottom:1px solid var(--border)">Descrizione</th>
+          <th style="text-align:center;padding:9px 8px;border-bottom:1px solid var(--border)">U.M.</th>
+          <th style="text-align:right;padding:9px 8px;border-bottom:1px solid var(--border)">Attuale (rif.)</th>
+          <th style="text-align:right;padding:9px 8px;border-bottom:1px solid var(--border)">Contato</th>
+        </tr>
+      </thead>
+      <tbody id="righe-codici"></tbody>
+    </table>
+    <div id="esito-salvataggio" style="font-size:13px;margin-top:14px;font-weight:600"></div>
+  </div>
+</div>
+
+<script>
+let RIGHE_ATTUALI = [];
+let CODICE_PADRE_ATTUALE = '';
+
+function cercaCodicePadre() {
+  const codice = document.getElementById('input-codice-padre').value.trim().toUpperCase();
+  const esito = document.getElementById('esito-ricerca');
+  esito.textContent = '';
+  if (!codice) { esito.textContent = 'Inserisci un codice padre.'; return; }
+  fetch('/api/inventario-codice-padre/' + encodeURIComponent(codice))
+    .then(r => r.json())
+    .then(d => {
+      if (!d.trovato) {
+        document.getElementById('box-elenco').style.display = 'none';
+        esito.textContent = 'Nessun codice/distinta trovata per "' + codice + '".';
+        return;
+      }
+      CODICE_PADRE_ATTUALE = d.codice_padre;
+      RIGHE_ATTUALI = d.righe;
+      document.getElementById('titolo-codice-padre').textContent = '📋 ' + d.codice_padre + ' — ' + d.righe.length + ' codici';
+      document.getElementById('link-stampa').href = '/inventario-codice-padre-stampa/' + encodeURIComponent(d.codice_padre);
+      renderRighe();
+      document.getElementById('box-elenco').style.display = '';
+      document.getElementById('esito-salvataggio').textContent = '';
+    })
+    .catch(() => { esito.textContent = 'Errore di comunicazione col server.'; });
+}
+
+function renderRighe() {
+  const tbody = document.getElementById('righe-codici');
+  tbody.innerHTML = '';
+  RIGHE_ATTUALI.forEach(r => {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td style="padding:8px;border-bottom:1px solid var(--border);font-weight:700">${r.codice}${r.codice === CODICE_PADRE_ATTUALE ? ' <span style="font-weight:400;color:var(--text-dim);font-size:11px">(padre)</span>' : ''}</td>
+      <td style="padding:8px;border-bottom:1px solid var(--border)">${r.descrizione || '—'}</td>
+      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:center">${r.unita_misura || ''}</td>
+      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text-dim)">${r.giacenza_attuale}</td>
+      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right">
+        <input type="number" step="any" data-codice="${r.codice}" class="input-contato"
+               style="width:110px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);text-align:right">
+      </td>`;
+    tbody.appendChild(tr);
+    (r.fasi || []).forEach(f => {
+      const trf = document.createElement('tr');
+      trf.innerHTML = `
+        <td style="padding:6px 8px 6px 26px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:12px">↳ ${r.codice}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:12px">
+          <span style="display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--accent2);border-radius:4px;padding:1px 6px;margin-right:6px">WIP</span>
+          fermi ad almeno «${f.centro_nome}»</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border)"></td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text-dim);font-size:12px">${f.quantita_wip_attuale}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">
+          <input type="number" step="any" data-codice="${r.codice}" data-centro="${f.centro_costo_id}" class="input-contato-fase"
+                 style="width:110px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);text-align:right">
+        </td>`;
+      tbody.appendChild(trf);
+    });
+  });
+}
+
+function salvaConteggi() {
+  const conteggi = {};
+  document.querySelectorAll('.input-contato').forEach(inp => {
+    if (inp.value !== '') conteggi[inp.dataset.codice] = parseFloat(inp.value);
+  });
+  const conteggi_fasi = {};
+  document.querySelectorAll('.input-contato-fase').forEach(inp => {
+    if (inp.value !== '') {
+      const codice = inp.dataset.codice;
+      conteggi_fasi[codice] = conteggi_fasi[codice] || {};
+      conteggi_fasi[codice][inp.dataset.centro] = parseFloat(inp.value);
+    }
+  });
+  const esito = document.getElementById('esito-salvataggio');
+  if (Object.keys(conteggi).length === 0 && Object.keys(conteggi_fasi).length === 0) {
+    esito.style.color = 'var(--danger)';
+    esito.textContent = 'Nessun valore inserito.';
+    return;
+  }
+  esito.style.color = 'var(--text-dim)';
+  esito.textContent = 'Salvataggio in corso...';
+  fetch('/api/inventario-codice-padre/salva', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({codice_padre: CODICE_PADRE_ATTUALE, conteggi, conteggi_fasi})
+  })
+    .then(r => r.json())
+    .then(d => {
+      if (d.ok) {
+        esito.style.color = 'var(--success, #1a9e5c)';
+        esito.textContent = `✅ Salvato — ${d.aggiornati} giacenze rettificate, ${d.fasi_aggiornate} righe WIP aggiornate.`;
+        cercaCodicePadre();
+      } else {
+        esito.style.color = 'var(--danger)';
+        esito.textContent = 'Errore: ' + (d.error || 'salvataggio non riuscito');
+      }
+    })
+    .catch(() => { esito.style.color = 'var(--danger)'; esito.textContent = 'Errore di comunicazione col server.'; });
+}
+
+document.getElementById('input-codice-padre').addEventListener('keydown', e => {
+  if (e.key === 'Enter') cercaCodicePadre();
+});
+</script>
+{% endblock %}
