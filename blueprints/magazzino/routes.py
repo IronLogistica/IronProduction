@@ -4084,6 +4084,32 @@ def _esplodi_codici_per_inventario(codice_padre):
     return righe
 
 
+@magazzino_bp.route('/api/inventario-codice-padre/ricerca')
+def api_inventario_codice_padre_ricerca():
+    """
+    Widget di ricerca intelligente per il campo "codice padre" (richiesta
+    Mauri, 05/10/2026): cerca in TUTTO il catalogo (codice o descrizione),
+    come il widget già usato per il Kanban Inventario, ma segnala per primi
+    i codici che hanno DAVVERO una distinta base sotto (i candidati più
+    sensati da usare come "codice padre" qui) — gli altri restano comunque
+    cercabili ed esplodibili (un codice senza figli mostra solo se stesso).
+    """
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    like = f'%{q}%'
+    righe = (DescrizioneCodiceWood.query
+             .filter(db.or_(DescrizioneCodiceWood.codice.ilike(like), DescrizioneCodiceWood.descrizione.ilike(like)))
+             .order_by(DescrizioneCodiceWood.codice).limit(50).all())
+    codici = [r.codice for r in righe]
+    padri_con_distinta = {r[0] for r in db.session.query(DistintaBaseWood.codice_padre)
+                           .filter(DistintaBaseWood.codice_padre.in_(codici)).distinct().all()} if codici else set()
+    risultati = [{'codice': r.codice, 'descrizione': r.descrizione or '', 'ha_distinta': r.codice in padri_con_distinta}
+                 for r in righe]
+    risultati.sort(key=lambda r: not r['ha_distinta'])
+    return jsonify(risultati[:30])
+
+
 @magazzino_bp.route('/inventario-codice-padre')
 def pagina_inventario_codice_padre():
     """

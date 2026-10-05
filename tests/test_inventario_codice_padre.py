@@ -182,6 +182,31 @@ class TestInventarioCodicePadre(unittest.TestCase):
             self.assertIsNone(WipFaseWood.query.filter_by(
                 codice='PINXTT110', centro_costo_id=centro_estraneo_id).first())
 
+    # ------------------------------------------------------------------
+    # Widget di ricerca intelligente (richiesta Mauri, 05/10/2026)
+    # ------------------------------------------------------------------
+    def test_ricerca_codice_padre_trova_per_codice_o_descrizione(self):
+        r = self.client.get('/api/inventario-codice-padre/ricerca?q=PINXTT')
+        d = r.get_json()
+        self.assertEqual([x['codice'] for x in d], ['PINXTT110'])
+
+        r = self.client.get('/api/inventario-codice-padre/ricerca?q=semilavorato')
+        d = r.get_json()
+        self.assertEqual([x['codice'] for x in d], ['PINXTT110'])
+
+    def test_ricerca_segnala_chi_ha_davvero_una_distinta_base(self):
+        r = self.client.get('/api/inventario-codice-padre/ricerca?q=BARRA')
+        d = r.get_json()
+        self.assertEqual(len(d), 1)
+        self.assertFalse(d[0]['ha_distinta'], "BARRA-GREZZA non ha figli in distinta base")
+
+        r = self.client.get('/api/inventario-codice-padre/ricerca?q=PINXTT')
+        self.assertTrue(r.get_json()[0]['ha_distinta'], "PINXTT110 ha BARRA-GREZZA come figlio")
+
+    def test_ricerca_con_query_troppo_corta_non_cerca(self):
+        r = self.client.get('/api/inventario-codice-padre/ricerca?q=P')
+        self.assertEqual(r.get_json(), [])
+
     def test_salva_senza_conteggi_ritorna_errore(self):
         r = self.client.post('/api/inventario-codice-padre/salva', json={
             'codice_padre': 'PINX110', 'conteggi': {}, 'conteggi_fasi': {},
