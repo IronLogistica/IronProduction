@@ -311,6 +311,22 @@ def _righe_macchina(centro):
                 fase_precedente_nome = fase_prec.centro_costo.nome if fase_prec.centro_costo else None
                 pezzi_fase_precedente = _pezzi_fase_cached(o.codice, fase_precedente_nome, componente=componente_param) \
                                          if fase_precedente_nome else 0
+                # "WIP Station" (segnalato: Satinatrice mostrava "IN ATTESA,
+                # 0/287 pronti da Segatrice" anche con l'ordine di Segatrice
+                # già chiuso — la stessa correzione fatta sopra per 'saldo'
+                # mancava qui: 'pezzi_fase_precedente' leggeva SOLO le
+                # dichiarazioni MasterWork, mai i pezzi registrati come
+                # fermi ad almeno la fase precedente via WIP Station).
+                # Additivo come in calcola_avanzamento_commesse: un codice
+                # senza righe WIP si comporta esattamente come prima.
+                wip_righe_comp = wip_per_codice.get(codice_comp)
+                if wip_righe_comp:
+                    sequenza_per_centro_comp = {f.centro_costo_id: f.sequenza for f in fasi_ciclo}
+                    pezzi_wip_fase_prec_o_oltre = sum(
+                        q for cid, q in wip_righe_comp.items()
+                        if sequenza_per_centro_comp.get(cid, -1) >= fase_prec.sequenza)
+                    pezzi_fase_precedente = max(pezzi_fase_precedente,
+                                                 min(pezzi_wip_fase_prec_o_oltre, qta_necessaria))
                 disponibile_da_monte = max(pezzi_fase_precedente - pezzi_fase, 0)
                 residuo_qui = max(qta_necessaria - pezzi_fase, 0)
                 soglia_kanban = min(fase_prec.lotto_trasferimento_minimo, residuo_qui) \

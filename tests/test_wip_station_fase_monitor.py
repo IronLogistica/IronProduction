@@ -80,6 +80,26 @@ class TestWipStationFaseMonitor(unittest.TestCase):
                               "la Satinatura deve ancora chiedere i 96 pezzi non ancora satinati "
                               "(prima della fix mostrava 287, stesso bug già corretto nel PDF)")
 
+    def test_con_wip_la_satinatura_risulta_producibile_non_in_attesa(self):
+        """Caso reale segnalato (screenshot 05/10): la Satinatrice mostrava
+        'IN ATTESA, 0/287 pronti da Segatrice' anche con l'ordine di
+        Segatrice già chiuso (tutto presente) — 'disponibile_da_monte'
+        leggeva SOLO le dichiarazioni MasterWork, mai WIP Station. Con
+        96+191=287 (l'intero fabbisogno) già fermi ad almeno il Taglio, la
+        Satinatura deve risultare PRODUCIBILE, non IN ATTESA."""
+        with self.app.app_context():
+            db.session.add_all([
+                WipFaseWood(codice='PINXTT110', centro_costo_id=self.taglio_id, quantita=96),
+                WipFaseWood(codice='PINXTT110', centro_costo_id=self.satinatura_id, quantita=191),
+            ])
+            db.session.commit()
+            satinatura = db.session.get(CentroCostoWood, self.satinatura_id)
+            riga_satin = _trova_riga(_righe_macchina(satinatura), 'OP-PINX')
+            self.assertEqual(riga_satin['disponibile_da_monte'], 287,
+                              "prima della fix era 0 (nessuna dichiarazione MasterWork alla Segatrice)")
+            self.assertEqual(riga_satin['stato_producibilita'], 'producibile',
+                              "prima della fix restava IN ATTESA nonostante la Segatrice fosse già chiusa")
+
     def test_senza_wip_la_giacenza_totale_copre_ancora_entrambe_le_fasi(self):
         """Nessuna regressione per i codici senza righe WIP."""
         with self.app.app_context():
