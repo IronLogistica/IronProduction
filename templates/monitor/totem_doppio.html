@@ -126,7 +126,18 @@
         <tbody>
         {% set ETICHETTA_PRODUCIBILITA = {'producibile': 'PRODUCIBILE', 'parziale': 'PARZIALMENTE PRODUCIBILE', 'in_attesa': 'IN ATTESA'} %}
         {% for g in s.gruppi %}
-          <tr class="{{ 'completa' if g.saldo_totale <= 0 else ('materiale-ok' if g.materiale_disponibile else '') }}">
+          {# BUG REALE TROVATO E CORRETTO (segnalato: commessa 26100072 ai
+             Trapani lampeggiava come "pronta" mentre il badge diceva IN
+             ATTESA — materiale in attesa dalla Segatrice) — il lampeggio
+             leggeva SOLO 'materiale_disponibile' (il materiale DIRETTO di
+             questo reparto, es. la barra grezza), ignorando del tutto la
+             fase a monte: una riga con materiale diretto presente ma
+             ancora in attesa del semilavorato da un reparto precedente
+             lampeggiava come "pronta a lavorare" anche se non lo era
+             affatto. Il lampeggio deve riflettere la producibilità VERA di
+             QUESTO reparto (g.stato_producibilita, che già combina fase a
+             monte + materiale diretto), non solo metà del controllo. #}
+          <tr class="{{ 'completa' if g.saldo_totale <= 0 else ('materiale-ok' if g.stato_producibilita == 'producibile' else '') }}">
             <td>{% if g.stato_producibilita %}<span class="prod-badge {{ g.stato_producibilita }}">{{ ETICHETTA_PRODUCIBILITA[g.stato_producibilita] }}</span>{% endif %}</td>
             <td><span class="commessa">{{ g.commessa or g.op_codice }}</span><span class="pz-prod">pz in prod. <b>{{ g.qta_pianificata }}</b></span></td>
             <td><span class="saldo-box{{ ' zero' if g.saldo_totale <= 0 else '' }}">{{ g.saldo_totale | round | int }}</span></td>
