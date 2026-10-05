@@ -4547,6 +4547,19 @@ def api_dichiarazione_op_aperti(cid):
                   .filter_by(centro_costo_id=centro.id).all()):
             fasi_per_codice.setdefault(f.codice, []).append(f)
 
+    # "WIP Station" (segnalato: Satinatrice dichiarazione mostrava Saldo
+    # 287 — l'intero ordine — quando il Monitor Live, corretto in
+    # precedenza, mostra correttamente 96: rischio concreto che l'operaio
+    # dichiari 287 pezzi invece dei 96 davvero da satinare). Serve il
+    # ciclo COMPLETO di ogni codice (tutte le fasi, non solo questo
+    # centro) per sapere quale sequenza ha ciascuna riga WIP — vedi
+    # 'fatti_eff' più sotto.
+    sequenza_per_centro_per_codice = {}
+    if tutti_i_codici:
+        for f in CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_i_codici)).all():
+            sequenza_per_centro_per_codice.setdefault(f.codice, {})[f.centro_costo_id] = f.sequenza
+    wip_per_codice = _wip_fase_per_codice(tutti_i_codici)
+
     codici_op = [o.codice for o in ordini]
     fatti_per_componente = {}
     if codici_op:
@@ -4620,6 +4633,30 @@ def api_dichiarazione_op_aperti(cid):
             qta_necessaria_base = round((o.qta_pianificata or 0) * comp['moltiplicatore'], 4)
             qta_necessaria = round(fabbisogno_effettivo.get(codice_comp, qta_necessaria_base), 4)
             fatti = fatti_per_componente.get((o.codice, componente_param), 0)
+            # "WIP Station": pezzi fermi ad ALMENO questa fase contano come
+            # "già fatto" qui tanto quanto una dichiarazione — SOLO additivo
+            # (un codice senza righe WIP Station si comporta esattamente
+            # come prima: fatti_eff == fatti). Questo NON è lo stesso
+            # "ERRORE CONCETTUALE" descritto sotto: quella sottrazione
+            # rimossa era sulla giacenza GREZZA totale (GiacenzaWood), un
+            # campo che la Dichiarazione Libera stessa alimenta come
+            # effetto collaterale — sottrarla qui creava un doppio
+            # conteggio circolare. WIP Station invece è la suddivisione
+            # PER FASE, oggi aggiornata automaticamente dalle dichiarazioni
+            # APPROVATE (vedi _avanza_wip_fase_automatico): è esattamente
+            # il dato che dice all'operaio "quanti pezzi mancano DAVVERO a
+            # QUESTA fase", lo stesso già usato dal Monitor Live — non
+            # applicarlo qui rischiava di far dichiarare l'intera quantità
+            # dell'OP (287) invece del vero residuo (96).
+            fatti_eff = fatti
+            wip_righe_comp = wip_per_codice.get(codice_comp)
+            if wip_righe_comp:
+                sequenza_richiesta = sequenza_per_centro_per_codice.get(codice_comp, {}).get(centro.id)
+                if sequenza_richiesta is not None:
+                    pezzi_wip_fase_o_oltre = sum(q for cid, q in wip_righe_comp.items()
+                                                 if sequenza_per_centro_per_codice.get(codice_comp, {}).get(cid, -1)
+                                                 >= sequenza_richiesta)
+                    fatti_eff = max(fatti, min(pezzi_wip_fase_o_oltre, qta_necessaria))
             # ERRORE CONCETTUALE CORRETTO (rimossa la sottrazione della
             # 'giacenza già disponibile' dal saldo qui, come già fatto per
             # Totem Live e Ordine di Lavoro): la Dichiarazione Libera
@@ -4629,7 +4666,7 @@ def api_dichiarazione_op_aperti(cid):
             # di nuovo il saldo qui era un doppio conteggio, la stessa
             # confusione già trovata altrove: un OP che avanza da solo
             # deve rimanere calcolato solo su pianificato e fatti.
-            saldo = max(qta_necessaria - fatti, 0)
+            saldo = max(qta_necessaria - fatti_eff, 0)
             if saldo <= 0:
                 continue  # già completato su questo centro: non dichiarabile
             gruppo_componenti.append({
