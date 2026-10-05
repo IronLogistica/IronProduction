@@ -121,7 +121,8 @@ def calcola_avanzamento_commesse():
                          EventoConsuntivoPP, ArticoloApprovvigionamento, FotoArticolo,
                          SequenzaAvanzamentoKPI)
     from blueprints.magazzino.routes import (_esplodi_componenti_op, _carica_mappa_distinta_base_wood,
-                         _residuo_giacenza_progressivo, _netta_e_esplodi_wood, STATI_CHE_IMPEGNANO)
+                         _residuo_giacenza_progressivo, _netta_e_esplodi_wood, STATI_CHE_IMPEGNANO,
+                         _wip_fase_per_codice)
 
     oggi = datetime.now()
 
@@ -142,6 +143,16 @@ def calcola_avanzamento_commesse():
     mappa_distinta = _carica_mappa_distinta_base_wood()
     residuo_per_op, _ = _residuo_giacenza_progressivo(op_aperti=ordini, mappa=mappa_distinta)
     centri = {c.id: c for c in CentroCostoWood.query.all()}
+
+    # "WIP Station" (richiesta Mauri, 03/10/2026 — caso reale PINX110/
+    # PINXTT110): stessa correzione già fatta nel Monitor Live/Totem e
+    # nell'Ordine di Lavoro stampato, mai propagata qui — senza questo, un
+    # codice con ciclo a più fasi i cui pezzi erano stati registrati in WIP
+    # Station (fermi ad almeno Taglio/Satinatura) ma MAI dichiarati come
+    # evento di produzione (EventoConsuntivoPP) risultava sempre a 0% per
+    # ogni zona del Cruscotto KPI/Avanzamento Commesse, anche quando il
+    # Monitor Live e il PDF sapevano già che quella fase era chiusa.
+    wip_per_codice = _wip_fase_per_codice()
 
     # Una sola query per TUTTE le miniature prodotto (la più recente per
     # ogni codice_articolo) invece di una per OP — stesso principio delle
@@ -222,6 +233,15 @@ def calcola_avanzamento_commesse():
             # complessivo diverso da zero PER QUELLA fase.
             qta_codice_pianificata = round((o.qta_pianificata or 0) * moltiplicatore)
             componente_param = None if codice == o.codice_articolo else codice
+            # Sequenza di fase per ogni centro del ciclo DI QUESTO codice —
+            # serve qui sotto per capire, riga WIP Station per riga WIP
+            # Station, quali sono "ad almeno questa fase" (stessa logica di
+            # _gia_disponibile_per_fase, ma qui PURAMENTE additiva rispetto
+            # a pezzi_fatti: non tocca/non introduce alcuna lettura della
+            # giacenza totale, che avrebbe cambiato il comportamento anche
+            # per i codici SENZA righe WIP Station — vedi 'pezzi_fatti_eff').
+            sequenza_per_centro_wip = {c.centro_costo_id: c.sequenza for c in cicli}
+            wip_righe_codice = wip_per_codice.get(codice)
             cursore_componente = data_materiale_pronto
             # Separato da cursore_componente apposta: quest'ultimo può
             # ora "correre avanti" prima della fine reale (vedi Lotto di
@@ -254,6 +274,21 @@ def calcola_avanzamento_commesse():
                 ).all()
                 pezzi_fatti = sum(e.pezzi_buoni or 0 for e in eventi_riga if _fasi_corrispondono(centro.nome, e.fase))
 
+                # "WIP Station": pezzi fermi ad ALMENO questa fase contano
+                # come "già fatto" qui tanto quanto una dichiarazione di
+                # produzione — un codice i cui pezzi sono stati censiti in
+                # WIP Station ma mai passati da una dichiarazione MasterWork
+                # (es. inseriti a mano dopo un conteggio fisico) non deve
+                # restare bloccato a 0% su ogni zona. SOLO additivo: nessuna
+                # lettura della giacenza totale qui (a differenza del
+                # Monitor Live/PDF, che nettano anche il materiale), quindi
+                # un codice SENZA righe WIP Station si comporta esattamente
+                # come prima di questa fix (pezzi_fatti_eff == pezzi_fatti).
+                pezzi_gia_a_questa_fase = (sum(q for cid, q in wip_righe_codice.items()
+                                               if sequenza_per_centro_wip.get(cid, -1) >= ciclo.sequenza)
+                                           if wip_righe_codice else 0)
+                pezzi_fatti_eff = max(pezzi_fatti, min(pezzi_gia_a_questa_fase, qta_codice_pianificata))
+
                 # Avanzamento per ZONA (tabella Avanzamento Commesse): conta
                 # SEMPRE, anche per una fase già completata al 100% (che qui
                 # sotto uscirebbe subito col 'continue' perché non c'è più
@@ -262,9 +297,9 @@ def calcola_avanzamento_commesse():
                 zona = _zona_di_centro(centro)
                 if zona:
                     zona_totale[zona] += qta_codice_pianificata
-                    zona_fatti[zona] += min(pezzi_fatti, qta_codice_pianificata)
+                    zona_fatti[zona] += min(pezzi_fatti_eff, qta_codice_pianificata)
 
-                saldo_fase = max(qta_codice - pezzi_fatti, 0)
+                saldo_fase = max(qta_codice - pezzi_fatti_eff, 0)
                 if saldo_fase <= 0:
                     continue
                 centri_con_saldo.add(centro.nome)
