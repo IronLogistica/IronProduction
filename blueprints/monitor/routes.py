@@ -9,7 +9,8 @@ from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     ParametriLavorazioneWood)
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
                     _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo,
-                    _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op)
+                    _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
+                    _wip_fase_per_codice, _gia_disponibile_per_fase)
 from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria, _fasi_corrispondono
 
 monitor_bp = Blueprint('monitor', __name__)
@@ -188,6 +189,19 @@ def _righe_macchina(centro):
     # lavorare ORA, non se l'intero ordine è già completo di tutto.
     residuo_per_op, residuo_finale = _residuo_giacenza_progressivo(op_aperti=ordini, mappa=mappa_distinta)
 
+    # "WIP Station" (richiesta Mauri, 03/10/2026 — caso reale PINX110/
+    # PINXTT110): suddivisione per fase della giacenza, SOLO per i codici
+    # che l'hanno — vedi _gia_disponibile_per_fase più sotto. Stessa
+    # correzione già fatta in _lista_lavoro_op (l'Ordine di Lavoro stampato)
+    # ma mai propagata qui: senza questo, un codice con ciclo a più fasi
+    # (es. Segatrice poi Satinatrice) applicava la giacenza TOTALE come
+    # "già fatto" a OGNI fase — con 287 pezzi di cui 191 già oltre la
+    # Satinatrice e 96 fermi dopo la sola Segatrice, il Monitor Live della
+    # Satinatrice mostrava comunque Saldo 287 (tutta la giacenza già
+    # "consumata" dal conteggio della Segatrice), mentre il PDF mostrava
+    # correttamente 0 da tagliare/Da Produrre tenendo conto della fase.
+    wip_per_codice = _wip_fase_per_codice(tutti_i_codici)
+
     righe = {k: [] for k in SEZIONI}
     for o in ordini:
         for comp in componenti_per_op[o.id]:
@@ -233,6 +247,11 @@ def _righe_macchina(centro):
             # PRIMA di usarla come sconto ulteriore, altrimenti solo
             # un'eccedenza genuinamente esterna dovrebbe ridurre il saldo).
             gia_disponibile = max(giacenza_di_op.get(codice_comp, 0) - pezzi_fase, 0)
+            # "WIP Station": restringe 'già disponibile' a quanto è fermo ad
+            # ALMENO questa fase (vedi commento sopra e _gia_disponibile_per_fase)
+            # — non il totale, che varrebbe anche per fasi successive mai
+            # davvero raggiunte da questo componente (caso reale PINX110).
+            gia_disponibile = _gia_disponibile_per_fase(codice_comp, centro.id, gia_disponibile, wip_per_codice)
             saldo_fase = max(saldo_prima_giacenza - gia_disponibile, 0)
             pct_fase = round(pezzi_fase / qta_necessaria * 100) if qta_necessaria else 0
 
