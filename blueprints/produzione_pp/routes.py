@@ -1998,6 +1998,79 @@ def _fasi_corrispondono(nome_centro, fase_nome):
     return a == b or a in b or b in a
 
 
+def _figli_a_padri_da_mappa(mappa_distinta):
+    """Mappa INVERSA della distinta base (figlio -> insieme dei suoi padri
+    diretti). Estratta da dentro 'api_dichiarazione_op_aperti' (dove restava
+    una closure locale) per poterla riusare anche altrove (vedi
+    _credito_da_valle sotto e il suo uso in blueprints/monitor/routes.py)."""
+    figli_a_padri = {}
+    for padre, righe in mappa_distinta.items():
+        for r in righe:
+            figli_a_padri.setdefault(r.codice_figlio, set()).add(padre)
+    return figli_a_padri
+
+
+def _antenati_nella_catena_op(codice_comp, codici_di_questo_op, figli_a_padri):
+    """Ogni codice che, direttamente o indirettamente, consuma 'codice_comp'
+    DENTRO la distinta base di QUESTO specifico OP — mai antenati di un uso
+    dello stesso codice_comp in TUTT'ALTRE distinte/OP, che non c'entrano con
+    questo ordine. Vedi nota completa in 'api_dichiarazione_op_aperti', dove
+    questa stessa logica viveva come closure locale."""
+    visti, risultato, da_visitare = set(), [], [codice_comp]
+    while da_visitare:
+        corrente = da_visitare.pop()
+        for padre in figli_a_padri.get(corrente, ()):
+            if padre in visti or padre not in codici_di_questo_op:
+                continue
+            visti.add(padre)
+            risultato.append(padre)
+            da_visitare.append(padre)
+    return risultato
+
+
+def _fatti_totali_per_componente(codici_op):
+    """Totale 'fatti MAI dichiarati per questo componente' (EventoConsuntivoPP
+    approvato), SENZA filtro sul centro di costo corrente — un componente a
+    valle (es. PINX110-A) ha la SUA fase propria ('Saldatura', non
+    'Segatrice'), quindi un filtro scoping al centro corrente non lo
+    troverebbe mai. Vedi nota completa in 'api_dichiarazione_op_aperti'."""
+    fatti_totali_per_componente = {}
+    if codici_op:
+        for op_code, componente, buoni in (
+                EventoConsuntivoPP.query.filter(EventoConsuntivoPP.op_code.in_(codici_op),
+                                                 EventoConsuntivoPP.approvato_direzione == True)  # noqa: E712
+                .with_entities(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente,
+                               EventoConsuntivoPP.pezzi_buoni).all()):
+            chiave = (op_code, componente)
+            fatti_totali_per_componente[chiave] = fatti_totali_per_componente.get(chiave, 0) + (buoni or 0)
+    return fatti_totali_per_componente
+
+
+def _credito_da_valle(o, codice_comp, codici_di_questo_op, figli_a_padri, fatti_totali_per_componente):
+    """Credito 'da valle' (segnalato da Mauri, 06/10/2026 — caso reale
+    PINXTT110 -> PINX110-A -> PINX110-B -> PINX110, riapparso identico il
+    stesso giorno sul Monitor Macchina/Inventario Codice Padre per la stessa
+    commessa 26100072 perché 'api_dichiarazione_op_aperti' era l'UNICO posto
+    corretto — vedi _righe_macchina in blueprints/monitor/routes.py): un
+    pezzo già avanzato a uno stadio SUCCESSIVO della stessa catena (un
+    codice diverso di distinta base di questo OP) resta 'già fatto' a questo
+    stadio per sempre, anche se la sua giacenza/WIP come 'codice_comp' è nel
+    frattempo scesa — proprio perché è sceso PER QUESTO: è stato consumato
+    per produrre lo stadio successivo. Tra i vari stadi successivi si prende
+    il MAX (non la somma): un pezzo avanzato fino a PINX110-B è già
+    conteggiato anche dentro il cumulativo di PINX110-A (lo stesso pezzo, un
+    passo più avanti) — sommarli sarebbe un doppio conteggio dello stesso
+    pezzo. Il chiamante deve poi SOMMARE (non max) questo credito al residuo
+    ancora fisicamente presente come 'codice_comp': sono due insiemi di
+    pezzi DISGIUNTI (quelli ancora fermi qui + quelli già passati avanti)."""
+    credito_da_valle = 0
+    for antenato in _antenati_nella_catena_op(codice_comp, codici_di_questo_op, figli_a_padri):
+        credito = (o.qta_buona or 0) if antenato == o.codice_articolo else \
+            fatti_totali_per_componente.get((o.codice, antenato), 0)
+        credito_da_valle = max(credito_da_valle, credito)
+    return credito_da_valle
+
+
 def _e_prima_fase_del_ciclo(codice_lavorato, fase_nome):
     """
     Vero se fase_nome è la PRIMA fase del Ciclo di Lavoro di questo codice —
@@ -4628,39 +4701,16 @@ def api_dichiarazione_op_aperti(cid):
     # PINX110-A, ha la SUA fase propria — 'Saldatura', non 'Segatrice' —
     # quindi il filtro sopra, scoping a questo centro, non lo troverebbe
     # mai).
-    fatti_totali_per_componente = {}
-    if codici_op:
-        for op_code, componente, buoni in (
-                EventoConsuntivoPP.query.filter(EventoConsuntivoPP.op_code.in_(codici_op),
-                                                 EventoConsuntivoPP.approvato_direzione == True)  # noqa: E712
-                .with_entities(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente,
-                               EventoConsuntivoPP.pezzi_buoni).all()):
-            chiave = (op_code, componente)
-            fatti_totali_per_componente[chiave] = fatti_totali_per_componente.get(chiave, 0) + (buoni or 0)
-
-    # Mappa INVERSA della distinta base (figlio -> insieme dei suoi padri
-    # diretti), per risalire da 'codice_comp' fino alla radice dell'OP e
-    # trovare ogni stadio successivo della catena.
-    figli_a_padri = {}
-    for padre, righe in mappa_distinta.items():
-        for r in righe:
-            figli_a_padri.setdefault(r.codice_figlio, set()).add(padre)
-
-    def _antenati_nella_catena_op(codice_comp, codici_di_questo_op):
-        """Ogni codice che, direttamente o indirettamente, consuma
-        'codice_comp' DENTRO la distinta base di QUESTO specifico OP —
-        mai antenati di un uso dello stesso codice_comp in TUTT'ALTRE
-        distinte/OP, che non c'entrano con questo ordine."""
-        visti, risultato, da_visitare = set(), [], [codice_comp]
-        while da_visitare:
-            corrente = da_visitare.pop()
-            for padre in figli_a_padri.get(corrente, ()):
-                if padre in visti or padre not in codici_di_questo_op:
-                    continue
-                visti.add(padre)
-                risultato.append(padre)
-                da_visitare.append(padre)
-        return risultato
+    # Da qui in giù, 'fatti_totali_per_componente', 'figli_a_padri' e
+    # '_antenati_nella_catena_op' sono condivisi (vedi i moduli-level helper
+    # subito dopo '_fasi_corrispondono' più sopra nel file) con
+    # 'blueprints/monitor/routes.py' (_righe_macchina): lo stesso identico
+    # bug "credito da valle" risultava ANCORA presente lì (e sull'Inventario
+    # Codice Padre a cascata) perché questa logica viveva SOLO qui come
+    # closure locale, non riusabile — stessa commessa reale 26100072,
+    # segnalato lo stesso giorno della fix originale.
+    fatti_totali_per_componente = _fatti_totali_per_componente(codici_op)
+    figli_a_padri = _figli_a_padri_da_mappa(mappa_distinta)
 
     # Descrizione di ogni codice dichiarabile — ArticoloML (magazzino
     # condiviso MasterLogistic) prima, riserva locale (da import
@@ -4748,11 +4798,8 @@ def api_dichiarazione_op_aperti(cid):
             # già conteggiato anche dentro il cumulativo di PINX110-A (lo
             # stesso pezzo, un passo più avanti) — sommarli sarebbe un
             # doppio conteggio dello stesso pezzo.
-            credito_da_valle = 0
-            for antenato in _antenati_nella_catena_op(codice_comp, codici_di_questo_op):
-                credito = (o.qta_buona or 0) if antenato == o.codice_articolo else \
-                    fatti_totali_per_componente.get((o.codice, antenato), 0)
-                credito_da_valle = max(credito_da_valle, credito)
+            credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
+                                                  figli_a_padri, fatti_totali_per_componente)
             fatti_eff = min(qta_necessaria, fatti_eff + credito_da_valle)
             # ERRORE CONCETTUALE CORRETTO (rimossa la sottrazione della
             # 'giacenza già disponibile' dal saldo qui, come già fatto per

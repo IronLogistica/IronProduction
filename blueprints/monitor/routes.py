@@ -11,7 +11,8 @@ from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_
                     _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo,
                     _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
                     _wip_fase_per_codice, _gia_disponibile_per_fase)
-from blueprints.produzione_pp.routes import _registra_evento_consuntivo, _audit, _is_carpenteria, _fasi_corrispondono
+from blueprints.produzione_pp.routes import (_registra_evento_consuntivo, _audit, _is_carpenteria,
+                    _fasi_corrispondono, _figli_a_padri_da_mappa, _fatti_totali_per_componente, _credito_da_valle)
 
 monitor_bp = Blueprint('monitor', __name__)
 
@@ -202,8 +203,22 @@ def _righe_macchina(centro):
     # correttamente 0 da tagliare/Da Produrre tenendo conto della fase.
     wip_per_codice = _wip_fase_per_codice(tutti_i_codici)
 
+    # Credito "da valle" (segnalato da Mauri, 06/10/2026 — caso reale
+    # PINXTT110 -> PINX110-A, commessa 26100072): stessa identica logica già
+    # corretta in 'api_dichiarazione_op_aperti' (blueprints/produzione_pp/
+    # routes.py), riusata qui tramite gli helper condivisi — senza questo,
+    # un componente che aveva già avanzato pezzi a un codice DISTINTO a
+    # valle della stessa catena (es. 83 pezzi saldati da PINXTT110 a
+    # PINX110-A) mostrava "saldo_fase" ancora pieno su questa macchina (la
+    # Segatrice), riaprendo un ordine che era già di fatto coperto, perché
+    # 'gia_disponibile' qui sotto guardava solo la giacenza grezza del
+    # componente stesso, mai i codici a valle della sua stessa distinta.
+    figli_a_padri = _figli_a_padri_da_mappa(mappa_distinta)
+    fatti_totali_per_componente = _fatti_totali_per_componente(codici_op)
+
     righe = {k: [] for k in SEZIONI}
     for o in ordini:
+        codici_di_questo_op = {c['codice'] for c in componenti_per_op[o.id]}
         for comp in componenti_per_op[o.id]:
             codice_comp = comp['codice']
             componente_finale = (codice_comp == o.codice_articolo)
@@ -252,6 +267,15 @@ def _righe_macchina(centro):
             # — non il totale, che varrebbe anche per fasi successive mai
             # davvero raggiunte da questo componente (caso reale PINX110).
             gia_disponibile = _gia_disponibile_per_fase(codice_comp, centro.id, gia_disponibile, wip_per_codice)
+            # Credito "da valle" — vedi nota sopra: va SOMMATO (sono pezzi
+            # fisicamente diversi da quelli già contati in 'gia_disponibile',
+            # che è giacenza/WIP ancora presente CON QUESTO codice), poi il
+            # totale resta tettato a 'saldo_prima_giacenza' (mai sotto zero
+            # il saldo finale, stesso tetto usato in produzione_pp per
+            # 'fatti_eff').
+            credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
+                                                  figli_a_padri, fatti_totali_per_componente)
+            gia_disponibile = min(saldo_prima_giacenza, gia_disponibile + credito_da_valle)
             saldo_fase = max(saldo_prima_giacenza - gia_disponibile, 0)
             pct_fase = round(pezzi_fase / qta_necessaria * 100) if qta_necessaria else 0
 
