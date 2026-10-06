@@ -28,7 +28,7 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
                     _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
                     _contestuale_attivo_per_op, _saldo_materiale_op, calcola_alert_fabbisogno_codici_padre,
-                    _wip_fase_per_codice, _gia_disponibile_per_fase, _valore_wip_a_fase)
+                    _wip_fase_per_codice, _gia_disponibile_per_fase, _valore_wip_a_fase, _consuma_wip_multi_fase)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 from blueprints.produzione_pp.avanzamento import (calcola_avanzamento_commesse,
@@ -2363,6 +2363,7 @@ def api_dichiarazione_libera_conferma():
             costo_corrente = _calcola_costo_standard(cod)['costo_totale']
             _registra_movimento_giacenza(cod, -qta_consumata, 'scarico_produzione', riferimento='', note=note,
                                           costo_unitario=costo_corrente)
+            _consuma_wip_multi_fase(cod, qta_consumata)
     costo_prodotto = _calcola_costo_standard(codice)['costo_totale']
     _registra_movimento_giacenza(codice, quantita, 'carico_produzione', riferimento='', note=note,
                                   costo_unitario=costo_prodotto)
@@ -2689,6 +2690,7 @@ def _applica_effetti_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, eve
                                                   riferimento=o.codice,
                                                   note=f'Consuntivo {good} pz buoni + {scrap} pz scarto ({codice_lavorato})',
                                                   costo_unitario=costo_corrente)
+                    _consuma_wip_multi_fase(cod, qta_consumata)
             # Isole one-piece-flow (DistintaBaseWood.contestuale=True, es.
             # FRONTE+RETRO di un cavalletto saldati insieme): questi figli non
             # sono MAI stock preesistente, nascono e si consumano nello stesso
@@ -2711,6 +2713,7 @@ def _applica_effetti_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, eve
                                                   note=(f'Consuntivo {good} pz buoni + {scrap} pz scarto '
                                                         f'— assemblato contestualmente in {codice_lavorato}'),
                                                   costo_unitario=costo_corrente)
+                    _consuma_wip_multi_fase(cod, qta_consumata)
         except Exception as e:
             # NON deve mai bloccare la registrazione del consuntivo — ma un
             # errore qui prima spariva nel nulla, senza traccia da nessuna

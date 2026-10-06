@@ -2763,6 +2763,59 @@ def _gia_disponibile_per_fase(codice, centro_id, gia_disponibile_flat, wip_per_c
     return min(gia_disponibile_flat, totale_fase_o_oltre)
 
 
+def _consuma_wip_multi_fase(codice, qta_consumata):
+    """
+    BUG REALE CORRETTO (segnalato da Mauri, 06/10/2026 — caso PINXTT110):
+    quando la giacenza PIANA di un codice con Ciclo di Lavoro a più fasi
+    viene SCARICATA perché consumata come COMPONENTE da un'altra
+    dichiarazione (es. PINXTT110 consumato per produrre PINX110-A), la
+    suddivisione per fase (WipFaseWood — "WIP Station") non si muoveva:
+    _avanza_wip_fase_automatico sposta la WIP solo del codice che si sta
+    DICHIARANDO (avanzamento tra le SUE fasi), mai di un codice consumato
+    come materiale da un ALTRO codice. Risultato: la WIP restava "indietro"
+    rispetto alla giacenza piana (es. Satinatrice=287 ma giacenza piana
+    scesa a 250 dopo un consumo di 37 pezzi) — proprio il disallineamento
+    segnalato dall'avviso "la somma inserita non coincide con la giacenza"
+    sulla pagina WIP Station.
+
+    Si consuma SEMPRE a partire dalla fase PIÙ AVANZATA del ciclo (quella
+    con sequenza più alta che ha ancora pezzi): solo i pezzi che hanno
+    completato l'intera lavorazione (o la fase più avanzata finora
+    raggiunta) sono fisicamente pronti per essere usati come componente di
+    un altro codice, quindi sono quelli "spesi" per primi — stessa logica
+    di _gia_disponibile_per_fase, letta al contrario. Se quella fase da
+    sola non basta (più pezzi consumati di quanti risultino completi a
+    quella fase — caso limite, dato storico disallineato), scende alla
+    fase precedente per il resto, senza mai portare una riga sotto zero.
+
+    Nessun effetto per un codice mono-fase o senza Ciclo di Lavoro (niente
+    da spezzare tra fasi — la sola giacenza piana resta la fonte di
+    verità), né per un codice senza nessuna riga WIP ancora inserita.
+    Non deve MAI bloccare lo scarico magazzino: qualunque errore resta
+    qui, solo loggato (stessa cautela di _avanza_wip_fase_automatico).
+    """
+    if qta_consumata <= 0:
+        return
+    try:
+        fasi = (CicloLavoroWood.query.filter_by(codice=codice)
+                .order_by(CicloLavoroWood.sequenza.desc()).all())
+        if len(fasi) < 2:
+            return
+        residuo = qta_consumata
+        for f in fasi:
+            if residuo <= 0:
+                break
+            riga = WipFaseWood.query.filter_by(codice=codice, centro_costo_id=f.centro_costo_id).first()
+            if not riga or not riga.quantita:
+                continue
+            tolto = min(riga.quantita, residuo)
+            riga.quantita = max(riga.quantita - tolto, 0)
+            riga.aggiornato_il = datetime.utcnow()
+            residuo -= tolto
+    except Exception as e:
+        log(f'AVVISO consumo automatico WIP per fase non riuscito — {codice}: {e}')
+
+
 @magazzino_bp.route('/api/fabbisogno_disponibilita')
 def api_fabbisogno_disponibilita():
     """
