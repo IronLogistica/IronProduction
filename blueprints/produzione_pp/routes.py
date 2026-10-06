@@ -4562,6 +4562,19 @@ def api_dichiarazione_op_aperti(cid):
         for f in CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(tutti_i_codici)).all():
             sequenza_per_centro_per_codice.setdefault(f.codice, {})[f.centro_costo_id] = f.sequenza
     wip_per_codice = _wip_fase_per_codice(tutti_i_codici)
+    # Tetto di sicurezza (segnalato da Mauri, 06/10/2026 — caso reale:
+    # PINXTT110 consumato come componente da un altro codice aveva scaricato
+    # la giacenza piana ma NON la WIP per fase, che restava "più alta" del
+    # fisicamente esistente — la WIP sommata risultava 287 quando in
+    # magazzino ce n'erano davvero solo 250, nascondendo una riga ancora
+    # davvero da dichiarare). Stessa cautela già applicata da
+    # _gia_disponibile_per_fase: la WIP può dire "già fatto" solo fino a
+    # quanto esiste FISICAMENTE in giacenza per quel codice, mai di più —
+    # un tetto difensivo, utile anche se la causa di fondo (sopra) è ora
+    # corretta, per non ripetere lo stesso sintomo da un'altra causa futura.
+    giacenze_per_codice = ({g.codice: g.quantita or 0 for g in
+                            GiacenzaWood.query.filter(GiacenzaWood.codice.in_(tutti_i_codici)).all()}
+                           if tutti_i_codici else {})
 
     codici_op = [o.codice for o in ordini]
     fatti_per_componente = {}
@@ -4659,6 +4672,8 @@ def api_dichiarazione_op_aperti(cid):
                     pezzi_wip_fase_o_oltre = sum(q for cid, q in wip_righe_comp.items()
                                                  if sequenza_per_centro_per_codice.get(codice_comp, {}).get(cid, -1)
                                                  >= sequenza_richiesta)
+                    pezzi_wip_fase_o_oltre = min(pezzi_wip_fase_o_oltre,
+                                                  giacenze_per_codice.get(codice_comp, pezzi_wip_fase_o_oltre))
                     fatti_eff = max(fatti, min(pezzi_wip_fase_o_oltre, qta_necessaria))
             # ERRORE CONCETTUALE CORRETTO (rimossa la sottrazione della
             # 'giacenza già disponibile' dal saldo qui, come già fatto per

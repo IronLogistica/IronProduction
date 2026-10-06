@@ -89,6 +89,30 @@ class TestWipStationFaseDichiarazione(unittest.TestCase):
         comp = self._componente_pinxtt110(r.get_json())
         self.assertEqual(comp['saldo'], 287)
 
+    def test_wip_inflazionata_oltre_la_giacenza_non_nasconde_la_riga(self):
+        """
+        Tetto di sicurezza (segnalato da Mauri, 06/10/2026): se per
+        qualunque motivo la WIP per fase risultasse "più alta" di quanto
+        esiste davvero in giacenza (es. un codice consumato altrove come
+        componente senza — all'epoca — allineare la WIP, bug ora corretto
+        a monte), questo endpoint non deve fidarsi ciecamente della somma
+        WIP: deve comunque limitarla a quanto è fisicamente in giacenza,
+        proprio come fa già _gia_disponibile_per_fase altrove — altrimenti
+        una riga ancora davvero da dichiarare sparisce dalla lista.
+        """
+        with self.app.app_context():
+            g = GiacenzaWood.query.get('PINXTT110')
+            g.quantita = 250  # consumato altrove: giacenza scesa, WIP rimasta a 287 (disallineata)
+            db.session.add_all([
+                WipFaseWood(codice='PINXTT110', centro_costo_id=self.taglio_id, quantita=96),
+                WipFaseWood(codice='PINXTT110', centro_costo_id=self.satinatura_id, quantita=191),
+            ])
+            db.session.commit()
+        r = self.client.get(f'/api/dichiarazione-produzione/{self.taglio_id}/op-aperti')
+        comp = self._componente_pinxtt110(r.get_json())
+        self.assertEqual(comp['saldo'], 37, "287 necessari - 250 davvero disponibili = 37 ancora da tagliare, "
+                                             "non 0 (che la WIP, da sola, inflazionata a 287, avrebbe suggerito)")
+
 
 if __name__ == '__main__':
     unittest.main()
