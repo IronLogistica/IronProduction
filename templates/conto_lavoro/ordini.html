@@ -233,10 +233,15 @@ async function apriOrdine(id){
     <div style="border-top:1px solid var(--border);padding-top:10px">
       <div style="font-size:12px;font-weight:700;margin-bottom:6px">➕ Aggiungi riga</div>
       <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:flex-end">
-        <div><label class="modal-label" style="margin:0">Codice</label>
-          <input class="modal-input" id="nr-codice" list="dl-articoli-ordine" style="width:150px"
-                 oninput="aggiornaDescrizioneNuovaRiga()" placeholder="cerca o digita nuovo">
-          <datalist id="dl-articoli-ordine"></datalist></div>
+        <div style="position:relative">
+          <label class="modal-label" style="margin:0">Codice</label>
+          <input class="modal-input" id="nr-codice" style="width:220px" autocomplete="off"
+                 oninput="ricercaArticoloNuovaRiga(this.value)"
+                 onfocus="ricercaArticoloNuovaRiga(this.value)" placeholder="cerca codice o descrizione, o digita nuovo">
+          <div id="nr-codice-risultati" style="display:none;position:absolute;z-index:50;top:100%;left:0;min-width:280px;
+               max-height:260px;overflow-y:auto;background:var(--bg-elevato,#152238);border:1px solid var(--border);
+               border-radius:6px;margin-top:2px;box-shadow:0 4px 14px rgba(0,0,0,.35)"></div>
+        </div>
         <div id="nr-descrizione-box" style="display:none">
           <label class="modal-label" style="margin:0">Descrizione (nuovo codice)</label>
           <input class="modal-input" id="nr-descrizione" style="width:200px"></div>
@@ -250,16 +255,53 @@ async function apriOrdine(id){
   document.getElementById('btn-ord-conferma-apertura').style.display = bozza ? '' : 'none';
   openModal('modalOrdine');
   CATALOGO_ORDINE_APERTO = await chiama('/conto-lavoro/api/articoli?cliente_id=' + d.cliente_id + '&tutti=1');
-  const dl = document.getElementById('dl-articoli-ordine');
-  if(dl) dl.innerHTML = (Array.isArray(CATALOGO_ORDINE_APERTO) ? CATALOGO_ORDINE_APERTO : [])
-    .map(a => `<option value="${esc(a.codice)}">${esc(a.descrizione) || ''}</option>`).join('');
+  if(!Array.isArray(CATALOGO_ORDINE_APERTO)) CATALOGO_ORDINE_APERTO = [];
 }
 
+// Menù intelligente "+ Aggiungi riga" (stesso pattern di Inventario Codice
+// Padre — ricercaCodicePadreInput/selezionaCodicePadre): qui il catalogo è
+// già tutto in memoria (CATALOGO_ORDINE_APERTO, caricato all'apertura
+// dell'ordine), quindi filtra lato client senza bisogno di interrogare il
+// server ad ogni carattere digitato.
 function aggiornaDescrizioneNuovaRiga(){
   const codice = (document.getElementById('nr-codice').value || '').trim().toUpperCase();
   const trovato = CATALOGO_ORDINE_APERTO.find(a => a.codice === codice);
   document.getElementById('nr-descrizione-box').style.display = (codice && !trovato) ? '' : 'none';
 }
+
+function ricercaArticoloNuovaRiga(valore){
+  aggiornaDescrizioneNuovaRiga();
+  const box = document.getElementById('nr-codice-risultati');
+  const q = (valore || '').trim().toLowerCase();
+  if(q.length < 1){ box.style.display = 'none'; box.innerHTML = ''; return; }
+  const risultati = CATALOGO_ORDINE_APERTO
+    .filter(a => a.codice.toLowerCase().includes(q) || (a.descrizione || '').toLowerCase().includes(q))
+    .slice(0, 20);
+  if(!risultati.length){
+    box.innerHTML = `<div style="padding:8px 10px;font-size:12px;color:var(--text-dim)">
+      Nessun codice esistente trovato — premendo "➕ Aggiungi" verrà creato come nuovo codice.</div>`;
+  } else {
+    box.innerHTML = risultati.map(a => `
+      <div style="padding:7px 10px;font-size:12px;cursor:pointer;border-bottom:1px solid var(--border)"
+           onmousedown="event.preventDefault(); selezionaArticoloNuovaRiga('${esc(a.codice).replace(/'/g, "\\'")}')"
+           onmouseover="this.style.background='rgba(255,255,255,.06)'" onmouseout="this.style.background=''">
+        <b>${esc(a.codice)}</b>${a.descrizione ? ` — ${esc(a.descrizione)}` : ''}
+      </div>`).join('');
+  }
+  box.style.display = '';
+}
+
+function selezionaArticoloNuovaRiga(codice){
+  document.getElementById('nr-codice').value = codice;
+  document.getElementById('nr-codice-risultati').style.display = 'none';
+  aggiornaDescrizioneNuovaRiga();
+  document.getElementById('nr-quantita').focus();
+}
+
+document.addEventListener('click', e => {
+  const box = document.getElementById('nr-codice-risultati');
+  if(box && !box.contains(e.target) && e.target.id !== 'nr-codice') box.style.display = 'none';
+});
 
 async function aggiungiRigaOrdine(){
   if(!ordineAperto) return;
