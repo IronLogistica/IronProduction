@@ -293,6 +293,17 @@ async function caricaInAttesaRilascio(){
   }
 }
 caricaInAttesaRilascio();
+
+// Auto-refresh (richiesto da Mauri, 06/10/2026 — pagina usata per
+// condivisione schermo/monitor fisso: nessuno è lì a premere "Aggiorna"
+// manualmente). Ogni sezione si ricarica da sola ogni 60s — sfalsate di
+// qualche secondo l'una dall'altra (invece che tutte e 5 nello stesso
+// istante) per non far partire 5 fetch in parallelo ogni minuto esatto.
+// I pulsanti "🔄 Aggiorna" restano invariati per un refresh immediato.
+[caricaGanttCommesse, caricaAvanzamentoCommesse, caricaMaterialiDaTrattare,
+ caricaAppenaTerminate, caricaInAttesaRilascio].forEach((fn, i) => {
+  setTimeout(() => setInterval(fn, 60000), i * 3000);
+});
 </script>
 </body>
 </html>
