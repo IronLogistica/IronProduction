@@ -474,7 +474,11 @@ def _quantita_prodotta(codice_articolo):
     """SOLA LETTURA su OrdineProduzione — vedi eccezione documentata in cima
     al file. Somma qta_buona di tutti gli OP con quel codice_articolo,
     qualunque sia lo stato: una volta dichiarata prodotta, la quantità resta
-    valida anche se l'OP viene poi chiuso/archiviato."""
+    valida anche se l'OP viene poi chiuso/archiviato.
+    Per UNA riga/UN codice isolato (dettaglio di un solo ordine). Quando
+    serve per MOLTE righe insieme (lista ordini, Live, Magazzino) usare
+    invece _prodotta_per_codici — una query sola invece di una per codice,
+    vedi lì il motivo (bug reale, "Errore di rete" per troppe query)."""
     if not codice_articolo:
         return 0.0
     tot = (db.session.query(db.func.coalesce(db.func.sum(OrdineProduzione.qta_buona), 0))
@@ -482,39 +486,65 @@ def _quantita_prodotta(codice_articolo):
     return float(tot or 0)
 
 
-def _prodotta_riga(r):
+def _prodotta_per_codici(codici):
+    """BUG REALE CORRETTO (segnalato da Mauri, 06/10/2026 — /conto-lavoro/
+    riepilogo mostrava 'Errore di rete'): _quantita_prodotta interrogava il
+    DB una volta per OGNI riga/codice (N+1) — con decine di ordini e righe,
+    /api/live (nessun limite) e /api/ordini (limite 200, ma più righe a
+    testa) finivano per fare centinaia di query sequenziali nella stessa
+    richiesta, abbastanza lente da far scadere il timeout del server: la
+    risposta tornava una pagina di errore HTML invece di JSON, e il
+    fetch().json() del browser la vedeva come un fallimento di rete.
+    Qui invece UNA sola query SUM...GROUP BY per tutti i codici coinvolti,
+    poi letta in memoria per ogni riga. Ritorna {codice: prodotta}."""
+    codici = {c for c in codici if c}
+    if not codici:
+        return {}
+    righe = (db.session.query(OrdineProduzione.codice_articolo,
+                              db.func.coalesce(db.func.sum(OrdineProduzione.qta_buona), 0))
+             .filter(OrdineProduzione.codice_articolo.in_(codici))
+             .group_by(OrdineProduzione.codice_articolo).all())
+    return {codice: float(tot or 0) for codice, tot in righe}
+
+
+def _prodotta_riga(r, mappa_prodotta=None):
     """'Prodotta' di una riga: il calcolo automatico da OrdineProduzione
     (sola lettura, vedi eccezione in testata file), SALVO che il capo abbia
     inserito una correzione manuale per questa riga (quantita_prodotta_manuale
-    non NULL) — in quel caso vale quella, sempre (dalla 0004)."""
+    non NULL) — in quel caso vale quella, sempre (dalla 0004).
+    'mappa_prodotta' opzionale (vedi _prodotta_per_codici): se fornita, legge
+    da lì invece di interrogare il DB — usarla sempre quando si processano
+    più righe nella stessa richiesta."""
     if r.quantita_prodotta_manuale is not None:
         return float(r.quantita_prodotta_manuale)
     codice = r.articolo.codice if r.articolo else ''
+    if mappa_prodotta is not None:
+        return mappa_prodotta.get(codice, 0.0)
     return _quantita_prodotta(codice)
 
 
-def _ordine_movimentato(o):
+def _ordine_movimentato(o, mappa_prodotta=None):
     """True se almeno una riga ha già qualcosa di 'reale' sopra (prodotta >0
     o evasa >0) — da quel momento l'ordine non si elimina più, né dalla lista
     né dal popup, qualunque sia il suo stato (anche se ancora BOZZA): quei
     numeri verrebbero persi senza lasciar traccia. Un ordine BOZZA o
     CONFERMATO senza nulla sopra resta eliminabile."""
-    return any(_prodotta_riga(r) > 0 or float(r.quantita_evasa or 0) > 0 for r in o.righe)
+    return any(_prodotta_riga(r, mappa_prodotta) > 0 or float(r.quantita_evasa or 0) > 0 for r in o.righe)
 
 
-def _ordine_dict(o, con_righe=False):
+def _ordine_dict(o, con_righe=False, mappa_prodotta=None):
     d = {'id': o.id, 'cliente_id': o.cliente_id, 'cliente': o.cliente.ragione_sociale if o.cliente else '',
         'numero_ordine': o.numero_ordine, 'rif_cliente': o.rif_cliente,
         'data_documento': o.data_documento.strftime('%d/%m/%Y') if o.data_documento else '',
         'stato': o.stato, 'filename': o.filename,
         'creato_il': o.creato_il.strftime('%d/%m/%Y %H:%M') if o.creato_il else '',
-        'movimentato': _ordine_movimentato(o)}
+        'movimentato': _ordine_movimentato(o, mappa_prodotta)}
     if con_righe:
         righe = []
         for r in o.righe:
             codice = r.articolo.codice if r.articolo else ''
             ordinata = float(r.quantita)
-            prodotta = _prodotta_riga(r)
+            prodotta = _prodotta_riga(r, mappa_prodotta)
             evasa = float(r.quantita_evasa or 0)
             righe.append({'id': r.id, 'n_riga': r.n_riga, 'codice': codice,
                           'descrizione': r.descrizione, 'quantita': ordinata,
@@ -528,17 +558,22 @@ def _ordine_dict(o, con_righe=False):
 
 @cl_bp.get('/api/ordini')
 def api_ordini():
-    q = ClOrdine.query
+    q = ClOrdine.query.options(db.joinedload(ClOrdine.cliente),
+                               db.joinedload(ClOrdine.righe).joinedload(ClOrdineRiga.articolo))
     cid = request.args.get('cliente_id', type=int)
     if cid:
         q = q.filter(ClOrdine.cliente_id == cid)
-    return jsonify([_ordine_dict(o) for o in q.order_by(ClOrdine.creato_il.desc()).limit(200).all()])
+    ordini = q.order_by(ClOrdine.creato_il.desc()).limit(200).all()
+    codici = {r.articolo.codice for o in ordini for r in o.righe if r.articolo}
+    mappa_prodotta = _prodotta_per_codici(codici)
+    return jsonify([_ordine_dict(o, mappa_prodotta=mappa_prodotta) for o in ordini])
 
 
 @cl_bp.get('/api/ordini/<int:oid>')
 def api_ordine_dettaglio(oid):
     o = db.session.get(ClOrdine, oid) or abort(404)
-    return jsonify(_ordine_dict(o, con_righe=True))
+    mappa_prodotta = _prodotta_per_codici(r.articolo.codice for r in o.righe if r.articolo)
+    return jsonify(_ordine_dict(o, con_righe=True, mappa_prodotta=mappa_prodotta))
 
 
 @cl_bp.post('/api/ordini/importa')
@@ -910,12 +945,19 @@ def api_live():
     lettura — stessa eccezione documentata in cima al file per "Prodotta".
     """
     ordini = (ClOrdine.query.filter(ClOrdine.stato == 'CONFERMATO')
+             .options(db.joinedload(ClOrdine.cliente),
+                      db.joinedload(ClOrdine.righe).joinedload(ClOrdineRiga.articolo))
              .order_by(ClOrdine.cliente_id, ClOrdine.numero_ordine).all())
     if not ordini:
         return jsonify([])
     articolo_ids = {r.articolo_id for o in ordini for r in o.righe}
     con_foto = {aid for (aid,) in db.session.query(ClFotoArticolo.articolo_id)
                .filter(ClFotoArticolo.articolo_id.in_(articolo_ids)).all()} if articolo_ids else set()
+    # Vedi _prodotta_per_codici: una sola query invece di una per riga — con
+    # NESSUN limite sul numero di ordini CONFERMATO (a differenza di
+    # /api/ordini), questo endpoint era il più esposto al bug "Errore di
+    # rete" per troppe query.
+    mappa_prodotta = _prodotta_per_codici(r.articolo.codice for o in ordini for r in o.righe if r.articolo)
 
     gruppi = {}
     for o in ordini:
@@ -925,7 +967,7 @@ def api_live():
         for r in o.righe:
             codice = r.articolo.codice if r.articolo else ''
             ordinata = float(r.quantita)
-            prodotta = _prodotta_riga(r)
+            prodotta = _prodotta_riga(r, mappa_prodotta)
             saldo = round(ordinata - prodotta, 3)
             pct = round(min(100, prodotta / ordinata * 100)) if ordinata > 0 else 100
             righe.append({'articolo_id': r.articolo_id, 'codice': codice, 'descrizione': r.descrizione,
@@ -978,12 +1020,15 @@ def api_magazzino():
         con_foto = {aid for (aid,) in db.session.query(ClFotoArticolo.articolo_id)
                    .filter(ClFotoArticolo.articolo_id.in_(articolo_ids)).all()}
 
+    # Vedi _prodotta_per_codici: una sola query invece di una per articolo.
+    mappa_prodotta = _prodotta_per_codici(a.codice for a in articoli)
+
     gruppi = {}
     for a in articoli:
         g = gruppi.setdefault(a.cliente_id, {'cliente_id': a.cliente_id,
                                              'cliente': a.cliente.ragione_sociale if a.cliente else '', 'articoli': []})
         ordinata = float(ordinate.get(a.id, 0) or 0)
-        prodotta = _quantita_prodotta(a.codice)
+        prodotta = mappa_prodotta.get(a.codice, 0.0)
         g['articoli'].append({'articolo_id': a.id, 'codice': a.codice, 'descrizione': a.descrizione, 'udm': a.udm,
                               'giacenza': float(giacenze.get(a.id, 0) or 0), 'quantita_ordinata': ordinata,
                               'quantita_prodotta': prodotta, 'quantita_evasa': float(evase.get(a.id, 0) or 0),
