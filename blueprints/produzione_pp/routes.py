@@ -4606,6 +4606,62 @@ def api_dichiarazione_op_aperti(cid):
                 chiave = (op_code, componente)
                 fatti_per_componente[chiave] = fatti_per_componente.get(chiave, 0) + (buoni or 0)
 
+    # Credito "da valle" (segnalato da Mauri, 06/10/2026 — caso reale
+    # PINXTT110 -> PINX110-A -> PINX110-B -> PINX110): a differenza del
+    # Ciclo di Lavoro a più fasi dello STESSO codice (dove WIP Station
+    # segue già i pezzi che avanzano), qui un pezzo che ha superato
+    # 'codice_comp' diventa un codice DIVERSO di distinta base (vedi
+    # MappaCodiceMasterWork — "Fase A: Saldatura Tappo" = PINX110-A, "Fase
+    # B" = PINX110-B, sono articoli distinti, non fasi dello stesso
+    # CicloLavoroWood). Quando quei pezzi vengono consumati per produrre
+    # lo stadio successivo, la giacenza/WIP di 'codice_comp' scende — è
+    # corretto — ma quei pezzi NON vanno rifatti da capo: hanno già
+    # superato 'codice_comp' per sempre, semplicemente non esistono più
+    # CON QUEL codice. Senza questo credito, un componente a monte
+    # risultava "ancora da produrre" anche per pezzi legittimamente già
+    # avanzati più avanti nella stessa catena di questo stesso OP — un
+    # ordine già di fatto coperto riappariva come "da produrre" in un
+    # reparto a monte.
+    #
+    # Serve quindi un totale "fatti MAI dichiarati per questo componente",
+    # SENZA il filtro sul centro corrente (un componente a valle, es.
+    # PINX110-A, ha la SUA fase propria — 'Saldatura', non 'Segatrice' —
+    # quindi il filtro sopra, scoping a questo centro, non lo troverebbe
+    # mai).
+    fatti_totali_per_componente = {}
+    if codici_op:
+        for op_code, componente, buoni in (
+                EventoConsuntivoPP.query.filter(EventoConsuntivoPP.op_code.in_(codici_op),
+                                                 EventoConsuntivoPP.approvato_direzione == True)  # noqa: E712
+                .with_entities(EventoConsuntivoPP.op_code, EventoConsuntivoPP.componente,
+                               EventoConsuntivoPP.pezzi_buoni).all()):
+            chiave = (op_code, componente)
+            fatti_totali_per_componente[chiave] = fatti_totali_per_componente.get(chiave, 0) + (buoni or 0)
+
+    # Mappa INVERSA della distinta base (figlio -> insieme dei suoi padri
+    # diretti), per risalire da 'codice_comp' fino alla radice dell'OP e
+    # trovare ogni stadio successivo della catena.
+    figli_a_padri = {}
+    for padre, righe in mappa_distinta.items():
+        for r in righe:
+            figli_a_padri.setdefault(r.codice_figlio, set()).add(padre)
+
+    def _antenati_nella_catena_op(codice_comp, codici_di_questo_op):
+        """Ogni codice che, direttamente o indirettamente, consuma
+        'codice_comp' DENTRO la distinta base di QUESTO specifico OP —
+        mai antenati di un uso dello stesso codice_comp in TUTT'ALTRE
+        distinte/OP, che non c'entrano con questo ordine."""
+        visti, risultato, da_visitare = set(), [], [codice_comp]
+        while da_visitare:
+            corrente = da_visitare.pop()
+            for padre in figli_a_padri.get(corrente, ()):
+                if padre in visti or padre not in codici_di_questo_op:
+                    continue
+                visti.add(padre)
+                risultato.append(padre)
+                da_visitare.append(padre)
+        return risultato
+
     # Descrizione di ogni codice dichiarabile — ArticoloML (magazzino
     # condiviso MasterLogistic) prima, riserva locale (da import
     # Zucchetti/DESCOM) solo per i codici che ArticoloML non conosce.
@@ -4626,6 +4682,7 @@ def api_dichiarazione_op_aperti(cid):
     risultato = []
     for o in ordini:
         fabbisogno_effettivo = _fabbisogno_propagato_per_op(o, mappa_distinta=mappa_distinta)
+        codici_di_questo_op = {c['codice'] for c in componenti_per_op[o.id]}
         gruppo_componenti = []
         for comp in componenti_per_op[o.id]:
             codice_comp = comp['codice']
@@ -4675,6 +4732,28 @@ def api_dichiarazione_op_aperti(cid):
                     pezzi_wip_fase_o_oltre = min(pezzi_wip_fase_o_oltre,
                                                   giacenze_per_codice.get(codice_comp, pezzi_wip_fase_o_oltre))
                     fatti_eff = max(fatti, min(pezzi_wip_fase_o_oltre, qta_necessaria))
+            # Credito "da valle" — vedi nota sopra su fatti_totali_per_componente
+            # e _antenati_nella_catena_op: un pezzo già avanzato a uno stadio
+            # SUCCESSIVO della stessa catena (un codice diverso di distinta
+            # base di questo OP) resta "già fatto" qui per sempre, anche se
+            # la sua giacenza/WIP come 'codice_comp' è nel frattempo scesa —
+            # proprio perché è sceso PER QUESTO: è stato consumato per
+            # produrre lo stadio successivo. Va quindi SOMMATO al residuo
+            # ancora fisicamente presente come 'codice_comp' (fatti_eff
+            # sopra), non confrontato con un max: sono due insiemi di pezzi
+            # DISGIUNTI (quelli ancora fermi qui + quelli già passati
+            # avanti), che insieme ricompongono il totale mai prodotto a
+            # questo stadio. Tra i vari stadi successivi invece si prende
+            # il MAX (non la somma): un pezzo avanzato fino a PINX110-B è
+            # già conteggiato anche dentro il cumulativo di PINX110-A (lo
+            # stesso pezzo, un passo più avanti) — sommarli sarebbe un
+            # doppio conteggio dello stesso pezzo.
+            credito_da_valle = 0
+            for antenato in _antenati_nella_catena_op(codice_comp, codici_di_questo_op):
+                credito = (o.qta_buona or 0) if antenato == o.codice_articolo else \
+                    fatti_totali_per_componente.get((o.codice, antenato), 0)
+                credito_da_valle = max(credito_da_valle, credito)
+            fatti_eff = min(qta_necessaria, fatti_eff + credito_da_valle)
             # ERRORE CONCETTUALE CORRETTO (rimossa la sottrazione della
             # 'giacenza già disponibile' dal saldo qui, come già fatto per
             # Totem Live e Ordine di Lavoro): la Dichiarazione Libera
