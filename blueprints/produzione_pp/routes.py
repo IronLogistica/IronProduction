@@ -2071,6 +2071,19 @@ def _credito_da_valle(o, codice_comp, codici_di_questo_op, figli_a_padri, fatti_
     return credito_da_valle
 
 
+def _credito_valle_applicabile(codice_comp, credito):
+    """Decisione di Angelo (07/10/2026, caso OP-2026-000063): il credito da
+    valle chiude la riga SOLO se i pezzi avanzati a valle sono davvero
+    passati da questo codice (giacenza non negativa). Se la giacenza del
+    codice e' NEGATIVA, a valle e' stato consumato qualcosa che qui non e'
+    mai stato dichiarato (dimenticanza): la riga resta aperta, dichiarabile,
+    e compare un avviso. Ritorna (credito_da_applicare, avviso_pezzi)."""
+    g = GiacenzaWood.query.get(codice_comp)
+    if g is not None and (g.quantita or 0) < 0:
+        return 0, credito
+    return credito, 0
+
+
 def _e_prima_fase_del_ciclo(codice_lavorato, fase_nome):
     """
     Vero se fase_nome è la PRIMA fase del Ciclo di Lavoro di questo codice —
@@ -3971,8 +3984,14 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         # chiuso — stesso calcolo, stesso helper condiviso, mai due versioni.
         credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
                                               figli_a_padri, fatti_totali_per_componente)
+        # Decisione di Angelo (07/10/2026): con giacenza negativa il credito da
+        # valle non chiude la riga, resta un avviso (_credito_valle_applicabile).
+        credito_da_valle, credito_non_dichiarato = _credito_valle_applicabile(codice_comp, credito_da_valle)
         gia_disponibile = min(saldo_prima_giacenza, gia_disponibile + credito_da_valle)
         saldo = max(saldo_prima_giacenza - gia_disponibile, 0)
+        a_valle_non_dichiarati = int(max(min(nr_pz_da_fare, credito_non_dichiarato) - pezzi_fatti, 0))
+        avviso_a_valle = (f'⚠️ {a_valle_non_dichiarati} pz risultano già lavorati a valle: '
+                          f'dichiarazione dimenticata?') if a_valle_non_dichiarati > 0 else ''
 
         # 'Materiale' mostrato in tabella è SEMPRE il primo figlio diretto in
         # Distinta Base di codice_comp — un dato di distinta, indipendente
@@ -4011,6 +4030,8 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
                 # falso allarme, va mostrato solo dove quei parametri hanno senso.
                 'nota': '' if 'sald' in nome_l else '⚠️ Parametri non ancora compilati in Parametri di Lavorazione',
             }
+        if avviso_a_valle:
+            riga['nota'] = (riga.get('nota') + ' ' if riga.get('nota') else '') + avviso_a_valle
         righe_per_materiale.setdefault(materiale, []).append(riga)
 
     codici_materiale = list(righe_per_materiale.keys())
@@ -4820,7 +4841,13 @@ def api_dichiarazione_op_aperti(cid):
             # doppio conteggio dello stesso pezzo.
             credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
                                                   figli_a_padri, fatti_totali_per_componente)
+            # DECISIONE DI ANGELO (07/10/2026, caso OP-2026-000063): se il
+            # codice ha giacenza NEGATIVA il credito da valle non chiude la
+            # riga (vedi _credito_valle_applicabile): resta dichiarabile e
+            # compare un avviso breve.
+            credito_da_valle, credito_non_dichiarato = _credito_valle_applicabile(codice_comp, credito_da_valle)
             fatti_eff = min(qta_necessaria, fatti_eff + credito_da_valle)
+            a_valle_non_dichiarati = int(max(min(qta_necessaria, credito_non_dichiarato) - fatti_eff, 0))
             # ERRORE CONCETTUALE CORRETTO (rimossa la sottrazione della
             # 'giacenza già disponibile' dal saldo qui, come già fatto per
             # Totem Live e Ordine di Lavoro): la Dichiarazione Libera
@@ -4838,6 +4865,7 @@ def api_dichiarazione_op_aperti(cid):
                 'codice_lavorato': codice_comp, 'descrizione': descrizione_per_codice.get(codice_comp, ''),
                 'qta_necessaria': qta_necessaria, 'fatti': fatti, 'saldo': saldo,
                 'reintegro_da_scarto_a_valle': qta_necessaria > qta_necessaria_base,
+                'avviso_a_valle': a_valle_non_dichiarati,
             })
         if not gruppo_componenti:
             continue

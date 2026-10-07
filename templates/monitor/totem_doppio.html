@@ -165,7 +165,7 @@
               <tbody>
               {% for c in g.componenti %}
                 <tr class="{{ 'componente-completo' if c.completato else '' }}">
-                  <td class="codice-cell">{{ c.codice_lavorato }}{{ ' ✅' if c.completato else '' }}</td>
+                  <td class="codice-cell">{{ c.codice_lavorato }}{{ ' ✅' if c.completato else '' }}{% if c.avviso_a_valle %}<div style="font-size:.62rem;color:#e6b800;font-weight:700;margin-top:2px">⚠️ {{ c.avviso_a_valle }} pz già lavorati a valle: dichiarazione dimenticata?</div>{% endif %}</td>
                   <td class="muted">{{ c.descrizione_lavorata or '—' }}</td>
                   <td>{% if not c.completato %}<span class="prod-badge {{ c.stato_producibilita }}">{{ ETICHETTA_PRODUCIBILITA[c.stato_producibilita] }}</span>
                     {% if c.stato_producibilita != 'producibile' and c.fase_precedente %}

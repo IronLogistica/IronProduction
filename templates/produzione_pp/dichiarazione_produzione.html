@@ -539,8 +539,11 @@ async function caricaOpAperti(){
       const badgeReintegro = c.reintegro_da_scarto_a_valle
         ? ` <span title="Il saldo include pezzi da rifare per uno scarto avvenuto in una fase successiva del ciclo" style="font-size:9px;background:#e6b800;color:#1c1c1c;padding:1px 6px;border-radius:4px;font-weight:700;white-space:nowrap">🔄 reintegro scarto a valle</span>`
         : '';
+      const badgeAValle = c.avviso_a_valle
+        ? `<div style="font-size:10px;color:#e6b800;font-weight:700;margin-top:2px">⚠️ ${c.avviso_a_valle} pz già lavorati a valle: dichiarazione dimenticata?</div>`
+        : '';
       return `<tr>
-        <td class="codice">${etichetta}${badgeReintegro}</td>
+        <td class="codice">${etichetta}${badgeReintegro}${badgeAValle}</td>
         <td class="muted" style="font-size:11px">${c.descrizione || '—'}</td>
         <td>${c.qta_necessaria}</td>
         <td>${c.fatti}</td>

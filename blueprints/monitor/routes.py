@@ -12,7 +12,8 @@ from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_
                     _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
                     _wip_fase_per_codice, _gia_disponibile_per_fase)
 from blueprints.produzione_pp.routes import (_registra_evento_consuntivo, _audit, _is_carpenteria,
-                    _fasi_corrispondono, _figli_a_padri_da_mappa, _fatti_totali_per_componente, _credito_da_valle)
+                    _fasi_corrispondono, _figli_a_padri_da_mappa, _fatti_totali_per_componente, _credito_da_valle,
+                    _credito_valle_applicabile)
 
 monitor_bp = Blueprint('monitor', __name__)
 
@@ -275,8 +276,12 @@ def _righe_macchina(centro):
             # 'fatti_eff').
             credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
                                                   figli_a_padri, fatti_totali_per_componente)
+            # Decisione di Angelo (07/10/2026): con giacenza negativa il credito da
+            # valle non chiude la riga, resta un avviso (OP-2026-000063).
+            credito_da_valle, credito_non_dichiarato = _credito_valle_applicabile(codice_comp, credito_da_valle)
             gia_disponibile = min(saldo_prima_giacenza, gia_disponibile + credito_da_valle)
             saldo_fase = max(saldo_prima_giacenza - gia_disponibile, 0)
+            a_valle_non_dichiarati = int(max(min(qta_necessaria, credito_non_dichiarato) - pezzi_fase, 0))
             pct_fase = round(pezzi_fase / qta_necessaria * 100) if qta_necessaria else 0
 
             if saldo_fase <= 0:
@@ -457,6 +462,7 @@ def _righe_macchina(centro):
                 'stato_producibilita': stato_producibilita,
                 'stato_materiale': stato_materiale,
                 'fase_precedente': fase_precedente_nome,
+                'avviso_a_valle': a_valle_non_dichiarati,
                 'disponibile_da_monte': disponibile_da_monte,
                 'soglia_kanban': soglia_kanban,
                 '_chiave_ordine': chiave_ordine,

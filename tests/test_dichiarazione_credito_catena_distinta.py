@@ -132,8 +132,13 @@ class TestDichiarazioneCreditoCatenaDistinta(unittest.TestCase):
                 o, 'Saldatura Tappo', datetime.utcnow(), good=400, scrap=0, tempo=0, event_id=1,
                 componente='PINX110-A', approvato_direzione=True)
             db.session.commit()
+        # Decisione di Angelo (07/10/2026): 400 saldati a valle contro 250 in giacenza =
+        # giacenza NEGATIVA = taglio mai dichiarato -> la riga resta aperta (mai saldo
+        # negativo, mai sopra il necessario) e avvisa, invece di restare chiusa per sempre.
         comp = self._righe_segatrice()
-        self.assertIsNone(comp)
+        self.assertIsNotNone(comp)
+        self.assertEqual(comp['saldo'], 287)
+        self.assertEqual(comp['avviso_a_valle'], 287)
 
     def test_senza_distinta_a_valle_nessun_effetto(self):
         """Nessuna regressione: un OP il cui codice_articolo è direttamente

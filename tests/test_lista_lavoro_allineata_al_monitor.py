@@ -151,3 +151,27 @@ class TestEliminaMovimentoProtetto(unittest.TestCase):
                                         json={'pin': '1234'}).status_code, 409)
             self.assertEqual(c.post(f'/api/dichiarazione-produzione/movimenti/{ids[2]}/elimina',
                                     json={'pin': '1234'}).status_code, 200)
+
+
+class TestValleSenzaMonteAvviso(TestListaLavoroAllineataAlMonitor):
+    """OP-2026-000063 (Angelo, 07/10/2026): a valle e' stato lavorato un pezzo mai dichiarato
+    a monte (giacenza NEGATIVA): il taglio resta aperto e dichiarabile, con avviso."""
+
+    def test_con_giacenza_negativa_resta_aperto_e_avvisa(self):
+        with self.app.app_context():
+            g = db.session.get(GiacenzaWood, 'PINXTT110')
+            g.quantita = -203          # consumato a valle senza mai essere stato tagliato/dichiarato
+            db.session.commit()
+            riga = self._lista(self.seg_id)['gruppi'][0]['righe'][0]
+            self.assertEqual(riga['saldo'], 287)
+            self.assertIn('84 pz risultano già lavorati a valle', riga['nota'])
+            r = next(x for s in _righe_macchina(db.session.get(CentroCostoWood, self.seg_id)).values()
+                     for x in s if x['op_codice'] == OP)
+            self.assertEqual(r['saldo'], riga['saldo'], "OL e Monitor Live devono coincidere")
+            self.assertEqual(r['avviso_a_valle'], 84)
+
+    def test_con_giacenza_positiva_niente_avviso(self):
+        with self.app.app_context():
+            riga = self._lista(self.seg_id)['gruppi'][0]['righe'][0]
+            self.assertEqual(riga['saldo'], 0)
+            self.assertNotIn('a valle', riga['nota'])
