@@ -79,3 +79,32 @@ class TestStornoWip(unittest.TestCase):
             self.assertEqual((self._wip(self.c_id), self._wip(self.t_id)), (60, 40))
             self._storna('ev2')
             self.assertEqual((self._wip(self.c_id), self._wip(self.t_id)), (100, 0))
+
+
+class TestBloccoFasePrecedente(TestStornoWip):
+    """Non si dichiara una fase successiva se la precedente non ha WIP sufficiente."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        from blueprints.produzione_pp.routes import pp_bp
+        cls.app.register_blueprint(pp_bp)
+
+    def _post(self, centro_id, buoni, scarto=0):
+        return self.app.test_client().post('/api/dichiarazione-produzione', json={
+            'op_code': 'OP-1', 'centro_id': centro_id, 'componente': 'Z01',
+            'pezzi_buoni': buoni, 'pezzi_scarto': scarto, 'tempo_minuti': 0})
+
+    def test_blocca_senza_wip_poi_consente_nei_limiti(self):
+        with self.app.app_context():
+            r = self._post(self.t_id, 400)
+            self.assertEqual(r.status_code, 409)
+            self.assertTrue(r.get_json()['wip_insufficiente'])
+            self.assertEqual(EventoConsuntivoPP.query.count(), 0, "nessun evento, nessun movimento di magazzino")
+            self.assertEqual(self._post(self.c_id, 50).status_code, 200)       # prima fase: sempre libera
+            r = self._post(self.t_id, 51)
+            self.assertEqual(r.status_code, 409)
+            self.assertEqual(r.get_json()['disponibile'], 50)
+            self.assertEqual(self._post(self.t_id, 50).status_code, 200)
+            self.assertEqual((self._wip(self.c_id), self._wip(self.t_id)), (0, 50))
+            self.assertEqual(self._post(self.t_id, 1).status_code, 409, "i 50 sono gia' passati a Trapani")

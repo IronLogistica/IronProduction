@@ -4968,6 +4968,10 @@ def api_dichiarazione_crea():
     if good <= 0 and scrap <= 0:
         return jsonify(ok=False, error='Dichiara almeno un pezzo buono o di scarto'), 400
 
+    blocco_wip = _verifica_wip_fase_precedente(o, centro, componente, good, scrap)
+    if blocco_wip:
+        return jsonify(blocco_wip), 409
+
     if good > 0:
         blocco = _verifica_eccedenza_dichiarazione(o, centro, componente, good)
         if blocco:
@@ -5005,6 +5009,43 @@ def api_dichiarazione_crea():
     # deve saperlo SUBITO invece che scoprirlo da una giacenza sbagliata
     # settimane dopo: 'avviso' non blocca nulla, è solo visibile.
     return jsonify(ok=True, event_id=event_id, ordine=_ordine(o), avviso_magazzino=avviso_magazzino)
+
+
+def _verifica_wip_fase_precedente(o, centro, componente, good, scrap):
+    """
+    Blocco richiesto da Mauri/Angelo (07/10/2026, Z01 di OP-2026-000063):
+    non si dichiara una fase SUCCESSIVA di un codice con Ciclo di Lavoro a
+    piu' fasi se la fase PRECEDENTE non ha in WIP (WipFaseWood) abbastanza
+    pezzi, o non ha nessuna riga WIP. Prima si dichiara la fase precedente
+    (o si inserisce il WIP in 'WIP Station' per lo stock preesistente):
+    altrimenti magazzino e WIP si sfalsano (400 forati senza 400 piegati).
+    Solo per la dichiarazione manuale: gli eventi MasterWork restano in
+    stand-by e non vengono mai rifiutati qui (non si perde un dato).
+    Ritorna None se si puo' procedere, altrimenti il dict di errore."""
+    codice = componente or o.codice_articolo
+    fasi = (CicloLavoroWood.query.filter_by(codice=codice)
+            .order_by(CicloLavoroWood.sequenza).all())
+    if len(fasi) < 2:
+        return None
+    idx = next((i for i, f in enumerate(fasi)
+                if f.centro_costo and _fasi_corrispondono(f.centro_costo.nome, centro.nome)), None)
+    if idx is None or idx == 0:
+        return None
+    prec = fasi[idx - 1]
+    nome_prec = prec.centro_costo.nome if prec.centro_costo else 'fase precedente'
+    riga = WipFaseWood.query.filter_by(codice=codice, centro_costo_id=prec.centro_costo_id).first()
+    disponibile = int((riga.quantita or 0) if riga else 0)
+    richiesti = (good or 0) + (scrap or 0)
+    if richiesti <= disponibile:
+        return None
+    if disponibile <= 0:
+        msg = (f'{codice}: alla fase precedente «{nome_prec}» non risulta nessun pezzo (WIP vuoto o assente). '
+               f'Dichiara prima «{nome_prec}», oppure inserisci il WIP in WIP Station se i pezzi esistevano già.')
+    else:
+        msg = (f'{codice}: alla fase precedente «{nome_prec}» risultano solo {disponibile} pezzi, '
+               f'ne stai dichiarando {richiesti}. Dichiara prima «{nome_prec}» (o riduci la quantità a {disponibile}).')
+    return {'ok': False, 'error': msg, 'wip_insufficiente': True,
+            'fase_precedente': nome_prec, 'disponibile': disponibile}
 
 
 SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE = 20  # oltre questa % sopra il pianificato, blocco automatico
