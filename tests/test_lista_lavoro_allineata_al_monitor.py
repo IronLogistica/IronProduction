@@ -119,3 +119,35 @@ class TestDiagnosticaOp(unittest.TestCase):
         self.assertTrue(any('STAND-BY' in a for a in d['anomalie_trovate']))
         self.assertIn('Saldatura', d['per_reparto'])
         self.assertEqual(app.test_client().get('/api/diagnostica/op/NOPE').status_code, 404)
+
+
+class TestEliminaMovimentoProtetto(unittest.TestCase):
+    """OP-2026-000063: i movimenti nati da dichiarazioni/storni non si cancellano a mano."""
+
+    def test_movimento_storno_e_consuntivo_rifiutati_altri_eliminabili(self):
+        from models import MovimentoGiacenzaWood
+        app = Flask(__name__, template_folder='../templates')
+        app.config.update(TESTING=True, SQLALCHEMY_DATABASE_URI='sqlite:///:memory:',
+                          SQLALCHEMY_TRACK_MODIFICATIONS=False, CAPO_PIN='1234')
+        db.init_app(app)
+        from blueprints.produzione_pp.routes import pp_bp
+        app.register_blueprint(pp_bp)
+        with app.app_context():
+            db.create_all(bind_key=None)
+            db.session.add(EventoConsuntivoPP(event_id='x', op_code=OP, fase='Segatrice', componente='A',
+                                              timestamp_evento=datetime.utcnow(), pezzi_buoni=1, pezzi_scarto=0,
+                                              tempo_minuti=0, approvato_direzione=True))
+            ms = [MovimentoGiacenzaWood(codice='A', tipo='rettifica_import', quantita=5, riferimento=OP,
+                                        note='STORNO consuntivo x'),
+                  MovimentoGiacenzaWood(codice='A', tipo='carico_produzione', quantita=5, riferimento=OP,
+                                        note='Consuntivo 5 pz buoni'),
+                  MovimentoGiacenzaWood(codice='A', tipo='carico_manuale', quantita=5, note='a mano')]
+            db.session.add_all(ms)
+            db.session.commit()
+            ids = [m.id for m in ms]
+            c = app.test_client()
+            for i in ids[:2]:
+                self.assertEqual(c.post(f'/api/dichiarazione-produzione/movimenti/{i}/elimina',
+                                        json={'pin': '1234'}).status_code, 409)
+            self.assertEqual(c.post(f'/api/dichiarazione-produzione/movimenti/{ids[2]}/elimina',
+                                    json={'pin': '1234'}).status_code, 200)

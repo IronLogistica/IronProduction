@@ -6084,6 +6084,18 @@ def api_dichiarazione_movimento_elimina(mid):
     if not _verifica_pin_capo(d):
         return jsonify(ok=False, error='PIN capo non valido'), 403
     m = MovimentoGiacenzaWood.query.get_or_404(mid)
+    # Protezione (caso OP-2026-000063, 07/10/2026): cancellare a mano i
+    # movimenti generati da una dichiarazione o dal suo storno scollega
+    # magazzino ed eventi (evento annullato, giacenza no -> negativi e
+    # doppi carichi). Questi movimenti si tolgono SOLO annullando la
+    # dichiarazione (che li ripristina in modo coerente).
+    nota = (m.note or '')
+    if nota.startswith('STORNO consuntivo') or (
+            nota.startswith('Consuntivo') and m.riferimento
+            and EventoConsuntivoPP.query.filter_by(op_code=m.riferimento).first()):
+        return jsonify(ok=False, error='Questo movimento nasce da una dichiarazione di produzione: '
+                       'non si elimina da qui. Usa "Annulla dichiarazione" sull\'evento sbagliato, '
+                       'che corregge in automatico anche il magazzino.'), 409
     g = GiacenzaWood.query.get(m.codice)
     if g:
         g.quantita = (g.quantita or 0) - m.quantita
