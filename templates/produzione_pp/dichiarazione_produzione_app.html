@@ -153,7 +153,7 @@ async function conferma(){
   try{
     const r = await fetch('/api/dichiarazione-produzione', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload)});
     const d = await r.json();
-    if(!d.ok && d.wip_insufficiente){ esito.innerHTML = ''; mostraBloccoWip(d.error); return; }
+    if(!d.ok && d.wip_insufficiente){ esito.innerHTML = ''; mostraBloccoWip(d.error, d.chiama_angelo); return; }
     if(!d.ok){ esito.innerHTML = `<div class="esito err">⚠️ ${d.error}</div>`; return; }
     esito.innerHTML = '<div class="esito ok">✓ Dichiarazione registrata</div>';
     setTimeout(tornaAllaLista, 1000);
@@ -165,7 +165,7 @@ async function conferma(){
 
 // ── BLOCCO WIP: messaggio enorme, rosso, lampeggiante (richiesta Mauri 07/10/2026:
 // "potrebbero essere ciechi") — role=alertdialog per gli screen reader.
-function mostraBloccoWip(testo){
+function mostraBloccoWip(testo, chiamaAngelo){
   if(!document.getElementById('stile-blocco-wip')){
     const st = document.createElement('style');
     st.id = 'stile-blocco-wip';
@@ -180,7 +180,7 @@ function mostraBloccoWip(testo){
   const box = document.createElement('div');
   box.style.cssText = 'background:#fff;border:12px solid #d90000;border-radius:18px;max-width:1100px;width:100%;padding:36px;text-align:center';
   const titolo = document.createElement('div');
-  titolo.textContent = '⛔ STOP — DICHIARAZIONE BLOCCATA';
+  titolo.textContent = chiamaAngelo ? '📞 CHIAMA ANGELO: AGGIORNI IL MAGAZZINO, ALTRIMENTI È IN NEGATIVO' : '⛔ STOP — DICHIARAZIONE BLOCCATA';
   titolo.style.cssText = 'color:#d90000;font-size:54px;font-weight:900;line-height:1.1;animation:bloccoWipLampeggia .8s infinite';
   const msg = document.createElement('div');
   msg.textContent = testo;

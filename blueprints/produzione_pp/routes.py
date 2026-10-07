@@ -5069,8 +5069,9 @@ def _verifica_semilavorati_disponibili(o, centro, componente, good, scrap, consu
     senza TR2006 disponibili): dichiarando un codice alla sua PRIMA fase si
     consumano i suoi figli di distinta che hanno un proprio ciclo
     (semilavorati) — TUTTI devono essere disponibili in quantita' sufficiente
-    (giacenza, o WIP all'ultima fase se multi-fase). Le materie prime pure e
-    i figli 'contestuali' (one-piece-flow) non sono bloccati qui.
+    (giacenza, o WIP all'ultima fase se multi-fase). Anche le materie prime
+    pure non possono andare in negativo (avviso 'chiama Angelo'). I figli
+    'contestuali' (one-piece-flow) non sono bloccati qui.
     Ritorna None se si puo' procedere, altrimenti il dict di errore."""
     componente_finale = not componente or componente == o.codice_articolo
     codice = o.codice_articolo if componente_finale else componente
@@ -5083,23 +5084,38 @@ def _verifica_semilavorati_disponibili(o, centro, componente, good, scrap, consu
         consumi = dict(consumi_override)
     else:
         consumi, _contestuali, _legacy = _calcola_consumi_standard(o, componente_finale, componente, richiesti)
-    mancanti = []
+    mancanti, mancanti_mp = [], []
     for cod, qta in consumi.items():
         if not qta or qta <= 0:
             continue
         if CicloLavoroWood.query.filter_by(codice=cod).first() is None:
-            continue  # materia prima pura: non bloccata
+            # Materia prima / componente d'acquisto: NON deve andare in negativo
+            # (richiesta Mauri, 07/10/2026) -> si chiama Angelo che aggiorna il magazzino.
+            g = GiacenzaWood.query.get(cod)
+            disp = float(g.quantita or 0) if g else 0.0
+            if disp + 1e-9 < qta:
+                mancanti_mp.append((cod, disp, qta))
+            continue
         disp = _disponibile_semilavorato(cod)
         if disp + 1e-9 < qta:
             mancanti.append((cod, disp, qta))
-    if not mancanti:
+    if not mancanti and not mancanti_mp:
         return None
-    dettaglio = ' — '.join(f'{c}: disponibili {d:g}, servono {q:g}' for c, d, q in mancanti)
-    nomi = ', '.join(c for c, _d, _q in mancanti)
-    msg = (f'{codice}: mancano i semilavorati necessari. {dettaglio}. '
-           f'Dichiara prima {nomi} (o inserisci il WIP in WIP Station se i pezzi esistevano già).')
+    parti = []
+    if mancanti:
+        dettaglio = ' — '.join(f'{c}: disponibili {d:g}, servono {q:g}' for c, d, q in mancanti)
+        nomi = ', '.join(c for c, _d, _q in mancanti)
+        parti.append(f'Mancano i semilavorati. {dettaglio}. Dichiara prima {nomi} '
+                     f'(o inserisci il WIP in WIP Station se i pezzi esistevano già).')
+    if mancanti_mp:
+        dettaglio = ' — '.join(f'{c}: a magazzino {d:g}, servono {q:g}' for c, d, q in mancanti_mp)
+        parti.append(f'Materie prime insufficienti. {dettaglio}. '
+                     f'CHIAMA ANGELO CHE AGGIORNI IL MAGAZZINO, ALTRIMENTI È IN NEGATIVO.')
+    msg = f'{codice}: ' + ' '.join(parti)
     return {'ok': False, 'error': msg, 'wip_insufficiente': True,
-            'semilavorati_mancanti': [{'codice': c, 'disponibili': d, 'servono': q} for c, d, q in mancanti]}
+            'chiama_angelo': bool(mancanti_mp),
+            'semilavorati_mancanti': [{'codice': c, 'disponibili': d, 'servono': q} for c, d, q in mancanti],
+            'materie_prime_mancanti': [{'codice': c, 'disponibili': d, 'servono': q} for c, d, q in mancanti_mp]}
 
 
 SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE = 20  # oltre questa % sopra il pianificato, blocco automatico

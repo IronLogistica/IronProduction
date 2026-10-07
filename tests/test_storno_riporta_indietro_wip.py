@@ -154,3 +154,19 @@ class TestBloccoSemilavoratiDistinta(TestStornoWip):
             self.assertEqual(self._post(10).status_code, 200)
             self.assertEqual(GiacenzaWood.query.get('TR2006').quantita, 0)
             self.assertEqual(self._post(1).status_code, 409, "consumati tutti")
+
+    def test_materia_prima_in_negativo_bloccata_chiama_angelo(self):
+        with self.app.app_context():
+            db.session.add(OrdineProduzione(codice='OP-T', codice_articolo='TR2006', qta_pianificata=2000,
+                                            stato='Rilasciato', priorita=1))
+            db.session.commit()
+            z = CentroCostoWood.query.filter_by(nome='Punzonatrice').one()
+            c = self.app.test_client()
+            body = {'op_code': 'OP-T', 'centro_id': z.id, 'componente': '', 'pezzi_scarto': 0, 'tempo_minuti': 0}
+            r = c.post('/api/dichiarazione-produzione', json={**body, 'pezzi_buoni': 1000})   # servono 150, ce ne sono 100
+            self.assertEqual(r.status_code, 409)
+            d = r.get_json()
+            self.assertTrue(d['chiama_angelo'])
+            self.assertIn('CHIAMA ANGELO', d['error'])
+            self.assertEqual(GiacenzaWood.query.get('TONDO8M').quantita, 100, "nessuno scarico")
+            self.assertEqual(c.post('/api/dichiarazione-produzione', json={**body, 'pezzi_buoni': 500}).status_code, 200)
