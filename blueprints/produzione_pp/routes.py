@@ -2698,6 +2698,62 @@ def _avanza_wip_fase_automatico(codice, fase_nome, good, scrap):
         log(f'AVVISO avanzamento automatico WIP per fase non riuscito — {codice}/{fase_nome}: {e}')
 
 
+def _storna_wip_fase_automatico(codice, fase_nome, good, scrap, escludi_event_id=None):
+    """
+    Inverso di _avanza_wip_fase_automatico, chiamato dallo STORNO di una
+    dichiarazione approvata (segnalato da Angelo, 07/10/2026, Z01: stornati
+    400 pezzi forati a Trapani e ridichiarati -> WIP Trapani 800 invece di
+    400, perche' lo storno toglieva l'evento e l'Ordine di Lavoro ma lasciava
+    il WIP avanzato dalla dichiarazione).
+      - la fase dichiarata perde i pezzi buoni che aveva guadagnato;
+      - la fase PRECEDENTE riavrebbe buoni+scarto, ma l'avanzamento originale
+        puo' essere stato limitato (max(...,0)): il ritorno viene quindi
+        tetto a quanto le dichiarazioni approvate rimaste dicono che deve
+        esserci ancora li' (buoni dichiarati alla fase precedente meno quanto
+        e' passato alla fase corrente), mai oltre.
+    Mai bloccante: un errore resta solo nel log.
+    """
+    if good <= 0 and scrap <= 0:
+        return
+    try:
+        fasi = (CicloLavoroWood.query.filter_by(codice=codice)
+                .order_by(CicloLavoroWood.sequenza).all())
+        if len(fasi) < 2:
+            return
+        idx = next((i for i, f in enumerate(fasi)
+                    if f.centro_costo and _fasi_corrispondono(f.centro_costo.nome, fase_nome)), None)
+        if idx is None:
+            return
+        riga_corr = WipFaseWood.query.filter_by(codice=codice, centro_costo_id=fasi[idx].centro_costo_id).first()
+        if riga_corr and good > 0:
+            riga_corr.quantita = max((riga_corr.quantita or 0) - good, 0)
+            riga_corr.aggiornato_il = datetime.utcnow()
+        if idx > 0:
+            nome_prec = fasi[idx - 1].centro_costo.nome if fasi[idx - 1].centro_costo else None
+            riga_prec = WipFaseWood.query.filter_by(codice=codice,
+                                                    centro_costo_id=fasi[idx - 1].centro_costo_id).first()
+            if riga_prec and nome_prec:
+                q = (db.session.query(EventoConsuntivoPP, OrdineProduzione.codice_articolo)
+                     .join(OrdineProduzione, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
+                     .filter(EventoConsuntivoPP.approvato_direzione == True))  # noqa: E712
+                if escludi_event_id:
+                    q = q.filter(EventoConsuntivoPP.event_id != escludi_event_id)
+                dich_prec = consumati = 0
+                for ev, cod_art in q.all():
+                    if (ev.componente or cod_art) != codice:
+                        continue
+                    if _fasi_corrispondono(nome_prec, ev.fase):
+                        dich_prec += ev.pezzi_buoni or 0
+                    if _fasi_corrispondono(fasi[idx].centro_costo.nome, ev.fase):
+                        consumati += (ev.pezzi_buoni or 0) + (ev.pezzi_scarto or 0)
+                attuale = riga_prec.quantita or 0
+                tetto = max(dich_prec - consumati, 0)
+                riga_prec.quantita = max(attuale, min(attuale + good + scrap, tetto))
+                riga_prec.aggiornato_il = datetime.utcnow()
+    except Exception as exc:
+        log(f'AVVISO storno WIP per fase non riuscito — {codice}/{fase_nome}: {exc}')
+
+
 def _applica_effetti_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id,
                                         componente_finale, codice_lavorato, avanza_op, consumi_override=None):
     """
@@ -5855,6 +5911,10 @@ def _storna_evento_consuntivo(e, o):
             _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
                                           riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
 
+    # WIP Station: lo storno deve riportare indietro anche l'avanzamento di fase
+    # automatico fatto dalla dichiarazione (vedi _storna_wip_fase_automatico).
+    _storna_wip_fase_automatico(codice_lavorato, e.fase, e.pezzi_buoni or 0, e.pezzi_scarto or 0,
+                                escludi_event_id=e.event_id)
     op_code_evento, fase_evento = e.op_code, e.fase
     db.session.delete(e)
 
