@@ -3899,6 +3899,10 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
     # _gia_disponibile_per_fase più sotto.
     wip_per_codice = _wip_fase_per_codice(componenti_di_centro)
 
+    figli_a_padri = _figli_a_padri_da_mappa(_carica_mappa_distinta_base_wood())
+    fatti_totali_per_componente = _fatti_totali_per_componente([o.codice])
+    codici_di_questo_op = set(moltiplicatore_per_codice)
+
     righe_per_materiale = {}
     for codice_comp in componenti_di_centro:
         moltiplicatore = moltiplicatore_per_codice[codice_comp]
@@ -3924,8 +3928,16 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         # Saldatura ne mostrava solo 29 (i soli con fase scritta identica
         # a 'Saldatura') — stesso numero, due calcoli diversi che
         # potevano disallinearsi.
+        # BUG REALE TROVATO E CORRETTO (segnalato da Mauri, 07/10/2026 —
+        # commessa 26100072, PINX110: l'Ordine di Lavoro Saldatura mostrava
+        # 130 'Prodotti' per il finale mentre i pezzi veri erano 84, e il
+        # Monitor Live (che già filtrava) diceva 84): qui mancava il filtro
+        # sugli eventi APPROVATI — le dichiarazioni MasterWork ancora in
+        # stand-by (approvato_direzione=False) non hanno mosso nulla di
+        # ufficiale ma venivano comunque sommate ai 'Prodotti' stampati.
         eventi_componente = (EventoConsuntivoPP.query
                              .filter(EventoConsuntivoPP.op_code == o.codice,
+                                     EventoConsuntivoPP.approvato_direzione == True,  # noqa: E712
                                      EventoConsuntivoPP.componente == componente_param if componente_param
                                      else EventoConsuntivoPP.componente.is_(None)).all())
         pezzi_fatti = sum(e.pezzi_buoni or 0 for e in eventi_componente
@@ -3952,6 +3964,14 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         # fermo ad ALMENO questa fase — non il totale, che varrebbe anche
         # per fasi successive mai davvero raggiunte (caso reale PINX110).
         gia_disponibile = _gia_disponibile_per_fase(codice_comp, centro.id, gia_disponibile, wip_per_codice)
+        # Credito "da valle" (segnalato da Mauri, 07/10/2026 — stessa commessa
+        # 26100072): l'Ordine di Lavoro stampato della Segatrice chiedeva
+        # ancora di tagliare 84 PINXTT110, già saldati in PINX110-A/B/finale,
+        # mentre il Monitor Live (che il credito lo applicava già) risultava
+        # chiuso — stesso calcolo, stesso helper condiviso, mai due versioni.
+        credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
+                                              figli_a_padri, fatti_totali_per_componente)
+        gia_disponibile = min(saldo_prima_giacenza, gia_disponibile + credito_da_valle)
         saldo = max(saldo_prima_giacenza - gia_disponibile, 0)
 
         # 'Materiale' mostrato in tabella è SEMPRE il primo figlio diretto in

@@ -733,6 +733,13 @@ def _contesto_totem(centro):
             g['totale_totale'] = g['qta_pianificata']
             finale = next((c for c in g['componenti'] if c['componente_finale']), None)
             g['saldo_totale'] = finale['saldo'] if finale else g['qta_pianificata']
+            # BUG REALE TROVATO E CORRETTO (segnalato da Mauri, 07/10/2026 —
+            # PINX110: 'Prodotti' 252 su 'Pz Necessari' 287, quando i finiti
+            # veri sono 84): 'totale' e 'saldo' erano già ridotti ai soli
+            # prodotti FINITI, ma 'Prodotti' continuava a sommare i pezzi di
+            # TUTTE le fasi/componenti (84+84+84) — due colonne affiancate
+            # con basi diverse. Ora 'Prodotti' è coerente con le altre due.
+            g['pezzi_fatti_totale'] = finale['pezzi_fatti'] if finale else 0
             g['pct_aggregato'] = round(100 * (g['totale_totale'] - g['saldo_totale']) / g['totale_totale']) if g['totale_totale'] else 0
 
     return dict(centro=centro, gruppi=gruppi, righe_terminati=righe['terminati'][:8],
