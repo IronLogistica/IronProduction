@@ -68,8 +68,37 @@ class TestMigrazionePostgres(unittest.TestCase):
             return bool(c.execute(text("SELECT 1 FROM information_schema.schemata WHERE schema_name='conto_lavoro'")).first())
 
     def _su(self):
-        rc, out = self._migra('su', True, '0001')
+        """Porta lo schema all'ULTIMA versione disponibile (migra.MIGRAZIONI).
+
+        BUG REALE CORRETTO (trovato il 07/10/2026 verificando dal vivo contro
+        un Postgres locale la fix della migrazione 0004 mancante — questa
+        intera classe gira SOLO con CL_TEST_PG_URL, quindi normalmente non
+        gira mai in CI e il bug qui sotto era rimasto invisibile per
+        mesi): 'esegui()' applica UNA SOLA migrazione per chiamata — il
+        '--conferma' richiesto deve combaciare esattamente con la versione in
+        corso di applicazione nel ciclo interno (vedi 'su' in migra.esegui),
+        quindi passare sempre '--conferma 0001' funzionava solo quando
+        MIGRAZIONI aveva un solo elemento (PR1, da cui il commento in testa
+        al file). Con 0002/0003/0004 aggiunte in seguito, questo helper
+        falliva silenziosamente ogni volta che veniva eseguito — mai
+        scoperto perché la classe non gira mai senza un Postgres locale
+        acceso.
+
+        Nota sul comportamento reale di 'esegui()' (invariato, non è
+        questo il bug): quando restano PIÙ migrazioni da applicare, una
+        chiamata applica comunque quella richiesta ma ritorna rc=3
+        sull'errore "serve --conferma" della PROSSIMA — quindi un rc!=0
+        qui è normale finché non si arriva all'ultima versione (l'uso
+        reale su Railway è infatti rilanciare il comando una volta per
+        migrazione, ignorando l'errore sulla successiva). Applichiamo
+        quindi ogni versione in sequenza senza controllare rc ad ogni
+        passo, e verifichiamo solo alla fine che lo schema sia arrivato
+        all'ultima versione disponibile."""
+        for v in migra.MIGRAZIONI:
+            self._migra('su', True, f'{v:04d}')
+        rc, out = self._migra('su', True, f'{migra.MIGRAZIONI[-1]:04d}')
         self.assertEqual(rc, 0, out)
+        self.assertIn('Niente da fare', out)
 
     def test_prova_e_conferma_obbligatoria(self):
         rc, out = self._migra('su')
@@ -82,17 +111,22 @@ class TestMigrazionePostgres(unittest.TestCase):
         self.assertFalse(self._schema_esiste())
 
     def test_su_giu_su_e_idempotenza(self):
+        """Nota (vedi docstring di '_su()'): con più migrazioni disponibili
+        '_su()' porta sempre all'ULTIMA versione (migra.MIGRAZIONI[-1]), non
+        più alla 0001 come quando esisteva solo quella — 'giu' (rollback)
+        tocca sempre e solo l'ultima applicata."""
+        ultima = migra.MIGRAZIONI[-1]
         self._su()
         rc, out = self._migra('stato')
-        self.assertIn('Versione schema conto_lavoro: 1', out)
-        rc, out = self._migra('su', True, '0001')
+        self.assertIn(f'Versione schema conto_lavoro: {ultima}', out)
+        rc, out = self._migra('su', True, f'{ultima:04d}')
         self.assertIn('Niente da fare', out)
         rc, _ = self._migra('giu', True, '0001')
         self.assertEqual(rc, 3)
         self.assertTrue(self._schema_esiste())
-        rc, _ = self._migra('giu', True, 'ELIMINA-0001')
+        rc, _ = self._migra('giu', True, f'ELIMINA-{ultima:04d}')
         self.assertEqual(rc, 0)
-        self.assertFalse(self._schema_esiste())
+        self.assertTrue(self._schema_esiste())  # tolta solo l'ultima migrazione: lo schema resta (0001..penultima)
         self._su()
 
     def _avvio(self, valore):
