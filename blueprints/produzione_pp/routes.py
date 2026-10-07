@@ -6214,3 +6214,167 @@ def api_diagnostica_bug_fasi_azzera_movimenti():
     db.session.commit()
     return jsonify(ok=True, eliminati=n)
 
+
+
+# ── DIAGNOSTICA OP (sola lettura) ────────────────────────────────────────────
+@pp_bp.get('/api/diagnostica/op/<op_code>')
+def api_diagnostica_op(op_code):
+    """
+    Fotografia COMPLETA di un Ordine di Produzione, per capire perché i conti
+    non tornano (richiesta Mauri, 07/10/2026 — OP-2026-000063): albero,
+    dichiarazioni (approvate e in stand-by), movimenti di magazzino legati
+    all'OP, giacenza e WIP di ogni componente, credito da valle, saldo
+    mostrato da Lista di Lavoro e da Monitor Live per ogni reparto, e un
+    elenco di ANOMALIE trovate. SOLA LETTURA: nessuna scrittura, nessun
+    numero di lista assegnato. Uso: apri l'indirizzo nel browser.
+    """
+    from models import MovimentoGiacenzaWood, GiacenzaWood
+    o = OrdineProduzione.query.filter_by(codice=op_code).first()
+    if not o:
+        return jsonify(errore=True, messaggio=f'{op_code} non trovato'), 404
+    out = {'op': _ordine(o), 'errori_diagnostica': []}
+
+    def sez(nome, fn):
+        try:
+            out[nome] = fn()
+        except Exception as e:      # una sezione che fallisce non deve nascondere le altre
+            db.session.rollback()
+            out[nome] = None
+            out['errori_diagnostica'].append(f'{nome}: {type(e).__name__}: {e}')
+
+    mappa = _carica_mappa_distinta_base_wood()
+    nodi = _esplodi_componenti_op(o, mappa_distinta=mappa)
+    codici = [n['codice'] for n in nodi]
+    figli_a_padri = _figli_a_padri_da_mappa(mappa)
+    eventi = (EventoConsuntivoPP.query.filter_by(op_code=o.codice)
+              .order_by(EventoConsuntivoPP.timestamp_evento, EventoConsuntivoPP.id).all())
+    fatti_totali = _fatti_totali_per_componente([o.codice])
+    codici_set = set(codici)
+
+    def _eventi():
+        return [{'event_id': e.event_id, 'quando': e.timestamp_evento.isoformat() if e.timestamp_evento else None,
+                 'ricevuto_il': e.ricevuto_il.isoformat() if e.ricevuto_il else None, 'fase': e.fase,
+                 'componente': e.componente or f'(finale {o.codice_articolo})', 'pezzi_buoni': e.pezzi_buoni,
+                 'pezzi_scarto': e.pezzi_scarto, 'minuti': e.tempo_minuti, 'approvato': e.approvato_direzione,
+                 'visionato': e.visionato, 'operatore': e.operatore} for e in eventi]
+    sez('eventi', _eventi)
+
+    def _movimenti():
+        righe = (MovimentoGiacenzaWood.query.filter(MovimentoGiacenzaWood.riferimento.like(f'%{o.codice}%'))
+                 .order_by(MovimentoGiacenzaWood.creato_il, MovimentoGiacenzaWood.id).all())
+        return [{'quando': m.creato_il.isoformat() if m.creato_il else None, 'codice': m.codice, 'tipo': m.tipo,
+                 'quantita': m.quantita, 'riferimento': m.riferimento, 'note': m.note} for m in righe]
+    sez('movimenti_magazzino_dell_op', _movimenti)
+
+    cicli = {}
+    for c in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(codici))
+              .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza).all()) if codici else []:
+        cicli.setdefault(c.codice, []).append(c)
+    wip = _wip_fase_per_codice(codici) if codici else {}
+    giac = {g.codice: g.quantita for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici)).all()} if codici else {}
+
+    def _componenti():
+        res = []
+        for n in nodi:
+            cod = n['codice']
+            finale = (cod == o.codice_articolo)
+            ev = [e for e in eventi if (e.componente is None and finale) or e.componente == cod]
+            per_fase = {}
+            for e in ev:
+                r = per_fase.setdefault(e.fase, {'buoni_approvati': 0, 'buoni_in_stand_by': 0, 'scarto': 0, 'minuti': 0, 'n_eventi': 0})
+                r['buoni_approvati' if e.approvato_direzione else 'buoni_in_stand_by'] += e.pezzi_buoni or 0
+                r['scarto'] += e.pezzi_scarto or 0
+                r['minuti'] += e.tempo_minuti or 0
+                r['n_eventi'] += 1
+            mov = (MovimentoGiacenzaWood.query.filter(MovimentoGiacenzaWood.codice == cod.upper(),
+                                                      MovimentoGiacenzaWood.riferimento.like(f'%{o.codice}%')).all())
+            res.append({
+                'codice': cod, 'finale': finale, 'moltiplicatore': n['moltiplicatore'],
+                'qta_necessaria': round((o.qta_pianificata or 0) * n['moltiplicatore'], 4),
+                'giacenza_attuale': giac.get(cod, 0),
+                'wip_per_fase': {str(k): v for k, v in (wip.get(cod) or {}).items()},
+                'ciclo': [{'seq': c.sequenza, 'centro': c.centro_costo.nome if c.centro_costo else None,
+                           'pz_ora': c.produttivita_oraria} for c in cicli.get(cod, [])],
+                'padri_nella_catena': sorted(p for p in figli_a_padri.get(cod, ()) if p in codici_set),
+                'dichiarato_per_fase': per_fase,
+                'carico_produzione_op': round(sum(m.quantita for m in mov if m.tipo == 'carico_produzione'), 4),
+                'scarico_produzione_op': round(sum(m.quantita for m in mov if m.tipo == 'scarico_produzione'), 4),
+                'credito_da_valle': _credito_da_valle(o, cod, codici_set, figli_a_padri, fatti_totali),
+            })
+        return res
+    sez('componenti', _componenti)
+
+    def _per_reparto():
+        from blueprints.monitor.routes import _righe_macchina
+        centri = {}
+        for cod in codici:
+            for c in cicli.get(cod, []):
+                if c.centro_costo:
+                    centri[c.centro_costo.id] = c.centro_costo
+        res = {}
+        for cid, centro in sorted(centri.items(), key=lambda kv: kv[1].nome):
+            r = {}
+            try:
+                ll = _lista_lavoro_op(o, centro, assegna_numero=False)
+                r['lista_lavoro'] = [{'codice': x['codice'], 'necessari': x['nr_pz_da_fare'], 'fatti': x['pezzi_fatti'],
+                                      'saldo': x['saldo']} for g in ll['gruppi'] for x in g['righe']]
+            except Exception as e:
+                r['lista_lavoro'] = f'errore: {e}'
+            try:
+                mon = _righe_macchina(centro)
+                r['monitor_live'] = [{'sezione': sez_, 'codice': x['codice_lavorato'], 'totale': x['totale'],
+                                      'fatti': x['pezzi_fatti'], 'saldo': x['saldo'], 'pct': x['pct'],
+                                      'producibilita': x['stato_producibilita']}
+                                     for sez_, righe in mon.items() for x in righe if x['op_codice'] == o.codice]
+            except Exception as e:
+                db.session.rollback()
+                r['monitor_live'] = f'errore: {e}'
+            res[centro.nome] = r
+        return res
+    sez('per_reparto', _per_reparto)
+
+    def _audit():
+        return [{'quando': a.creato_il.isoformat() if a.creato_il else None, 'azione': a.azione, 'dettaglio': a.dettaglio}
+                for a in AuditPP.query.filter_by(op_code=o.codice).order_by(AuditPP.id.desc()).limit(80).all()]
+    sez('audit_ultimi_80', _audit)
+
+    # ── anomalie automatiche ──
+    anomalie = []
+    for e in eventi:
+        nome = e.componente or o.codice_articolo
+        if nome not in codici_set:
+            anomalie.append(f'Evento {e.event_id[:8]} su componente «{nome}» che NON è nell\'albero dell\'OP')
+        elif not any(_fasi_corrispondono(c.centro_costo.nome, e.fase) for c in cicli.get(nome, []) if c.centro_costo):
+            anomalie.append(f'Evento {e.event_id[:8]}: fase «{e.fase}» non corrisponde a nessun reparto del ciclo di {nome} '
+                            f'(conta pezzi ma nessun Monitor/Lista li vede)')
+        if not e.approvato_direzione:
+            anomalie.append(f'Evento {e.event_id[:8]} ({e.pezzi_buoni} pz, {nome}, {e.fase}) in STAND-BY: non conta nei saldi')
+    visti = {}
+    for e in eventi:
+        k = (e.componente, e.fase, e.pezzi_buoni, e.pezzi_scarto, e.tempo_minuti)
+        if visti.setdefault(k, e.event_id) != e.event_id:
+            anomalie.append(f'Possibile DUPLICATO: stessi dati di {visti[k][:8]} e {e.event_id[:8]} '
+                            f'({e.componente or o.codice_articolo}, {e.fase}, {e.pezzi_buoni} pz)')
+    for c in (out.get('componenti') or []):
+        if c['giacenza_attuale'] < 0:
+            anomalie.append(f'{c["codice"]}: giacenza NEGATIVA ({c["giacenza_attuale"]})')
+        buoni = sum(f['buoni_approvati'] for f in c['dichiarato_per_fase'].values())
+        ultima = c['ciclo'][-1]['centro'] if c['ciclo'] else None
+        buoni_ultima = sum(f['buoni_approvati'] for k, f in c['dichiarato_per_fase'].items()
+                           if ultima and _fasi_corrispondono(ultima, k))
+        if c['carico_produzione_op'] and abs(c['carico_produzione_op'] - buoni_ultima) > 0.001:
+            anomalie.append(f'{c["codice"]}: carico a magazzino per questo OP {c["carico_produzione_op"]} ≠ pezzi buoni '
+                            f'approvati all\'ultima fase ({buoni_ultima})')
+        if c['finale'] and (o.qta_buona or 0) != buoni_ultima:
+            anomalie.append(f'OP: qta_buona {o.qta_buona} ≠ pezzi buoni approvati all\'ultima fase del finale ({buoni_ultima})')
+        if buoni > c['qta_necessaria'] + 0.001:
+            anomalie.append(f'{c["codice"]}: dichiarati {buoni} pz approvati, più dei {c["qta_necessaria"]} necessari')
+    out['anomalie_trovate'] = anomalie or ['nessuna anomalia automatica: confronta eventi, movimenti e saldi qui sopra']
+    return app_json(out)
+
+
+def app_json(dati):
+    """JSON leggibile nel browser (accenti veri, indentato)."""
+    import json
+    from flask import Response
+    return Response(json.dumps(dati, ensure_ascii=False, indent=2, default=str), mimetype='application/json')

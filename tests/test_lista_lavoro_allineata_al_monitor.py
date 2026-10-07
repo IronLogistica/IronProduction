@@ -97,3 +97,25 @@ class TestListaLavoroAllineataAlMonitor(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestDiagnosticaOp(unittest.TestCase):
+    def test_endpoint_diagnostico_risponde_e_trova_anomalie(self):
+        base = TestListaLavoroAllineataAlMonitor
+        base.setUpClass()
+        t = base('test_ol_segatrice_non_chiede_i_pezzi_gia_saldati')
+        t.setUp()
+        from flask import Flask
+        from blueprints.produzione_pp.routes import pp_bp
+        app = base.app
+        app.register_blueprint(pp_bp)
+        with app.app_context():
+            db.session.add(_ev(9, None, 46, approvato=False))
+            db.session.commit()
+        r = app.test_client().get('/api/diagnostica/op/' + OP)
+        self.assertEqual(r.status_code, 200)
+        d = r.get_json()
+        self.assertEqual(d['errori_diagnostica'], [])
+        self.assertTrue(any('STAND-BY' in a for a in d['anomalie_trovate']))
+        self.assertIn('Saldatura', d['per_reparto'])
+        self.assertEqual(app.test_client().get('/api/diagnostica/op/NOPE').status_code, 404)
