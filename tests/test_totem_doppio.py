@@ -44,9 +44,12 @@ class TestTotemDoppio(unittest.TestCase):
         self.assertIn('PSGO', t)
         self.assertLess(t.index('PSAT'), t.index('PSGO'))
 
-    def test_pressopiegatrice_punzonatrice(self):
+    def test_punzonatrice_sopra_pressopiegatrice_sotto(self):
+        """Richiesta Mauri, 07/10/2026: su questo schermo l'ordine è
+        invertito rispetto alla coppia Satinatrice/Sgolatrice — Punzonatrice
+        SOPRA, Pressopiegatrice SOTTO."""
         t = self.client.get('/totem/doppio/pressopiegatrice-punzonatrice').get_data(as_text=True)
-        self.assertLess(t.index('>Pressopiegatrice<'), t.index('>Punzonatrice<'))
+        self.assertLess(t.index('>Punzonatrice<'), t.index('>Pressopiegatrice<'))
 
     def test_nav_mostra_coppie_una_volta(self):
         t = self.client.get('/totem/doppio/satinatrice-sgolatrice').get_data(as_text=True)

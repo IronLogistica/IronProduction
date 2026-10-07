@@ -747,7 +747,11 @@ def _contesto_totem(centro):
 # configurazione da fare: basta che i centri esistano.
 COPPIE_LIVE = [
     {'slug': 'satinatrice-sgolatrice', 'etichetta': 'Satinatrice + Sgolatrice', 'nomi': ('satin', 'sgola')},
-    {'slug': 'pressopiegatrice-punzonatrice', 'etichetta': 'Pressopiegatrice + Punzonatrice', 'nomi': ('piega', 'punzon')},
+    # Richiesta Mauri, 07/10/2026: su questo schermo la Punzonatrice va
+    # SOPRA e la Pressopiegatrice SOTTO (invertito rispetto all'ordine
+    # alfabetico/etichetta) — l'ordine qui in 'nomi' è quello di
+    # rendering in 'sezioni' (vedi totem_doppio sotto), SOPRA = primo.
+    {'slug': 'pressopiegatrice-punzonatrice', 'etichetta': 'Pressopiegatrice + Punzonatrice', 'nomi': ('punzon', 'piega')},
 ]
 
 
