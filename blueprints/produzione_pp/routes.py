@@ -6358,13 +6358,21 @@ def api_diagnostica_op(op_code):
     for c in (out.get('componenti') or []):
         if c['giacenza_attuale'] < 0:
             anomalie.append(f'{c["codice"]}: giacenza NEGATIVA ({c["giacenza_attuale"]})')
-        buoni = sum(f['buoni_approvati'] for f in c['dichiarato_per_fase'].values())
+        # più fasi dello stesso componente (es. Segatrice poi Trapani) dichiarano gli STESSI pezzi: conta la fase più avanti, non la somma
+        buoni = max((f['buoni_approvati'] for f in c['dichiarato_per_fase'].values()), default=0)
         ultima = c['ciclo'][-1]['centro'] if c['ciclo'] else None
         buoni_ultima = sum(f['buoni_approvati'] for k, f in c['dichiarato_per_fase'].items()
                            if ultima and _fasi_corrispondono(ultima, k))
         if c['carico_produzione_op'] and abs(c['carico_produzione_op'] - buoni_ultima) > 0.001:
             anomalie.append(f'{c["codice"]}: carico a magazzino per questo OP {c["carico_produzione_op"]} ≠ pezzi buoni '
                             f'approvati all\'ultima fase ({buoni_ultima})')
+        for i, fase_ciclo in enumerate(c['ciclo'][1:], start=1):
+            prec = c['ciclo'][i - 1]['centro']
+            b_prec = sum(f['buoni_approvati'] for k, f in c['dichiarato_per_fase'].items() if _fasi_corrispondono(prec, k))
+            b_qui = sum(f['buoni_approvati'] for k, f in c['dichiarato_per_fase'].items() if _fasi_corrispondono(fase_ciclo['centro'], k))
+            if b_qui > b_prec:
+                anomalie.append(f'{c["codice"]}: {fase_ciclo["centro"]} ha {b_qui} pz dichiarati ma la fase prima ({prec}) solo {b_prec} '
+                                f'(dichiarazione annullata o saltata?)')
         if c['finale'] and (o.qta_buona or 0) != buoni_ultima:
             anomalie.append(f'OP: qta_buona {o.qta_buona} ≠ pezzi buoni approvati all\'ultima fase del finale ({buoni_ultima})')
         if buoni > c['qta_necessaria'] + 0.001:
