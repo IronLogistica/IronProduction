@@ -1056,6 +1056,7 @@ async function confermaAnteprima(){
         document.getElementById('ant-blocco-8d-esito').textContent = '';
         return;
       }
+      if(d.wip_insufficiente){ esito.textContent = ''; mostraBloccoWip(d.error); return; }
       esito.style.color='#f07070'; esito.textContent = '⚠️ ' + d.error; return;
     }
     if(d.avviso_magazzino){
@@ -1067,6 +1068,36 @@ async function confermaAnteprima(){
   }catch(e){
     esito.style.color='#f07070'; esito.textContent = '❌ Errore di rete.';
   }
+}
+
+// ── BLOCCO WIP: messaggio enorme, rosso, lampeggiante (richiesta Mauri 07/10/2026:
+// "potrebbero essere ciechi") — role=alertdialog per gli screen reader.
+function mostraBloccoWip(testo){
+  if(!document.getElementById('stile-blocco-wip')){
+    const st = document.createElement('style');
+    st.id = 'stile-blocco-wip';
+    st.textContent = '@keyframes bloccoWipLampeggia{0%,100%{opacity:1}50%{opacity:.15}}';
+    document.head.appendChild(st);
+  }
+  const vecchio = document.getElementById('blocco-wip-overlay'); if(vecchio) vecchio.remove();
+  const ov = document.createElement('div');
+  ov.id = 'blocco-wip-overlay';
+  ov.setAttribute('role','alertdialog'); ov.setAttribute('aria-live','assertive'); ov.setAttribute('aria-modal','true');
+  ov.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.88);display:flex;align-items:center;justify-content:center;padding:24px';
+  const box = document.createElement('div');
+  box.style.cssText = 'background:#fff;border:12px solid #d90000;border-radius:18px;max-width:1100px;width:100%;padding:36px;text-align:center';
+  const titolo = document.createElement('div');
+  titolo.textContent = '⛔ STOP — DICHIARAZIONE BLOCCATA';
+  titolo.style.cssText = 'color:#d90000;font-size:54px;font-weight:900;line-height:1.1;animation:bloccoWipLampeggia .8s infinite';
+  const msg = document.createElement('div');
+  msg.textContent = testo;
+  msg.style.cssText = 'color:#d90000;font-size:36px;font-weight:800;line-height:1.3;margin:26px 0;animation:bloccoWipLampeggia .8s infinite';
+  const bt = document.createElement('button');
+  bt.textContent = 'HO CAPITO';
+  bt.style.cssText = 'font-size:34px;font-weight:900;padding:18px 54px;border:0;border-radius:12px;background:#d90000;color:#fff;cursor:pointer';
+  bt.onclick = () => ov.remove();
+  box.append(titolo, msg, bt); ov.appendChild(box); document.body.appendChild(ov);
+  bt.focus();
 }
 
 async function apriModulo8D(){
