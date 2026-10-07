@@ -4968,15 +4968,6 @@ def api_dichiarazione_crea():
     if good <= 0 and scrap <= 0:
         return jsonify(ok=False, error='Dichiara almeno un pezzo buono o di scarto'), 400
 
-    blocco_wip = _verifica_wip_fase_precedente(o, centro, componente, good, scrap)
-    if blocco_wip:
-        return jsonify(blocco_wip), 409
-
-    if good > 0:
-        blocco = _verifica_eccedenza_dichiarazione(o, centro, componente, good)
-        if blocco:
-            return jsonify(blocco), 409
-
     consumi_override = None
     if 'consumi' in d and isinstance(d['consumi'], dict):
         consumi_override = {}
@@ -4987,6 +4978,17 @@ def api_dichiarazione_crea():
                 continue
             if qta_f > 0:
                 consumi_override[cod] = qta_f
+
+    blocco_wip = (_verifica_wip_fase_precedente(o, centro, componente, good, scrap)
+                  or _verifica_semilavorati_disponibili(o, centro, componente, good, scrap, consumi_override))
+    if blocco_wip:
+        return jsonify(blocco_wip), 409
+
+    if good > 0:
+        blocco = _verifica_eccedenza_dichiarazione(o, centro, componente, good)
+        if blocco:
+            return jsonify(blocco), 409
+
     event_id = str(uuid.uuid4())
     avviso_magazzino = _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id,
                                                      componente=componente, consumi_override=consumi_override,
@@ -5046,6 +5048,58 @@ def _verifica_wip_fase_precedente(o, centro, componente, good, scrap):
                f'ne stai dichiarando {richiesti}. Dichiara prima «{nome_prec}» (o riduci la quantità a {disponibile}).')
     return {'ok': False, 'error': msg, 'wip_insufficiente': True,
             'fase_precedente': nome_prec, 'disponibile': disponibile}
+
+
+def _disponibile_semilavorato(codice):
+    """Pezzi di un semilavorato davvero utilizzabili da chi lo consuma: se ha
+    un ciclo a piu' fasi e una suddivisione WIP, contano solo quelli arrivati
+    all'ULTIMA fase (gli altri non sono ancora finiti); altrimenti la giacenza."""
+    fasi = (CicloLavoroWood.query.filter_by(codice=codice)
+            .order_by(CicloLavoroWood.sequenza).all())
+    if len(fasi) >= 2 and WipFaseWood.query.filter_by(codice=codice).first():
+        riga = WipFaseWood.query.filter_by(codice=codice, centro_costo_id=fasi[-1].centro_costo_id).first()
+        return float(riga.quantita or 0) if riga else 0.0
+    g = GiacenzaWood.query.get(codice)
+    return float(g.quantita or 0) if g else 0.0
+
+
+def _verifica_semilavorati_disponibili(o, centro, componente, good, scrap, consumi_override=None):
+    """
+    Seconda parte del blocco di Mauri/Angelo (07/10/2026, TR2006-L dichiarato
+    senza TR2006 disponibili): dichiarando un codice alla sua PRIMA fase si
+    consumano i suoi figli di distinta che hanno un proprio ciclo
+    (semilavorati) — TUTTI devono essere disponibili in quantita' sufficiente
+    (giacenza, o WIP all'ultima fase se multi-fase). Le materie prime pure e
+    i figli 'contestuali' (one-piece-flow) non sono bloccati qui.
+    Ritorna None se si puo' procedere, altrimenti il dict di errore."""
+    componente_finale = not componente or componente == o.codice_articolo
+    codice = o.codice_articolo if componente_finale else componente
+    if not _e_prima_fase_del_ciclo(codice, centro.nome):
+        return None
+    richiesti = (good or 0) + (scrap or 0)
+    if richiesti <= 0:
+        return None
+    if consumi_override:
+        consumi = dict(consumi_override)
+    else:
+        consumi, _contestuali, _legacy = _calcola_consumi_standard(o, componente_finale, componente, richiesti)
+    mancanti = []
+    for cod, qta in consumi.items():
+        if not qta or qta <= 0:
+            continue
+        if CicloLavoroWood.query.filter_by(codice=cod).first() is None:
+            continue  # materia prima pura: non bloccata
+        disp = _disponibile_semilavorato(cod)
+        if disp + 1e-9 < qta:
+            mancanti.append((cod, disp, qta))
+    if not mancanti:
+        return None
+    dettaglio = ' — '.join(f'{c}: disponibili {d:g}, servono {q:g}' for c, d, q in mancanti)
+    nomi = ', '.join(c for c, _d, _q in mancanti)
+    msg = (f'{codice}: mancano i semilavorati necessari. {dettaglio}. '
+           f'Dichiara prima {nomi} (o inserisci il WIP in WIP Station se i pezzi esistevano già).')
+    return {'ok': False, 'error': msg, 'wip_insufficiente': True,
+            'semilavorati_mancanti': [{'codice': c, 'disponibili': d, 'servono': q} for c, d, q in mancanti]}
 
 
 SOGLIA_ECCEDENZA_PCT_DICHIARAZIONE = 20  # oltre questa % sopra il pianificato, blocco automatico

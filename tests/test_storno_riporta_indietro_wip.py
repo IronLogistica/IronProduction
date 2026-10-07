@@ -108,3 +108,49 @@ class TestBloccoFasePrecedente(TestStornoWip):
             self.assertEqual(self._post(self.t_id, 50).status_code, 200)
             self.assertEqual((self._wip(self.c_id), self._wip(self.t_id)), (0, 50))
             self.assertEqual(self._post(self.t_id, 1).status_code, 409, "i 50 sono gia' passati a Trapani")
+
+
+class TestBloccoSemilavoratiDistinta(TestStornoWip):
+    """TR2006-L (pressopiegato) dichiarato senza TR2006 (punzonato) disponibili: bloccato."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        from blueprints.produzione_pp.routes import pp_bp
+        if 'produzione_pp' not in cls.app.blueprints:
+            cls.app.register_blueprint(pp_bp)
+
+    def setUp(self):
+        super().setUp()
+        with self.app.app_context():
+            p, z = CentroCostoWood(nome='Pressopiegatrice'), CentroCostoWood(nome='Punzonatrice')
+            db.session.add_all([p, z]); db.session.flush()
+            self.p_id = p.id
+            db.session.add_all([
+                CicloLavoroWood(codice='TR2006-L', sequenza=1, centro_costo_id=p.id),
+                CicloLavoroWood(codice='TR2006', sequenza=1, centro_costo_id=z.id),
+                DistintaBaseWood(codice_padre='TR2006-L', codice_figlio='TR2006', quantita=1.0),
+                DistintaBaseWood(codice_padre='TR2006', codice_figlio='TONDO8M', quantita=0.15),
+                GiacenzaWood(codice='TONDO8M', quantita=100),
+                OrdineProduzione(codice='OP-L', codice_articolo='TR2006-L', qta_pianificata=50,
+                                 stato='Rilasciato', priorita=1),
+            ])
+            db.session.commit()
+
+    def _post(self, buoni):
+        return self.app.test_client().post('/api/dichiarazione-produzione', json={
+            'op_code': 'OP-L', 'centro_id': self.p_id, 'componente': '',
+            'pezzi_buoni': buoni, 'pezzi_scarto': 0, 'tempo_minuti': 0})
+
+    def test_blocca_se_manca_il_semilavorato_poi_consente(self):
+        with self.app.app_context():
+            r = self._post(10)
+            self.assertEqual(r.status_code, 409)
+            d = r.get_json()
+            self.assertTrue(d['wip_insufficiente'])
+            self.assertIn('TR2006: disponibili 0, servono 10', d['error'])
+            self.assertEqual(EventoConsuntivoPP.query.count(), 0)
+            db.session.add(GiacenzaWood(codice='TR2006', quantita=10)); db.session.commit()
+            self.assertEqual(self._post(10).status_code, 200)
+            self.assertEqual(GiacenzaWood.query.get('TR2006').quantita, 0)
+            self.assertEqual(self._post(1).status_code, 409, "consumati tutti")
