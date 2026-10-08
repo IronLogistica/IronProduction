@@ -6,24 +6,17 @@
 
 <div class="mon-section" id="masterwork-box" style="border:1.5px solid #b8860b">
   <div style="padding:14px;display:flex;justify-content:space-between;align-items:center;cursor:pointer" onclick="toggleMasterworkPendenti()">
-    <div style="font-weight:700;color:#b8860b">🏭 Produzioni dichiarate in officina — <span id="masterwork-count">0</span> da visionare</div>
+    <div style="font-weight:700;color:#b8860b">🏭 Produzioni dichiarate in officina (MasterWork) — <span id="masterwork-count">0</span> da APPROVARE o ELIMINARE</div>
     <span id="masterwork-freccia">▼</span>
   </div>
   <div id="masterwork-pendenti-box" style="display:block;padding:0 14px 14px">
-    <p style="font-size:12px;color:var(--text-dim);margin:0 0 10px">
-      Quello che gli operai hanno dichiarato in officina via MasterWork, con l'Ordine di Produzione preso dal
-      QR code che selezionano (quello è affidabile, non sbaglia). Quello che NON si può dare per scontato è
-      <b>quale componente/fase</b> di quell'OP hanno davvero lavorato — lo stesso OP può passare dalla stessa
-      persona in giorni diversi per parti diverse (es. oggi il retro di C12, domani il davanti) e il programma da
-      solo non può distinguerlo. Per questo le righe qui sotto NON caricano da sole né quantità né magazzino:
-      guardale, attribuisci TU il componente giusto e carica la produzione reale con la Dichiarazione di
-      Produzione qui sopra, poi spunta "visionata e registrata" — la riga sparisce da qui e dalla tile
-      lampeggiante in dashboard.
+    <p style="font-size:13px;color:var(--text);margin:0 0 10px">
+      Ogni registrazione che arriva da MasterWork compare <b>qui in cima</b> e resta <b>ferma, senza effetto</b>:
+      <b>non modifica né il magazzino né gli Ordini di Produzione</b> finché non scegli.
+      <b>✅ Approva</b> = la registrazione diventa valida e muove ordine, magazzino e WIP.
+      <b>🗑️ Elimina</b> = sparisce come se non fosse mai arrivata (nessuna traccia su ordini e magazzino).
+      L'OP arriva dal QR code (affidabile); controlla sempre componente/fase prima di approvare.
     </p>
-    <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px">
-      <input id="masterwork-chi" type="text" placeholder="👤 Chi sta registrando (il tuo nome)" autocomplete="off"
-             style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);width:260px">
-    </div>
     <div id="masterwork-lista">Caricamento...</div>
   </div>
 </div>
@@ -1209,9 +1202,9 @@ async function caricaMasterworkPendenti(){
     const d = await r.json();
     if(!d.ok){ box.innerHTML = `<p style="color:#c0392b">⚠️ ${d.error||'Errore'}</p>`; return; }
     document.getElementById('masterwork-count').textContent = d.eventi.length;
-    if(!d.eventi.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna produzione da visionare al momento.</p>'; return; }
+    if(!d.eventi.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna registrazione MasterWork in attesa.</p>'; return; }
     let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr>' +
-      '<th>Quando</th><th>OP (dal QR, affidabile)</th><th>Codice padre</th><th>⚠️ Componente/Fase da attribuire</th><th>Operatore</th><th>Buoni</th><th>Scarto</th><th>Minuti</th><th></th>' +
+      '<th>Quando</th><th>OP (dal QR, affidabile)</th><th>Codice padre</th><th>⚠️ Componente/Fase da attribuire</th><th>Operatore</th><th>Buoni</th><th>Scarto</th><th>Minuti</th><th>Scelta</th>' +
       '</tr></thead><tbody>';
     d.eventi.forEach(e=>{
       html += `<tr id="mw-riga-${e.id}">
@@ -1221,9 +1214,7 @@ async function caricaMasterworkPendenti(){
         <td style="font-weight:700;color:#b8860b">${esc(e.componente || '(prodotto finito)')} <span style="font-weight:400;color:var(--text-dim)">— ${esc(e.fase)}</span></td>
         <td>${esc(e.operatore) || '—'}</td>
         <td>${e.pezzi_buoni}</td><td>${e.pezzi_scarto}</td><td>${e.tempo_minuti}</td>
-        <td><label style="display:flex;align-items:center;gap:6px;font-size:11px;white-space:nowrap;cursor:pointer">
-          <input type="checkbox" onchange="marcaMasterworkVisionata(${e.id}, this)"> visionata e registrata
-        </label></td>
+        <td style="white-space:nowrap"><button class="btn btn-primary" style="padding:6px 12px;font-size:12px;margin-right:4px" onclick="approvaMasterwork(${e.id}, this)">✅ Approva</button><button class="btn btn-danger" style="padding:6px 12px;font-size:12px" onclick="eliminaMasterwork(${e.id}, this)">🗑️ Elimina</button></td>
       </tr>`;
     });
     html += '</tbody></table></div>';
@@ -1242,34 +1233,31 @@ async function caricaMasterworkConteggio(){
   }catch(e){}
 }
 
-async function marcaMasterworkVisionata(eid, checkboxEl){
-  checkboxEl.disabled = true;
-  const chi = (document.getElementById('masterwork-chi').value || '').trim();
+async function _decidiMasterwork(eid, azione, btn){
+  if(!_pinDirezioneAttivo){ alert('⚠️ Accesso non ancora pronto: ricarica la pagina e riprova.'); return; }
+  const approva = azione === 'approva';
+  if(!confirm(approva
+      ? 'Approvare questa registrazione? Da ora muove Ordine di Produzione, magazzino e WIP.'
+      : 'Eliminare questa registrazione? Sparisce come se non fosse mai arrivata, senza toccare ordini e magazzino.')) return;
+  document.querySelectorAll('#masterwork-lista button').forEach(b => b.disabled = true);
   try{
-    const r = await fetch(`/api/dichiarazione-produzione/eventi/${eid}/visiona`, {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({visionato: true, visionato_da: chi})
+    const r = await fetch(`/api/dichiarazione-produzione/eventi/${eid}/${approva ? 'approva' : 'annulla'}`, {
+      method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin:_pinDirezioneAttivo})
     });
     let d = null;
     try{ d = await r.json(); }catch(_){ d = null; }
     if(!r.ok || !d || !d.ok){
-      // Mostra il motivo vero (prima: sempre 'Errore di rete') e rilegge l'elenco dal server, cosi' le righe
-      // a schermo coincidono con quelle realmente registrate (la spunta potrebbe essere stata salvata).
-      alert('⚠️ ' + ((d && d.error) || ('Il server ha risposto con errore (HTTP ' + r.status + '). Riprova: se compare ancora, avvisa Mauri.')));
-      caricaMasterworkPendenti();
-      return;
+      alert('⚠️ ' + ((d && d.error) || ('Il server ha risposto con errore (HTTP ' + r.status + '). Riprova.')));
+    } else if(approva && d.avviso_magazzino){
+      alert('✅ Approvata. ⚠️ ' + d.avviso_magazzino);
     }
-    const riga = document.getElementById(`mw-riga-${eid}`);
-    if(riga) riga.remove();
-    const rimaste = document.querySelectorAll('#masterwork-lista tbody tr').length;
-    document.getElementById('masterwork-count').textContent = rimaste;
-    if(!rimaste) document.getElementById('masterwork-lista').innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna produzione da visionare al momento.</p>';
-    try{ caricaApprovazioni(); }catch(_){}      // la stessa riga esce anche dall'Area Direzione — approvazioni
   }catch(e){
     alert('❌ Connessione interrotta, riprova. (' + (e && e.message ? e.message : e) + ')');
-    caricaMasterworkPendenti();
   }
+  caricaMasterworkPendenti();     // rilegge sempre dal server: a schermo c'e' solo cio' che e' davvero ancora in attesa
 }
+function approvaMasterwork(eid, btn){ _decidiMasterwork(eid, 'approva', btn); }
+function eliminaMasterwork(eid, btn){ _decidiMasterwork(eid, 'elimina', btn); }
 
 caricaCentri();
 caricaMasterworkPendenti();
@@ -1309,24 +1297,8 @@ async function segnaAvvisoLetto(aid){
 }
 
 async function caricaApprovazioni(){
-  if(!_pinDirezioneAttivo) return;
   const box = document.getElementById('direzione-lista');
-  box.innerHTML = 'Caricamento...';
-  const r = await fetch(`/api/dichiarazione-produzione/approvazioni?pin=${encodeURIComponent(_pinDirezioneAttivo)}`);
-  const d = await r.json();
-  if(!d.ok){ box.innerHTML = `<p style="color:#c0392b">⚠️ ${d.error}</p>`; return; }
-  if(!d.eventi.length){ box.innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna dichiarazione in attesa di approvazione.</p>'; return; }
-  let html = '<div style="overflow-x:auto"><table class="kanban-table"><thead><tr><th>Ora</th><th>Centro</th><th>OP</th><th>Codice</th><th>Componente</th><th>Operatore</th><th>Buoni</th><th>Scarto</th><th>Minuti</th><th></th></tr></thead><tbody>';
-  d.eventi.forEach(e=>{
-    html += `<tr><td>${e.timestamp}</td><td>${e.fase}</td><td class="codice">${e.op_code}</td><td class="codice" style="font-weight:700;color:var(--accent2)">${e.codice_articolo||'—'}</td><td>${e.componente||'(prodotto finito)'}</td>` +
-      `<td>${e.operatore||'—'}</td><td>${e.pezzi_buoni}</td><td>${e.pezzi_scarto}</td><td>${e.tempo_minuti}</td>` +
-      `<td style="display:flex;gap:4px">` +
-      `<button class="btn btn-primary" style="padding:4px 8px;font-size:11px" onclick="approvaDichiarazione(${e.id})">✅ Approva</button>` +
-      `<button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="eliminaDichiarazioneDirezione(${e.id})">🗑️ Elimina</button>` +
-      `</td></tr>`;
-  });
-  html += '</tbody></table></div>';
-  box.innerHTML = html;
+  if(box) box.innerHTML = '<p style="color:var(--text-dim);font-size:13px">Le registrazioni MasterWork da approvare o eliminare sono in cima a questa pagina (riquadro giallo): un solo elenco.</p>';
 }
 
 async function approvaDichiarazione(eid){
