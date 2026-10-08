@@ -15,10 +15,11 @@
   table { width: 100%; border-collapse: collapse; font-size: 13px; margin-bottom: 18px; }
   th { background: #eee; border: 1px solid #999; padding: 7px 8px; text-align: left; font-size: 11px; text-transform: uppercase; }
   td { border: 1px solid #999; padding: 9px 8px; vertical-align: middle; }
-  .col-codice { width: 18%; font-weight: 700; }
-  .col-desc { width: 37%; }
-  .col-um { width: 9%; text-align: center; }
-  .col-conteggio { width: 36%; }
+  .col-codice { width: 17%; font-weight: 700; }
+  .col-desc { width: 33%; }
+  .col-um { width: 8%; text-align: center; }
+  .col-attuale { width: 12%; text-align: right; color: #333; }
+  .col-conteggio { width: 30%; }
   .riga-conteggio { border-bottom: 1px solid #000; display: block; height: 20px; }
   .riga-fase td.col-codice { font-weight: 400; padding-left: 20px; color: #333; }
   .riga-fase td.col-codice:before { content: "↳ "; color: #999; }
@@ -46,6 +47,7 @@
       <th class="col-codice">Codice</th>
       <th class="col-desc">Descrizione</th>
       <th class="col-um">U.M.</th>
+      <th class="col-attuale">Attuale</th>
       <th class="col-conteggio">Quantità contata</th>
     </tr>
   </thead>
@@ -55,6 +57,7 @@
       <td class="col-codice">{{ r.codice }}{{ ' (padre)' if r.codice == codice_padre else '' }}</td>
       <td class="col-desc">{{ r.descrizione or '—' }}</td>
       <td class="col-um">{{ r.unita_misura or '' }}</td>
+      <td class="col-attuale">{{ '%g'|format((r.giacenza_attuale or 0)|round(3)) }}</td>
       <td class="col-conteggio"><span class="riga-conteggio"></span></td>
     </tr>
     {% for f in r.fasi %}
@@ -62,12 +65,13 @@
       <td class="col-codice">{{ r.codice }}</td>
       <td class="col-desc"><span class="tag-wip">WIP</span>fermi A «{{ f.centro_nome }}» (fatta questa, non ancora la fase dopo)</td>
       <td class="col-um">{{ r.unita_misura or '' }}</td>
+      <td class="col-attuale">{{ '%g'|format((f.quantita_wip_attuale or 0)|round(3)) }}</td>
       <td class="col-conteggio"><span class="riga-conteggio"></span></td>
     </tr>
     {% endfor %}
     {% endfor %}
     {% if not righe %}
-    <tr><td colspan="4" style="text-align:center;color:#777;font-style:italic">Nessun codice trovato per questo codice padre.</td></tr>
+    <tr><td colspan="5" style="text-align:center;color:#777;font-style:italic">Nessun codice trovato per questo codice padre.</td></tr>
     {% endif %}
   </tbody>
 </table>

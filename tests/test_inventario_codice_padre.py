@@ -101,7 +101,7 @@ class TestInventarioCodicePadre(unittest.TestCase):
     # ------------------------------------------------------------------
     # Foglio stampabile VUOTO
     # ------------------------------------------------------------------
-    def test_foglio_stampa_non_mostra_le_quantita_attuali(self):
+    def test_foglio_stampa_mostra_le_quantita_attuali(self):
         r = self.client.get('/inventario-codice-padre-stampa/PINX110')
         self.assertEqual(r.status_code, 200)
         t = r.get_data(as_text=True)
@@ -109,12 +109,10 @@ class TestInventarioCodicePadre(unittest.TestCase):
         self.assertIn('BARRA-GREZZA', t)
         self.assertIn('fermi A «Segatrice»', t)
         self.assertIn('fermi A «Satinatrice»', t)
-        # Vuoto per davvero: il template non deve mai referenziare i campi
-        # con le quantità attuali del sistema (solo usati nel modulo di
-        # inserimento dati, pagina diversa) — non deve "suggerire" il
-        # conteggio a chi va a contare fisicamente in reparto/magazzino.
-        self.assertNotIn('giacenza_attuale', t)
-        self.assertNotIn('quantita_wip_attuale', t)
+        # colonna «Attuale» (richiesta Mauri 08/10/2026): giacenza e WIP come nella schermata
+        self.assertIn('Attuale', t)
+        for q in ('>287<', '>500<', '>96<', '>191<'):
+            self.assertIn(q, t.replace(' ', '').replace('\n', ''))
 
     # ------------------------------------------------------------------
     # Salvataggio conteggi

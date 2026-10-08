@@ -32,8 +32,7 @@
       <button class="btn btn-primary" style="padding:12px 18px;font-size:14px;margin-left:auto" onclick="salvaConteggi()">💾 Salva conteggi</button>
     </div>
     <p style="font-size:12px;color:var(--text-dim);margin-bottom:6px">
-      La giacenza/WIP attuale è mostrata solo come riferimento per chi inserisce i dati — il foglio stampato per
-      chi va a contare fisicamente NON la mostra, per non condizionare il conteggio. Lascia vuoto un campo per non
+      La giacenza/WIP attuale è mostrata come riferimento, anche nel foglio stampato (colonna «Attuale»). Lascia vuoto un campo per non
       toccare quel codice/fase.
     </p>
     <p style="font-size:12px;color:var(--text-dim);margin-bottom:14px">
@@ -125,6 +124,8 @@ function cercaCodicePadre() {
     .catch(() => { esito.textContent = 'Errore di comunicazione col server.'; });
 }
 
+function fmtQta(v) { return String(Math.round((Number(v) || 0) * 1000) / 1000); }
+
 function renderRighe() {
   const tbody = document.getElementById('righe-codici');
   tbody.innerHTML = '';
@@ -134,7 +135,7 @@ function renderRighe() {
       <td style="padding:8px;border-bottom:1px solid var(--border);font-weight:700">${r.codice}${r.codice === CODICE_PADRE_ATTUALE ? ' <span style="font-weight:400;color:var(--text-dim);font-size:11px">(padre)</span>' : ''}</td>
       <td style="padding:8px;border-bottom:1px solid var(--border)">${r.descrizione || '—'}</td>
       <td style="padding:8px;border-bottom:1px solid var(--border);text-align:center">${r.unita_misura || ''}</td>
-      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text-dim)">${r.giacenza_attuale}</td>
+      <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text-dim)">${fmtQta(r.giacenza_attuale)}</td>
       <td style="padding:8px;border-bottom:1px solid var(--border);text-align:right">
         <input type="number" step="any" data-codice="${r.codice}" class="input-contato"
                style="width:110px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);text-align:right">
@@ -148,7 +149,7 @@ function renderRighe() {
           <span style="display:inline-block;font-size:10px;font-weight:700;color:#fff;background:var(--accent2);border-radius:4px;padding:1px 6px;margin-right:6px">WIP</span>
           fermi A «${f.centro_nome}» (fatta questa, non ancora la fase dopo)</td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border)"></td>
-        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text-dim);font-size:12px">${f.quantita_wip_attuale}</td>
+        <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right;color:var(--text-dim);font-size:12px">${fmtQta(f.quantita_wip_attuale)}</td>
         <td style="padding:6px 8px;border-bottom:1px solid var(--border);text-align:right">
           <input type="number" step="any" data-codice="${r.codice}" data-centro="${f.centro_costo_id}" class="input-contato-fase"
                  style="width:110px;padding:6px 8px;border-radius:6px;border:1px solid var(--border);text-align:right">
