@@ -195,3 +195,29 @@ class TestSaldoTrapaniZ01(TestStornoWip):
             r = next(x for sez in _righe_macchina(trapani).values() for x in sez if x['op_codice'] == 'OP-1')
             self.assertEqual(r['saldo'], 150)
             self.assertNotEqual(r.get('completato'), True)
+
+
+class TestCardOrdineLavoroTrapani(TestSaldoTrapaniZ01):
+    """La card della commessa non deve sparire da 'Ordine Lavoro Trapani' finche' c'e' saldo (Z01 660/810)."""
+
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        from blueprints.produzione_pp.routes import pp_bp
+        if 'produzione_pp' not in cls.app.blueprints:
+            cls.app.register_blueprint(pp_bp)
+
+    def test_card_presente_con_residuo_150(self):
+        with self.app.app_context():
+            db.session.add_all([GiacenzaWood(codice='Z01', quantita=810),
+                                WipFaseWood(codice='Z01', centro_costo_id=self.c_id, quantita=150),
+                                WipFaseWood(codice='Z01', centro_costo_id=self.t_id, quantita=660)])
+            for n, (fase, q) in enumerate((('Curvatubi', 810), ('Trapani', 660))):
+                db.session.add(EventoConsuntivoPP(event_id=f'k{n}', op_code='OP-1', fase=fase, componente='Z01',
+                                                  timestamp_evento=datetime.utcnow(), pezzi_buoni=q, pezzi_scarto=0,
+                                                  tempo_minuti=0, approvato_direzione=True))
+            db.session.commit()
+            r = self.app.test_client().get(f'/api/liste-lavoro/{self.t_id}')
+            card = next((c for c in r.get_json() if c['op_codice'] == 'OP-1'), None)
+            self.assertIsNotNone(card, "prima della fix la card spariva")
+            self.assertEqual((card['totale_pz'], card['pz_effettuati'], card['residuo_pz']), (810, 660, 150))

@@ -1563,7 +1563,11 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
                 # lavoro il cui risultato è già pronto a magazzino.
                 gia_disponibile = max(residuo_giacenza_op.get(codice_comp, 0), 0)
                 gia_disponibile = _gia_disponibile_per_fase(codice_comp, centro_id, gia_disponibile, wip_per_codice)
-                acc['pz_effettuati'] += min(pezzi_fatti + gia_disponibile, nr_pz_da_fare)
+                # Stesso calcolo di _lista_lavoro_op e del Monitor Live (Mauri, 08/10/2026,
+                # Z01 di OP-2026-000063: la card sparita da 'Ordine Lavoro Trapani'):
+                # i pezzi gia' dichiarati sono GIA' dentro la giacenza/WIP, sommarli
+                # li contava due volte (660 fatti + 660 WIP = tutto 'effettuato').
+                acc['pz_effettuati'] += min(max(pezzi_fatti, gia_disponibile), nr_pz_da_fare)
         for v in per_centro.values():
             v['residuo_pz'] = max(v['totale_pz'] - v['pz_effettuati'], 0)
         risultato[o.id] = list(per_centro.values())
