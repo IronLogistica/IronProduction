@@ -6,6 +6,9 @@ class Config:
         _db = _db.replace('postgres://', 'postgresql://', 1)
     SQLALCHEMY_DATABASE_URI = _db
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # Connessioni Postgres che Railway chiude/rompe ('SSL error: bad record mac', 'server closed the connection'):
+    # si verifica la connessione prima dell'uso e la si rinnova spesso, cosi' una richiesta non fallisce a caso.
+    SQLALCHEMY_ENGINE_OPTIONS = {'pool_pre_ping': True, 'pool_recycle': 280}
     SECRET_KEY = os.environ.get('SECRET_KEY', 'mes-carpenteria-dev-2024')
 
     # ══════════════════════════════════════════════════════════════════════

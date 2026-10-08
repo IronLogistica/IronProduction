@@ -1250,15 +1250,23 @@ async function marcaMasterworkVisionata(eid, checkboxEl){
       method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({visionato: true, visionato_da: chi})
     });
-    const d = await r.json();
-    if(!d.ok){ alert('⚠️ ' + (d.error||'Errore')); checkboxEl.disabled = false; checkboxEl.checked = false; return; }
+    let d = null;
+    try{ d = await r.json(); }catch(_){ d = null; }
+    if(!r.ok || !d || !d.ok){
+      // Mostra il motivo vero (prima: sempre 'Errore di rete') e rilegge l'elenco dal server, cosi' le righe
+      // a schermo coincidono con quelle realmente registrate (la spunta potrebbe essere stata salvata).
+      alert('⚠️ ' + ((d && d.error) || ('Il server ha risposto con errore (HTTP ' + r.status + '). Riprova: se compare ancora, avvisa Mauri.')));
+      caricaMasterworkPendenti();
+      return;
+    }
     const riga = document.getElementById(`mw-riga-${eid}`);
     if(riga) riga.remove();
     const rimaste = document.querySelectorAll('#masterwork-lista tbody tr').length;
     document.getElementById('masterwork-count').textContent = rimaste;
     if(!rimaste) document.getElementById('masterwork-lista').innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna produzione da visionare al momento.</p>';
   }catch(e){
-    alert('❌ Errore di rete.'); checkboxEl.disabled = false; checkboxEl.checked = false;
+    alert('❌ Connessione interrotta, riprova. (' + (e && e.message ? e.message : e) + ')');
+    caricaMasterworkPendenti();
   }
 }
 
