@@ -4027,12 +4027,19 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         # (es. scorta genuinamente preesistente da altre commesse, o un
         #'ricalcolo BOM' su un OP con priorità superiore che libera stock
         # non suo) rappresenta davvero un risparmio di taglio.
-        gia_disponibile = max(residuo_giacenza_per_op.get(codice_comp, 0) - pezzi_fatti, 0)
+        gia_disponibile = residuo_giacenza_per_op.get(codice_comp, 0)
         # "WIP Station": se per questo codice è stata inserita una
         # suddivisione per fase, restringe 'già disponibile' a quanto è
         # fermo ad ALMENO questa fase — non il totale, che varrebbe anche
         # per fasi successive mai davvero raggiunte (caso reale PINX110).
+        # Ordine corretto (segnalato da Mauri, 08/10/2026, Z01 di OP-2026-000063:
+        # 660 fatti a Trapani + 150 ancora a Curvatubi, la Dichiarazione dava
+        # saldo 150 ma OL e Live Trapani lo davano 0): il tetto WIP della fase
+        # va applicato alla giacenza TOTALE e SOLO DOPO si sottraggono i pezzi
+        # gia' dichiarati — prima si sottraeva e poi si confrontava con un WIP
+        # che contiene gia' quei pezzi, contandoli due volte.
         gia_disponibile = _gia_disponibile_per_fase(codice_comp, centro.id, gia_disponibile, wip_per_codice)
+        gia_disponibile = max(gia_disponibile - pezzi_fatti, 0)
         # Credito "da valle" (segnalato da Mauri, 07/10/2026 — stessa commessa
         # 26100072): l'Ordine di Lavoro stampato della Segatrice chiedeva
         # ancora di tagliare 84 PINXTT110, già saldati in PINX110-A/B/finale,

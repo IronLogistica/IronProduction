@@ -262,12 +262,16 @@ def _righe_macchina(centro):
             # giacenza va scontata di quanto quest'OP ha già dichiarato
             # PRIMA di usarla come sconto ulteriore, altrimenti solo
             # un'eccedenza genuinamente esterna dovrebbe ridurre il saldo).
-            gia_disponibile = max(giacenza_di_op.get(codice_comp, 0) - pezzi_fase, 0)
+            gia_disponibile = giacenza_di_op.get(codice_comp, 0)
             # "WIP Station": restringe 'già disponibile' a quanto è fermo ad
             # ALMENO questa fase (vedi commento sopra e _gia_disponibile_per_fase)
             # — non il totale, che varrebbe anche per fasi successive mai
             # davvero raggiunte da questo componente (caso reale PINX110).
+            # Ordine corretto (Mauri, 08/10/2026, Z01 OP-2026-000063): prima il tetto
+            # WIP della fase sulla giacenza TOTALE, poi si tolgono i pezzi gia'
+            # dichiarati (gia' contenuti nel WIP) — vedi _lista_lavoro_op.
             gia_disponibile = _gia_disponibile_per_fase(codice_comp, centro.id, gia_disponibile, wip_per_codice)
+            gia_disponibile = max(gia_disponibile - pezzi_fase, 0)
             # Credito "da valle" — vedi nota sopra: va SOMMATO (sono pezzi
             # fisicamente diversi da quelli già contati in 'gia_disponibile',
             # che è giacenza/WIP ancora presente CON QUESTO codice), poi il

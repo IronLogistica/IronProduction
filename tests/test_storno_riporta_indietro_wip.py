@@ -170,3 +170,28 @@ class TestBloccoSemilavoratiDistinta(TestStornoWip):
             self.assertIn('CHIAMA ANGELO', d['error'])
             self.assertEqual(GiacenzaWood.query.get('TONDO8M').quantita, 100, "nessuno scarico")
             self.assertEqual(c.post('/api/dichiarazione-produzione', json={**body, 'pezzi_buoni': 500}).status_code, 200)
+
+
+class TestSaldoTrapaniZ01(TestStornoWip):
+    """Z01 di OP-2026-000063 (Mauri, 08/10/2026): 660 fatti a Trapani su 810, 150 ancora a
+    Curvatubi: Dichiarazione, Ordine di Lavoro e Live devono dire tutti saldo 150."""
+
+    def test_ol_live_e_dichiarazione_coincidono(self):
+        from blueprints.produzione_pp.routes import _lista_lavoro_op
+        from blueprints.monitor.routes import _righe_macchina
+        with self.app.app_context():
+            db.session.add_all([GiacenzaWood(codice='Z01', quantita=810),
+                                WipFaseWood(codice='Z01', centro_costo_id=self.c_id, quantita=150),
+                                WipFaseWood(codice='Z01', centro_costo_id=self.t_id, quantita=660)])
+            for n, (fase, q) in enumerate((('Curvatubi', 810), ('Trapani', 660))):
+                db.session.add(EventoConsuntivoPP(event_id=f'e{n}', op_code='OP-1', fase=fase, componente='Z01',
+                                                  timestamp_evento=datetime.utcnow(), pezzi_buoni=q, pezzi_scarto=0,
+                                                  tempo_minuti=0, approvato_direzione=True))
+            db.session.commit()
+            trapani = db.session.get(CentroCostoWood, self.t_id)
+            op = OrdineProduzione.query.filter_by(codice='OP-1').one()
+            riga = _lista_lavoro_op(op, trapani, assegna_numero=False)['gruppi'][0]['righe'][0]
+            self.assertEqual((riga['codice'], riga['saldo']), ('Z01', 150), "prima della fix: 0")
+            r = next(x for sez in _righe_macchina(trapani).values() for x in sez if x['op_codice'] == 'OP-1')
+            self.assertEqual(r['saldo'], 150)
+            self.assertNotEqual(r.get('completato'), True)
