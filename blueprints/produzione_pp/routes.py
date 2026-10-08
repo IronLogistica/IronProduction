@@ -5809,7 +5809,10 @@ def api_dichiarazione_approvazioni():
     cose fatte."""
     if not _verifica_pin_direzione(request.args):
         return jsonify(ok=False, error='PIN Direzione non valido'), 403
-    eventi = (EventoConsuntivoPP.query.filter_by(approvato_direzione=False)
+    # Le dichiarazioni gia' 'visionate e registrate' (Angelo le ha caricate lui a mano) NON restano in questa
+    # coda: erano lo stesso elenco mostrato due volte, e un 'Approva' qui le avrebbe caricate una seconda volta
+    # su OP e magazzino (Angelo, 08/10/2026: 'come se fosse una replica di quelle sotto').
+    eventi = (EventoConsuntivoPP.query.filter_by(approvato_direzione=False, visionato=False)
               .order_by(EventoConsuntivoPP.timestamp_evento.desc()).limit(200).all())
     # Codice articolo: preso dall'OP collegato, così la Direzione vede COSA
     # sta approvando (prima si vedeva solo l'OP, non il prodotto). Una sola

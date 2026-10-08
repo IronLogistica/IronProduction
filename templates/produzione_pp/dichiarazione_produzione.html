@@ -1264,6 +1264,7 @@ async function marcaMasterworkVisionata(eid, checkboxEl){
     const rimaste = document.querySelectorAll('#masterwork-lista tbody tr').length;
     document.getElementById('masterwork-count').textContent = rimaste;
     if(!rimaste) document.getElementById('masterwork-lista').innerHTML = '<p style="color:#aaa;font-style:italic">Nessuna produzione da visionare al momento.</p>';
+    try{ caricaApprovazioni(); }catch(_){}      // la stessa riga esce anche dall'Area Direzione — approvazioni
   }catch(e){
     alert('❌ Connessione interrotta, riprova. (' + (e && e.message ? e.message : e) + ')');
     caricaMasterworkPendenti();
