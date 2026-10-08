@@ -122,7 +122,9 @@ def calcola_avanzamento_commesse():
                          SequenzaAvanzamentoKPI)
     from blueprints.magazzino.routes import (_esplodi_componenti_op, _carica_mappa_distinta_base_wood,
                          _residuo_giacenza_progressivo, _netta_e_esplodi_wood, STATI_CHE_IMPEGNANO,
-                         _wip_fase_per_codice)
+                         _wip_fase_per_codice, _gia_disponibile_per_fase)
+    from blueprints.produzione_pp.routes import (_figli_a_padri_da_mappa, _fatti_totali_per_componente,
+                                                 _credito_da_valle, _credito_valle_applicabile)
 
     oggi = datetime.now()
 
@@ -153,6 +155,10 @@ def calcola_avanzamento_commesse():
     # ogni zona del Cruscotto KPI/Avanzamento Commesse, anche quando il
     # Monitor Live e il PDF sapevano già che quella fase era chiusa.
     wip_per_codice = _wip_fase_per_codice()
+    # Per il credito "già coperto" (stesso calcolo dell'Ordine di Lavoro stampato): giacenza e pezzi già
+    # avanzati a valle valgono come 'già fatto' anche per la percentuale di zona del Cruscotto.
+    figli_a_padri = _figli_a_padri_da_mappa(mappa_distinta)
+    fatti_totali_per_componente = _fatti_totali_per_componente([o.codice for o in ordini])
 
     # Una sola query per TUTTE le miniature prodotto (la più recente per
     # ogni codice_articolo) invece di una per OP — stesso principio delle
@@ -288,6 +294,19 @@ def calcola_avanzamento_commesse():
                                                if sequenza_per_centro_wip.get(cid, -1) >= ciclo.sequenza)
                                            if wip_righe_codice else 0)
                 pezzi_fatti_eff = max(pezzi_fatti, min(pezzi_gia_a_questa_fase, qta_codice_pianificata))
+
+                # Copertura da magazzino e da valle (Pierantonio, 08/10/2026, PINX110 OP-2026-000072: gli Ordini di
+                # Lavoro Segatrice e Satinatrice erano chiusi — 'da produrre 0', pezzi gia' a magazzino o gia'
+                # passati a valle — ma il Cruscotto mostrava 71%). Stessa formula di _lista_lavoro_op:
+                # giacenza (tetto WIP della fase, scontata dei pezzi dichiarati) + credito da valle.
+                gia_disp = max(residuo_per_op.get(o.id, {}).get(codice, 0), 0)
+                gia_disp = _gia_disponibile_per_fase(codice, ciclo.centro_costo_id, gia_disp, wip_per_codice)
+                gia_disp = max(gia_disp - pezzi_fatti, 0)
+                credito, _non_dich = _credito_valle_applicabile(
+                    codice, _credito_da_valle(o, codice, set(moltiplicatore_per_codice), figli_a_padri,
+                                              fatti_totali_per_componente))
+                copertura = min(max(qta_codice_pianificata - pezzi_fatti, 0), gia_disp + credito)
+                pezzi_fatti_eff = max(pezzi_fatti_eff, min(pezzi_fatti + copertura, qta_codice_pianificata))
 
                 # Avanzamento per ZONA (tabella Avanzamento Commesse): conta
                 # SEMPRE, anche per una fase già completata al 100% (che qui

@@ -77,14 +77,40 @@ class TestWipStationFaseAvanzamento(unittest.TestCase):
             self.assertEqual(r['zone']['sgola_sati'], 67,
                               "Satinatrice già a 191/287, prima della fix restava 0%")
 
-    def test_senza_wip_zone_restano_a_zero_senza_dichiarazioni(self):
-        """Nessuna regressione: un codice senza righe WIP e senza eventi di
-        produzione dichiarati resta a 0% come prima di questa fix."""
+    def test_senza_wip_la_giacenza_gia_a_magazzino_chiude_le_zone(self):
+        """Pierantonio 08/10/2026 (PINX110, OP-2026-000072): se il semilavorato e' gia' tutto a magazzino gli
+        Ordini di Lavoro sono chiusi ('da produrre 0') e il Cruscotto deve dire lo stesso: 100%, non 0%/71%."""
         with self.app.app_context():
+            risultati, _ = calcola_avanzamento_commesse()
+            r = _risultato(risultati, 'OP-PINX')
+            self.assertEqual(r['zone']['taglio'], 100)
+            self.assertEqual(r['zone']['sgola_sati'], 100)
+
+    def test_senza_giacenza_ne_wip_ne_dichiarazioni_restano_a_zero(self):
+        with self.app.app_context():
+            GiacenzaWood.query.filter_by(codice='PINXTT110').delete()
+            db.session.commit()
             risultati, _ = calcola_avanzamento_commesse()
             r = _risultato(risultati, 'OP-PINX')
             self.assertEqual(r['zone']['taglio'], 0)
             self.assertEqual(r['zone']['sgola_sati'], 0)
+
+    def test_giacenza_piu_pezzi_gia_passati_a_valle_coprono_il_pianificato(self):
+        """Caso reale: 287 pianificati del finito PINX110, 84 gia' fatti (qta_buona), 203 semilavorati a
+        magazzino: Taglio e Sgola/Sati sono coperti al 100% (203 + 84 = 287)."""
+        from models import DistintaBaseWood
+        with self.app.app_context():
+            OrdineProduzione.query.delete()
+            GiacenzaWood.query.filter_by(codice='PINXTT110').update({'quantita': 203})
+            db.session.add_all([
+                DistintaBaseWood(codice_padre='PINX110', codice_figlio='PINXTT110', quantita=1.0),
+                OrdineProduzione(codice='OP-PINX', codice_articolo='PINX110', qta_pianificata=287, qta_buona=84,
+                                 stato='Rilasciato', priorita=1)])
+            db.session.commit()
+            risultati, _ = calcola_avanzamento_commesse()
+            r = _risultato(risultati, 'OP-PINX')
+            self.assertEqual(r['zone']['taglio'], 100)
+            self.assertEqual(r['zone']['sgola_sati'], 100)
 
 
 if __name__ == '__main__':
