@@ -3,7 +3,7 @@ import uuid
 from datetime import datetime
 from flask import Blueprint, render_template, jsonify, request, Response
 from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
-                    EventoConsuntivoPP, SequenzaAvanzamentoKPI, get_macchine_monitor,
+                    EventoConsuntivoPP, SequenzaAvanzamentoKPI, SequenzaMonitorMacchina, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo,
                     NumeroListaLavoroWood, SchedaLavorazioneWood, ArticoloML, DescrizioneCodiceWood,
                     ParametriLavorazioneWood)
@@ -23,6 +23,10 @@ SEZIONI = {
     'terminati':   ('✅ APPENA TERMINATI (questa fase)',    'terminati-hdr'),
 }
 
+
+
+def _e_saldatura(centro):
+    return 'salda' in (centro.nome or '').lower()
 
 
 def _materiale_disponibile(o, giacenza_residua=None, mappa_distinta=None):
@@ -119,6 +123,16 @@ def _righe_macchina(centro):
     # commessa attraversa più macchine e non ha senso un ordine diverso
     # su ciascuna.
     posizioni_manuali_kpi = {s.ordine_produzione_id: s.posizione for s in SequenzaAvanzamentoKPI.query.all()}
+    # ECCEZIONE (richiesta Mauri, 10/10/2026): la SALDATURA ha una coda SUA,
+    # indipendente dal KPI — per i semilavorati valgono le priorità del
+    # cruscotto, ma una volta pronti da saldare il capo li mette in fila in
+    # un altro modo, direttamente dal Live Saldatura. Finché non ha mai
+    # riordinato nulla qui, vale l'ordine KPI (nessuna sorpresa al deploy).
+    if _e_saldatura(centro):
+        proprie = {s.ordine_produzione_id: s.posizione
+                   for s in SequenzaMonitorMacchina.query.filter_by(centro_costo_id=centro.id).all()}
+        if proprie:
+            posizioni_manuali_kpi = proprie
 
     # Tutta la distinta base in memoria una volta sola — vedi punto 1) sopra.
     mappa_distinta = _carica_mappa_distinta_base_wood()
@@ -752,8 +766,10 @@ def _contesto_totem(centro):
             g['pezzi_fatti_totale'] = finale['pezzi_fatti'] if finale else 0
             g['pct_aggregato'] = round(100 * (g['totale_totale'] - g['saldo_totale']) / g['totale_totale']) if g['totale_totale'] else 0
 
+    coda_propria = bool(saldatura_nota and SequenzaMonitorMacchina.query.filter_by(centro_costo_id=centro.id).first())
     return dict(centro=centro, gruppi=gruppi, righe_terminati=righe['terminati'][:8],
-                colonne_parametri=colonne_parametri, saldatura_nota=saldatura_nota)
+                colonne_parametri=colonne_parametri, saldatura_nota=saldatura_nota,
+                riordinabile=saldatura_nota, coda_propria=coda_propria)
 
 
 # ── LIVE DOPPIO (monitor in VERTICALE) ────────────────────────────────────────
@@ -834,6 +850,33 @@ def api_totem_tabella_dichiara(cid):
 def api_righe_macchina(cid):
     centro = CentroCostoWood.query.get_or_404(cid)
     return jsonify(_righe_macchina(centro))
+
+
+@monitor_bp.route('/api/totem/<int:cid>/ordina-coda', methods=['POST', 'DELETE'])
+def api_ordina_coda_saldatura(cid):
+    """
+    Salva l'ordine della coda del Live SALDATURA (solo questo centro, il
+    cruscotto KPI non viene toccato). POST: lista COMPLETA degli op_id nel
+    nuovo ordine. DELETE: torna all'ordine del KPI. Protetto dal PIN capo.
+    """
+    from blueprints.produzione_pp.routes import _verifica_pin_capo
+    centro = CentroCostoWood.query.get_or_404(cid)
+    if not _e_saldatura(centro):
+        return jsonify(ok=False, error='Il riordino manuale è previsto solo per la Saldatura'), 400
+    d = request.get_json(silent=True) or {}
+    if not _verifica_pin_capo(d):
+        return jsonify(ok=False, error='PIN capo non valido'), 403
+    SequenzaMonitorMacchina.query.filter_by(centro_costo_id=centro.id).delete()
+    if request.method == 'POST':
+        ids = [int(x) for x in (d.get('ordine') or []) if str(x).isdigit()]
+        if not ids:
+            db.session.rollback()
+            return jsonify(ok=False, error='Elenco vuoto'), 400
+        validi = {o.id for o in OrdineProduzione.query.filter(OrdineProduzione.id.in_(ids)).all()}
+        for pos, oid in enumerate(i for i in ids if i in validi):
+            db.session.add(SequenzaMonitorMacchina(ordine_produzione_id=oid, centro_costo_id=centro.id, posizione=pos))
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 # I due endpoint che erano qui (POST/DELETE .../ordina) scrivevano su

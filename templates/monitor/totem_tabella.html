@@ -81,6 +81,7 @@
   .meta table.tabella-totem{border-radius:0}
   .meta .piede{border-top:1px solid var(--border);padding:7px 14px;font-size:.78rem;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
   .meta .piede .lbl{color:var(--ok);font-weight:800;text-transform:uppercase}
+  .fr{background:#2a2f3a;color:#fff;border:1px solid #555;border-radius:5px;cursor:pointer;margin-right:3px;padding:4px 9px;font-size:1rem}
 </style>
 </head>
 <body>
@@ -119,6 +120,13 @@
   <div class="meta-testa">
     <span class="nome">{{ centro.nome }}</span>
     <span class="conteggio">{{ gruppi|length }} commess{{ 'a' if gruppi|length == 1 else 'e' }} in coda</span>
+    {% if riordinabile %}
+    <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
+      <span style="font-size:.72rem;color:var(--muted)">{{ 'Ordine PROPRIO della saldatura' if coda_propria else 'Ordine del cruscotto KPI' }}</span>
+      <button id="btn-riordina" onclick="toggleRiordino()" style="background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:7px;padding:5px 12px;cursor:pointer;font-weight:700;font-size:.8rem">↕ Riordina</button>
+      {% if coda_propria %}<button onclick="ripristinaKpi()" style="background:transparent;border:1px solid var(--muted);color:var(--muted);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:.8rem">Torna all'ordine KPI</button>{% endif %}
+    </span>
+    {% endif %}
   </div>
 <table class="tabella-totem">
   <thead><tr>
@@ -139,8 +147,8 @@
        affatto. Il lampeggio deve riflettere la producibilità VERA di
        QUESTO reparto (g.stato_producibilita, che già combina fase a monte
        + materiale diretto), non solo metà del controllo. #}
-    <tr class="{{ 'completa' if g.saldo_totale <= 0 else ('materiale-ok' if g.stato_producibilita == 'producibile' else '') }}">
-      <td>{% if g.stato_producibilita %}<span class="prod-badge {{ g.stato_producibilita }}">{{ ETICHETTA_PRODUCIBILITA[g.stato_producibilita] }}</span>{% endif %}</td>
+    <tr data-op-id="{{ g.op_id }}" class="riga-gruppo {{ 'completa' if g.saldo_totale <= 0 else ('materiale-ok' if g.stato_producibilita == 'producibile' else '') }}">
+      <td><span class="frecce" style="display:none;white-space:nowrap"><button onclick="sposta(this,-1)" class="fr">▲</button><button onclick="sposta(this,1)" class="fr">▼</button></span>{% if g.stato_producibilita %}<span class="prod-badge {{ g.stato_producibilita }}">{{ ETICHETTA_PRODUCIBILITA[g.stato_producibilita] }}</span>{% endif %}</td>
       <td><span class="commessa">{{ g.commessa or g.op_codice }}</span></td>
       <td><span class="num-grande">{{ g.qta_pianificata }}</span></td>
       <td><span class="saldo-box{{ ' zero' if g.saldo_totale <= 0 else '' }}">{{ g.saldo_totale | round | int }}</span></td>
@@ -164,7 +172,7 @@
       </td>
     </tr>
     {% if colonne_parametri and g.componenti %}
-    <tr class="dettaglio-codici">
+    <tr class="dettaglio-codici" data-dett-di="{{ g.op_id }}">
       <td colspan="8">
         <table class="tabella-dettaglio">
           <thead><tr>
@@ -239,7 +247,7 @@ function chiudiKpiOverlay(){
   document.getElementById('kpi-iframe').src = '';
   _kpiOverlayAperto = false;
 }
-setInterval(() => { if(!_kpiOverlayAperto) window.location.reload(); }, 60000);
+setInterval(() => { if(!_kpiOverlayAperto && !_riordino) window.location.reload(); }, 60000);
 
 // Reintegro Scarti — solo lettura qui (niente dichiarazione da questa
 // pagina): informa l'operaio/il capo che qualcosa va rifatto per colpa
@@ -267,6 +275,54 @@ async function caricaReintegroScartiTotem(){
   }catch(e){ /* non bloccare il totem se questo fallisce */ }
 }
 caricaReintegroScartiTotem();
+
+// ── Riordino coda (solo Saldatura) ──
+let _riordino = false, _pin = '';
+{% if riordinabile %}
+const CID = {{ centro.id }};
+async function chiediPin(){
+  if(!_pin){ _pin = (prompt('PIN capo per riordinare la coda:') || '').trim(); }
+  return _pin;
+}
+function toggleRiordino(){
+  _riordino = !_riordino;
+  document.querySelectorAll('.frecce').forEach(e => e.style.display = _riordino ? 'inline-block' : 'none');
+  document.getElementById('btn-riordina').textContent = _riordino ? '✔ Fine riordino' : '↕ Riordina';
+  if(!_riordino) salvaOrdine();
+}
+function sposta(btn, dir){
+  const riga = btn.closest('tr.riga-gruppo');
+  const blocco = [riga]; const d = document.querySelector(`tr[data-dett-di="${riga.dataset.opId}"]`);
+  if(d) blocco.push(d);
+  if(dir < 0){
+    let prev = riga.previousElementSibling;
+    while(prev && !prev.classList.contains('riga-gruppo')) prev = prev.previousElementSibling;
+    if(prev) blocco.forEach(r => prev.before(r));
+  } else {
+    let next = riga.nextElementSibling;
+    while(next && !next.classList.contains('riga-gruppo')) next = next.nextElementSibling;
+    if(next){
+      let ref = next; const dn = document.querySelector(`tr[data-dett-di="${next.dataset.opId}"]`);
+      if(dn) ref = dn;
+      blocco.slice().reverse().forEach(r => ref.after(r));
+    }
+  }
+}
+async function salvaOrdine(){
+  const ordine = [...document.querySelectorAll('tr.riga-gruppo')].map(r => parseInt(r.dataset.opId));
+  const pin = await chiediPin();
+  const r = await fetch(`/api/totem/${CID}/ordina-coda`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ordine, pin})});
+  if(!r.ok){ _pin = ''; alert((await r.json()).error || 'Errore'); }
+  window.location.reload();
+}
+async function ripristinaKpi(){
+  if(!confirm("Tornare all'ordine del cruscotto KPI?")) return;
+  const pin = await chiediPin();
+  const r = await fetch(`/api/totem/${CID}/ordina-coda`, {method:'DELETE', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin})});
+  if(!r.ok){ _pin = ''; alert((await r.json()).error || 'Errore'); return; }
+  window.location.reload();
+}
+{% endif %}
 </script>
 </body>
 </html>
