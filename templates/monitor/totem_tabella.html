@@ -122,9 +122,9 @@
     <span class="conteggio">{{ gruppi|length }} commess{{ 'a' if gruppi|length == 1 else 'e' }} in coda</span>
     {% if riordinabile %}
     <span style="margin-left:auto;display:flex;gap:8px;align-items:center">
-      <span style="font-size:.72rem;color:var(--muted)">{{ 'Ordine PROPRIO della saldatura' if coda_propria else 'Ordine del cruscotto KPI' }}</span>
-      <button id="btn-riordina" onclick="toggleRiordino()" style="background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:7px;padding:5px 12px;cursor:pointer;font-weight:700;font-size:.8rem">↕ Riordina</button>
-      {% if coda_propria %}<button onclick="ripristinaKpi()" style="background:transparent;border:1px solid var(--muted);color:var(--muted);border-radius:7px;padding:5px 12px;cursor:pointer;font-size:.8rem">Torna all'ordine KPI</button>{% endif %}
+      <span style="font-size:.75rem;color:#0b1220;font-weight:700">{{ 'Ordine PROPRIO della saldatura' if coda_propria else 'Ordine del cruscotto KPI' }}</span>
+      <button id="btn-riordina" onclick="toggleRiordino()" style="background:#0b1220;border:none;color:#fff;border-radius:7px;padding:6px 14px;cursor:pointer;font-weight:800;font-size:.85rem">↕ Riordina</button>
+      {% if coda_propria %}<button onclick="ripristinaKpi()" style="background:#0b1220;border:none;color:#fff;border-radius:7px;padding:6px 14px;cursor:pointer;font-size:.8rem">Torna all'ordine KPI</button>{% endif %}
     </span>
     {% endif %}
   </div>
@@ -288,7 +288,7 @@ function toggleRiordino(){
   _riordino = !_riordino;
   document.querySelectorAll('.frecce').forEach(e => e.style.display = _riordino ? 'inline-block' : 'none');
   document.getElementById('btn-riordina').textContent = _riordino ? '✔ Fine riordino' : '↕ Riordina';
-  if(!_riordino) salvaOrdine();
+  if(!_riordino) window.location.reload();
 }
 function sposta(btn, dir){
   const riga = btn.closest('tr.riga-gruppo');
@@ -307,13 +307,14 @@ function sposta(btn, dir){
       blocco.slice().reverse().forEach(r => ref.after(r));
     }
   }
+  salvaOrdine();
 }
-async function salvaOrdine(){
+async function salvaOrdine(ricarica){
   const ordine = [...document.querySelectorAll('tr.riga-gruppo')].map(r => parseInt(r.dataset.opId));
   const pin = await chiediPin();
   const r = await fetch(`/api/totem/${CID}/ordina-coda`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ordine, pin})});
-  if(!r.ok){ _pin = ''; alert((await r.json()).error || 'Errore'); }
-  window.location.reload();
+  if(!r.ok){ _pin = ''; alert((await r.json()).error || 'Errore: ordine NON salvato'); return; }
+  const b = document.getElementById('btn-riordina'); b.textContent = '✔ Salvato — Fine riordino';
 }
 async function ripristinaKpi(){
   if(!confirm("Tornare all'ordine del cruscotto KPI?")) return;
