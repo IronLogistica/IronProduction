@@ -285,7 +285,7 @@ def _righe_macchina(centro):
             # WIP della fase sulla giacenza TOTALE, poi si tolgono i pezzi gia'
             # dichiarati (gia' contenuti nel WIP) — vedi _lista_lavoro_op.
             gia_disponibile = _gia_disponibile_per_fase(codice_comp, centro.id, gia_disponibile, wip_per_codice)
-            gia_disponibile = max(gia_disponibile - pezzi_fase, 0)
+            presenti_qui = gia_disponibile
             # Credito "da valle" — vedi nota sopra: va SOMMATO (sono pezzi
             # fisicamente diversi da quelli già contati in 'gia_disponibile',
             # che è giacenza/WIP ancora presente CON QUESTO codice), poi il
@@ -297,7 +297,11 @@ def _righe_macchina(centro):
             # Decisione di Angelo (07/10/2026): con giacenza negativa il credito da
             # valle non chiude la riga, resta un avviso (OP-2026-000063).
             credito_da_valle, credito_non_dichiarato = _credito_valle_applicabile(codice_comp, credito_da_valle)
-            gia_disponibile = min(saldo_prima_giacenza, gia_disponibile + credito_da_valle)
+            # FIX 12/10/2026 (OP-2026-000072, OL Saldatura LIST/047: PINX110-A/B 'Prodotti 158,
+            # Da Produrre 0' con Residuo 416 a piede pagina): i pezzi gia' dichiarati qui
+            # CONTENGONO gia' quelli poi passati a valle — sommare il credito da valle ai
+            # dichiarati li contava due volte. Coperto = MAX(dichiarati, presenti qui + a valle).
+            gia_disponibile = min(saldo_prima_giacenza, round(max(presenti_qui + credito_da_valle - pezzi_fase, 0)))
             saldo_fase = max(saldo_prima_giacenza - gia_disponibile, 0)
             a_valle_non_dichiarati = int(max(min(qta_necessaria, credito_non_dichiarato) - pezzi_fase, 0))
             pct_fase = round(pezzi_fase / qta_necessaria * 100) if qta_necessaria else 0

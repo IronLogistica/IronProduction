@@ -301,11 +301,14 @@ def calcola_avanzamento_commesse():
                 # giacenza (tetto WIP della fase, scontata dei pezzi dichiarati) + credito da valle.
                 gia_disp = max(residuo_per_op.get(o.id, {}).get(codice, 0), 0)
                 gia_disp = _gia_disponibile_per_fase(codice, ciclo.centro_costo_id, gia_disp, wip_per_codice)
-                gia_disp = max(gia_disp - pezzi_fatti, 0)
                 credito, _non_dich = _credito_valle_applicabile(
                     codice, _credito_da_valle(o, codice, set(moltiplicatore_per_codice), figli_a_padri,
                                               fatti_totali_per_componente))
-                copertura = min(max(qta_codice_pianificata - pezzi_fatti, 0), gia_disp + credito)
+                # FIX 12/10/2026 (OP-2026-000072, OL Saldatura LIST/047: PINX110-A/B 'Prodotti 158,
+                # Da Produrre 0' con Residuo 416 a piede pagina): i pezzi gia' dichiarati qui
+                # CONTENGONO gia' quelli poi passati a valle — sommare il credito da valle ai
+                # dichiarati li contava due volte. Coperto = MAX(dichiarati, presenti qui + a valle).
+                copertura = min(max(qta_codice_pianificata - pezzi_fatti, 0), max(gia_disp + credito - pezzi_fatti, 0))
                 pezzi_fatti_eff = max(pezzi_fatti_eff, min(pezzi_fatti + copertura, qta_codice_pianificata))
 
                 # Avanzamento per ZONA (tabella Avanzamento Commesse): conta
