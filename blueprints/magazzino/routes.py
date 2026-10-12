@@ -18,7 +18,7 @@ from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, 
                     DescrizioneCodiceWood,
                     ScortaMinimaWood, OrdineAcquistoWood, RigaOrdineAcquistoWood, LavorazioneTerzista,
                     EventoConsuntivoPP, RettificaGrezzoIW, CodicePadreManuale, AuditPP, log,
-                    KanbanProdotto, MappaCodiceMasterWork, ParametriLavorazioneWood, CategoriaAcquistoConfig,
+                    KanbanProdotto, kanban_per_codice, MappaCodiceMasterWork, ParametriLavorazioneWood, CategoriaAcquistoConfig,
                     GruppoInventarioWood, SottogruppoInventarioWood, CodiceInventarioWood,
                     ScartoFornitoreWood, VarianzaMaterialeWood, WipFaseWood)
 
@@ -1470,9 +1470,7 @@ def api_wms_scarica_finiti_iw():
                                   riferimento='WMS', note='Venduto a Iron Segnaletica — DDT acquisto MasterLogistic-WMS')
 
     kanban_verniciati_dopo = None
-    p = (KanbanProdotto.query
-         .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{sku.upper()}%'))
-         .first())
+    p = kanban_per_codice(sku)  # SKU esatto, mai 'inizia con' (fix 12/10/2026)
     if p:
         prima = p.verniciati or 0
         p.verniciati = max(0, prima - quantita)

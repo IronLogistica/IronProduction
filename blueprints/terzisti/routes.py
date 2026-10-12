@@ -3,7 +3,7 @@ from urllib.parse import quote
 from models import (
     db, Terzista, LavorazioneTerzista, RigaCommessa, FaseRiga, log,
     SchedaTrattamento, TIPI_TRATTAMENTO_SCHEDA, FORNITORI_SCHEDA_DEFAULT,
-    KanbanProdotto, storico_aggiungi_auto, CentroCostoWood, OrdineProduzione,
+    KanbanProdotto, kanban_per_codice, storico_aggiungi_auto, CentroCostoWood, OrdineProduzione,
     RettificaGrezzoIW, FotoArticolo,
 )
 from masterlogistic_client import carica_produzione, sku_da_nome_prodotto, MasterLogisticError
@@ -36,23 +36,25 @@ def _aggiorna_kanban_da_rientro_ddt(codice, qta_rientrata_ora):
     """
     if not codice or qta_rientrata_ora == 0:
         return
-    p = (KanbanProdotto.query
-         .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{codice.strip().upper()}%'))
-         .first())
-    if not p:
-        return
-    p.verniciati = max(0, (p.verniciati or 0) + qta_rientrata_ora)
-    ora_now = datetime.utcnow()
-    if ora_now >= datetime(2026, 7, 1):
-        storico_aggiungi_auto(p.id, qta_rientrata_ora)
-    sku = sku_da_nome_prodotto(p.prodotto)
+    # FIX 12/10/2026 (DDT 2955, T200): Kanban per SKU ESATTO (non 'inizia con'),
+    # e il carico a magazzino avviene SEMPRE sul codice del DDT, anche se il
+    # codice non ha una scheda Kanban (prima il rientro spariva in silenzio).
+    sku = codice.strip().upper()
+    p = kanban_per_codice(sku)
+    if p:
+        p.verniciati = max(0, (p.verniciati or 0) + qta_rientrata_ora)
+        if datetime.utcnow() >= datetime(2026, 7, 1):
+            storico_aggiungi_auto(p.id, qta_rientrata_ora)
+    else:
+        log(f'Rientro terzista {sku}: nessuna scheda Kanban con questo SKU esatto — '
+            f'caricato solo il magazzino locale')
     # Magazzino LOCALE di IronProduction (GiacenzaWood/Materiali) — senza
     # questo, il rientro si vedeva su Kanban ("Finiti IW" saliva) ma NON
     # sulla pagina Materiali, perché quella legge solo GiacenzaWood, mai
     # il campo Kanban p.verniciati. Le due cose vanno tenute allineate.
     _registra_movimento_giacenza(sku, qta_rientrata_ora, 'carico_produzione',
                                   riferimento=codice, note=f'Rientro DDT terzista — {qta_rientrata_ora} pz')
-    log(f'Kanban: {qta_rientrata_ora:+d} "Finiti IW" su {p.prodotto} da rientro/rettifica DDT terzista (locale, MAI notificato a WMS)')
+    log(f'Rientro terzista: {qta_rientrata_ora:+d} "Finiti IW" su {sku} da rientro/rettifica DDT terzista (locale, MAI notificato a WMS)')
 
 
 def _aggiorna_lead_time_esterno_da_rientro(trattamento, data_uscita, data_rientro):

@@ -2287,6 +2287,25 @@ class StoricoProduzione(db.Model):
     def qta_totale(self):
         return (self.qta_import or 0) + (self.qta_auto or 0)
 
+
+def kanban_per_codice(codice):
+    """Scheda Kanban dello SKU ESATTO 'codice' (fix 12/10/2026, DDT terzista 2955:
+    65 T200 rientrati ma mai caricati su T200). Prima ogni chiamante cercava
+    prodotto LIKE 'T200%' e prendeva il PRIMO risultato: con schede anche per
+    T200DT/T200PF/T200RMZF il movimento poteva finire sul codice sbagliato.
+    'prodotto' e' salvato come 'SKU — Descrizione' (o SKU puro): confronta solo
+    la parte prima del ' — ', ignorando maiuscole/spazi. None se non esiste."""
+    cod = (codice or '').strip().upper()
+    if not cod:
+        return None
+    for p in (KanbanProdotto.query
+              .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{cod}%'))
+              .order_by(KanbanProdotto.id).all()):
+        if (p.prodotto or '').split(' — ')[0].strip().upper() == cod:
+            return p
+    return None
+
+
 def storico_aggiungi_auto(kanban_id, delta_pezzi, anno=None, mese=None):
     """
     Chiamare ogni volta che verniciati aumenta su un KanbanProdotto.

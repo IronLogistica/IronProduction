@@ -15,7 +15,7 @@ from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     SogliaAllarmeVarianzaWood, ContoContabileMappaWood, MovimentoContabileWood,
                     VOCI_CONTABILI_WOOD, assicura_conti_contabili_wood, SchedaLavorazioneWood,
                     NumeroListaLavoroWood, AvvisoScostamentoWood, ArticoloML, DescrizioneCodiceWood,
-                    FotoArticolo, KanbanProdotto, storico_aggiungi_auto, ModuloNonConformita8D,
+                    FotoArticolo, KanbanProdotto, kanban_per_codice, storico_aggiungi_auto, ModuloNonConformita8D,
                     MatriceWood, ContromatriceWood, MappaCodiceMasterWork, RettificaGrezzoIW,
                     ParametriLavorazioneWood, OperatoreWood, CompetenzaOperatoreWood,
                     AssegnazioneOperatoreCentroWood, SequenzaMonitorMacchina, SequenzaAvanzamentoKPI,
@@ -4581,9 +4581,7 @@ def api_verniciatura_interna_conferma():
                                   note='Verniciatura interna (nessun DDT — lavorazione in casa)')
 
     kanban_verniciati_dopo = None
-    p = (KanbanProdotto.query
-         .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{codice.upper()}%'))
-         .first())
+    p = kanban_per_codice(codice)  # SKU esatto, mai 'inizia con' (fix 12/10/2026)
     if p:
         p.verniciati = (p.verniciati or 0) + quantita
         kanban_verniciati_dopo = p.verniciati
@@ -5876,9 +5874,7 @@ def api_dichiarazione_approva(eid):
     # deve contarla nello stesso istante, non restare fermo ai soli rientri
     # DDT dalla verniciatura.
     if e.componente is None and 'sald' in (e.fase or '').strip().lower() and e.pezzi_buoni > 0:
-        p = (KanbanProdotto.query
-             .filter(db.func.upper(KanbanProdotto.prodotto).like(f'{(o.codice_articolo or "").upper()}%'))
-             .first())
+        p = kanban_per_codice(o.codice_articolo)  # SKU esatto (fix 12/10/2026)
         if p:
             storico_aggiungi_auto(p.id, e.pezzi_buoni)
     db.session.commit()
