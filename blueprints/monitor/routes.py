@@ -277,6 +277,12 @@ def _righe_macchina(centro):
             # PRIMA di usarla come sconto ulteriore, altrimenti solo
             # un'eccedenza genuinamente esterna dovrebbe ridurre il saldo).
             gia_disponibile = giacenza_di_op.get(codice_comp, 0)
+            # REGOLA (Mauri, 12/10/2026, OP-2026-000077 PINX110: 44 finiti a magazzino scalati
+            # dall'OL Saldatura, 237 -> 193): la giacenza del PRODOTTO FINITO dell'OP non
+            # scala MAI quell'OP — l'OP e' produzione AGGIUNTIVA (100 pronti + nuova
+            # commessa da 100 = arrivare a 200). Valgono solo i semilavorati/componenti.
+            if codice_comp == o.codice_articolo:
+                gia_disponibile = 0
             # "WIP Station": restringe 'già disponibile' a quanto è fermo ad
             # ALMENO questa fase (vedi commento sopra e _gia_disponibile_per_fase)
             # — non il totale, che varrebbe anche per fasi successive mai

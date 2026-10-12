@@ -4032,6 +4032,12 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         #'ricalcolo BOM' su un OP con priorità superiore che libera stock
         # non suo) rappresenta davvero un risparmio di taglio.
         gia_disponibile = residuo_giacenza_per_op.get(codice_comp, 0)
+        # REGOLA (Mauri, 12/10/2026, OP-2026-000077 PINX110: 44 finiti a magazzino scalati
+        # dall'OL Saldatura, 237 -> 193): la giacenza del PRODOTTO FINITO dell'OP non
+        # scala MAI quell'OP — l'OP e' produzione AGGIUNTIVA (100 pronti + nuova
+        # commessa da 100 = arrivare a 200). Valgono solo i semilavorati/componenti.
+        if codice_comp == o.codice_articolo:
+            gia_disponibile = 0
         # "WIP Station": se per questo codice è stata inserita una
         # suddivisione per fase, restringe 'già disponibile' a quanto è
         # fermo ad ALMENO questa fase — non il totale, che varrebbe anche
@@ -4937,7 +4943,10 @@ def api_dichiarazione_op_aperti(cid):
             # resta il comportamento precedente.
             seq_codice = sequenza_per_centro_per_codice.get(codice_comp, {})
             prima_fase = (not seq_codice) or seq_codice.get(centro.id) == min(seq_codice.values())
-            if prima_fase or wip_per_codice.get(codice_comp):
+            # Mai la giacenza del prodotto finito dell'OP stesso (vedi _netta_e_esplodi_wood).
+            if codice_comp == o.codice_articolo:
+                presenti_stock = 0
+            elif prima_fase or wip_per_codice.get(codice_comp):
                 presenti_stock = max(residuo_per_op.get(o.id, {}).get(codice_comp, 0) or 0, 0)
                 presenti_stock = _gia_disponibile_per_fase(codice_comp, centro.id, presenti_stock, wip_per_codice)
             else:

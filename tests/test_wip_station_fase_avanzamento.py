@@ -15,7 +15,7 @@ import unittest
 
 from flask import Flask
 
-from models import db, CentroCostoWood, CicloLavoroWood, OrdineProduzione, GiacenzaWood, WipFaseWood
+from models import db, CentroCostoWood, CicloLavoroWood, OrdineProduzione, GiacenzaWood, WipFaseWood, DistintaBaseWood
 from blueprints.produzione_pp.avanzamento import calcola_avanzamento_commesse
 
 
@@ -36,7 +36,7 @@ class TestWipStationFaseAvanzamento(unittest.TestCase):
     def setUp(self):
         with self.app.app_context():
             db.session.remove()
-            for modello in (WipFaseWood, GiacenzaWood, CicloLavoroWood, OrdineProduzione, CentroCostoWood):
+            for modello in (WipFaseWood, DistintaBaseWood, GiacenzaWood, CicloLavoroWood, OrdineProduzione, CentroCostoWood):
                 db.session.query(modello).delete()
             db.session.commit()
 
@@ -53,8 +53,10 @@ class TestWipStationFaseAvanzamento(unittest.TestCase):
                                  produttivita_oraria=10),
                 CicloLavoroWood(codice='PINXTT110', sequenza=2, centro_costo_id=self.satinatrice_id,
                                  produttivita_oraria=10),
+                # OP sul padre reale: la giacenza del prodotto finito dell'OP non vale (regola 12/10/2026)
+                DistintaBaseWood(codice_padre='PINX110', codice_figlio='PINXTT110', quantita=1.0),
                 GiacenzaWood(codice='PINXTT110', quantita=287),
-                OrdineProduzione(codice='OP-PINX', codice_articolo='PINXTT110',
+                OrdineProduzione(codice='OP-PINX', codice_articolo='PINX110',
                                   qta_pianificata=287, qta_buona=0, stato='Rilasciato', priorita=1),
             ])
             db.session.commit()
@@ -103,7 +105,6 @@ class TestWipStationFaseAvanzamento(unittest.TestCase):
             OrdineProduzione.query.delete()
             GiacenzaWood.query.filter_by(codice='PINXTT110').update({'quantita': 203})
             db.session.add_all([
-                DistintaBaseWood(codice_padre='PINX110', codice_figlio='PINXTT110', quantita=1.0),
                 OrdineProduzione(codice='OP-PINX', codice_articolo='PINX110', qta_pianificata=287, qta_buona=84,
                                  stato='Rilasciato', priorita=1)])
             db.session.commit()

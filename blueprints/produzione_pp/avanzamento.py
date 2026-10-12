@@ -300,6 +300,8 @@ def calcola_avanzamento_commesse():
                 # passati a valle — ma il Cruscotto mostrava 71%). Stessa formula di _lista_lavoro_op:
                 # giacenza (tetto WIP della fase, scontata dei pezzi dichiarati) + credito da valle.
                 gia_disp = max(residuo_per_op.get(o.id, {}).get(codice, 0), 0)
+                if codice == o.codice_articolo:
+                    gia_disp = 0  # mai il prodotto finito dell'OP stesso (regola 12/10/2026)
                 gia_disp = _gia_disponibile_per_fase(codice, ciclo.centro_costo_id, gia_disp, wip_per_codice)
                 credito, _non_dich = _credito_valle_applicabile(
                     codice, _credito_da_valle(o, codice, set(moltiplicatore_per_codice), figli_a_padri,

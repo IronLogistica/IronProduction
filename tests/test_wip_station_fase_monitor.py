@@ -53,8 +53,10 @@ class TestWipStationFaseMonitor(unittest.TestCase):
             db.session.add_all([
                 CicloLavoroWood(codice='PINXTT110', sequenza=1, centro_costo_id=self.taglio_id),
                 CicloLavoroWood(codice='PINXTT110', sequenza=2, centro_costo_id=self.satinatura_id),
+                # OP sul padre reale: la giacenza del prodotto finito dell'OP non vale (regola 12/10/2026)
+                DistintaBaseWood(codice_padre='PINX110', codice_figlio='PINXTT110', quantita=1.0),
                 GiacenzaWood(codice='PINXTT110', quantita=287),
-                OrdineProduzione(codice='OP-PINX', codice_articolo='PINXTT110',
+                OrdineProduzione(codice='OP-PINX', codice_articolo='PINX110',
                                   qta_pianificata=287, stato='Rilasciato', priorita=1),
             ])
             db.session.commit()

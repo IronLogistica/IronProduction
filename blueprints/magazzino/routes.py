@@ -2511,6 +2511,15 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
     _visitati = _visitati | {codice}
 
     disponibile_prima = giacenza_residua.get(codice, 0.0)
+    # REGOLA (Mauri, 12/10/2026, OP-2026-000077 PINX110: 44 finiti a magazzino scalati
+    # dall'OL Saldatura, 237 -> 193): la giacenza del PRODOTTO FINITO dell'OP non
+    # scala MAI quell'OP — l'OP e' produzione AGGIUNTIVA (100 pronti + nuova
+    # commessa da 100 = arrivare a 200). Valgono solo i semilavorati/componenti.
+    # Il nodo di partenza (profondita' 0) e' sempre il codice da PRODURRE: non si
+    # netta contro la sua giacenza, ne' la consuma (resta libera per altri OP che
+    # lo usano davvero come componente, es. un kit).
+    if _profondita == 0:
+        disponibile_prima = 0.0
     # BUG CORRETTO: se la giacenza di questo codice è NEGATIVA (es. da
     # scorrettezze storiche pregresse), min(negativo, qta) restituiva un
     # 'usato' negativo — che invece di ridurre il mancante lo FACEVA
@@ -2519,7 +2528,8 @@ def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _p
     # sempre contare come "zero disponibile", mai come disponibilità
     # negativa che si propaga amplificando il fabbisogno a valle.
     usato = min(max(disponibile_prima, 0.0), qta)
-    giacenza_residua[codice] = disponibile_prima - usato
+    if _profondita > 0:
+        giacenza_residua[codice] = disponibile_prima - usato
     mancante = qta - usato
 
     if not (_profondita == 0 and codice == escludi_fabbisogno_per):
