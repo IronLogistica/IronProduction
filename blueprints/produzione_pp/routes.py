@@ -4821,6 +4821,11 @@ def api_dichiarazione_op_aperti(cid):
     # segnalato lo stesso giorno della fix originale.
     fatti_totali_per_componente = _fatti_totali_per_componente(codici_op)
     figli_a_padri = _figli_a_padri_da_mappa(mappa_distinta)
+    # FIX 12/10/2026 (commessa 26090062, OP-2026-000062: TR2005 gia' a magazzino,
+    # Ordine di Lavoro Segatrice 'Da produrre 0' ma Dichiarazione ancora 'Saldo 240'):
+    # stessa giacenza residua per OP (priorita') gia' usata da Ordine di Lavoro,
+    # Monitor LIVE e Cruscotto — la Dichiarazione era l'unica a ignorarla.
+    residuo_per_op, _ = _residuo_giacenza_progressivo(op_aperti=ordini, mappa=mappa_distinta)
 
     # Descrizione di ogni codice dichiarabile — ArticoloML (magazzino
     # condiviso MasterLogistic) prima, riserva locale (da import
@@ -4921,17 +4926,29 @@ def api_dichiarazione_op_aperti(cid):
             # Da Produrre 0' con Residuo 416 a piede pagina): i pezzi gia' dichiarati qui
             # CONTENGONO gia' quelli poi passati a valle — sommare il credito da valle ai
             # dichiarati li contava due volte. Coperto = MAX(dichiarati, presenti qui + a valle).
-            fatti_eff = min(qta_necessaria, max(fatti_eff, presenti_wip + credito_da_valle))
+            # Pezzi gia' presenti a magazzino per QUESTO OP (dopo gli OP a priorita'
+            # maggiore), ristretti alla fase via WIP Station: stessa formula di
+            # _lista_lavoro_op. MAX con i dichiarati (mai somma): i pezzi dichiarati
+            # da questo OP sono gia' dentro la giacenza — nessun doppio conteggio.
+            # Solo dove la giacenza dice con certezza che la fase e' gia' fatta: prima
+            # fase del ciclo (il codice esiste a magazzino solo dopo di essa), oppure
+            # codice con WIP Station compilata. Per una fase successiva SENZA WIP la
+            # giacenza e' ambigua (i pezzi potrebbero essere fermi a una fase prima):
+            # resta il comportamento precedente.
+            seq_codice = sequenza_per_centro_per_codice.get(codice_comp, {})
+            prima_fase = (not seq_codice) or seq_codice.get(centro.id) == min(seq_codice.values())
+            if prima_fase or wip_per_codice.get(codice_comp):
+                presenti_stock = max(residuo_per_op.get(o.id, {}).get(codice_comp, 0) or 0, 0)
+                presenti_stock = _gia_disponibile_per_fase(codice_comp, centro.id, presenti_stock, wip_per_codice)
+            else:
+                presenti_stock = 0
+            presenti_qui = max(presenti_wip, presenti_stock)
+            fatti_eff = min(qta_necessaria, max(fatti_eff, presenti_qui + credito_da_valle))
             a_valle_non_dichiarati = int(max(min(qta_necessaria, credito_non_dichiarato) - fatti_eff, 0))
-            # ERRORE CONCETTUALE CORRETTO (rimossa la sottrazione della
-            # 'giacenza già disponibile' dal saldo qui, come già fatto per
-            # Totem Live e Ordine di Lavoro): la Dichiarazione Libera
-            # alimenta comunque il magazzino — da quella dichiarazione in
-            # poi le scorte di materie prime/semilavorati/prodotti finiti
-            # aumentano e restano visibili lì, normalmente. Farle SCONTARE
-            # di nuovo il saldo qui era un doppio conteggio, la stessa
-            # confusione già trovata altrove: un OP che avanza da solo
-            # deve rimanere calcolato solo su pianificato e fatti.
+            # Nota storica: la vecchia SOTTRAZIONE della giacenza dal saldo era un
+            # doppio conteggio (la dichiarazione stessa alimenta il magazzino). Ora la
+            # giacenza entra con un MAX contro i dichiarati (sopra), non sommata:
+            # cosi' la scorta preesistente chiude la riga senza contare due volte.
             saldo = max(qta_necessaria - fatti_eff, 0)
             if saldo <= 0:
                 continue  # già completato su questo centro: non dichiarabile
