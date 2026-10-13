@@ -193,6 +193,9 @@
   @media(max-width:1100px){.monitor-grid{grid-template-columns:1fr}}
   @media print{.sidebar,.topbar{display:none!important}.main{overflow:visible}.content{padding:0}}
 </style>
+<script>/* Dentro il Totem Acquisti e Logistica (iframe): niente sidebar/topbar, resta solo la pagina */
+try{ if(window.self!==window.top){ document.documentElement.classList.add('in-totem'); } }catch(e){ document.documentElement.classList.add('in-totem'); }</script>
+<style>html.in-totem .sidebar, html.in-totem .topbar{display:none!important} html.in-totem .content{padding-top:12px}</style>
 </head>
 <body>
 <div class="app">

@@ -730,7 +730,8 @@ def api_analytics_cruscotto():
     oa_in_ritardo = sum(1 for o in oa_aperti if o.data_consegna and o.data_consegna < oggi)
 
     # ── DDT Terzisti (zincatura/verniciatura) ───────────────────────────
-    lav_aperte = LavorazioneTerzista.query.filter(LavorazioneTerzista.stato != 'RIENTRATO').all()
+    # stato reale e' 'RIENTRATA' (non 'RIENTRATO'): prima contava anche le lavorazioni gia' chiuse
+    lav_aperte = LavorazioneTerzista.query.filter(LavorazioneTerzista.stato.in_(('ATTESA_RIENTRO', 'IN_RITARDO', 'PARZIALE'))).all()
     ddt_terzisti_in_ritardo = 0
     for lav in lav_aperte:
         if not lav.data_rientro_prev:

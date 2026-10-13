@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Totem Ufficio Acquisti e Logistica — IronProduction</title>
+<style>
+  :root{
+    --bg:#0b1626; --bg2:#0d1b2e; --surf:#132035; --surf2:#172a44; --border:rgba(37,137,199,.28);
+    --text:#d5e5f5; --dim:#7f9bb8; --accent:#2589c7; --orange:#e8760a;
+    --rosso:#e5484d; --arancio:#f59e0b; --blu:#3b9ae1; --verde:#22c55e;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--bg);color:var(--text);font-family:'Segoe UI',Arial,sans-serif;display:flex;flex-direction:column;overflow:hidden}
+  a{color:inherit;text-decoration:none}
+
+  /* HEADER */
+  .hdr{display:flex;align-items:center;gap:18px;padding:12px 22px;background:var(--bg2);border-bottom:3px solid var(--orange);flex-shrink:0}
+  .hdr .tit{font-size:1.45rem;font-weight:900;letter-spacing:.4px;color:#fff}
+  .hdr .tit span{color:var(--orange)}
+  .hdr .sub{font-size:.8rem;color:var(--dim);margin-top:2px}
+  .hdr .dx{margin-left:auto;display:flex;align-items:center;gap:14px}
+  #clock{font-family:Consolas,monospace;font-size:1.5rem;color:#fff}
+  .agg{font-size:.75rem;color:var(--dim);text-align:right}
+  .btn{background:var(--surf);border:1px solid var(--border);color:var(--text);border-radius:8px;padding:8px 14px;font-size:.85rem;cursor:pointer;font-weight:600}
+  .btn:hover{border-color:var(--accent);color:#fff}
+
+  /* TAB */
+  .tabs{display:flex;gap:6px;padding:10px 22px 0;background:var(--bg2);flex-shrink:0}
+  .tab{position:relative;padding:12px 22px;border-radius:10px 10px 0 0;background:var(--surf);border:1px solid var(--border);border-bottom:none;
+       font-size:1rem;font-weight:800;cursor:pointer;color:var(--dim);user-select:none}
+  .tab.on{background:var(--bg);color:#fff;border-color:var(--orange);box-shadow:0 -3px 0 var(--orange) inset}
+  .tab .bdg{position:absolute;top:-8px;right:-6px;min-width:22px;height:22px;border-radius:11px;font-size:.75rem;font-weight:900;
+            display:none;align-items:center;justify-content:center;padding:0 6px;color:#fff}
+  .tab .bdg.rosso{display:flex;background:var(--rosso)} .tab .bdg.arancio{display:flex;background:var(--arancio);color:#1a1000}
+
+  .main{flex:1;min-height:0;display:flex}
+  .pane{display:none;flex:1;min-height:0}
+  .pane.on{display:flex}
+
+  /* DASHBOARD */
+  #pane-dashboard{gap:18px;padding:18px 22px;overflow:auto}
+  .col-notifiche{flex:1.35;min-width:0;display:flex;flex-direction:column;gap:10px}
+  .col-kpi{flex:1;min-width:0;display:flex;flex-direction:column;gap:14px}
+  h2{font-size:.85rem;text-transform:uppercase;letter-spacing:.8px;color:var(--dim);font-weight:800;margin-bottom:2px}
+  .notifica{display:flex;gap:14px;align-items:center;background:var(--surf);border:1px solid var(--border);border-left:8px solid var(--arancio);
+            border-radius:10px;padding:14px 16px}
+  .notifica.rosso{border-left-color:var(--rosso);background:linear-gradient(90deg,rgba(229,72,77,.13),var(--surf) 40%)}
+  .notifica .num{font-size:2.1rem;font-weight:900;min-width:64px;text-align:center}
+  .notifica.rosso .num{color:var(--rosso)} .notifica.arancio .num{color:var(--arancio)}
+  .notifica .corpo{flex:1;min-width:0}
+  .notifica .rep{font-size:.7rem;text-transform:uppercase;letter-spacing:.6px;color:var(--dim);font-weight:800}
+  .notifica .txt{font-size:1.02rem;font-weight:700;color:#fff;margin:2px 0}
+  .notifica .det{font-size:.8rem;color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .notifica .btn{white-space:nowrap}
+  .tutto-ok{background:rgba(34,197,94,.1);border:1px solid var(--verde);border-radius:10px;padding:22px;font-size:1.1rem;font-weight:700;color:var(--verde);text-align:center}
+  .reparto{background:var(--surf);border:1px solid var(--border);border-radius:10px;padding:12px 14px}
+  .reparto .nome{font-size:.8rem;font-weight:900;text-transform:uppercase;letter-spacing:.6px;color:var(--orange);margin-bottom:8px}
+  .kpis{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+  .kpi{background:var(--surf2);border-radius:8px;padding:10px 12px;cursor:pointer;border-top:4px solid var(--verde)}
+  .kpi:hover{outline:1px solid var(--accent)}
+  .kpi.rosso{border-top-color:var(--rosso)} .kpi.arancio{border-top-color:var(--arancio)} .kpi.blu{border-top-color:var(--blu)}
+  .kpi .v{font-size:1.7rem;font-weight:900;color:#fff}
+  .kpi.rosso .v{color:var(--rosso)} .kpi.arancio .v{color:var(--arancio)}
+  .kpi .t{font-size:.75rem;color:var(--dim);font-weight:700;line-height:1.25}
+  .errori{font-size:.75rem;color:var(--arancio)}
+
+  /* SEZIONI con pagine del programma */
+  .menu{width:250px;flex-shrink:0;background:var(--bg2);border-right:1px solid var(--border);padding:14px 10px;overflow-y:auto;display:flex;flex-direction:column;gap:4px}
+  .menu .gr{font-size:.7rem;text-transform:uppercase;letter-spacing:.7px;color:var(--dim);font-weight:800;margin:10px 8px 4px}
+  .voce{display:flex;gap:9px;align-items:center;padding:10px 12px;border-radius:8px;font-size:.92rem;font-weight:600;cursor:pointer;border-left:4px solid transparent}
+  .voce:hover{background:var(--surf)}
+  .voce.on{background:rgba(232,118,10,.16);border-left-color:var(--orange);color:#fff}
+  .voce .bdg{margin-left:auto;font-size:.72rem;font-weight:900;border-radius:9px;padding:1px 7px;color:#fff}
+  .voce .bdg.rosso{background:var(--rosso)} .voce .bdg.arancio{background:var(--arancio);color:#1a1000}
+  .frame-wrap{flex:1;min-width:0;display:flex;flex-direction:column;background:#0f1e35}
+  .frame-bar{display:flex;align-items:center;gap:10px;padding:6px 12px;background:var(--bg2);border-bottom:1px solid var(--border);font-size:.8rem;color:var(--dim)}
+  .frame-bar b{color:#fff}
+  .frame-bar .dx{margin-left:auto;display:flex;gap:6px}
+  iframe{flex:1;width:100%;border:0;background:#0f1e35}
+</style>
+</head>
+<body>
+<div class="hdr">
+  <div>
+    <div class="tit">🖥️ TOTEM UFFICIO <span>ACQUISTI E LOGISTICA</span></div>
+    <div class="sub">Claudio · Grazia — gestione ordinaria: Kanban, terzisti, acquisti, inventari e fabbisogni</div>
+  </div>
+  <div class="dx">
+    <div class="agg">Notifiche aggiornate<br><span id="agg">—</span></div>
+    <button class="btn" onclick="caricaKpi()">↻ Aggiorna</button>
+    <a class="btn" href="/launchpad">🏠 Launchpad</a>
+    <div id="clock"></div>
+  </div>
+</div>
+
+<div class="tabs" id="tabs"></div>
+
+<div class="main">
+  <div class="pane" id="pane-dashboard">
+    <div class="col-notifiche">
+      <h2>🔔 Da gestire adesso</h2>
+      <div id="notifiche"><div class="tutto-ok" style="color:var(--dim);border-color:var(--border);background:var(--surf)">Caricamento…</div></div>
+      <div class="errori" id="errori"></div>
+    </div>
+    <div class="col-kpi">
+      <h2>📊 KPI di tutti i reparti</h2>
+      <div id="kpi-reparti"></div>
+    </div>
+  </div>
+  <div class="pane" id="pane-sezione">
+    <div class="menu" id="menu"></div>
+    <div class="frame-wrap">
+      <div class="frame-bar"><span>📄 <b id="frame-titolo"></b></span>
+        <div class="dx"><button class="btn" onclick="ricaricaFrame()">↻ Ricarica</button>
+          <button class="btn" onclick="window.open(document.getElementById('frame').src,'_blank')">↗ Apri in una nuova scheda</button></div></div>
+      <iframe id="frame" title="Pagina del programma"></iframe>
+    </div>
+  </div>
+</div>
+
+<script>
+const SEZIONI = {
+  dashboard: {titolo:'🏠 Dashboard'},
+  kanban: {titolo:'🚦 Kanban', menu:[
+    {gr:'Kanban'},
+    {t:'🚦 Kanban HPI', u:'/kanban-hpi'},
+    {t:'⏱️ Lead Time Rifornimento', u:'/alert-scorte'},
+    {t:'🗂️ Kanban Inventario', u:'/inventario/kanban'},
+    {gr:'Kanban per gruppo'},
+    {% for g in kanban_gruppi %}{t:{{ ((g.icona or '📦') ~ ' ' ~ g.label)|tojson }}, u:{{ ('/kanban/' ~ g.url_key)|tojson }}},
+    {% endfor %}
+  ]},
+  terzisti: {titolo:'🔨 Terzisti', menu:[
+    {gr:'Terzisti'},
+    {t:'🚚 Spedizioni Terzisti', u:'/terzisti/spedizioni'},
+    {t:'🔨 DDT uscita / rientro', u:'/terzisti'},
+    {t:'📋 Materiali da Trattare', u:'/terzisti/da-trattare'},
+  ]},
+  acquisti: {titolo:'🛒 Acquisti', menu:[
+    {gr:'Ordini'},
+    {t:'🛒 Ordini di Acquisto', u:'/ordini-acquisto-wood'},
+    {t:'🧮 Acquisti da Fabbisogno', u:'/acquisti-da-fabbisogno'},
+    {t:'🚛 Materiale in Arrivo', u:'/materiale-in-arrivo'},
+    {gr:'Altri acquisti'},
+    {t:'🧰 Acquisti Consumabili', u:'/acquisti-consumabili'},
+    {t:'🦺 Acquisti Sicurezza', u:'/acquisti-sicurezza'},
+    {gr:'Anagrafiche'},
+    {t:'💰 Prezzi Storici', u:'/prezzi-storici-wood'},
+    {t:'🏢 Anagrafica Iron Wood', u:'/anagrafica-azienda-wood'},
+  ]},
+  inventari: {titolo:'📋 Inventari & Fabbisogni', menu:[
+    {gr:'Fabbisogni'},
+    {t:'📋 Lista Fabbisogni', u:'/lista-fabbisogni'},
+    {gr:'Magazzino e inventari'},
+    {t:'📦 Magazzino', u:'/magazzino'},
+    {t:'📊 Giacenza Iron Wood', u:'/giacenza-wood'},
+    {t:'📋 Inventario', u:'/inventario'},
+    {t:'🧾 Inventario Codice Padre', u:'/inventario-codice-padre'},
+    {t:'📒 Scheda di Magazzino', u:'/scheda-magazzino'},
+    {t:'⚖️ Varianza Materiale', u:'/varianza-materiale'},
+  ]},
+  altro: {titolo:'📂 Dettaglio', menu:[{gr:'Dettaglio'}, {t:'← Torna alla Dashboard', azione:'dashboard'}]},
+};
+const ORDINE_TAB = ['dashboard','kanban','terzisti','acquisti','inventari'];
+let datiKpi = null, sezioneCorrente = null;
+const esc = v => String(v ?? '').replace(/[&<>'"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
+const memo = (k, v) => { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch (e) { return null; } };
+
+function badgeSezione(sez){
+  if(!datiKpi) return '';
+  const n = datiKpi.notifiche.filter(k => sez === 'dashboard' || k.sezione === sez);
+  if(!n.length) return '';
+  return n.some(k => k.livello === 'rosso') ? 'rosso' : 'arancio';
+}
+function contaSezione(sez){ return datiKpi ? datiKpi.notifiche.filter(k => sez === 'dashboard' || k.sezione === sez).length : 0; }
+function disegnaTab(){
+  document.getElementById('tabs').innerHTML = ORDINE_TAB.map(s =>
+    `<div class="tab ${s===sezioneCorrente?'on':''}" onclick="apri('${s}')">${SEZIONI[s].titolo}<span class="bdg ${badgeSezione(s)}">${contaSezione(s)}</span></div>`).join('');
+}
+function apri(sez, url){
+  sezioneCorrente = sez;
+  if (sez !== 'altro') memo('totem_acq_tab', sez);
+  disegnaTab();
+  document.getElementById('pane-dashboard').classList.toggle('on', sez === 'dashboard');
+  document.getElementById('pane-sezione').classList.toggle('on', sez !== 'dashboard');
+  if (sez === 'dashboard') return;
+  const voci = SEZIONI[sez].menu;
+  const pagine = voci.filter(v => v.u);
+  const scelta = url || memo('totem_acq_url_' + sez) || (pagine[0] && pagine[0].u);
+  disegnaMenu(sez, scelta);
+  caricaFrame(scelta, (pagine.find(v => v.u === scelta) || {}).t || scelta);
+}
+function disegnaMenu(sez, attiva){
+  const notifPerUrl = {};
+  (datiKpi ? datiKpi.notifiche : []).forEach(k => { const p = notifPerUrl[k.url] || {n:0, rosso:false}; p.n += 1; p.rosso = p.rosso || k.livello==='rosso'; notifPerUrl[k.url] = p; });
+  document.getElementById('menu').innerHTML = SEZIONI[sez].menu.map(v => {
+    if (v.gr) return `<div class="gr">${esc(v.gr)}</div>`;
+    if (v.azione) return `<div class="voce" onclick="apri('${v.azione}')">${esc(v.t)}</div>`;
+    const b = notifPerUrl[v.u];
+    return `<div class="voce ${v.u===attiva?'on':''}" onclick='scegli(${JSON.stringify(sez)},${JSON.stringify(v.u)},${JSON.stringify(v.t)})'>${esc(v.t)}${b?`<span class="bdg ${b.rosso?'rosso':'arancio'}">${b.n}</span>`:''}</div>`;
+  }).join('');
+}
+function scegli(sez, url, titolo){ memo('totem_acq_url_' + sez, url); disegnaMenu(sez, url); caricaFrame(url, titolo); }
+function caricaFrame(url, titolo){
+  const f = document.getElementById('frame');
+  if (f.getAttribute('src') !== url) f.setAttribute('src', url);
+  document.getElementById('frame-titolo').textContent = titolo || url;
+}
+function ricaricaFrame(){ const f = document.getElementById('frame'); try { f.contentWindow.location.reload(); } catch (e) { f.src = f.src; } }
+function apriNotifica(i){
+  const k = datiKpi.notifiche[i];
+  if (k.sezione && k.sezione !== 'dashboard' && SEZIONI[k.sezione]) { apri(k.sezione, k.url); return; }
+  SEZIONI.altro.menu = [{gr:'Dettaglio'}, {t:'← Torna alla Dashboard', azione:'dashboard'}, {t:k.titolo, u:k.url}];
+  apri('altro', k.url);
+}
+function apriKpi(chiave){
+  const k = datiKpi.kpi.find(x => x.chiave === chiave);
+  if (!k) return;
+  if (k.sezione && k.sezione !== 'dashboard' && SEZIONI[k.sezione]) { apri(k.sezione, k.url); return; }
+  SEZIONI.altro.menu = [{gr:'Dettaglio'}, {t:'← Torna alla Dashboard', azione:'dashboard'}, {t:k.titolo, u:k.url}];
+  apri('altro', k.url);
+}
+function disegnaDashboard(){
+  const n = datiKpi.notifiche;
+  document.getElementById('notifiche').innerHTML = n.length ? n.map((k,i) => `
+    <div class="notifica ${k.livello}">
+      <div class="num">${k.valore}</div>
+      <div class="corpo"><div class="rep">${esc(k.reparto)} · ${esc(k.titolo)}</div>
+        <div class="txt">${esc(k.testo)}</div>${k.dettaglio?`<div class="det" title="${esc(k.dettaglio)}">${esc(k.dettaglio)}</div>`:''}</div>
+      <button class="btn" onclick="apriNotifica(${i})">Apri →</button>
+    </div>`).join('') : `<div class="tutto-ok">✅ Nessuna urgenza: tutti i reparti sono in ordine</div>`;
+  const perRep = {};
+  datiKpi.kpi.forEach(k => (perRep[k.reparto] = perRep[k.reparto] || []).push(k));
+  const ordineRep = ['Kanban','Acquisti','Terzisti','Pianificazione','Produzione','Magazzino'];
+  document.getElementById('kpi-reparti').innerHTML = Object.keys(perRep)
+    .sort((a,b) => (ordineRep.indexOf(a)+99)%99 - (ordineRep.indexOf(b)+99)%99)
+    .map(r => `<div class="reparto"><div class="nome">${esc(r)}</div><div class="kpis">${perRep[r].map(k =>
+      `<div class="kpi ${k.livello}" onclick="apriKpi('${k.chiave}')" title="${esc(k.testo)}"><div class="v">${k.valore}</div><div class="t">${esc(k.titolo)}</div></div>`).join('')}</div></div>`).join('');
+  document.getElementById('errori').textContent = datiKpi.errori.length ? '⚠️ Alcuni indicatori non disponibili: ' + datiKpi.errori.join(' · ') : '';
+}
+async function caricaKpi(){
+  try {
+    const r = await fetch('/api/totem-acquisti/kpi'); datiKpi = await r.json();
+    document.getElementById('agg').textContent = datiKpi.aggiornato_il;
+    disegnaDashboard(); disegnaTab();
+    if (sezioneCorrente && sezioneCorrente !== 'dashboard') disegnaMenu(sezioneCorrente, document.getElementById('frame').getAttribute('src'));
+  } catch (e) { document.getElementById('agg').textContent = 'errore di aggiornamento'; }
+}
+function orologio(){ const d = new Date(); document.getElementById('clock').textContent = d.toLocaleTimeString('it-IT', {hour:'2-digit', minute:'2-digit'}); }
+orologio(); setInterval(orologio, 10000);
+apri(ORDINE_TAB.includes(memo('totem_acq_tab')) ? memo('totem_acq_tab') : 'dashboard');
+caricaKpi(); setInterval(caricaKpi, 60000);
+</script>
+</body>
+</html>
