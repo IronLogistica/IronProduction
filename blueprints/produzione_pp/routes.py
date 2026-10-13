@@ -6797,3 +6797,41 @@ def api_sostituzioni_materiale_attive():
     for x in righe:
         conteggio[str(x.op_id)] = conteggio.get(str(x.op_id), 0) + 1
     return jsonify(conteggio)
+
+
+@pp_bp.get('/api/sostituzioni-materiale/cerca')
+def api_cerca_materiale_sostitutivo():
+    """Menu intelligente per il materiale sostitutivo (Mauri, 13/10/2026).
+    Cerca tra magazzino, anagrafica acquisti e materiali di distinta. Ordine:
+    1) codici 'simili' all'originale (stessa radice, es. T1515 -> T1515SP1),
+    2) con giacenza disponibile, 3) gli altri. Senza testo mostra i simili."""
+    q = (request.args.get('q') or '').strip().upper()
+    originale = (request.args.get('originale') or '').strip().upper()
+    radice = originale[:max(3, len(originale) - 2)] if originale else ''
+    filtro = q or radice
+    if not filtro:
+        return jsonify([])
+    like = f'%{filtro}%'
+    codici = set()
+    for (c,) in db.session.query(GiacenzaWood.codice).filter(db.func.upper(GiacenzaWood.codice).like(like)).limit(300):
+        codici.add(c.upper())
+    for (c,) in db.session.query(ArticoloApprovvigionamento.codice).filter(
+            db.func.upper(ArticoloApprovvigionamento.codice).like(like)).limit(300):
+        codici.add(c.upper())
+    for (c,) in db.session.query(DistintaBaseWood.codice_figlio).filter(
+            db.func.upper(DistintaBaseWood.codice_figlio).like(like)).distinct().limit(300):
+        codici.add(c.upper())
+    codici.discard(originale)
+    if not codici:
+        return jsonify([])
+    giac = {g.codice.upper(): g.quantita or 0 for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(codici)).all()}
+    um = {a.codice.upper(): a.unita_misura or '' for a in
+          ArticoloApprovvigionamento.query.filter(ArticoloApprovvigionamento.codice.in_(codici)).all()}
+    descr = _descrizioni_per_codici(codici)
+    def simile(c):
+        return bool(radice) and c.startswith(radice)
+    risultati = [{'codice': c, 'descrizione': descr.get(c, ''), 'giacenza': round(giac.get(c, 0), 2),
+                  'unita_misura': um.get(c, ''), 'simile': simile(c)} for c in codici]
+    risultati.sort(key=lambda r: (not r['simile'], r['giacenza'] <= 0, not r['codice'].startswith(q) if q else False,
+                                  r['codice']))
+    return jsonify(risultati[:25])

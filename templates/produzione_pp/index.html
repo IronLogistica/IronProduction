@@ -22,7 +22,7 @@
 <label>Priorità <select name="priorita">{% for n in range(1,10) %}<option value="{{n}}" {% if n==5 %}selected{% endif %}>{{n}}</option>{% endfor %}</select></label>
 <button class="btn btn-primary" type="submit">Crea OP</button></form><p id="message"></p><div id="scorta-result"></div></div>
 <div class="card" style="padding:18px;overflow:auto"><table class="kanban-table"><thead><tr><th>OP / priorità</th><th>Articolo</th><th>Cliente / commessa</th><th>ASA / date</th><th>Pian. · buoni · scarto</th><th>Stato</th><th>Azioni</th></tr></thead><tbody id="rows"></tbody></table></div>
-<style>.op-grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px}.op-grid input,.op-grid select{width:100%;box-sizing:border-box;padding:9px;border:1px solid #ccd5df;border-radius:5px}.op-grid label{font-size:12px;color:var(--text-dim)}@media(max-width:850px){.op-grid{grid-template-columns:1fr 1fr}}</style>
+<style>.cm-sug:hover{background:rgba(37,137,199,.25)}.op-grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px}.op-grid input,.op-grid select{width:100%;box-sizing:border-box;padding:9px;border:1px solid #ccd5df;border-radius:5px}.op-grid label{font-size:12px;color:var(--text-dim)}@media(max-width:850px){.op-grid{grid-template-columns:1fr 1fr}}</style>
 
 <div class="modal-overlay" id="modal-modifica-op">
   <div class="modal-box" style="width:480px;max-width:96vw">
@@ -59,7 +59,11 @@
     <label class="modal-label">Materiale da sostituire (dalla distinta di questa commessa)</label>
     <select id="cm-riga" class="modal-input"></select>
     <label class="modal-label" style="margin-top:8px">Codice del materiale da usare al suo posto</label>
-    <input id="cm-sostitutivo" class="modal-input" placeholder="es. T1515SP1" style="text-transform:uppercase">
+    <div style="position:relative">
+      <input id="cm-sostitutivo" class="modal-input" placeholder="Scrivi o scegli dall'elenco (es. T1515SP1)" style="text-transform:uppercase"
+             autocomplete="off" oninput="cmSuggerisci()" onfocus="cmSuggerisci()" onblur="setTimeout(()=>cmBox().style.display='none',200)">
+      <div id="cm-suggerimenti" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:600;background:#0f1e35;border:1px solid #2589c7;border-radius:6px;max-height:280px;overflow-y:auto;box-shadow:0 10px 30px rgba(0,0,0,.6)"></div>
+    </div>
     <label class="modal-label" style="margin-top:8px">Motivo (obbligatorio)</label>
     <input id="cm-motivo" class="modal-input" placeholder="es. T1515 non disponibile, uso T1515SP1">
     <label class="modal-label" style="margin-top:8px">PIN Direzione</label>
@@ -91,6 +95,25 @@ async function apriCambioMateriale(oid){
        <button class="btn btn-ghost" style="color:#c0392b;margin-left:auto" onclick="revocaCambioMateriale(${a.id})">↩️ Torna all'originale</button></div>`).join('')+`</div>`:'';
   openModal('modal-cambio-materiale');
 }
+const cmBox=()=>document.getElementById('cm-suggerimenti');
+let cmTimer=null;
+function cmOriginale(){ const righe=JSON.parse(document.getElementById('cm-riga').dataset.righe||'[]');
+  const r=righe[+document.getElementById('cm-riga').value]; return r?r.materiale:''; }
+function cmSuggerisci(){ clearTimeout(cmTimer); cmTimer=setTimeout(async()=>{
+  const q=document.getElementById('cm-sostitutivo').value.trim();
+  let lista=[]; try{ lista=await api(`/api/sostituzioni-materiale/cerca?q=${encodeURIComponent(q)}&originale=${encodeURIComponent(cmOriginale())}`);}catch(e){}
+  const box=cmBox();
+  if(!lista.length){ box.innerHTML=`<div style="padding:8px 12px;color:#6b8aaa;font-size:12.5px">${q?'Nessun materiale trovato':'Scrivi un codice per cercare'}</div>`; box.style.display='block'; return; }
+  box.innerHTML=(q?'':`<div style="padding:6px 12px;font-size:11px;color:#e8760a;font-weight:700;text-transform:uppercase">Simili a ${esc(cmOriginale())}</div>`)+
+    lista.map(r=>`<div class="cm-sug" onmousedown="cmScegli('${esc(r.codice)}')" style="padding:7px 12px;cursor:pointer;border-top:1px solid rgba(30,111,165,.25);display:flex;gap:10px;align-items:center">
+      <b style="min-width:120px">${esc(r.codice)}</b>
+      <span style="flex:1;color:#c8ddf0;font-size:12.5px">${esc(r.descrizione||'')}</span>
+      ${r.simile?'<span style="font-size:10.5px;background:#e8760a;color:#fff;border-radius:8px;padding:1px 7px">simile</span>':''}
+      <span style="font-size:12px;font-weight:700;color:${r.giacenza>0?'#3fd68b':'#ef6b5c'}">${r.giacenza>0?'giac. '+r.giacenza+' '+esc(r.unita_misura):'non a magazzino'}</span></div>`).join('');
+  box.style.display='block';
+},200); }
+function cmScegli(c){ document.getElementById('cm-sostitutivo').value=c; cmBox().style.display='none'; }
+document.addEventListener('DOMContentLoaded',()=>{ const s=document.getElementById('cm-riga'); if(s) s.addEventListener('change',()=>{document.getElementById('cm-sostitutivo').value='';}); });
 async function salvaCambioMateriale(){
   const righe=JSON.parse(document.getElementById('cm-riga').dataset.righe||'[]');
   const r=righe[+document.getElementById('cm-riga').value]; const msg=document.getElementById('cm-msg');
