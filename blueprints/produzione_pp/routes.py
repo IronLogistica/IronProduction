@@ -2050,7 +2050,8 @@ def _fatti_totali_per_componente(codici_op):
     return fatti_totali_per_componente
 
 
-def _credito_da_valle(o, codice_comp, codici_di_questo_op, figli_a_padri, fatti_totali_per_componente):
+def _credito_da_valle(o, codice_comp, codici_di_questo_op, figli_a_padri, fatti_totali_per_componente,
+                      moltiplicatori=None):
     """Credito 'da valle' (segnalato da Mauri, 06/10/2026 — caso reale
     PINXTT110 -> PINX110-A -> PINX110-B -> PINX110, riapparso identico il
     stesso giorno sul Monitor Macchina/Inventario Codice Padre per la stessa
@@ -2068,10 +2069,38 @@ def _credito_da_valle(o, codice_comp, codici_di_questo_op, figli_a_padri, fatti_
     ancora fisicamente presente come 'codice_comp': sono due insiemi di
     pezzi DISGIUNTI (quelli ancora fermi qui + quelli già passati avanti)."""
     credito_da_valle = 0
-    for antenato in _antenati_nella_catena_op(codice_comp, codici_di_questo_op, figli_a_padri):
+    antenati = _antenati_nella_catena_op(codice_comp, codici_di_questo_op, figli_a_padri)
+    for antenato in antenati:
         credito = (o.qta_buona or 0) if antenato == o.codice_articolo else \
             fatti_totali_per_componente.get((o.codice, antenato), 0)
         credito_da_valle = max(credito_da_valle, credito)
+
+    # Credito da GIACENZA a valle (Pierantonio, 13/10/2026 — OP-2026-000077, PINX110:
+    # 25 PINX110-A trovati in capannone e caricati a magazzino senza dichiarazione;
+    # 212 PINXTT110 + 25 A = 237, ma Segatrice/Satinatrice chiedevano ancora 25 tubi).
+    # I semilavorati a valle presenti a magazzino sono pezzi che hanno GIA' superato
+    # questo stadio: si sommano (insiemi disgiunti, uno per stadio), convertiti nelle
+    # unita' di 'codice_comp' col rapporto dei moltiplicatori di distinta, piu' i finiti
+    # gia' prodotti da questo OP (qta_buona). MAI la giacenza del prodotto finito
+    # (regola 12/10/2026). Si prende il MAX col credito da dichiarazioni (sopra): un
+    # pezzo dichiarato e ancora fermo a valle e' contato in entrambi.
+    if antenati:
+        if moltiplicatori is None:
+            moltiplicatori = {n['codice']: n['moltiplicatore'] for n in _esplodi_componenti_op(o)}
+        m_comp = moltiplicatori.get(codice_comp) or 0
+        intermedi = [a for a in antenati if a != o.codice_articolo]
+        if m_comp > 0:
+            giac = ({g.codice: g.quantita or 0 for g in
+                     GiacenzaWood.query.filter(GiacenzaWood.codice.in_(intermedi)).all()}
+                    if intermedi else {})
+            credito_giacenza = 0.0
+            for a in intermedi:
+                m_a = moltiplicatori.get(a) or 0
+                if m_a > 0:
+                    credito_giacenza += max(giac.get(a, 0), 0) * (m_comp / m_a)
+            m_root = moltiplicatori.get(o.codice_articolo) or 1
+            credito_giacenza += (o.qta_buona or 0) * (m_comp / m_root)
+            credito_da_valle = max(credito_da_valle, round(credito_giacenza, 4))
     return credito_da_valle
 
 
@@ -4056,7 +4085,8 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         # mentre il Monitor Live (che il credito lo applicava già) risultava
         # chiuso — stesso calcolo, stesso helper condiviso, mai due versioni.
         credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
-                                              figli_a_padri, fatti_totali_per_componente)
+                                              figli_a_padri, fatti_totali_per_componente,
+                                              moltiplicatori=moltiplicatore_per_codice)
         # Decisione di Angelo (07/10/2026): con giacenza negativa il credito da
         # valle non chiude la riga, resta un avviso (_credito_valle_applicabile).
         credito_da_valle, credito_non_dichiarato = _credito_valle_applicabile(codice_comp, credito_da_valle)
@@ -4922,7 +4952,9 @@ def api_dichiarazione_op_aperti(cid):
             # stesso pezzo, un passo più avanti) — sommarli sarebbe un
             # doppio conteggio dello stesso pezzo.
             credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
-                                                  figli_a_padri, fatti_totali_per_componente)
+                                                  figli_a_padri, fatti_totali_per_componente,
+                                                  moltiplicatori={c['codice']: c['moltiplicatore']
+                                                                  for c in componenti_per_op[o.id]})
             # DECISIONE DI ANGELO (07/10/2026, caso OP-2026-000063): se il
             # codice ha giacenza NEGATIVA il credito da valle non chiude la
             # riga (vedi _credito_valle_applicabile): resta dichiarabile e

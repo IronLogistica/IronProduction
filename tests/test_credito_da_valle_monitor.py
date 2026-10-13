@@ -101,9 +101,21 @@ class TestCreditoDaValleMonitor(unittest.TestCase):
         PINX110-A, i 204 di giacenza non bastano e la Segatrice deve ancora
         mostrare il vero residuo (287 - 204 = 83)."""
         with self.app.app_context():
+            # Dal 13/10/2026 anche i PINX110-A presenti a MAGAZZINO (senza dichiarazione)
+            # coprono la Segatrice: per questo caso "niente a valle" li azzeriamo.
+            GiacenzaWood.query.filter_by(codice='PINX110-A').update({'quantita': 0})
+            db.session.commit()
             segatrice = db.session.get(CentroCostoWood, self.segatrice_id)
             riga = _trova_riga(_righe_macchina(segatrice), 'OP-2026-000072')
             self.assertEqual(riga['saldo'], 83)
+
+    def test_semilavorati_a_valle_a_magazzino_coprono_senza_dichiarazione(self):
+        """Pierantonio, 13/10/2026: 204 PINXTT110 + 83 PINX110-A a magazzino (caricati
+        senza dichiarazione) = 287: la Segatrice non deve chiedere altri tagli."""
+        with self.app.app_context():
+            segatrice = db.session.get(CentroCostoWood, self.segatrice_id)
+            riga = _trova_riga(_righe_macchina(segatrice), 'OP-2026-000072')
+            self.assertEqual(riga['saldo'], 0)
 
     def test_credito_resta_tettato_alla_quantita_necessaria(self):
         """Il credito da valle non deve mai far scendere il saldo sotto
