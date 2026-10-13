@@ -233,7 +233,7 @@ function disegnaDashboard(){
     </div>`).join('') : `<div class="tutto-ok">✅ Nessuna urgenza: tutti i reparti sono in ordine</div>`;
   const perRep = {};
   datiKpi.kpi.forEach(k => (perRep[k.reparto] = perRep[k.reparto] || []).push(k));
-  const ordineRep = ['Kanban','Acquisti','Terzisti','Pianificazione','Produzione','Magazzino'];
+  const ordineRep = ['Kanban','Inventari','Acquisti','Terzisti','Pianificazione','Produzione','Magazzino'];
   document.getElementById('kpi-reparti').innerHTML = Object.keys(perRep)
     .sort((a,b) => (ordineRep.indexOf(a)+99)%99 - (ordineRep.indexOf(b)+99)%99)
     .map(r => `<div class="reparto"><div class="nome">${esc(r)}</div><div class="kpis">${perRep[r].map(k =>

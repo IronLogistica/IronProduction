@@ -151,6 +151,34 @@ def _kpi_magazzino():
     ]
 
 
+def _kpi_inventari_kanban():
+    """Kanban Inventario (gruppi di conteggio con frequenza): stessa regola di
+    'scaduto' della pagina Kanban Inventario — mai contato, o giorni dall'ultimo
+    conteggio >= frequenza. Avvisa anche chi scade nei prossimi 3 giorni."""
+    from models import GruppoInventarioWood
+    ora = datetime.utcnow()
+    scaduti, in_scadenza = [], []
+    for g in GruppoInventarioWood.query.order_by(GruppoInventarioWood.sort_order, GruppoInventarioWood.id).all():
+        if not g.frequenza_giorni:
+            continue
+        giorni = (ora - g.ultimo_inventario_il).days if g.ultimo_inventario_il else None
+        if giorni is None or giorni >= g.frequenza_giorni:
+            ritardo = ('mai contato' if giorni is None else 'scade oggi' if giorni == g.frequenza_giorni
+                       else f'scaduto da {giorni - g.frequenza_giorni} gg')
+            scaduti.append(f'{g.nome} ({ritardo})')
+        elif g.frequenza_giorni - giorni <= 3:
+            in_scadenza.append(f'{g.nome} (tra {g.frequenza_giorni - giorni} gg)')
+    return [
+        _kpi('inventari_scaduti', 'Inventari Kanban da rifare', len(scaduti), 'arancio' if scaduti else 'verde',
+             _pl(len(scaduti), 'gruppo di inventario scaduto', 'gruppi di inventario scaduti') + ': è ora di ricontarli'
+             if scaduti else 'Tutti gli inventari Kanban sono in regola', 'kanban', '/inventario/kanban',
+             'Inventari', ', '.join(scaduti)),
+        _kpi('inventari_in_scadenza', 'Inventari in scadenza (3 gg)', len(in_scadenza), 'blu',
+             _pl(len(in_scadenza), 'gruppo di inventario da contare', 'gruppi di inventario da contare') + ' nei prossimi 3 giorni',
+             'kanban', '/inventario/kanban', 'Inventari', ', '.join(in_scadenza)),
+    ]
+
+
 @totem_acquisti_bp.route('/totem/acquisti-logistica')
 def totem_acquisti_logistica():
     try:
@@ -168,7 +196,8 @@ def api_totem_acquisti_kpi():
     kpi, errori = [], []
     blocchi = [('Kanban', _kpi_kanban), ('Acquisti', lambda: _kpi_acquisti(oggi)), ('Fabbisogni', _kpi_fabbisogni),
                ('Alert scorte', _kpi_alert_scorte_padre), ('Terzisti', lambda: _kpi_terzisti(oggi)),
-               ('Produzione', lambda: _kpi_produzione(oggi)), ('Magazzino', _kpi_magazzino)]
+               ('Produzione', lambda: _kpi_produzione(oggi)), ('Magazzino', _kpi_magazzino),
+               ('Inventari Kanban', _kpi_inventari_kanban)]
     for nome, fn in blocchi:
         try:
             kpi.extend(fn())

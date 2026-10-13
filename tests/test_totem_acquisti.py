@@ -6,7 +6,7 @@ from datetime import date, datetime, timedelta
 from flask import Flask
 
 from models import (db, OrdineProduzione, GiacenzaWood, LavorazioneTerzista, Terzista, OrdineAcquistoWood,
-                    EventoConsuntivoPP, KanbanProdotto, KanbanGruppo)
+                    EventoConsuntivoPP, KanbanProdotto, KanbanGruppo, GruppoInventarioWood)
 from blueprints.totem_acquisti.routes import totem_acquisti_bp
 from blueprints.kanban.routes import kanban_bp
 
@@ -41,7 +41,24 @@ class TestTotemAcquisti(unittest.TestCase):
                 EventoConsuntivoPP(event_id='e1', op_code='OP-1', fase='Saldatura', timestamp_evento=datetime.utcnow(),
                                    pezzi_buoni=1, pezzi_scarto=0, tempo_minuti=0, approvato_direzione=False),
             ])
+            db.session.add_all([
+                GruppoInventarioWood(nome='Imballo', frequenza_giorni=21,
+                                     ultimo_inventario_il=datetime.utcnow() - timedelta(days=30)),
+                GruppoInventarioWood(nome='Vernici Strada', frequenza_giorni=15),
+                GruppoInventarioWood(nome='Gas e Filo', frequenza_giorni=8,
+                                     ultimo_inventario_il=datetime.utcnow() - timedelta(days=6)),
+                GruppoInventarioWood(nome='Senza frequenza'),
+            ])
             db.session.commit()
+
+    def test_inventari_kanban_scaduti(self):
+        d = self.app.test_client().get('/api/totem-acquisti/kpi').get_json()
+        kpi = {k['chiave']: k for k in d['kpi']}
+        self.assertEqual(kpi['inventari_scaduti']['valore'], 2)
+        self.assertIn('Vernici Strada (mai contato)', kpi['inventari_scaduti']['dettaglio'])
+        self.assertIn('Imballo (scaduto da 9 gg)', kpi['inventari_scaduti']['dettaglio'])
+        self.assertEqual(kpi['inventari_in_scadenza']['valore'], 1)
+        self.assertTrue(any(n['chiave'] == 'inventari_scaduti' for n in d['notifiche']))
 
     def test_kpi_e_notifiche(self):
         d = self.app.test_client().get('/api/totem-acquisti/kpi').get_json()
