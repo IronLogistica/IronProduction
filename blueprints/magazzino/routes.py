@@ -6,8 +6,10 @@ import io
 import pandas as pd
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import text
+import contextvars
+from contextlib import contextmanager
 from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError, _kanban_stock_grezzo
-from models import (db, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
+from models import (db, SostituzioneMaterialeOP, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
                     TIPI_APPROVVIGIONAMENTO, GiacenzaWood, MovimentoGiacenzaWood, OrdineProduzione,
                     ImpostazioneCostoWood, CostoStandardWood, VarianzaProduzioneWood,
@@ -361,6 +363,49 @@ def api_distinta_base(codice):
 #  gli articoli/stock restano quelli condivisi (ArticoloML), ma le righe di
 #  distinta sono gestite qui per non toccare mai la tabella di MasterLogistic.
 # ══════════════════════════════════════════════════════════════════════════════
+# ── Sostituzione materiale per commessa (13/10/2026) ────────────────────────
+# Mentre si esplode la distinta di UN OP, _righe_bom_attive_wood sostituisce i
+# materiali indicati per quell'OP (SostituzioneMaterialeOP). Fuori da questo
+# contesto la distinta base resta quella vera, per tutti.
+_SOSTITUZIONI_CTX = contextvars.ContextVar('sostituzioni_materiale_op', default=None)
+
+
+def sostituzioni_per_op(op_id):
+    """{(codice_padre, materiale_originale): SostituzioneMaterialeOP} attive per l'OP."""
+    if not op_id:
+        return {}
+    try:
+        righe = SostituzioneMaterialeOP.query.filter_by(op_id=op_id, revocata_il=None).all()
+    except Exception:
+        db.session.rollback()   # tabella non ancora creata (primo deploy): nessuna sostituzione
+        return {}
+    return {(r.codice_padre, r.materiale_originale): r for r in righe}
+
+
+@contextmanager
+def sostituzioni_attive(o):
+    """Applica le sostituzioni materiale dell'OP 'o' a tutte le letture di
+    distinta fatte dentro il blocco 'with'. Annidabile; con o=None non fa nulla."""
+    token = _SOSTITUZIONI_CTX.set(sostituzioni_per_op(getattr(o, 'id', None)) or None)
+    try:
+        yield
+    finally:
+        _SOSTITUZIONI_CTX.reset(token)
+
+
+class _RigaBomSostituita:
+    """Copia in sola lettura di una riga di distinta con il materiale sostituito
+    (l'oggetto ORM originale non viene MAI modificato)."""
+    def __init__(self, riga, sost):
+        self._riga = riga
+        self.codice_figlio = sost.materiale_sostitutivo
+        self.materiale_originale = riga.codice_figlio
+        self.sostituzione = sost
+
+    def __getattr__(self, nome):
+        return getattr(self._riga, nome)
+
+
 def _righe_bom_attive_wood(codice_padre, query=None, mappa=None):
     """
     Righe di distinta_base_wood da usare per un dato codice_padre in TUTTE le
@@ -393,6 +438,10 @@ def _righe_bom_attive_wood(codice_padre, query=None, mappa=None):
            (r.preferita == scelta_attuale.preferita and r.id < scelta_attuale.id):
             per_gruppo[r.gruppo_alternativa] = r
     risultato.extend(per_gruppo.values())
+    sost = _SOSTITUZIONI_CTX.get()
+    if sost:
+        risultato = [_RigaBomSostituita(r, sost[(r.codice_padre, r.codice_figlio)])
+                     if (r.codice_padre, r.codice_figlio) in sost else r for r in risultato]
     return risultato
 
 
@@ -495,7 +544,8 @@ def _esplodi_componenti_op(o, _max_profondita=15, mappa_distinta=None):
                 moltiplicatori[r.codice_figlio] += m
             walk(r.codice_figlio, m, profondita + 1, antenati | {r.codice_figlio})
 
-    walk(o.codice_articolo, 1.0, 0, {o.codice_articolo})
+    with sostituzioni_attive(o):
+        walk(o.codice_articolo, 1.0, 0, {o.codice_articolo})
     return [{'codice': c, 'moltiplicatore': moltiplicatori[c]} for c in ordine_comparsa]
 
 
@@ -1884,7 +1934,7 @@ def api_giacenza_impegni_op(codice):
             continue
         out = {}
         _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua, out, mappa=mappa,
-                               escludi_fabbisogno_per=op.codice_articolo)
+                               escludi_fabbisogno_per=op.codice_articolo, op=op)
         tocco = out.get(codice)
         if tocco and tocco['fabbisogno'] > 0:
             righe.append({
@@ -1919,7 +1969,7 @@ def api_diagnostica_esplosione_op(op_code):
     giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
     out = {}
     if saldo > 0:
-        _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, out)
+        _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, out, op=o)
     nodi = [{
         'codice': cod, 'fabbisogno': round(r['fabbisogno'], 4), 'usato_da_giacenza': round(r['usato'], 4),
         'mancante_sceso_sotto': round(r['mancante'], 4),
@@ -2472,7 +2522,18 @@ def api_anagrafica_wood_nuovo_codice():
     return jsonify(ok=True)
 
 
-def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _profondita=0, _max_profondita=12, mappa=None, escludi_fabbisogno_per=None):
+def _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati=None, _profondita=0, _max_profondita=12, mappa=None, escludi_fabbisogno_per=None, op=None):
+    if op is not None and _profondita == 0:
+        # Sostituzioni materiale di QUESTO OP (vedi sostituzioni_attive)
+        with sostituzioni_attive(op):
+            return _netta_e_esplodi_wood(codice, qta, giacenza_residua, out, _visitati, _profondita,
+                                          _max_profondita, mappa=mappa,
+                                          escludi_fabbisogno_per=escludi_fabbisogno_per)
+    return _netta_e_esplodi_wood_impl(codice, qta, giacenza_residua, out, _visitati, _profondita,
+                                       _max_profondita, mappa=mappa, escludi_fabbisogno_per=escludi_fabbisogno_per)
+
+
+def _netta_e_esplodi_wood_impl(codice, qta, giacenza_residua, out, _visitati=None, _profondita=0, _max_profondita=12, mappa=None, escludi_fabbisogno_per=None):
     """
     Esplode la distinta Iron Wood da `codice` per una quantità `qta`, NETTANDO
     ad ogni nodo contro `giacenza_residua` (dict mutabile {codice: qta libera},
@@ -2616,7 +2677,7 @@ def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None, fabbisogno_lo
         if saldo > 0:
             _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza_residua,
                                    out_condiviso if out_condiviso is not None else {}, mappa=mappa,
-                                   escludi_fabbisogno_per=op.codice_articolo)
+                                   escludi_fabbisogno_per=op.codice_articolo, op=op)
     if fabbisogno_lordo_out is not None:
         for cod, r in out_condiviso.items():
             fabbisogno_lordo_out[cod] = r['fabbisogno']
@@ -2655,7 +2716,7 @@ def impegni_op_per_codice(giacenza_iniziale=None, mappa=None):
             continue
         out = {}
         _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza, out, mappa=mappa,
-                               escludi_fabbisogno_per=op.codice_articolo)
+                               escludi_fabbisogno_per=op.codice_articolo, op=op)
         for cod, r in out.items():
             if r['fabbisogno'] <= 0:
                 continue
@@ -2703,7 +2764,7 @@ def _residuo_giacenza_progressivo(op_aperti=None, mappa=None):
         residuo_per_op[op.id] = dict(giacenza)  # snapshot prima di servire QUESTO OP
         saldo = _saldo_materiale_op(op)
         if saldo > 0:
-            _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza, {}, mappa=mappa)
+            _netta_e_esplodi_wood(op.codice_articolo, saldo, giacenza, {}, mappa=mappa, op=op)
     return residuo_per_op, giacenza
 
 
@@ -2856,7 +2917,8 @@ def api_fabbisogno_disponibilita():
 
     righe = {}
     if qta > 0 and codice:
-        _netta_e_esplodi_wood(codice, qta, giacenza_residua, righe, escludi_fabbisogno_per=codice)
+        _netta_e_esplodi_wood(codice, qta, giacenza_residua, righe, escludi_fabbisogno_per=codice,
+                              op=(OrdineProduzione.query.get(op_id) if op_id else None))
 
     risultato = []
     for cod, r in righe.items():

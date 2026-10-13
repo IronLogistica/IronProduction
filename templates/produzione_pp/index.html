@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-toolbar"><div class="page-title">🏭 Ordini di Produzione</div><a class="btn btn-ghost" href="/ordini-produzione/avanzamento">📊 Avanzamento</a></div>
+<div class="avviso-cambio-materiale" style="background:#fff4e5;border:3px solid #e8760a;border-left:12px solid #e8760a;border-radius:8px;padding:14px 18px;margin-bottom:16px;color:#5a2d00;font-size:14px;line-height:1.5">
+  <div style="font-size:17px;font-weight:900;color:#c0392b;margin-bottom:6px">⚠️ ATTENZIONE — SE DESIDERI CAMBIARE MATERIALE RISPETTO ALLA DISTINTA BASE PER UNA SOLA COMMESSA:</div>
+  <b>NON modificare la Distinta Base</b> (cambierebbe il materiale per TUTTE le commesse). Fai invece così:
+  <ol style="margin:6px 0 4px 20px">
+    <li>vai in <a href="/ordini-produzione" style="color:#c0392b;font-weight:700">Ordini di Produzione</a> e premi <b>🔁 Cambia materiale</b> sulla riga della commessa;</li>
+    <li>scegli il materiale da sostituire e scrivi il codice del materiale da usare;</li>
+    <li>scrivi il <b>motivo</b> e conferma con il <b>PIN Direzione</b>.</li>
+  </ol>
+  La sostituzione vale <b>SOLO per quella commessa</b> (Ordini di Lavoro, LIVE, Dichiarazione, fabbisogni, scarico magazzino, costi) e
+  <b>finisce da sola alla chiusura dell'ordine</b>: le altre commesse continuano a usare il materiale della distinta. Si può revocare in qualsiasi momento.
+</div>
 <div class="card" style="padding:18px;margin-bottom:16px"><form id="opForm" class="op-grid">
 <div style="position:relative"><input id="opCodiceArticolo" name="codice_articolo" required maxlength="100" placeholder="Codice articolo *" autocomplete="off" oninput="suggerisciCodiciOP()" onfocus="suggerisciCodiciOP()" onblur="autocompilaDescrizioneOP()">
 <div id="opCodiceSuggerimenti" style="display:none;position:absolute;top:100%;left:0;z-index:20;background:#fff;border:1px solid #ccd5df;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;width:100%"></div></div>
@@ -39,8 +50,65 @@
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="modal-cambio-materiale">
+  <div class="modal-box" style="width:720px;max-width:96vw;max-height:90vh;overflow:auto">
+    <h3>🔁 Cambia materiale — <span id="cm-titolo"></span></h3>
+    <div style="background:rgba(232,118,10,.15);border:1px solid #e8760a;border-radius:6px;padding:8px 10px;font-size:12.5px;margin-bottom:12px">
+      Vale <b>SOLO per questa commessa</b>. La Distinta Base non viene modificata. Finisce da sola alla chiusura dell'ordine.</div>
+    <div id="cm-attive"></div>
+    <label class="modal-label">Materiale da sostituire (dalla distinta di questa commessa)</label>
+    <select id="cm-riga" class="modal-input"></select>
+    <label class="modal-label" style="margin-top:8px">Codice del materiale da usare al suo posto</label>
+    <input id="cm-sostitutivo" class="modal-input" placeholder="es. T1515SP1" style="text-transform:uppercase">
+    <label class="modal-label" style="margin-top:8px">Motivo (obbligatorio)</label>
+    <input id="cm-motivo" class="modal-input" placeholder="es. T1515 non disponibile, uso T1515SP1">
+    <label class="modal-label" style="margin-top:8px">PIN Direzione</label>
+    <input id="cm-pin" class="modal-input" type="password" autocomplete="off">
+    <div style="font-size:12px;color:#e6b800;margin-top:8px">⚠️ Se il materiale ha spessore o lunghezza diversi, controlla i parametri macchina (pz per barra, punto zero) sull'Ordine di Lavoro.</div>
+    <p id="cm-msg" style="margin-top:8px"></p>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-cambio-materiale')">Chiudi</button>
+      <button class="btn btn-primary" onclick="salvaCambioMateriale()">💾 Applica a questa commessa</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
+let sostAttive={};
+async function caricaSostAttive(){ try{ sostAttive=await api('/api/sostituzioni-materiale/attive'); }catch(e){ sostAttive={}; } }
+let cmOpId=null;
+async function apriCambioMateriale(oid){
+  cmOpId=oid; document.getElementById('cm-msg').textContent='';
+  ['cm-sostitutivo','cm-motivo','cm-pin'].forEach(i=>document.getElementById(i).value='');
+  const d=await api(`/api/ordini-produzione/${oid}/sostituzioni-materiale`);
+  document.getElementById('cm-titolo').textContent=`${d.op.codice} · commessa ${d.op.commessa} · ${d.op.codice_articolo}`;
+  document.getElementById('cm-riga').innerHTML=d.righe_distinta.map((r,i)=>
+    `<option value="${i}">${r.materia_prima?'📦 materia prima':'⚙️ semilavorato'} · ${esc(r.materiale)} ${r.descrizione?'— '+esc(r.descrizione):''}  (in ${esc(r.codice_padre)}, q.tà ${r.quantita})</option>`).join('');
+  document.getElementById('cm-riga').dataset.righe=JSON.stringify(d.righe_distinta);
+  document.getElementById('cm-attive').innerHTML=d.attive.length?
+    `<div style="margin-bottom:10px"><b>Sostituzioni attive su questa commessa:</b>`+d.attive.map(a=>
+      `<div style="display:flex;gap:8px;align-items:center;margin-top:4px;font-size:13px">🔁 <b>${esc(a.originale)}</b> → <b style="color:#e8760a">${esc(a.sostitutivo)}</b> in ${esc(a.codice_padre)} <span style="color:var(--text-dim)">(${esc(a.motivo)} · ${esc(a.creato_il)})</span>
+       <button class="btn btn-ghost" style="color:#c0392b;margin-left:auto" onclick="revocaCambioMateriale(${a.id})">↩️ Torna all'originale</button></div>`).join('')+`</div>`:'';
+  openModal('modal-cambio-materiale');
+}
+async function salvaCambioMateriale(){
+  const righe=JSON.parse(document.getElementById('cm-riga').dataset.righe||'[]');
+  const r=righe[+document.getElementById('cm-riga').value]; const msg=document.getElementById('cm-msg');
+  if(!r){msg.textContent='Nessun materiale selezionato';return;}
+  try{
+    await api(`/api/ordini-produzione/${cmOpId}/sostituzioni-materiale`,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({codice_padre:r.codice_padre,originale:r.materiale,
+        sostitutivo:document.getElementById('cm-sostitutivo').value,motivo:document.getElementById('cm-motivo').value,
+        pin:document.getElementById('cm-pin').value})});
+    await caricaSostAttive(); closeModal('modal-cambio-materiale'); if(typeof load==='function') load();
+  }catch(e){ msg.style.color='#c0392b'; msg.textContent='❌ '+e.message; }
+}
+async function revocaCambioMateriale(sid){
+  const pin=prompt('PIN Direzione per tornare al materiale della distinta:'); if(!pin) return;
+  try{ await api(`/api/sostituzioni-materiale/${sid}/revoca`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
+       await caricaSostAttive(); await apriCambioMateriale(cmOpId); if(typeof load==='function') load(); }
+  catch(e){ alert(e.message); }
+}
 const esc=v=>String(v??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 async function api(url, options={}) { const r=await fetch(url,options); const d=await r.json(); if(!r.ok) throw new Error(d.error||'Errore'); return d; }
 let codiciPadreCache=[];
@@ -88,6 +156,8 @@ async function load(){try{const list=await api('/api/ordini-produzione'); rows.i
   if(x.stato==='Rilasciato' || x.stato==='In esecuzione') azioni += `<button class="btn btn-ghost" onclick="chiudiForzato(${x.id},'${esc(x.codice)}',${x.qta_pianificata},${x.qta_buona})" style="color:#e6b800">🛑 Chiudi Forzato</button> `;
   if(x.stato==='Chiuso CO') azioni += `<button class="btn btn-ghost" onclick="riapriOp(${x.id},'${esc(x.codice)}')" style="color:#5debb0">↩️ Riapri</button> `;
   if(puoModificare) azioni += `<button class="btn btn-ghost" onclick='apriModificaOp(${JSON.stringify(x)})'>✏️ Modifica</button> `;
+  if(x.stato!=='Chiuso CO'){ const ns=sostAttive[String(x.id)]||0;
+    azioni += `<button class="btn btn-ghost" onclick="apriCambioMateriale(${x.id})" style="color:#e8760a">🔁 Cambia materiale${ns?` <b style="background:#e8760a;color:#fff;border-radius:8px;padding:0 6px">${ns}</b>`:''}</button> `; }
   if(puoEliminare) azioni += `<button class="btn btn-ghost" onclick="deleteOp(${x.id},'${esc(x.codice)}')" style="color:#c0392b">🗑️ Elimina</button> `;
   if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/analisi-costo">📊 Analisi Costo</a> `;
   if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/cartellino" target="_blank">🖨️ Cartellino</a>`;
@@ -155,7 +225,7 @@ async function riapriOp(id, codice){
   }catch(e){ alert(e.message) }
 }
 async function deleteOp(id,codice){if(!confirm('Eliminare definitivamente '+codice+'? L\'operazione non è reversibile.'))return;try{await api('/api/ordini-produzione/'+id,{method:'DELETE'});load()}catch(e){alert(e.message)}}
-opForm.onsubmit=async e=>{e.preventDefault();message.textContent='';document.getElementById('scorta-result').innerHTML='';const data=Object.fromEntries(new FormData(opForm));if(codiciPadreValidi.size && !codiciPadreValidi.has(data.codice_articolo)){message.textContent='⚠️ Codice non presente tra i codici padre della distinta base Iron Wood — selezionalo dall\'elenco.';return}try{const r=await api('/api/ordini-produzione',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});message.textContent='Creato '+r.ordine.codice+' — Commessa '+r.ordine.commessa;renderControlloScorta(r.controllo_scorta);opForm.reset();load()}catch(e){message.textContent='Errore: '+e.message}}; load(); precaricaCodiciPadre();
+opForm.onsubmit=async e=>{e.preventDefault();message.textContent='';document.getElementById('scorta-result').innerHTML='';const data=Object.fromEntries(new FormData(opForm));if(codiciPadreValidi.size && !codiciPadreValidi.has(data.codice_articolo)){message.textContent='⚠️ Codice non presente tra i codici padre della distinta base Iron Wood — selezionalo dall\'elenco.';return}try{const r=await api('/api/ordini-produzione',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});message.textContent='Creato '+r.ordine.codice+' — Commessa '+r.ordine.commessa;renderControlloScorta(r.controllo_scorta);opForm.reset();load()}catch(e){message.textContent='Errore: '+e.message}}; caricaSostAttive().then(load); precaricaCodiciPadre();
 
 function renderControlloScorta(righe, targetId){
   const box = document.getElementById(targetId || 'scorta-result');

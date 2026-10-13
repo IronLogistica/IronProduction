@@ -8,7 +8,7 @@ from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     NumeroListaLavoroWood, SchedaLavorazioneWood, ArticoloML, DescrizioneCodiceWood,
                     ParametriLavorazioneWood)
 from blueprints.magazzino.routes import (_giacenza_residua_dopo_impegni, _netta_e_esplodi_wood,
-                    _righe_bom_attive_wood, _esplodi_componenti_op, _residuo_giacenza_progressivo,
+                    _righe_bom_attive_wood, sostituzioni_attive, _esplodi_componenti_op, _residuo_giacenza_progressivo,
                     _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
                     _wip_fase_per_codice, _gia_disponibile_per_fase)
 from blueprints.produzione_pp.routes import (_registra_evento_consuntivo, _audit, _is_carpenteria,
@@ -58,7 +58,7 @@ def _materiale_disponibile(o, giacenza_residua=None, mappa_distinta=None):
     # correzione già fatta altrove (vedi docstring di _netta_e_esplodi_wood)
     # ma mai propagata qui.
     _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe, mappa=mappa_distinta,
-                          escludi_fabbisogno_per=o.codice_articolo)
+                          escludi_fabbisogno_per=o.codice_articolo, op=o)
     return all(r['mancante'] <= 0 for r in righe.values())
 
 
@@ -329,8 +329,9 @@ def _righe_macchina(centro):
 
             # Standard fisico di consumo materiale per 1 pezzo di QUESTO componente
             # (non dell'intero OP) — solo l'alternativa attiva per gruppo.
-            consumi_standard = [{'codice': rb.codice_figlio, 'quantita': rb.quantita}
-                                for rb in _righe_bom_attive_wood(codice_comp, mappa=mappa_distinta)]
+            with sostituzioni_attive(o):  # materiale sostituito per questa commessa (13/10/2026)
+                consumi_standard = [{'codice': rb.codice_figlio, 'quantita': rb.quantita}
+                                    for rb in _righe_bom_attive_wood(codice_comp, mappa=mappa_distinta)]
 
             # BUG REALE TROVATO E CORRETTO (segnalato: Satinatrice IN ATTESA
             # con "287/287 pronti da «Segatrice»" — fase a monte già

@@ -191,7 +191,7 @@ def calcola_avanzamento_commesse():
         # simulazione di produzione qui sotto, non da un lead time fornitore.
         giacenza_snapshot = dict(residuo_per_op.get(o.id, {}))
         righe_netting = {}
-        _netta_e_esplodi_wood(o.codice_articolo, saldo_op, giacenza_snapshot, righe_netting, mappa=mappa_distinta)
+        _netta_e_esplodi_wood(o.codice_articolo, saldo_op, giacenza_snapshot, righe_netting, mappa=mappa_distinta, op=o)
         codici_con_ciclo = ({c.codice for c in CicloLavoroWood.query
                              .filter(CicloLavoroWood.codice.in_(list(righe_netting.keys()))).all()}
                              if righe_netting else set())

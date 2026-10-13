@@ -2288,6 +2288,25 @@ class StoricoProduzione(db.Model):
         return (self.qta_import or 0) + (self.qta_auto or 0)
 
 
+
+class SostituzioneMaterialeOP(db.Model):
+    """Sostituzione di un materiale della distinta base SOLO per un Ordine di
+    Produzione (richiesta Mauri, 13/10/2026 — es. S-20: T1515 non disponibile,
+    per questa commessa si usa T1515SP1). La distinta base NON viene toccata: la
+    sostituzione vale solo nelle esplosioni di QUESTO OP (Ordini di Lavoro, LIVE,
+    Dichiarazione, fabbisogni/impegni, scarico magazzino, costi) e finisce da sola
+    quando l'OP si chiude. Revocabile (revocata_il), sempre con PIN Direzione."""
+    __tablename__ = 'sostituzioni_materiale_op'
+    id                    = db.Column(db.Integer, primary_key=True)
+    op_id                 = db.Column(db.Integer, nullable=False, index=True)
+    codice_padre          = db.Column(db.String(100), nullable=False)
+    materiale_originale   = db.Column(db.String(100), nullable=False)
+    materiale_sostitutivo = db.Column(db.String(100), nullable=False)
+    motivo                = db.Column(db.String(500), nullable=False)
+    creato_il             = db.Column(db.DateTime, default=datetime.utcnow)
+    revocata_il           = db.Column(db.DateTime, nullable=True)
+
+
 def kanban_per_codice(codice):
     """Scheda Kanban dello SKU ESATTO 'codice' (fix 12/10/2026, DDT terzista 2955:
     65 T200 rientrati ma mai caricati su T200). Prima ogni chiamante cercava

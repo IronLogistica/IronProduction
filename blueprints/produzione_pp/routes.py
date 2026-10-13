@@ -5,7 +5,7 @@ import requests
 from datetime import datetime, date, timedelta
 from flask import Blueprint, current_app, jsonify, render_template, request, Response
 from sqlalchemy.exc import IntegrityError
-from models import (db, log, OrdineProduzione, EventoConsuntivoPP, AuditPP,
+from models import (db, log, SostituzioneMaterialeOP, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     STATI_ORDINE_PP, ASA_MASTERWORK, prossimo_codice_ordine_pp,
                     prossimo_numero_commessa, GiacenzaWood, MovimentoGiacenzaWood, CicloLavoroWood,
                     CentroCostoWood, VarianzaProduzioneWood, ArticoloApprovvigionamento,
@@ -25,7 +25,7 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
                     _grezzo_iw_per_codici,
-                    _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood,
+                    _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood, sostituzioni_attive, sostituzioni_per_op,
                     _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
                     _contestuale_attivo_per_op, _saldo_materiale_op, calcola_alert_fabbisogno_codici_padre,
                     _wip_fase_per_codice, _gia_disponibile_per_fase, _valore_wip_a_fase, _consuma_wip_multi_fase)
@@ -1312,7 +1312,8 @@ def _calcola_controllo_scorta(codice_articolo, qta, escludi_op_id=None):
         disponibile_prima = dict(giacenza_residua)
         righe_netting = {}
         _netta_e_esplodi_wood(codice_articolo, qta, giacenza_residua, righe_netting,
-                              escludi_fabbisogno_per=codice_articolo)
+                              escludi_fabbisogno_per=codice_articolo,
+                              op=(OrdineProduzione.query.get(escludi_op_id) if escludi_op_id else None))
         controllo_scorta = []
         for cod, r in righe_netting.items():
             giacenza_tot = giacenza_iniziale.get(cod, 0.0)
@@ -1604,7 +1605,7 @@ def api_ordini_riepilogo_disponibilita():
         if saldo > 0:
             giacenza_residua = dict(residuo_per_op.get(o.id, residuo_finale))
             _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe, mappa=mappa_distinta,
-                                  escludi_fabbisogno_per=o.codice_articolo)
+                                  escludi_fabbisogno_per=o.codice_articolo, op=o)
         mancanti = [codice for codice, r in righe.items() if r['mancante'] > 0]
         mancanti_per_ordine.append(mancanti)
         tutti_codici_mancanti.update(mancanti)
@@ -1703,7 +1704,7 @@ def api_ordine_situazione_completa(codice):
     if saldo > 0:
         giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
         _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe_disponibilita,
-                              escludi_fabbisogno_per=o.codice_articolo)
+                              escludi_fabbisogno_per=o.codice_articolo, op=o)
 
     albero = _esplodi_bom_wood(o.codice_articolo, qta=saldo if saldo > 0 else 1.0)
 
@@ -1809,7 +1810,7 @@ def api_ordine_dettaglio_per_categoria(codice):
         giacenza_residua = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
         disponibile_prima = dict(giacenza_residua)
         _netta_e_esplodi_wood(o.codice_articolo, saldo, giacenza_residua, righe_disponibilita,
-                              escludi_fabbisogno_per=o.codice_articolo)
+                              escludi_fabbisogno_per=o.codice_articolo, op=o)
     else:
         giacenza_iniziale, disponibile_prima = {}, {}
 
@@ -2289,7 +2290,8 @@ def _calcola_consumi_standard(o, componente_finale, componente, qta_tagliata):
     consumi = {}
     contestuali = {}
     legacy_bloccati = []  # codici che sarebbero contestuali ma l'OP è legacy non autorizzato: avviso per Angelo
-    _esplodi_fino_a_semilavorati_dichiarabili(codice_base, qta_tagliata, consumi, contestuali, o, legacy_bloccati)
+    with sostituzioni_attive(o):  # materiale sostituito per questa commessa (13/10/2026)
+        _esplodi_fino_a_semilavorati_dichiarabili(codice_base, qta_tagliata, consumi, contestuali, o, legacy_bloccati)
     return consumi, contestuali, legacy_bloccati
 
 
@@ -4104,7 +4106,8 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         # Distinta Base di codice_comp — un dato di distinta, indipendente
         # dai parametri macchina (che ora sono per codice_comp stesso, non
         # più legati a una coppia padre/figlio — vedi ParametriLavorazioneWood).
-        figli = _righe_bom_attive_wood(codice_comp)
+        with sostituzioni_attive(o):  # materiale sostituito per questa commessa (13/10/2026)
+            figli = _righe_bom_attive_wood(codice_comp)
         materiale = figli[0].codice_figlio if figli else '—'
 
         par = parametri_per_codice.get(codice_comp)
@@ -4203,6 +4206,9 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         'ha_rullo': mostra_rullo, 'ha_satinatura': mostra_satinatura,
         'totale_pz': totale_pz, 'pz_effettuati': totale_fatti,
         'residuo_pz': max(totale_pz - totale_fatti, 0),
+        'sostituzioni': [{'codice_padre': x.codice_padre, 'originale': x.materiale_originale,
+                          'sostitutivo': x.materiale_sostitutivo, 'motivo': x.motivo}
+                         for x in sostituzioni_per_op(o.id).values()],
     }
 
 
@@ -4693,7 +4699,8 @@ def api_reintegro_scarti():
 
     risultato = []
     for o in ordini:
-        fabbisogno_effettivo = _fabbisogno_propagato_per_op(o, mappa_distinta=mappa_distinta)
+        with sostituzioni_attive(o):
+            fabbisogno_effettivo = _fabbisogno_propagato_per_op(o, mappa_distinta=mappa_distinta)
         for comp in componenti_per_op[o.id]:
             codice_comp = comp['codice']
             componente_finale = (codice_comp == o.codice_articolo)
@@ -4882,7 +4889,8 @@ def api_dichiarazione_op_aperti(cid):
 
     risultato = []
     for o in ordini:
-        fabbisogno_effettivo = _fabbisogno_propagato_per_op(o, mappa_distinta=mappa_distinta)
+        with sostituzioni_attive(o):
+            fabbisogno_effettivo = _fabbisogno_propagato_per_op(o, mappa_distinta=mappa_distinta)
         codici_di_questo_op = {c['codice'] for c in componenti_per_op[o.id]}
         gruppo_componenti = []
         for comp in componenti_per_op[o.id]:
@@ -6675,3 +6683,117 @@ def app_json(dati):
     import json
     from flask import Response
     return Response(json.dumps(dati, ensure_ascii=False, indent=2, default=str), mimetype='application/json')
+
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  SOSTITUZIONE MATERIALE PER COMMESSA (richiesta Mauri, 13/10/2026)
+#  Cambia un materiale della distinta SOLO per un OP: la distinta base resta
+#  invariata. Vedi SostituzioneMaterialeOP e sostituzioni_attive (magazzino).
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _righe_distinta_originale_op(o):
+    """Tutte le coppie (padre, figlio) della distinta ORIGINALE dell'OP (senza
+    sostituzioni), con la quantita' — le sole righe sostituibili."""
+    righe, visti = [], set()
+
+    def walk(codice, profondita):
+        if profondita > 15 or codice in visti:
+            return
+        visti.add(codice)
+        for r in _righe_bom_attive_wood(codice):
+            righe.append({'codice_padre': r.codice_padre, 'materiale': r.codice_figlio,
+                          'quantita': r.quantita})
+            walk(r.codice_figlio, profondita + 1)
+    walk(o.codice_articolo, 0)
+    for r in righe:
+        r['materia_prima'] = not _righe_bom_attive_wood(r['materiale'])
+    # Materie prime per prime: e' quello che di solito si sostituisce (es. T1515 -> T1515SP1)
+    righe.sort(key=lambda r: (not r['materia_prima'], r['materiale']))
+    return righe
+
+
+def _sostituzione_dict(x):
+    return {'id': x.id, 'codice_padre': x.codice_padre, 'originale': x.materiale_originale,
+            'sostitutivo': x.materiale_sostitutivo, 'motivo': x.motivo,
+            'creato_il': x.creato_il.strftime('%d/%m/%Y %H:%M') if x.creato_il else ''}
+
+
+@pp_bp.get('/api/ordini-produzione/<int:oid>/sostituzioni-materiale')
+def api_sostituzioni_materiale_op(oid):
+    o = OrdineProduzione.query.get_or_404(oid)
+    righe = _righe_distinta_originale_op(o)
+    descr = _descrizioni_per_codici({r['materiale'] for r in righe} | {r['codice_padre'] for r in righe})
+    for r in righe:
+        r['descrizione'] = descr.get(r['materiale'], '')
+        r['descrizione_padre'] = descr.get(r['codice_padre'], '')
+    return jsonify(op={'id': o.id, 'codice': o.codice, 'commessa': o.commessa or '',
+                       'codice_articolo': o.codice_articolo, 'stato': o.stato},
+                   attive=[_sostituzione_dict(x) for x in sostituzioni_per_op(o.id).values()],
+                   righe_distinta=righe)
+
+
+@pp_bp.post('/api/ordini-produzione/<int:oid>/sostituzioni-materiale')
+def api_crea_sostituzione_materiale(oid):
+    d = request.get_json(force=True) or {}
+    if not _verifica_pin_direzione(d):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    o = OrdineProduzione.query.get_or_404(oid)
+    if o.stato == 'Chiuso CO':
+        return jsonify(ok=False, error='Ordine chiuso: non si possono piu\' cambiare i materiali'), 400
+    padre = (d.get('codice_padre') or '').strip()
+    originale = (d.get('originale') or '').strip()
+    sostitutivo = (d.get('sostitutivo') or '').strip().upper()
+    motivo = (d.get('motivo') or '').strip()
+    if not motivo:
+        return jsonify(ok=False, error='Il motivo e\' obbligatorio'), 400
+    if not sostitutivo or sostitutivo == originale.upper():
+        return jsonify(ok=False, error='Indica un materiale sostitutivo diverso dall\'originale'), 400
+    if not any(r['codice_padre'] == padre and r['materiale'] == originale for r in _righe_distinta_originale_op(o)):
+        return jsonify(ok=False, error=f'{originale} non e\' un materiale di {padre} nella distinta di questo ordine'), 400
+    conosciuto = (GiacenzaWood.query.get(sostitutivo) is not None
+                  or ArticoloApprovvigionamento.query.filter_by(codice=sostitutivo).first() is not None
+                  or DistintaBaseWood.query.filter_by(codice_figlio=sostitutivo).first() is not None)
+    if not conosciuto:
+        return jsonify(ok=False, error=f'Codice {sostitutivo} sconosciuto: non risulta ne\' a magazzino ne\' in anagrafica acquisti. '
+                                       'Controlla di averlo scritto giusto.'), 400
+    for vecchia in SostituzioneMaterialeOP.query.filter_by(op_id=o.id, codice_padre=padre,
+                                                           materiale_originale=originale, revocata_il=None).all():
+        vecchia.revocata_il = datetime.utcnow()
+    x = SostituzioneMaterialeOP(op_id=o.id, codice_padre=padre, materiale_originale=originale,
+                                materiale_sostitutivo=sostitutivo, motivo=motivo)
+    db.session.add(x)
+    _audit(o, 'SOSTITUZIONE_MATERIALE',
+           f'{padre}: {originale} -> {sostitutivo} solo per questa commessa — motivo: {motivo}')
+    db.session.commit()
+    return jsonify(ok=True, sostituzione=_sostituzione_dict(x))
+
+
+@pp_bp.post('/api/sostituzioni-materiale/<int:sid>/revoca')
+def api_revoca_sostituzione_materiale(sid):
+    d = request.get_json(force=True) or {}
+    if not _verifica_pin_direzione(d):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    x = SostituzioneMaterialeOP.query.get_or_404(sid)
+    if x.revocata_il is None:
+        x.revocata_il = datetime.utcnow()
+        o = OrdineProduzione.query.get(x.op_id)
+        if o:
+            _audit(o, 'SOSTITUZIONE_MATERIALE_REVOCATA',
+                   f'{x.codice_padre}: torna {x.materiale_originale} (era {x.materiale_sostitutivo})')
+        db.session.commit()
+    return jsonify(ok=True)
+
+
+@pp_bp.get('/api/sostituzioni-materiale/attive')
+def api_sostituzioni_materiale_attive():
+    """{op_id: n. sostituzioni attive} — per il segnale sulla lista Ordini di Produzione."""
+    try:
+        righe = SostituzioneMaterialeOP.query.filter_by(revocata_il=None).all()
+    except Exception:
+        db.session.rollback()
+        righe = []
+    conteggio = {}
+    for x in righe:
+        conteggio[str(x.op_id)] = conteggio.get(str(x.op_id), 0) + 1
+    return jsonify(conteggio)

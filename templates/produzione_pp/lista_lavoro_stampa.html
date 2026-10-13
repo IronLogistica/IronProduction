@@ -153,6 +153,13 @@
   {% endset %}
   {% set n_col_materiale = 2 + (1 if dati.ha_barra else 0) %}
   {% set col_pct_materiale = (100 / n_col_materiale)|round(3) %}
+  {% if dati.sostituzioni %}
+  <div style="border:3px solid #c0392b;background:#fdecea;border-radius:6px;padding:8px 12px;margin:10px 0;font-size:13px">
+    <b style="color:#c0392b">⚠️ MATERIALE CAMBIATO SOLO PER QUESTA COMMESSA</b>
+    {% for s in dati.sostituzioni %}<div>• in <b>{{ s.codice_padre }}</b>: usare <b>{{ s.sostitutivo }}</b> al posto di {{ s.originale }} — {{ s.motivo }}</div>{% endfor %}
+    <div style="font-size:11.5px;color:#555">Controllare i parametri macchina (pz per barra, punto zero) se spessore o lunghezza sono diversi.</div>
+  </div>
+  {% endif %}
   {% for g in dati.gruppi %}
   {% if mostra_controllo_materiale %}
   <table class="materiale-info">
