@@ -4253,6 +4253,29 @@ def api_inventario_codice_padre(codice_padre):
             and not DescrizioneCodiceWood.query.get(codice_padre):
         return jsonify({'trovato': False, 'codice_padre': codice_padre, 'righe': []})
     righe = _esplodi_codici_per_inventario(codice_padre)
+    # Impegnato / Disponibile (Mauri, 14/10/2026): SOLO a schermo, accanto ad
+    # 'Attuale' — mai dentro 'Attuale' (che resta il fisico da confrontare col
+    # conteggio) e mai sul foglio stampato. Stesso calcolo di 'Impegnato' in
+    # Magazzino e Lista Fabbisogni (impegni_op_per_codice: commesse aperte in
+    # ordine di priorita', anche di ALTRI codici padre che usano lo stesso
+    # semilavorato, sostituzioni materiale comprese).
+    try:
+        impegni = {k.upper(): v for k, v in impegni_op_per_codice().items()}
+    except Exception:
+        db.session.rollback()
+        impegni = None
+    for r in righe:
+        if impegni is None:
+            r['impegnato'] = r['disponibile'] = None
+            r['impegni'] = []
+            continue
+        lista = impegni.get((r.get('codice') or '').upper(), [])
+        imp = round(sum(i['fabbisogno'] for i in lista), 3)
+        r['impegnato'] = imp
+        r['disponibile'] = round((r.get('giacenza_attuale') or 0) - imp, 3)
+        r['impegni'] = [{'commessa': i['commessa'] or i['op_code'], 'op_code': i['op_code'],
+                         'codice_articolo': i['codice_articolo'], 'quantita': round(i['fabbisogno'], 3)}
+                        for i in lista]
     return jsonify({'trovato': True, 'codice_padre': codice_padre, 'righe': righe})
 
 
