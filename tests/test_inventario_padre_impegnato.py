@@ -38,6 +38,13 @@ class TestInventarioPadreImpegnato(unittest.TestCase):
         self.assertEqual(r['disponibile'], 1078)
         self.assertEqual({i['commessa'] for i in r['impegni']}, {'26090062', '26100090'})
 
+    def test_foglio_stampato_mostra_impegnato_e_disponibile(self):
+        html = self.app.test_client().get('/inventario-codice-padre-stampa/T200').get_data(as_text=True)
+        self.assertIn('Impegnato', html)
+        self.assertIn('Disponibile', html)
+        self.assertIn('26090062 (T250): 240', html)
+        self.assertIn('>1078<', html.replace(' ', '').replace('\n', ''))
+
 
 if __name__ == '__main__':
     unittest.main()

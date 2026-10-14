@@ -4246,16 +4246,10 @@ def pagina_inventario_codice_padre():
     return render_template('magazzino/inventario_codice_padre.html', active='inventario_codice_padre')
 
 
-@magazzino_bp.route('/api/inventario-codice-padre/<codice_padre>')
-def api_inventario_codice_padre(codice_padre):
-    codice_padre = codice_padre.strip().upper()
-    if not _righe_bom_attive_wood(codice_padre) and not GiacenzaWood.query.get(codice_padre) \
-            and not DescrizioneCodiceWood.query.get(codice_padre):
-        return jsonify({'trovato': False, 'codice_padre': codice_padre, 'righe': []})
-    righe = _esplodi_codici_per_inventario(codice_padre)
-    # Impegnato / Disponibile (Mauri, 14/10/2026): SOLO a schermo, accanto ad
-    # 'Attuale' — mai dentro 'Attuale' (che resta il fisico da confrontare col
-    # conteggio) e mai sul foglio stampato. Stesso calcolo di 'Impegnato' in
+def _aggiungi_impegnato_disponibile(righe):
+    # Impegnato / Disponibile (Mauri, 14/10/2026): colonne SEPARATE accanto ad
+    # 'Attuale' (a schermo e sul foglio stampato) — mai dentro 'Attuale', che
+    # resta il fisico da confrontare col conteggio. Stesso calcolo di 'Impegnato' in
     # Magazzino e Lista Fabbisogni (impegni_op_per_codice: commesse aperte in
     # ordine di priorita', anche di ALTRI codici padre che usano lo stesso
     # semilavorato, sostituzioni materiale comprese).
@@ -4276,6 +4270,17 @@ def api_inventario_codice_padre(codice_padre):
         r['impegni'] = [{'commessa': i['commessa'] or i['op_code'], 'op_code': i['op_code'],
                          'codice_articolo': i['codice_articolo'], 'quantita': round(i['fabbisogno'], 3)}
                         for i in lista]
+    return righe
+
+
+@magazzino_bp.route('/api/inventario-codice-padre/<codice_padre>')
+def api_inventario_codice_padre(codice_padre):
+    codice_padre = codice_padre.strip().upper()
+    if not _righe_bom_attive_wood(codice_padre) and not GiacenzaWood.query.get(codice_padre) \
+            and not DescrizioneCodiceWood.query.get(codice_padre):
+        return jsonify({'trovato': False, 'codice_padre': codice_padre, 'righe': []})
+    righe = _esplodi_codici_per_inventario(codice_padre)
+    _aggiungi_impegnato_disponibile(righe)
     return jsonify({'trovato': True, 'codice_padre': codice_padre, 'righe': righe})
 
 
@@ -4291,7 +4296,7 @@ def pagina_inventario_codice_padre_stampa(codice_padre):
     Segatrice" e "già oltre i Trapani" invece di un unico totale ambiguo.
     """
     codice_padre = codice_padre.strip().upper()
-    righe = _esplodi_codici_per_inventario(codice_padre)
+    righe = _aggiungi_impegnato_disponibile(_esplodi_codici_per_inventario(codice_padre))
     return render_template('magazzino/inventario_codice_padre_stampa.html',
         codice_padre=codice_padre, righe=righe)
 

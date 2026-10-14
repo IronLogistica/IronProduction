@@ -16,10 +16,14 @@
   th { background: #eee; border: 1px solid #999; padding: 7px 8px; text-align: left; font-size: 11px; text-transform: uppercase; }
   td { border: 1px solid #999; padding: 9px 8px; vertical-align: middle; }
   .col-codice { width: 17%; font-weight: 700; }
-  .col-desc { width: 33%; }
-  .col-um { width: 8%; text-align: center; }
-  .col-attuale { width: 12%; text-align: right; color: #333; }
-  .col-conteggio { width: 30%; }
+  .col-desc { width: 27%; }
+  .col-um { width: 6%; text-align: center; }
+  .col-attuale { width: 9%; text-align: right; color: #333; }
+  .col-impegnato { width: 9%; text-align: right; color: #333; }
+  .col-disponibile { width: 9%; text-align: right; font-weight: 700; }
+  .col-disponibile.neg { color: #b42318; }
+  .col-conteggio { width: 23%; }
+  .impegni { display: block; font-size: 9.5px; font-weight: 400; color: #555; line-height: 1.25; margin-top: 2px; }
   .riga-conteggio { border-bottom: 1px solid #000; display: block; height: 20px; }
   .riga-fase td.col-codice { font-weight: 400; padding-left: 20px; color: #333; }
   .riga-fase td.col-codice:before { content: "↳ "; color: #999; }
@@ -48,6 +52,8 @@
       <th class="col-desc">Descrizione</th>
       <th class="col-um">U.M.</th>
       <th class="col-attuale">Attuale</th>
+      <th class="col-impegnato">Impegnato</th>
+      <th class="col-disponibile">Disponibile</th>
       <th class="col-conteggio">Quantità contata</th>
     </tr>
   </thead>
@@ -58,6 +64,8 @@
       <td class="col-desc">{{ r.descrizione or '—' }}</td>
       <td class="col-um">{{ r.unita_misura or '' }}</td>
       <td class="col-attuale">{{ '%g'|format((r.giacenza_attuale or 0)|round(3)) }}</td>
+      <td class="col-impegnato">{% if r.impegnato is none %}n.d.{% else %}{{ '%g'|format(r.impegnato|round(3)) }}{% for i in r.impegni %}<span class="impegni">{{ i.commessa }} ({{ i.codice_articolo }}): {{ '%g'|format(i.quantita|round(3)) }}</span>{% endfor %}{% endif %}</td>
+      <td class="col-disponibile{{ ' neg' if r.disponibile is not none and r.disponibile < 0 else '' }}">{% if r.disponibile is none %}n.d.{% else %}{{ '%g'|format(r.disponibile|round(3)) }}{% endif %}</td>
       <td class="col-conteggio"><span class="riga-conteggio"></span></td>
     </tr>
     {% for f in r.fasi %}
@@ -66,12 +74,14 @@
       <td class="col-desc"><span class="tag-wip">WIP</span>fermi A «{{ f.centro_nome }}» (fatta questa, non ancora la fase dopo)</td>
       <td class="col-um">{{ r.unita_misura or '' }}</td>
       <td class="col-attuale">{{ '%g'|format((f.quantita_wip_attuale or 0)|round(3)) }}</td>
+      <td class="col-impegnato"></td>
+      <td class="col-disponibile"></td>
       <td class="col-conteggio"><span class="riga-conteggio"></span></td>
     </tr>
     {% endfor %}
     {% endfor %}
     {% if not righe %}
-    <tr><td colspan="5" style="text-align:center;color:#777;font-style:italic">Nessun codice trovato per questo codice padre.</td></tr>
+    <tr><td colspan="7" style="text-align:center;color:#777;font-style:italic">Nessun codice trovato per questo codice padre.</td></tr>
     {% endif %}
   </tbody>
 </table>
