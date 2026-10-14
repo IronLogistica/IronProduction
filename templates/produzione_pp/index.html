@@ -16,13 +16,32 @@
 <div style="position:relative"><input id="opCodiceArticolo" name="codice_articolo" required maxlength="100" placeholder="Codice articolo *" autocomplete="off" oninput="suggerisciCodiciOP()" onfocus="suggerisciCodiciOP()" onblur="autocompilaDescrizioneOP()">
 <div id="opCodiceSuggerimenti" style="display:none;position:absolute;top:100%;left:0;z-index:20;background:#fff;border:1px solid #ccd5df;border-radius:6px;box-shadow:0 4px 14px rgba(0,0,0,.15);max-height:220px;overflow-y:auto;width:100%"></div></div>
 <input id="opDescrizione" name="descrizione" maxlength="300" placeholder="Descrizione">
-<input name="cliente" maxlength="200" placeholder="Cliente"><input readonly value="La commessa viene generata automaticamente (es. 26070001)" style="color:var(--text-dim);font-style:italic;background:#f4f6f8">
+<input id="opCliente" name="cliente" maxlength="200" placeholder="Cliente"><input readonly value="La commessa viene generata automaticamente (es. 26070001)" style="color:var(--text-dim);font-style:italic;background:#f4f6f8">
 <input name="qta_pianificata" required type="number" min="0" placeholder="Quantità pianificata *"><input name="asa" required maxlength="100" value="Carpenteria Propria" placeholder="ASA *">
 <label>Inizio <input name="data_inizio" type="date"></label><label>Consegna <input name="data_prevista" type="date"></label>
 <label>Priorità <select name="priorita">{% for n in range(1,10) %}<option value="{{n}}" {% if n==5 %}selected{% endif %}>{{n}}</option>{% endfor %}</select></label>
+<label id="opScortaBox" class="scorta-toggle"><input type="checkbox" name="a_scorta" id="opAScorta" onchange="toggleAScorta()">
+<span><b>📦 OP A SCORTA</b> — produzione per <b>magazzino</b>, <b>nessun ordine cliente</b> (es. semilavorati / codici nipote preparati in anticipo).
+<small>Si spunta qui: la commessa resta riconoscibile ovunque con il bollino <span class="badge-scorta">📦 A SCORTA</span>.</small></span></label>
 <button class="btn btn-primary" type="submit">Crea OP</button></form><p id="message"></p><div id="scorta-result"></div></div>
-<div class="card" style="padding:18px;overflow:auto"><table class="kanban-table"><thead><tr><th>OP / priorità</th><th>Articolo</th><th>Cliente / commessa</th><th>ASA / date</th><th>Pian. · buoni · scarto</th><th>Stato</th><th>Azioni</th></tr></thead><tbody id="rows"></tbody></table></div>
-<style>.cm-sug:hover{background:rgba(37,137,199,.25)}.op-grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px}.op-grid input,.op-grid select{width:100%;box-sizing:border-box;padding:9px;border:1px solid #ccd5df;border-radius:5px}.op-grid label{font-size:12px;color:var(--text-dim)}@media(max-width:850px){.op-grid{grid-template-columns:1fr 1fr}}</style>
+<div class="card" style="padding:18px;overflow:auto">
+<div class="filtro-scorta"><span>Mostra:</span>
+<button type="button" class="fs-btn attivo" data-f="tutti" onclick="setFiltroScorta('tutti')">Tutti <b id="fs-n-tutti"></b></button>
+<button type="button" class="fs-btn" data-f="cliente" onclick="setFiltroScorta('cliente')">👤 Per cliente <b id="fs-n-cliente"></b></button>
+<button type="button" class="fs-btn fs-scorta" data-f="scorta" onclick="setFiltroScorta('scorta')">📦 A scorta <b id="fs-n-scorta"></b></button></div>
+<table class="kanban-table"><thead><tr><th>OP / priorità</th><th>Articolo</th><th>Cliente / commessa</th><th>ASA / date</th><th>Pian. · buoni · scarto</th><th>Stato</th><th>Azioni</th></tr></thead><tbody id="rows"></tbody></table></div>
+<style>.cm-sug:hover{background:rgba(37,137,199,.25)}.op-grid{display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:10px}.op-grid input,.op-grid select{width:100%;box-sizing:border-box;padding:9px;border:1px solid #ccd5df;border-radius:5px}.op-grid label{font-size:12px;color:var(--text-dim)}
+.op-grid label.scorta-toggle{grid-column:1/-1;display:flex;gap:12px;align-items:center;padding:12px 14px;border:2px dashed #7b3fbf;border-radius:8px;background:#f5effc;color:#3d1f63;font-size:14px;cursor:pointer}
+.op-grid label.scorta-toggle input{width:22px;height:22px;flex:0 0 auto;accent-color:#7b3fbf}
+.op-grid label.scorta-toggle small{display:block;color:#6a5a80;margin-top:3px}
+.op-grid label.scorta-toggle.on{border-style:solid;background:#7b3fbf;color:#fff}.op-grid label.scorta-toggle.on small{color:#e9dcf8}
+.badge-scorta{display:inline-block;background:#7b3fbf;color:#fff;font-weight:800;font-size:11px;letter-spacing:.5px;padding:2px 8px;border-radius:10px;white-space:nowrap}
+tr.riga-scorta td{background:rgba(123,63,191,.22)}tr.riga-scorta td:first-child{border-left:5px solid #7b3fbf}
+.filtro-scorta{display:flex;gap:8px;align-items:center;margin-bottom:12px;font-size:13px;color:var(--text-dim);flex-wrap:wrap}
+.fs-btn{border:1px solid #ccd5df;background:#fff;border-radius:16px;padding:5px 14px;cursor:pointer;font-size:13px}
+.fs-btn.attivo{background:#1f4e79;color:#fff;border-color:#1f4e79}.fs-btn.fs-scorta.attivo{background:#7b3fbf;border-color:#7b3fbf}
+.avviso-scorta{margin-top:12px;border:2px solid #7b3fbf;border-radius:8px;background:#f5effc;padding:12px 16px;color:#3d1f63;font-size:14px}
+.avviso-scorta table{border-collapse:collapse;margin-top:6px}.avviso-scorta td{padding:3px 14px 3px 0}.avviso-scorta td.n{text-align:right;font-weight:700}@media(max-width:850px){.op-grid{grid-template-columns:1fr 1fr}}</style>
 
 <div class="modal-overlay" id="modal-modifica-op">
   <div class="modal-box" style="width:480px;max-width:96vw">
@@ -33,6 +52,8 @@
     <input id="mod-descrizione" class="modal-input" type="text">
     <label class="modal-label">Cliente</label>
     <input id="mod-cliente" class="modal-input" type="text">
+    <label style="display:flex;gap:8px;align-items:center;margin:8px 0;padding:8px 10px;border:2px dashed #7b3fbf;border-radius:6px;background:#f5effc;color:#3d1f63;cursor:pointer">
+      <input id="mod-a-scorta" type="checkbox" style="width:18px;height:18px;accent-color:#7b3fbf"> <b>📦 OP A SCORTA</b> — per magazzino, nessun cliente</label>
     <div style="display:flex;gap:10px">
       <div style="flex:1"><label class="modal-label">Quantità pianificata</label>
         <input id="mod-qta" class="modal-input" type="number" min="1"></div>
@@ -169,7 +190,37 @@ document.addEventListener('click',e=>{
   const box=document.getElementById('opCodiceSuggerimenti');
   if(box && !e.target.closest('#opCodiceArticolo') && !e.target.closest('#opCodiceSuggerimenti')) box.style.display='none';
 });
-async function load(){try{const list=await api('/api/ordini-produzione'); rows.innerHTML=list.map(x=>{
+let filtroScorta = 'tutti';
+try{ filtroScorta = localStorage.getItem('op_filtro_scorta') || 'tutti'; }catch(e){}
+function setFiltroScorta(f){ filtroScorta=f; try{localStorage.setItem('op_filtro_scorta',f)}catch(e){} load(); }
+function toggleAScorta(){
+  const on=document.getElementById('opAScorta').checked, cli=document.getElementById('opCliente');
+  document.getElementById('opScortaBox').classList.toggle('on', on);
+  cli.disabled=on; cli.placeholder = on ? '📦 A SCORTA (nessun cliente)' : 'Cliente';
+  if(on) cli.value='';
+}
+function renderSituazioneScorta(s){
+  const box=document.getElementById('scorta-result');
+  if(!s) return;
+  const n=v=>Number(v||0).toLocaleString('it-IT');
+  const aperti=(s.op_scorta_aperti||[]).map(o=>`${esc(o.op_code)} (${n(o.residuo)} pz, ${esc(o.stato)})`).join(', ');
+  const alto = s.libero > 0 || s.in_produzione_scorta > 0;
+  box.insertAdjacentHTML('afterbegin', `<div class="avviso-scorta"><b>📦 OP A SCORTA creato per ${esc(s.codice)} — produzione per magazzino, nessun cliente.</b>
+  <table><tr><td>A magazzino adesso</td><td class="n">${n(s.giacenza)}</td></tr>
+  <tr><td>Già impegnato da altri OP aperti</td><td class="n">${n(s.impegnato)}</td></tr>
+  <tr><td>Libero${s.libero<0?' <small>(negativo = già mancanti per gli OP aperti)</small>':''}</td><td class="n" style="color:${s.libero<0?'#c0392b':'inherit'}">${n(s.libero)}</td></tr>
+  <tr><td>In produzione su OP per cliente</td><td class="n">${n(s.in_produzione_cliente)}</td></tr>
+  <tr><td>In produzione su altri OP a scorta</td><td class="n">${n(s.in_produzione_scorta)}</td></tr></table>
+  ${alto?`<div style="margin-top:8px;color:#b35900;font-weight:700">⚠️ Attenzione: ${s.libero>0?`ci sono già ${n(s.libero)} pezzi liberi a magazzino`:''}${s.libero>0&&s.in_produzione_scorta>0?' e ':''}${s.in_produzione_scorta>0?`altri ${n(s.in_produzione_scorta)} sono già in produzione a scorta${aperti?' ('+aperti+')':''}`:''}. Verifica che servano davvero.</div>`:''}</div>`);
+}
+async function load(){try{const tutti=await api('/api/ordini-produzione');
+  const nSc=tutti.filter(x=>x.a_scorta).length;
+  document.getElementById('fs-n-tutti').textContent=tutti.length;
+  document.getElementById('fs-n-cliente').textContent=tutti.length-nSc;
+  document.getElementById('fs-n-scorta').textContent=nSc;
+  document.querySelectorAll('.fs-btn').forEach(b=>b.classList.toggle('attivo', b.dataset.f===filtroScorta));
+  const list = filtroScorta==='scorta' ? tutti.filter(x=>x.a_scorta) : filtroScorta==='cliente' ? tutti.filter(x=>!x.a_scorta) : tutti;
+  rows.innerHTML=list.map(x=>{
   const puoModificare = x.stato==='Creato' || x.stato==='Rilasciato' || x.stato==='In esecuzione' || x.stato==='Tecnicamente completato';
   const puoEliminare = x.stato==='Creato' || (x.stato==='Rilasciato' && x.qta_buona===0);
   const priorita = (x.stato==='Creato'||x.stato==='Rilasciato')?`<select style="width:52px;font-size:11px;padding:1px" onchange="cambiaPriorita(${x.id},this.value)">${Array.from({length:9},(_,i)=>i+1).map(n=>`<option value="${n}" ${n===x.priorita?'selected':''}>P${n}</option>`).join('')}</select>`:`<small>P${x.priorita}</small>`;
@@ -184,8 +235,11 @@ async function load(){try{const list=await api('/api/ordini-produzione'); rows.i
   if(puoEliminare) azioni += `<button class="btn btn-ghost" onclick="deleteOp(${x.id},'${esc(x.codice)}')" style="color:#c0392b">🗑️ Elimina</button> `;
   if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/analisi-costo">📊 Analisi Costo</a> `;
   if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/cartellino" target="_blank">🖨️ Cartellino</a>`;
-  return `<tr><td><b>${esc(x.codice)}</b><br>${priorita}</td><td>${esc(x.codice_articolo)}<br><small>${esc(x.descrizione)}</small></td><td>${esc(x.cliente)}<br><small>${esc(x.commessa)}</small></td><td>${esc(x.asa)}<br><small>${x.data_inizio||'—'} → ${x.data_prevista||'—'}</small></td><td>${x.qta_pianificata} · ${x.qta_buona} · ${x.qta_scarto}</td><td>${esc(x.stato)}</td><td style="white-space:nowrap">${azioni}</td></tr>`;
-}).join('')||'<tr><td colspan="7">Nessun ordine di produzione.</td></tr>'}catch(e){message.textContent=e.message}}
+  const cellaCliente = x.a_scorta
+    ? `<span class="badge-scorta" title="OP a scorta: produzione per magazzino, nessun ordine cliente">📦 A SCORTA</span>${x.cliente && x.cliente!=='A SCORTA'?`<br><small>${esc(x.cliente)}</small>`:''}<br><small>${esc(x.commessa)}</small>`
+    : `${esc(x.cliente)}<br><small>${esc(x.commessa)}</small>`;
+  return `<tr class="${x.a_scorta?'riga-scorta':''}"><td><b>${esc(x.codice)}</b>${x.a_scorta?' <span class="badge-scorta">📦</span>':''}<br>${priorita}</td><td>${esc(x.codice_articolo)}<br><small>${esc(x.descrizione)}</small></td><td>${cellaCliente}</td><td>${esc(x.asa)}<br><small>${x.data_inizio||'—'} → ${x.data_prevista||'—'}</small></td><td>${x.qta_pianificata} · ${x.qta_buona} · ${x.qta_scarto}</td><td>${esc(x.stato)}</td><td style="white-space:nowrap">${azioni}</td></tr>`;
+}).join('')||`<tr><td colspan="7">${filtroScorta==='scorta'?'Nessun OP a scorta.':'Nessun ordine di produzione.'}</td></tr>`}catch(e){message.textContent=e.message}}
 
 let _opInModifica = null;
 function apriModificaOp(x){
@@ -197,6 +251,7 @@ function apriModificaOp(x){
   campoCodice.title = gia_avviato ? 'Non modificabile: produzione già avviata su questo codice' : '';
   document.getElementById('mod-descrizione').value = x.descrizione || '';
   document.getElementById('mod-cliente').value = x.cliente || '';
+  document.getElementById('mod-a-scorta').checked = !!x.a_scorta;
   document.getElementById('mod-qta').value = x.qta_pianificata;
   document.getElementById('mod-priorita').value = x.priorita;
   document.getElementById('mod-esito').textContent = gia_avviato
@@ -210,7 +265,9 @@ async function salvaModificaOp(){
   const payload = {
     codice_articolo: document.getElementById('mod-codice-articolo').value.trim(),
     descrizione: document.getElementById('mod-descrizione').value.trim(),
-    cliente: document.getElementById('mod-cliente').value.trim(),
+    cliente: (()=>{ const c=document.getElementById('mod-cliente').value.trim();
+      return (!document.getElementById('mod-a-scorta').checked && c==='A SCORTA') ? '' : c; })(),
+    a_scorta: document.getElementById('mod-a-scorta').checked,
     qta_pianificata: document.getElementById('mod-qta').value,
     priorita: document.getElementById('mod-priorita').value,
   };
@@ -248,7 +305,7 @@ async function riapriOp(id, codice){
   }catch(e){ alert(e.message) }
 }
 async function deleteOp(id,codice){if(!confirm('Eliminare definitivamente '+codice+'? L\'operazione non è reversibile.'))return;try{await api('/api/ordini-produzione/'+id,{method:'DELETE'});load()}catch(e){alert(e.message)}}
-opForm.onsubmit=async e=>{e.preventDefault();message.textContent='';document.getElementById('scorta-result').innerHTML='';const data=Object.fromEntries(new FormData(opForm));if(codiciPadreValidi.size && !codiciPadreValidi.has(data.codice_articolo)){message.textContent='⚠️ Codice non presente tra i codici padre della distinta base Iron Wood — selezionalo dall\'elenco.';return}try{const r=await api('/api/ordini-produzione',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});message.textContent='Creato '+r.ordine.codice+' — Commessa '+r.ordine.commessa;renderControlloScorta(r.controllo_scorta);opForm.reset();load()}catch(e){message.textContent='Errore: '+e.message}}; caricaSostAttive().then(load); precaricaCodiciPadre();
+opForm.onsubmit=async e=>{e.preventDefault();message.textContent='';document.getElementById('scorta-result').innerHTML='';const data=Object.fromEntries(new FormData(opForm));data.a_scorta=document.getElementById('opAScorta').checked;if(codiciPadreValidi.size && !codiciPadreValidi.has(data.codice_articolo)){message.textContent='⚠️ Codice non presente tra i codici padre della distinta base Iron Wood — selezionalo dall\'elenco.';return}try{const r=await api('/api/ordini-produzione',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)});message.textContent='Creato '+r.ordine.codice+' — Commessa '+r.ordine.commessa;renderControlloScorta(r.controllo_scorta);renderSituazioneScorta(r.situazione_scorta);opForm.reset();toggleAScorta();load()}catch(e){message.textContent='Errore: '+e.message}}; caricaSostAttive().then(load); precaricaCodiciPadre();
 
 function renderControlloScorta(righe, targetId){
   const box = document.getElementById(targetId || 'scorta-result');

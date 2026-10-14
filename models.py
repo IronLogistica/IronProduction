@@ -1896,6 +1896,22 @@ def assicura_event_id_varianza_produzione():
             db.session.commit()
 
 
+def assicura_op_a_scorta():
+    """Colonna ordini_produzione_pp.a_scorta (OP a scorta, senza cliente)."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN IF NOT EXISTS a_scorta BOOLEAN NOT NULL DEFAULT FALSE"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('ordini_produzione_pp')}
+        if 'a_scorta' not in colonne:
+            db.session.execute(text("ALTER TABLE ordini_produzione_pp ADD COLUMN a_scorta BOOLEAN NOT NULL DEFAULT 0"))
+            db.session.commit()
+
+
 def assicura_bandiera_stato_op():
     """Migrazione compatibile con DB già esistenti: aggiunge
     ordini_produzione_pp.bandiera_stato (Nuova Commessa/Urgente/Sospesa/
@@ -3038,6 +3054,12 @@ class OrdineProduzione(db.Model):
     # componenti mancanti sono già in arrivo (non serve sollecitare nulla).
     BANDIERE_STATO_OP = ('NUOVA_COMMESSA', 'URGENTE', 'SOSPESA', 'ATTESA_MATERIALI', 'IN_LAVORAZIONE')
     bandiera_stato = db.Column(db.String(30), nullable=True)
+    # OP A SCORTA (Mauri, 14/10/2026): commessa di produzione lanciata SENZA
+    # ordine cliente, per riempire il magazzino (tipicamente semilavorati /
+    # codici nipote preparati mesi prima). Si comporta come qualsiasi altro
+    # OP (cicli, OL, dichiarazioni, fabbisogni): il flag serve a renderlo
+    # riconoscibile ovunque (lista OP, filtro, Ordine di Lavoro, LIVE).
+    a_scorta = db.Column(db.Boolean, nullable=False, default=False)
 
 class EventoConsuntivoPP(db.Model):
     __tablename__ = "pp_eventi_consuntivi"

@@ -27,7 +27,7 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _grezzo_iw_per_codici,
                     _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood, sostituzioni_attive, sostituzioni_per_op,
                     _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
-                    _contestuale_attivo_per_op, _saldo_materiale_op, calcola_alert_fabbisogno_codici_padre,
+                    _contestuale_attivo_per_op, _saldo_materiale_op, impegni_op_per_codice, calcola_alert_fabbisogno_codici_padre,
                     _wip_fase_per_codice, _gia_disponibile_per_fase, _valore_wip_a_fase, _consuma_wip_multi_fase)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
@@ -47,6 +47,46 @@ def _integer(value, name, minimum=0):
     if value < minimum: raise ValueError(f"{name} non può essere negativo")
     return value
 
+CLIENTE_A_SCORTA = 'A SCORTA'
+
+
+def _bool(v):
+    if isinstance(v, str): return v.strip().lower() in ('1', 'true', 'on', 'si', 'sì', 'yes')
+    return bool(v)
+
+
+def _situazione_scorta_codice(codice, escludi_op_id=None):
+    """
+    Quadro del codice al momento di lanciare un OP A SCORTA: quanto c'e' gia'
+    a magazzino, quanto ne chiedono gli altri OP aperti (impegnato come
+    componente), quanto e' gia' in produzione su altri OP (per cliente e a
+    scorta) e la copertura risultante. Serve per l'avviso "stai producendo
+    per magazzino: ne hai gia' X". Non solleva mai eccezioni.
+    """
+    try:
+        giacenza = float(getattr(GiacenzaWood.query.filter_by(codice=codice).first(), 'quantita', 0) or 0)
+        impegnato = sum(r['fabbisogno'] for r in impegni_op_per_codice().get(codice, []))
+        in_prod_cliente = in_prod_scorta = 0.0
+        op_scorta_aperti = []
+        for op in OrdineProduzione.query.filter(OrdineProduzione.codice_articolo == codice,
+                                                OrdineProduzione.stato.in_(('Creato',) + tuple(STATI_CHE_IMPEGNANO))).all():
+            if escludi_op_id and op.id == escludi_op_id: continue
+            residuo = max((op.qta_pianificata or 0) - (op.qta_buona or 0), 0)
+            if op.a_scorta:
+                in_prod_scorta += residuo
+                op_scorta_aperti.append({'op_code': op.codice, 'commessa': op.commessa, 'residuo': residuo, 'stato': op.stato})
+            else:
+                in_prod_cliente += residuo
+        libero = giacenza - impegnato
+        return {'codice': codice, 'giacenza': round(giacenza, 3), 'impegnato': round(impegnato, 3),
+                'libero': round(libero, 3), 'in_produzione_cliente': round(in_prod_cliente, 3),
+                'in_produzione_scorta': round(in_prod_scorta, 3), 'op_scorta_aperti': op_scorta_aperti,
+                'copertura_futura': round(libero + in_prod_cliente + in_prod_scorta, 3)}
+    except Exception:
+        log.exception('situazione scorta %s', codice)
+        return None
+
+
 def _ordine(o):
     return {"id": o.id, "op_code": o.codice, "codice": o.codice,
       "codice_articolo": o.codice_articolo, "descrizione": o.descrizione,
@@ -55,6 +95,7 @@ def _ordine(o):
       "qta_pianificata": o.qta_pianificata, "qta_buona": o.qta_buona,
       "qta_scarto": o.qta_scarto, "tempo_consuntivo_minuti": o.tempo_consuntivo_minuti,
       "stato": o.stato, "asa": o.asa, "priorita": o.priorita,
+      "a_scorta": bool(getattr(o, 'a_scorta', False)),
       "data_inizio": o.data_inizio.isoformat() if o.data_inizio else None,
       "data_prevista": o.data_prevista.isoformat() if o.data_prevista else None,
       "avanzamento_pct": round(100 * o.qta_buona / o.qta_pianificata, 1) if o.qta_pianificata else 0}
@@ -268,20 +309,26 @@ def crea():
         priority = _integer(d.get('priorita', 5), 'Priorità', 1)
         if priority > 9: raise ValueError('Priorità deve essere fra 1 e 9')
         client = str(d.get('cliente','')).strip()
+        a_scorta = _bool(d.get('a_scorta'))
+        if a_scorta and not client: client = CLIENTE_A_SCORTA
         job = prossimo_numero_commessa()  # generato in automatico, ignora eventuale valore inviato dal client
         legacy = str(d.get('cliente_commessa_esterna','')).strip() or ' / '.join(x for x in (client, job) if x)
         o = OrdineProduzione(codice=prossimo_codice_ordine_pp(), codice_articolo=article,
             descrizione=str(d.get('descrizione','')).strip(), cliente=client, commessa=job,
             cliente_commessa_esterna=legacy, qta_pianificata=qty, asa=str(d.get('asa','')).strip(),
-            priorita=priority, data_inizio=_date(d.get('data_inizio')), data_prevista=_date(d.get('data_prevista')))
-        db.session.add(o); _audit(o, 'CREATO', 'Creato da pagina Ordini Produzione'); db.session.commit()
+            priorita=priority, data_inizio=_date(d.get('data_inizio')), data_prevista=_date(d.get('data_prevista')),
+            a_scorta=a_scorta)
+        db.session.add(o)
+        _audit(o, 'CREATO', 'Creato da pagina Ordini Produzione' + (' — OP A SCORTA (produzione per magazzino, nessun ordine cliente)' if a_scorta else ''))
+        db.session.commit()
 
         # Controllo scorta: giacenza/impegnato/disponibile/mancante per questo OP
         # appena creato, rispetto agli OP già aperti (l'OP appena creato è in
         # stato "Creato", quindi NON impegna ancora nulla — è solo un'anteprima).
         controllo_scorta = _calcola_controllo_scorta(article, qty)
 
-        return jsonify(ok=True, ordine=_ordine(o), controllo_scorta=controllo_scorta), 201
+        return jsonify(ok=True, ordine=_ordine(o), controllo_scorta=controllo_scorta,
+                       situazione_scorta=_situazione_scorta_codice(article, escludi_op_id=o.id) if a_scorta else None), 201
     except (ValueError, IntegrityError) as exc:
         db.session.rollback(); return jsonify(ok=False, error=str(exc)), 400
 
@@ -1359,6 +1406,13 @@ def modifica(oid):
                 if gia_avviato and k in campi_bloccati_se_avviato:
                     continue  # ignorato silenziosamente, non un errore: il resto della modifica procede comunque
                 setattr(o, k, str(d[k]).strip())
+        if 'a_scorta' in d:
+            nuovo = _bool(d['a_scorta'])
+            if nuovo != bool(o.a_scorta):
+                o.a_scorta = nuovo
+                if nuovo and not (o.cliente or '').strip(): o.cliente = CLIENTE_A_SCORTA
+                if not nuovo and (o.cliente or '').strip() == CLIENTE_A_SCORTA and 'cliente' not in d: o.cliente = ''
+                _audit(o, 'A_SCORTA', 'Segnato come OP A SCORTA' if nuovo else 'Tolto il flag OP A SCORTA (ora per cliente)')
         if 'qta_pianificata' in d:
             o.qta_pianificata = _integer(d['qta_pianificata'], 'Quantità pianificata')
         if 'priorita' in d: o.priorita = _integer(d['priorita'], 'Priorità', 1)
@@ -4199,6 +4253,7 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         'centro_id': centro.id, 'centro_nome': centro.nome,
         'op_codice': o.codice, 'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',
         'commessa': o.commessa or '', 'cliente': o.cliente or '', 'stato': o.stato,
+        'a_scorta': bool(getattr(o, 'a_scorta', False)),
         'qta_pianificata': o.qta_pianificata,
         'data_inizio': o.data_inizio.strftime('%d/%m/%Y') if o.data_inizio else '',
         'numero_lista': _numero_lista_lavoro(o.codice, centro) if assegna_numero else None,

@@ -467,7 +467,7 @@ def _righe_macchina(centro):
                 1, o.priorita, o.data_prevista or datetime.max.date(), o.id, codice_comp)
 
             righe[sezione].append({
-                'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
+                'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '', 'a_scorta': bool(getattr(o, 'a_scorta', False)),
                 'codice_articolo': o.codice_articolo,
                 # Pezzi di PRODOTTO FINITO pianificati per questo OP — NON i pezzi di
                 # questa fase (vedi 'totale'): un OP con più componenti che passano
@@ -513,7 +513,7 @@ def _righe_macchina(centro):
             fase_ciclo = fasi_ciclo[idx]
             tempo_standard_min_pz = (60 / fase_ciclo.produttivita_oraria) if fase_ciclo.produttivita_oraria else None
             righe['da_iniziare'].append({
-                'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
+                'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '', 'a_scorta': bool(getattr(o, 'a_scorta', False)),
                 'codice_articolo': o.codice_articolo, 'qta_pianificata': o.qta_pianificata,
                 'materiale_disponibile': None,  # non calcolato: l'OP non è ancora un impegno reale
                 'componente': componente_param_nr, 'componente_finale': componente_finale,
@@ -572,7 +572,7 @@ def _raggruppa_per_op(righe):
         if r['op_id'] not in indice_per_op:
             indice_per_op[r['op_id']] = len(gruppi)
             gruppi.append({
-                'op_id': r['op_id'], 'op_codice': r['op_codice'], 'commessa': r['commessa'],
+                'op_id': r['op_id'], 'op_codice': r['op_codice'], 'commessa': r['commessa'], 'a_scorta': r.get('a_scorta', False),
                 'codice_articolo': r['codice_articolo'], 'priorita': r['priorita'],
                 'posizione_manuale': r['posizione_manuale'], 'descrizione': r['descrizione'],
                 'qta_pianificata': r['qta_pianificata'], 'materiale_disponibile': r['materiale_disponibile'],

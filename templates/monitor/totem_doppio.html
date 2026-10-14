@@ -51,6 +51,7 @@
   .prod-badge.producibile{color:var(--ok);background:rgba(34,197,94,.14);border:1px solid var(--ok)}
   .prod-badge.parziale{color:var(--warn);background:rgba(245,158,11,.14);border:1px solid var(--warn)}
   .prod-badge.in_attesa{color:var(--danger);background:rgba(239,68,68,.14);border:1px solid var(--danger)}
+  .badge-scorta-live{display:inline-block;background:#7b3fbf;color:#fff;font-weight:800;font-size:.7rem;letter-spacing:.5px;padding:1px 7px;border-radius:9px;margin-left:6px;vertical-align:middle;white-space:nowrap}
   .commessa{font-family:'Consolas',monospace;font-size:.85rem;display:block}
   .pz-prod{font-size:.72rem;color:var(--muted)}
   .pz-prod b{font-size:1rem;color:var(--text)}
@@ -147,7 +148,7 @@
              monte + materiale diretto), non solo metà del controllo. #}
           <tr class="{{ 'completa' if g.saldo_totale <= 0 else ('materiale-ok' if g.stato_producibilita == 'producibile' else '') }}">
             <td>{% if g.stato_producibilita %}<span class="prod-badge {{ g.stato_producibilita }}">{{ ETICHETTA_PRODUCIBILITA[g.stato_producibilita] }}</span>{% endif %}</td>
-            <td><span class="commessa">{{ g.commessa or g.op_codice }}</span><span class="pz-prod">pz in prod. <span class="pz-box">{{ g.qta_pianificata }}</span></span></td>
+            <td><span class="commessa">{{ g.commessa or g.op_codice }}</span>{% if g.a_scorta %}<span class="badge-scorta-live">📦 A SCORTA</span>{% endif %}<span class="pz-prod">pz in prod. <span class="pz-box">{{ g.qta_pianificata }}</span></span></td>
             <td><span class="saldo-num{{ ' zero' if g.saldo_totale <= 0 else '' }}">{{ g.saldo_totale | round | int }}</span></td>
             <td>
               <div class="codice-img">

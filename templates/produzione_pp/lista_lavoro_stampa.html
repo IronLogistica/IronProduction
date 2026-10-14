@@ -57,6 +57,8 @@
 
   .foto-placeholder{margin-top:20px;padding:14px;border:1px dashed var(--border);font-size:11px;color:#999;text-align:center}
 
+  .timbro-scorta{margin:6px 0;border:3px solid #7b3fbf;color:#7b3fbf;font-weight:900;font-size:20px;letter-spacing:1px;text-align:center;padding:4px 6px;border-radius:6px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .timbro-scorta small{display:block;font-size:10px;font-weight:700;letter-spacing:0}
   @media print{
     body{background:#fff;padding:0}
     .toolbar{display:none}
@@ -119,6 +121,7 @@
     <div class="hdr-box">
       <div class="lbl">Nr Commessa</div>
       <div class="val giallo">{{ dati.commessa or '—' }}</div>
+      {% if dati.a_scorta %}<div class="timbro-scorta">📦 A SCORTA<small>per magazzino · nessun cliente</small></div>{% endif %}
       <div class="foto-mini">
         {% if dati.foto_id %}
         <img src="/api/foto_articolo/file/{{ dati.foto_id }}" alt="Foto {{ dati.codice_articolo }}">
