@@ -1,14 +1,14 @@
 """
-Schemi di taglio e Piano di taglio (richiesta Mauri, 14/10/2026). Caso reale:
-barra TTD32SP15L7 da 7.000 per la T250DT.
-  A = 1 TPD32L3940 (3.940) + 1 TR2502DT (2.460)    scarto 600
-  B = 2 TR2502DT (2.460) + 2 TPD32L780 (780)       scarto 520
-50 T250DT = 50 TPD32L3940 + 100 TR2502DT -> 50 barre A + 25 barre B = 75 barre,
-50 zampe TPD32L780 in piu' a magazzino.
+Schemi di taglio (richiesta Mauri, 14/10/2026) — REGOLA: lo schema e' OBBLIGATORIO
+quando si taglia un suo codice attivatore. Foglio di taglio di Angelo, barra
+TTD32SP15L7 da 7.000:
+  A = 1 TPD32L3940 (3.940) + 1 TR2502DT (2.460)   scarto 600, attivato da TR2502DT
+Per 50 T250DT (50 TPD32L3940 + 100 TR2502DT): 100 barre A -> 100 TR2502DT e 100
+TPD32L3940; 50 TPD32L3940 servono alla commessa, 50 vanno a magazzino.
 """
 import unittest
 
-from flask import Flask
+from flask import Flask, render_template
 
 from models import (db, CentroCostoWood, CicloLavoroWood, OrdineProduzione, GiacenzaWood, DistintaBaseWood,
                     EventoConsuntivoPP, AuditPP, SchemaTaglioWood, SchemaTaglioRigaWood, CaricoExtraTaglioWood,
@@ -21,48 +21,43 @@ PIN = '1234'
 
 def _schema(nome, righe, barra=7000):
     return {'id': nome, 'nome': nome, 'lunghezza_barra_mm': barra, 'scarto_mm': None,
-            'righe': [{'codice': c, 'quantita': q, 'lunghezza_mm': l} for c, q, l in righe]}
+            'righe': [{'codice': c, 'quantita': q, 'lunghezza_mm': l, 'attiva_schema': att} for c, q, l, att in righe]}
 
 
-A = _schema('A', [('TPD32L3940', 1, 3940), ('TR2502DT', 1, 2460)])
-B = _schema('B', [('TR2502DT', 2, 2460), ('TPD32L780', 2, 780)])
+A_TR = _schema('A', [('TPD32L3940', 1, 3940, False), ('TR2502DT', 1, 2460, True)])
+A_TPD = _schema('A', [('TPD32L3940', 1, 3940, True), ('TR2502DT', 1, 2460, False)])
+B_TR = _schema('B', [('TR2502DT', 2, 2460, True), ('TPD32L780', 2, 780, False)])
 
 
-class TestOttimizzatore(unittest.TestCase):
-    def test_caso_t250dt(self):
-        p = calcola_piano({'TPD32L3940': 50, 'TR2502DT': 100}, [A, B])
-        self.assertEqual(p['barre_totali'], 75, 'contro 100 tagliando un codice alla volta')
-        self.assertEqual({r['nome']: r['barre'] for r in p['righe_piano']}, {'A': 50, 'B': 25})
+class TestRegolaSchema(unittest.TestCase):
+    def test_tagliando_tr2502dt_si_usa_sempre_lo_schema(self):
+        p = calcola_piano({'TPD32L3940': 50, 'TR2502DT': 100}, [A_TR])
+        self.assertEqual(p['barre_totali'], 100)
+        self.assertEqual(p['righe_piano'][0]['attivato_da'], 'TR2502DT')
+        self.assertEqual(p['extra'], {'TPD32L3940': 50}, 'i TPD32L3940 in piu vanno a magazzino')
+        self.assertEqual(p['coperti'], ['TPD32L3940', 'TR2502DT'])
+
+    def test_solo_tr2502dt_richiesto(self):
+        p = calcola_piano({'TR2502DT': 40}, [A_TR])
+        self.assertEqual(p['barre_totali'], 40)
+        self.assertEqual(p['extra'], {'TPD32L3940': 40})
+
+    def test_codice_non_attivatore_non_fa_scattare_lo_schema(self):
+        """Tagliare TPD32L3940 da solo NON usa lo schema A se A e' attivato dal TR2502DT."""
+        self.assertIsNone(calcola_piano({'TPD32L3940': 30}, [A_TR]))
+
+    def test_copertura_parziale(self):
+        p = calcola_piano({'TPD32L3940': 80, 'TR2502DT': 50}, [A_TR])
+        self.assertEqual(p['barre_totali'], 50)
+        self.assertEqual(p['parziali'], {'TPD32L3940': 30}, '30 TPD32L3940 restano da tagliare a parte')
+        self.assertEqual(p['extra'], {})
+
+    def test_catena_di_schemi(self):
+        """A attivato da TPD32L3940 da' anche TR2502DT; B taglia solo i TR2502DT che mancano."""
+        p = calcola_piano({'TPD32L3940': 50, 'TR2502DT': 100}, [B_TR, A_TPD])
+        self.assertEqual([(r['nome'], r['barre']) for r in p['righe_piano']], [('A', 50), ('B', 25)])
+        self.assertEqual(p['barre_totali'], 75)
         self.assertEqual(p['extra'], {'TPD32L780': 50})
-        self.assertTrue(p['ottimo'])
-
-    def test_ordine_schemi_indifferente(self):
-        self.assertEqual(calcola_piano({'TPD32L3940': 50, 'TR2502DT': 100}, [B, A])['barre_totali'], 75)
-
-    def test_numeri_dispari(self):
-        p = calcola_piano({'TPD32L3940': 40, 'TR2502DT': 81}, [A, B])
-        self.assertEqual(p['barre_totali'], 61)  # es. 40 A + 21 B oppure 41 A + 20 B
-        ecc = sum(q for c, q in p['extra'].items() if c != 'TPD32L780')
-        self.assertEqual(ecc, 1, "un solo pezzo richiesto in eccesso, che va a magazzino")
-
-    def test_solo_un_codice(self):
-        p = calcola_piano({'TPD32L3940': 10}, [A, B])
-        self.assertEqual(p['barre_totali'], 10)
-        self.assertEqual(p['extra'], {'TR2502DT': 10})
-
-    def test_codice_senza_schema(self):
-        p = calcola_piano({'TR2502DT': 4, 'ALTRO': 3}, [A, B])
-        self.assertEqual(p['non_coperti'], ['ALTRO'])
-        self.assertEqual(p['barre_totali'], 2)
-
-    def test_nessuno_schema_pertinente(self):
-        self.assertIsNone(calcola_piano({'ALTRO': 3}, [A, B]))
-
-    def test_tre_schemi_grandi_numeri(self):
-        C = _schema('C', [('TPD32L3940', 1, 3940), ('TPD32L780', 3, 780)])
-        p = calcola_piano({'TPD32L3940': 500, 'TR2502DT': 900, 'TPD32L780': 200}, [A, B, C])
-        # 500 A coprono i TPD32L3940 e 500 TR2502DT; 200 B coprono 400 TR2502DT e 400 zampe
-        self.assertEqual(p['barre_totali'], 700)
 
 
 class TestPianoNellOrdineDiLavoro(unittest.TestCase):
@@ -105,12 +100,11 @@ class TestPianoNellOrdineDiLavoro(unittest.TestCase):
             ])
             db.session.commit()
         self.c = self.app.test_client()
-        for nome, righe in (('A', [('TPD32L3940', 1, 3940), ('TR2502DT', 1, 2460)]),
-                            ('B', [('TR2502DT', 2, 2460), ('TPD32L780', 2, 780)])):
-            r = self.c.post('/api/schemi-taglio', json={'materiale': 'ttd32sp15l7', 'nome': nome, 'lunghezza_barra_mm': 7000,
-                                                        'righe': [{'codice': c, 'quantita': q, 'lunghezza_mm': l}
-                                                                  for c, q, l in righe]})
-            self.assertEqual(r.status_code, 201, r.get_json())
+        r = self.c.post('/api/schemi-taglio', json={
+            'materiale': 'ttd32sp15l7', 'nome': 'A', 'lunghezza_barra_mm': 7000,
+            'righe': [{'codice': 'TPD32L3940', 'quantita': 1, 'lunghezza_mm': 3940},
+                      {'codice': 'TR2502DT', 'quantita': 1, 'lunghezza_mm': 2460, 'attiva_schema': True}]})
+        self.assertEqual(r.status_code, 201, r.get_json())
 
     def _ol(self):
         with self.app.app_context():
@@ -122,41 +116,49 @@ class TestPianoNellOrdineDiLavoro(unittest.TestCase):
                                                     'righe': [{'codice': 'P', 'quantita': 2, 'lunghezza_mm': 3600}]})
         self.assertEqual(r.status_code, 400)
         self.assertIn('superano la barra', r.get_json()['error'])
+        senza = {'materiale': 'X', 'nome': 'Z', 'lunghezza_barra_mm': 7000,
+                 'righe': [{'codice': 'P', 'quantita': 1, 'lunghezza_mm': 1000}]}
+        self.assertIn('Spunta almeno un codice', self.c.post('/api/schemi-taglio', json=senza).get_json()['error'])
+        doppio = {'materiale': 'TTD32SP15L7', 'nome': 'B', 'lunghezza_barra_mm': 7000,
+                  'righe': [{'codice': 'TR2502DT', 'quantita': 2, 'lunghezza_mm': 2460, 'attiva_schema': True}]}
+        r = self.c.post('/api/schemi-taglio', json=doppio)
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('attiva già lo schema A', r.get_json()['error'])
         with self.app.app_context():
             self.assertEqual(schemi_per_materiale('TTD32SP15L7')[0]['scarto_mm'], 600)
 
     def test_ol_segatrice_usa_il_piano(self):
         g = self._ol()['gruppi'][0]
         self.assertEqual(g['materiale'], 'TTD32SP15L7')
-        self.assertEqual(g['nr_barre_totale'], 75, 'senza schemi sarebbero 50 + 50 = 100')
-        self.assertEqual(g['quantita_necessaria'], 525.0, '75 barre x 7 m')
-        self.assertEqual(g['piano_taglio']['extra'], {'TPD32L780': 50})
+        self.assertEqual(g['nr_barre_totale'], 100, '100 TR2502DT = 100 barre schema A')
+        self.assertEqual(g['quantita_necessaria'], 700.0, '100 barre x 7 m')
+        self.assertEqual(g['piano_taglio']['extra'], {'TPD32L3940': 50})
         self.assertTrue(all(r.get('nel_piano') for r in g['righe']))
-        self.assertEqual(g['extra_taglio'], [{'codice': 'TPD32L780', 'previsti': 50, 'caricati': 0, 'da_caricare': 50}])
+        self.assertEqual(g['extra_taglio'], [{'codice': 'TPD32L3940', 'previsti': 50, 'caricati': 0, 'da_caricare': 50}])
 
     def test_pagina_stampa_mostra_piano(self):
         with self.app.test_request_context():
-            from flask import render_template
             dati = self._ol()
             with self.app.app_context():
                 html = render_template('produzione_pp/lista_lavoro_stampa.html', dati=dati,
                                        centro=db.session.get(CentroCostoWood, self.seg_id))
         self.assertIn('PIANO DI TAGLIO TTD32SP15L7', html)
-        self.assertIn('→ MAGAZZINO', html)
+        self.assertIn('2° taglio', html)
+        self.assertIn('per tagliare TR2502DT', html)
         self.assertIn('carica-extra-taglio', html)
 
     def test_carico_extra_a_magazzino(self):
         url = f'/api/ordini-produzione/OP-2026-000090/lista-lavoro/{self.seg_id}/carica-extra-taglio'
-        self.assertEqual(self.c.post(url, json={'codice': 'TPD32L780', 'quantita': 10, 'pin': '0'}).status_code, 403)
+        self.assertEqual(self.c.post(url, json={'codice': 'TPD32L3940', 'quantita': 10, 'pin': '0'}).status_code, 403)
         self.assertEqual(self.c.post(url, json={'codice': 'TR2501', 'quantita': 10, 'pin': PIN}).status_code, 400)
-        self.assertEqual(self.c.post(url, json={'codice': 'TPD32L780', 'quantita': 51, 'pin': PIN}).status_code, 400)
-        self.assertTrue(self.c.post(url, json={'codice': 'tpd32l780', 'quantita': 30, 'pin': PIN}).get_json()['ok'])
+        self.assertEqual(self.c.post(url, json={'codice': 'TPD32L3940', 'quantita': 51, 'pin': PIN}).status_code, 400)
+        self.assertTrue(self.c.post(url, json={'codice': 'tpd32l3940', 'quantita': 30, 'pin': PIN}).get_json()['ok'])
         with self.app.app_context():
-            self.assertEqual(db.session.get(GiacenzaWood, 'TPD32L780').quantita, 30)
+            self.assertEqual(db.session.get(GiacenzaWood, 'TPD32L3940').quantita, 30)
         e = self._ol()['gruppi'][0]['extra_taglio'][0]
         self.assertEqual((e['caricati'], e['da_caricare']), (30, 20))
-        self.assertTrue(self.c.post(url, json={'codice': 'TPD32L780', 'quantita': 20, 'pin': PIN}).get_json()['ok'])
-        self.assertEqual(self.c.post(url, json={'codice': 'TPD32L780', 'quantita': 1, 'pin': PIN}).status_code, 400)
+        self.assertTrue(self.c.post(url, json={'codice': 'TPD32L3940', 'quantita': 20, 'pin': PIN}).get_json()['ok'])
+        self.assertEqual(self.c.post(url, json={'codice': 'TPD32L3940', 'quantita': 1, 'pin': PIN}).status_code, 400)
 
     def test_extra_previsti_restano_mentre_si_taglia(self):
         """Gli extra si calcolano su tutto l'OL (fatti + da fare): non spariscono

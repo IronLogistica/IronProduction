@@ -3,12 +3,12 @@
 <div class="page-toolbar"><div class="page-title">✂️ Schemi di Taglio</div></div>
 
 <div class="card st-info">
-  <b>Come si taglia DAVVERO una barra.</b> Per ogni materiale registra gli schemi che usa Angelo: quali codici escono da
-  <b>una</b> barra e quanti. Esempio barra TTD32SP15L7 da 7.000 mm:
-  <b>A</b> = 1 TPD32L3940 + 1 TR2502DT (scarto 600) — <b>B</b> = 2 TR2502DT + 2 TPD32L780 (scarto 520).<br>
-  L'<b>Ordine di Lavoro</b> calcola da solo il <b>Piano di Taglio</b> con meno barre. I pezzi che escono in più
-  (es. le zampe) si caricano a <b>magazzino</b> dall'OL e le commesse successive ne chiedono di meno.
-  Le misure comprendono già lo sfrido della lama.
+  <b>Lo schema è una regola fissa: quando si taglia un certo codice, la barra si taglia SEMPRE così.</b><br>
+  Esempio barra TTD32SP15L7 da 7.000 mm: schema <b>A</b> = 1 TPD32L3940 (3.940) + 1 TR2502DT (2.460), scarto 600.
+  Spunta <b>⚡ Attiva</b> sul codice che fa scattare lo schema (es. TR2502DT): ogni volta che l'Ordine di Lavoro deve tagliare
+  TR2502DT, usa lo schema A e da ogni barra esce anche un TPD32L3940.<br>
+  I pezzi che escono insieme coprono prima quello che serve alla stessa commessa; quelli in più si caricano a <b>magazzino</b>
+  dall'OL, così le commesse successive ne chiedono di meno. Un codice può attivare un solo schema. Le misure comprendono già lo sfrido della lama.
 </div>
 
 <div class="st-layout">
@@ -19,7 +19,7 @@
       <label>Nome schema<input id="st-nome" placeholder="es. A" maxlength="60"></label>
       <label>Lunghezza barra (mm)<input id="st-barra" type="number" min="1" placeholder="7000" oninput="disegna()"></label>
     </div>
-    <table class="st-righe"><thead><tr><th>Codice che esce dalla barra</th><th>Pz per barra</th><th>Lunghezza pezzo (mm)</th><th></th></tr></thead>
+    <table class="st-righe"><thead><tr><th>Codice che esce dalla barra</th><th>Pz per barra</th><th>Lunghezza pezzo (mm)</th><th title="Quando si taglia questo codice si usa questo schema">⚡ Attiva</th><th></th></tr></thead>
       <tbody id="st-righe"></tbody></table>
     <button class="btn btn-ghost" type="button" onclick="aggiungiRiga()">+ Aggiungi codice</button>
     <div id="st-barra-vis" class="st-barra-vis"></div>
@@ -33,9 +33,9 @@
 
   <div class="card st-sim">
     <h3>🧮 Prova il piano di taglio</h3>
-    <p class="st-dim">Scrivi quanti pezzi servono: il programma sceglie la combinazione di schemi con meno barre.</p>
+    <p class="st-dim">Scrivi quanti pezzi servono: il programma applica gli schemi dei codici ⚡ e mostra barre e pezzi in più.</p>
     <label>Materiale<input id="sim-materiale" placeholder="TTD32SP15L7"></label>
-    <textarea id="sim-bisogni" rows="4" placeholder="TPD32L3940 50&#10;TR2502DT 100"></textarea>
+    <textarea id="sim-bisogni" rows="4" placeholder="TR2502DT 100&#10;TPD32L3940 50"></textarea>
     <button class="btn btn-primary" type="button" onclick="simula()">Calcola</button>
     <div id="sim-esito"></div>
   </div>
@@ -115,18 +115,18 @@ function aggiungiRiga(r={}){
   tr.innerHTML=`<td><div class="st-ac"><input class="r-cod" autocomplete="off" placeholder="Codice" value="${esc(r.codice||'')}" oninput="cercaCodici(this,true)" onchange="infoCodice(this)"><div class="st-sug"></div></div></td>
     <td><input class="r-qta" type="number" min="1" value="${r.quantita||1}" oninput="disegna()"></td>
     <td><input class="r-lung" type="number" min="1" placeholder="mm" value="${r.lunghezza_mm??''}" oninput="disegna()"></td>
+    <td style="text-align:center"><input class="r-att" type="checkbox" style="width:20px;height:20px" ${r.attiva_schema?'checked':''}></td>
     <td><button class="btn btn-ghost" type="button" title="Togli" onclick="this.closest('tr').remove();disegna()">✕</button></td>`;
   tb.appendChild(tr); disegna();
 }
 function leggiRighe(){
   return [...document.querySelectorAll('#st-righe tr')].map(tr=>({codice:tr.querySelector('.r-cod').value.trim().toUpperCase(),
-    quantita:parseInt(tr.querySelector('.r-qta').value||0), lunghezza_mm:tr.querySelector('.r-lung').value?parseFloat(tr.querySelector('.r-lung').value):null})).filter(r=>r.codice);
+    quantita:parseInt(tr.querySelector('.r-qta').value||0), attiva_schema:tr.querySelector('.r-att').checked, lunghezza_mm:tr.querySelector('.r-lung').value?parseFloat(tr.querySelector('.r-lung').value):null})).filter(r=>r.codice);
 }
-function coloreCodice(c){let h=0;for(const ch of c)h=(h*31+ch.charCodeAt(0))>>>0;return COLORI[h%COLORI.length];}
 function barraHtml(barra,righe){
   if(!barra) return '';
   let html='',usati=0; const colori={};
-  for(const r of righe){ if(!r.lunghezza_mm) continue; colori[r.codice]=coloreCodice(r.codice);
+  let i=0; for(const r of righe){ if(!r.lunghezza_mm) continue; colori[r.codice]=colori[r.codice]||COLORI[i++%COLORI.length];
     for(let k=0;k<r.quantita;k++){ usati+=r.lunghezza_mm;
       html+=`<div class="st-seg" style="flex:${r.lunghezza_mm};background:${colori[r.codice]}" title="${esc(r.codice)} L.${fmt(r.lunghezza_mm)}">${esc(r.codice)} ${fmt(r.lunghezza_mm)}</div>`; } }
   const scarto=barra-usati;
@@ -139,7 +139,7 @@ function disegna(){
 function nuovo(){
   inModifica=null; document.getElementById('st-form-titolo').textContent='➕ Nuovo schema';
   ['st-materiale','st-nome','st-barra','st-note'].forEach(id=>document.getElementById(id).value='');
-  document.getElementById('st-righe').innerHTML=''; aggiungiRiga(); aggiungiRiga();
+  document.getElementById('st-righe').innerHTML=''; aggiungiRiga({attiva_schema:true}); aggiungiRiga();
   document.getElementById('st-esito').textContent='';
 }
 function modifica(id){
@@ -172,7 +172,8 @@ async function carica(){
   const per={}; schemi.forEach(s=>(per[s.materiale]=per[s.materiale]||[]).push(s));
   box.innerHTML=Object.entries(per).map(([m,lista])=>`<div class="st-mat"><h4>${esc(m)} <span class="st-dim">· barra ${fmt(lista[0].lunghezza_barra_mm)} mm</span></h4>`+
     lista.map(s=>`<div class="st-schema ${s.attivo?'':'off'}"><div class="nome">${esc(s.nome)}</div>
-      <div>${barraHtml(s.lunghezza_barra_mm,s.righe)}<div class="st-dim" style="margin-top:4px">${s.righe.map(r=>`${r.quantita} × <b>${esc(r.codice)}</b>${r.lunghezza_mm?' L.'+fmt(r.lunghezza_mm):''}`).join(' + ')}${s.scarto_mm!=null?` — scarto ${fmt(s.scarto_mm)} mm`:''}${s.note?' · '+esc(s.note):''}${s.attivo?'':' · <b>DISATTIVATO</b>'}</div></div>
+      <div>${barraHtml(s.lunghezza_barra_mm,s.righe)}<div class="st-dim" style="margin-top:4px">${s.righe.map(r=>`${r.quantita} × <b>${esc(r.codice)}</b>${r.lunghezza_mm?' L.'+fmt(r.lunghezza_mm):''}`).join(' + ')}
+        <br>⚡ Si usa quando si taglia: <b>${s.righe.filter(r=>r.attiva_schema).map(r=>esc(r.codice)).join(', ')||'—'}</b>${s.scarto_mm!=null?` — scarto ${fmt(s.scarto_mm)} mm`:''}${s.note?' · '+esc(s.note):''}${s.attivo?'':' · <b>DISATTIVATO</b>'}</div></div>
       <div style="white-space:nowrap"><button class="btn btn-ghost" onclick="modifica(${s.id})">✏️</button>
         <button class="btn btn-ghost" onclick="attiva(${s.id},${!s.attivo})">${s.attivo?'⏸️ Disattiva':'▶️ Attiva'}</button>
         <button class="btn btn-ghost" style="color:#c0392b" onclick="elimina(${s.id})">🗑️</button></div></div>`).join('')+`</div>`).join('');
@@ -185,8 +186,9 @@ async function simula(){
     const d=await j('/api/schemi-taglio/simula',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({materiale:document.getElementById('sim-materiale').value,bisogni})});
     const p=d.piano; if(!p){out.innerHTML='<p class="st-dim">Nessuno schema di questo materiale riguarda questi codici.</p>';return;}
     out.innerHTML=`<p style="font-size:16px;margin:10px 0 4px"><b>${p.barre_totali} barre</b> (${fmt(p.metri_barre)} m)</p>
-      <table class="pt-tab"><tr><th>Schema</th><th>Barre</th><th>Pezzi</th></tr>${p.righe_piano.map(r=>`<tr><td><b>${esc(r.nome)}</b></td><td><b>${r.barre}</b></td><td>${r.composizione.map(c=>`${c.pezzi_totali} ${esc(c.codice)}${c.richiesto?'':' <span class="pt-mag">→ MAGAZZINO</span>'}`).join('<br>')}</td></tr>`).join('')}</table>
+      <table class="pt-tab"><tr><th>Schema</th><th>Barre</th><th>Pezzi</th></tr>${p.righe_piano.map(r=>`<tr><td><b>${esc(r.nome)}</b><br><small>per ${esc(r.attivato_da)}</small></td><td><b>${r.barre}</b></td><td>${r.composizione.map(c=>`${c.pezzi_totali} ${esc(c.codice)}${c.richiesto?'':' <span class="pt-mag">→ MAGAZZINO</span>'}`).join('<br>')}</td></tr>`).join('')}</table>
       ${Object.keys(p.extra).length?`<p>📦 In più a magazzino: ${Object.entries(p.extra).map(([c,q])=>`<b>${q} ${esc(c)}</b>`).join(', ')}</p>`:''}
+      ${Object.keys(p.parziali||{}).length?`<p class="st-dim">Da tagliare ancora a parte: ${Object.entries(p.parziali).map(([c,q])=>`${q} ${esc(c)}`).join(', ')}</p>`:''}
       ${p.non_coperti.length?`<p class="st-dim">Senza schema: ${p.non_coperti.map(esc).join(', ')}</p>`:''}`;
   }catch(e){ out.textContent='⚠️ '+e.message; }
 }

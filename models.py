@@ -1896,6 +1896,22 @@ def assicura_event_id_varianza_produzione():
             db.session.commit()
 
 
+def assicura_schemi_taglio_attivazione():
+    """Colonna schemi_taglio_righe_wood.attiva_schema (codice che fa scattare lo schema)."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        try:
+            db.session.execute(text("ALTER TABLE schemi_taglio_righe_wood ADD COLUMN IF NOT EXISTS attiva_schema BOOLEAN NOT NULL DEFAULT FALSE"))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('schemi_taglio_righe_wood')}
+        if 'attiva_schema' not in colonne:
+            db.session.execute(text("ALTER TABLE schemi_taglio_righe_wood ADD COLUMN attiva_schema BOOLEAN NOT NULL DEFAULT 0"))
+            db.session.commit()
+
+
 def assicura_op_a_scorta():
     """Colonna ordini_produzione_pp.a_scorta (OP a scorta, senza cliente)."""
     db_url = os.environ.get('DATABASE_URL', '')
@@ -2328,9 +2344,9 @@ class SchemaTaglioWood(db.Model):
     """Schema di taglio di una barra (richiesta Mauri, 14/10/2026): come Angelo
     taglia DAVVERO una barra di un materiale, combinando piu' codici. Es. barra
     TTD32SP15L7 da 7.000: schema A = 1 TPD32L3940 + 1 TR2502DT (scarto 600),
-    schema B = 2 TR2502DT + 2 TPD32L780. Il Piano di Taglio dell'Ordine di Lavoro
-    sceglie la combinazione di schemi con MENO barre; i pezzi che escono in piu'
-    (codici non richiesti dall'OL) vanno a magazzino come semilavorato."""
+    schema B = 2 TR2502DT + 2 TPD32L780. Lo schema e' OBBLIGATORIO quando l'OL
+    taglia un suo codice "attivatore" (SchemaTaglioRigaWood.attiva_schema); i
+    pezzi che escono in piu' vanno a magazzino come semilavorato."""
     __tablename__ = 'schemi_taglio_wood'
     id                 = db.Column(db.Integer, primary_key=True)
     materiale          = db.Column(db.String(100), nullable=False, index=True)
@@ -2351,6 +2367,12 @@ class SchemaTaglioRigaWood(db.Model):
     codice      = db.Column(db.String(100), nullable=False)
     quantita    = db.Column(db.Integer, nullable=False, default=1)
     lunghezza_mm = db.Column(db.Float, nullable=True)
+    # Regola di Mauri (14/10/2026): lo schema e' OBBLIGATORIO quando si taglia un
+    # codice con questo flag. Es. schema A = 1 TPD32L3940 + 1 TR2502DT: se il flag
+    # e' sul TR2502DT, ogni TR2502DT si taglia con lo schema A (esce anche 1
+    # TPD32L3940 per barra). Gli altri codici dello schema sono pezzi che escono
+    # insieme: coprono il resto dell'OL, l'avanzo va a magazzino.
+    attiva_schema = db.Column(db.Boolean, nullable=False, default=False)
 
 
 class CaricoExtraTaglioWood(db.Model):

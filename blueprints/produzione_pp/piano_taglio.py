@@ -1,21 +1,22 @@
 """
 SCHEMI DI TAGLIO e PIANO DI TAGLIO (richiesta Mauri, 14/10/2026).
 
-Caso reale: barra TTD32SP15L7 da 7.000 mm per la transenna T250DT.
-  - schema A = 1 TPD32L3940 (3.940) + 1 TR2502DT (2.460)   -> scarto 600
-  - schema B = 2 TR2502DT (2 x 2.460) + 2 TPD32L780 (zampe) -> scarto 520
-Per 50 T250DT (50 TPD32L3940 + 100 TR2502DT): 50 barre A + 25 barre B = 75
-barre (contro 100 tagliando un codice alla volta) e 50 zampe in piu' che vanno a
-magazzino come semilavorato: la prossima commessa di zampe le trova gia' pronte.
+Caso reale: barra TTD32SP15L7 da 7.000 mm per la transenna T250DT (foglio di
+taglio di Angelo "Tubo Tondo 32 - Barra 7 metri"):
+  1 TPD32L3940 (3.940) | 1o taglio | 1 TR2502DT (2.460) | 2o taglio | scarto 600
+Se lo schema e' attivato sul TR2502DT, OGNI TR2502DT si taglia cosi': per 100
+TR2502DT servono 100 barre ed escono anche 100 TPD32L3940 (quelli che servono
+alla commessa li coprono, gli altri vanno a magazzino).
 
 Lo sfrido della lama e' gia' compreso nelle misure (indicazione di Mauri): lo
 scarto di uno schema e' semplicemente barra - somma dei pezzi.
 
-Il Piano di Taglio e' calcolato per ogni gruppo-materiale dell'Ordine di Lavoro:
-i bisogni sono i 'Da produrre' delle righe dell'OL; si sceglie la combinazione
-di schemi con MENO barre (a parita', meno pezzi in eccesso). Tutto cio' che
-esce oltre il bisogno (codici non richiesti dall'OL + eccedenze) e' "extra":
-si carica a magazzino dall'OL con PIN Direzione, tracciato per OP.
+REGOLA (correzione di Mauri, 14/10/2026): lo schema non e' una scelta di
+ottimizzazione ma una regola OBBLIGATORIA legata al codice. Su ogni schema si
+spuntano i codici che lo "attivano": quando l'OL deve tagliare quel codice, ogni
+barra si taglia con quello schema. Gli altri pezzi che escono dalla barra coprono
+il resto dell'OL; quello che avanza e' "extra" e si carica a magazzino dall'OL
+con PIN Direzione, tracciato per OP.
 """
 import math
 import os
@@ -27,9 +28,6 @@ from models import (db, SchemaTaglioWood, SchemaTaglioRigaWood, CaricoExtraTagli
                     DistintaBaseWood, GiacenzaWood, ParametriLavorazioneWood, CentroCostoWood, AuditPP)
 
 schemi_taglio_bp = Blueprint('schemi_taglio', __name__)
-
-LIMITE_NODI_RICERCA = 200_000
-
 
 def _pin_ok(pin):
     return str(pin or '').strip() == os.environ.get('PIN_DIREZIONE', '1234')
@@ -44,7 +42,8 @@ def _norm(c):
 # ---------------------------------------------------------------------------
 
 def _schema_dict(s):
-    righe = [{'codice': r.codice, 'quantita': r.quantita, 'lunghezza_mm': r.lunghezza_mm} for r in s.righe]
+    righe = [{'codice': r.codice, 'quantita': r.quantita, 'lunghezza_mm': r.lunghezza_mm,
+              'attiva_schema': bool(r.attiva_schema)} for r in s.righe]
     usati = sum((r['lunghezza_mm'] or 0) * r['quantita'] for r in righe)
     tutte_le_misure = all(r['lunghezza_mm'] for r in righe) and righe
     return {'id': s.id, 'materiale': s.materiale, 'nome': s.nome, 'lunghezza_barra_mm': s.lunghezza_barra_mm,
@@ -61,113 +60,71 @@ def schemi_per_materiale(materiale, solo_attivi=True):
 
 
 # ---------------------------------------------------------------------------
-# Ottimizzatore: minimo numero di barre che copre i bisogni
+# Piano di taglio: lo schema scatta quando si taglia il suo codice "attivatore"
 # ---------------------------------------------------------------------------
-
-def _greedy(bisogni, schemi):
-    """Soluzione di partenza sempre valida: barra per barra, lo schema che copre
-    piu' pezzi ancora mancanti."""
-    rem = dict(bisogni)
-    conteggi = [0] * len(schemi)
-    while any(v > 0 for v in rem.values()):
-        migliore, punti = None, 0
-        for i, s in enumerate(schemi):
-            p = sum(min(q, max(rem.get(c, 0), 0)) for c, q in s['_q'].items())
-            if p > punti:
-                migliore, punti = i, p
-        if migliore is None:
-            return None
-        conteggi[migliore] += 1
-        for c, q in schemi[migliore]['_q'].items():
-            if c in rem:
-                rem[c] -= q
-    return conteggi
-
-
-def _valuta(conteggi, bisogni, schemi):
-    prodotti = {}
-    for n, s in zip(conteggi, schemi):
-        for c, q in s['_q'].items():
-            prodotti[c] = prodotti.get(c, 0) + n * q
-    eccesso = sum(prodotti.get(c, 0) - b for c, b in bisogni.items())
-    return (sum(conteggi), eccesso, sum(1 for n in conteggi if n)), prodotti
-
 
 def calcola_piano(bisogni, schemi):
     """bisogni: {codice: pezzi da tagliare}; schemi: lista di _schema_dict.
-    Ritorna None se nessuno schema riguarda questi codici."""
+
+    Regola (Mauri, 14/10/2026): uno schema NON e' una scelta di ottimizzazione,
+    e' OBBLIGATORIO per i codici su cui e' attivato. Se l'OL deve tagliare N pezzi
+    di un codice attivatore, si tagliano ceil(N / pezzi per barra) barre con quello
+    schema; gli altri codici che escono dalla barra coprono prima il resto dell'OL,
+    l'avanzo va a magazzino. Un codice coperto solo in parte dai pezzi dello
+    schema resta da tagliare per la differenza (a barra intera o col suo schema).
+
+    Ordine: prima gli schemi i cui pezzi "insieme" coprono altri codici
+    attivatori (es. A attivato da TPD32L3940 da' anche TR2502DT, che a sua volta
+    attiva B): cosi' B taglia solo i TR2502DT che mancano ancora.
+    Ritorna None se nessuno schema scatta per questi codici."""
     bisogni = {_norm(c): int(math.ceil(b)) for c, b in bisogni.items() if b and b > 0}
-    utili = []
+    per_attivatore = {}
     for s in schemi:
-        qmap = {}
         for r in s['righe']:
-            if r['quantita'] and r['quantita'] > 0:
-                qmap[_norm(r['codice'])] = qmap.get(_norm(r['codice']), 0) + int(r['quantita'])
-        if any(c in bisogni for c in qmap):
-            utili.append(dict(s, _q=qmap))
-    if not utili:
+            if r.get('attiva_schema') and _norm(r['codice']) in bisogni:
+                per_attivatore.setdefault(_norm(r['codice']), s)
+    if not per_attivatore:
         return None
-    coperti = {c: b for c, b in bisogni.items() if any(c in s['_q'] for s in utili)}
-    non_coperti = sorted(c for c in bisogni if c not in coperti)
 
-    migliore = _greedy(coperti, utili)
-    miglior_chiave = _valuta(migliore, coperti, utili)[0]
-    n = len(utili)
-    nodi = [0]
-    ottimo = [True]
-    # massimo pezzi per barra di ciascun codice negli schemi da i in poi (per il limite inferiore)
-    max_da = [{c: max((utili[j]['_q'].get(c, 0) for j in range(i, n)), default=0) for c in coperti}
-              for i in range(n + 1)]
+    def qmap(s):
+        out = {}
+        for r in s['righe']:
+            out[_norm(r['codice'])] = out.get(_norm(r['codice']), 0) + int(r['quantita'] or 0)
+        return out
 
-    def cerca(i, rem, conteggi, barre):
-        nonlocal migliore, miglior_chiave
-        nodi[0] += 1
-        if nodi[0] > LIMITE_NODI_RICERCA:
-            ottimo[0] = False
-            return
-        mancanti = {c: v for c, v in rem.items() if v > 0}
-        if not mancanti:
-            chiave = _valuta(conteggi + [0] * (n - len(conteggi)), coperti, utili)[0]
-            if chiave < miglior_chiave:
-                migliore, miglior_chiave = conteggi + [0] * (n - len(conteggi)), chiave
-            return
-        if i == n:
-            return
-        lb = 0
-        for c, v in mancanti.items():
-            m = max_da[i][c]
-            if m == 0:
-                return
-            lb = max(lb, math.ceil(v / m))
-        if barre + lb > miglior_chiave[0]:
-            return
-        q = utili[i]['_q']
-        alto = max((math.ceil(v / q[c]) for c, v in mancanti.items() if q.get(c)), default=0)
-        for k in range(alto, -1, -1):
-            nuovo = {c: v - k * q.get(c, 0) for c, v in rem.items()}
-            cerca(i + 1, nuovo, conteggi + [k], barre + k)
-
-    cerca(0, dict(coperti), [], 0)
-    _chiave, prodotti = _valuta(migliore, coperti, utili)
-
-    righe_piano = []
-    for k, s in zip(migliore, utili):
-        if not k:
+    prodotti, righe_piano, da_fare = {}, [], list(per_attivatore)
+    while da_fare:
+        altri_pezzi = {c for a in da_fare for c in qmap(per_attivatore[a]) if c != a}
+        pronti = [a for a in da_fare if a not in altri_pezzi] or da_fare
+        a = max(pronti, key=lambda c: (bisogni[c] - prodotti.get(c, 0), c))
+        da_fare.remove(a)
+        s = per_attivatore[a]
+        q = qmap(s)
+        resto = bisogni[a] - prodotti.get(a, 0)
+        if resto <= 0 or not q.get(a):
             continue
+        barre = math.ceil(resto / q[a])
+        for c, n in q.items():
+            prodotti[c] = prodotti.get(c, 0) + barre * n
         righe_piano.append({
-            'schema_id': s['id'], 'nome': s['nome'], 'barre': k, 'lunghezza_barra_mm': s['lunghezza_barra_mm'],
-            'scarto_mm': s['scarto_mm'],
+            'schema_id': s['id'], 'nome': s['nome'], 'barre': barre, 'attivato_da': a,
+            'lunghezza_barra_mm': s['lunghezza_barra_mm'], 'scarto_mm': s['scarto_mm'],
             'composizione': [{'codice': _norm(r['codice']), 'quantita': r['quantita'], 'lunghezza_mm': r['lunghezza_mm'],
-                              'pezzi_totali': k * r['quantita'], 'richiesto': _norm(r['codice']) in coperti}
+                              'pezzi_totali': barre * r['quantita'], 'richiesto': _norm(r['codice']) in bisogni,
+                              'attiva_schema': bool(r.get('attiva_schema'))}
                              for r in s['righe']],
         })
-    extra = {c: p - coperti.get(c, 0) for c, p in prodotti.items() if p - coperti.get(c, 0) > 0}
-    lunghezze = {s['lunghezza_barra_mm'] for s in utili}
-    return {'righe_piano': righe_piano, 'barre_totali': sum(migliore), 'prodotti': prodotti,
-            'coperti': sorted(coperti), 'non_coperti': non_coperti, 'extra': dict(sorted(extra.items())),
+    if not righe_piano:
+        return None
+    coperti = sorted(c for c in bisogni if prodotti.get(c, 0) >= bisogni[c])
+    parziali = {c: bisogni[c] - prodotti[c] for c in bisogni if 0 < prodotti.get(c, 0) < bisogni[c]}
+    non_coperti = sorted(c for c in bisogni if not prodotti.get(c))
+    extra = {c: p - bisogni.get(c, 0) for c, p in prodotti.items() if p - bisogni.get(c, 0) > 0}
+    lunghezze = {r['lunghezza_barra_mm'] for r in righe_piano}
+    return {'righe_piano': righe_piano, 'barre_totali': sum(r['barre'] for r in righe_piano), 'prodotti': prodotti,
+            'coperti': coperti, 'parziali': parziali, 'non_coperti': non_coperti, 'extra': dict(sorted(extra.items())),
             'lunghezza_barra_mm': lunghezze.pop() if len(lunghezze) == 1 else None,
-            'metri_barre': round(sum(k * s['lunghezza_barra_mm'] for k, s in zip(migliore, utili)) / 1000, 3),
-            'ottimo': ottimo[0]}
+            'metri_barre': round(sum(r['barre'] * r['lunghezza_barra_mm'] for r in righe_piano) / 1000, 3)}
 
 
 # ---------------------------------------------------------------------------
@@ -191,22 +148,37 @@ def applica_piano_al_gruppo(o, centro_id, materiale, righe, caricati=None):
     schemi = schemi_per_materiale(materiale)
     if not schemi:
         return None
+    if caricati is None:
+        caricati = caricati_extra(o.id, centro_id)
+    # I pezzi extra gia' caricati a magazzino da questo OL finiscono nella giacenza e
+    # (come ogni semilavorato) abbasserebbero il 'Da produrre' dello stesso OL: si
+    # rimettono nel conto, altrimenti gli extra crescerebbero a ogni carico.
+    def _con_caricati(r, base):
+        return min(base + caricati.get(_norm(r['codice']), 0), r['nr_pz_da_fare'] or 0)
     # pezzi che questo OL taglia in tutto (gia' tagliati + ancora da tagliare):
     # base per gli extra previsti, che non devono sparire man mano che si taglia
-    base = {r['codice']: min((r['saldo'] or 0) + (r['pezzi_fatti'] or 0), r['nr_pz_da_fare'] or 0) for r in righe}
+    base = {r['codice']: _con_caricati(r, (r['saldo'] or 0) + (r['pezzi_fatti'] or 0)) for r in righe}
     piano_totale = calcola_piano(base, schemi)
     if piano_totale is None:
         return None
-    piano = calcola_piano({r['codice']: r['saldo'] for r in righe}, schemi)
-    coperti = set(piano_totale['coperti'])
+    da_tagliare = {r['codice']: min((r['saldo'] or 0) + caricati.get(_norm(r['codice']), 0),
+                                    max((r['nr_pz_da_fare'] or 0) - (r['pezzi_fatti'] or 0), 0))
+                   for r in righe}
+    piano = calcola_piano(da_tagliare, schemi)
+    coperti = set((piano or piano_totale)['coperti'])
+    parziali = (piano or {}).get('parziali') or {}
     for r in righe:
-        if _norm(r['codice']) in coperti:
+        cod = _norm(r['codice'])
+        if cod in coperti:
             r['nel_piano'] = True
             r['nr_barre'] = None
             r['pz_per_barra'] = None
+        elif cod in parziali:
+            # i pezzi che escono dallo schema ne coprono una parte: il resto si taglia a parte
+            resto = parziali[cod]
+            r['dal_piano'] = max(da_tagliare[r['codice']] - resto, 0)
+            r['nr_barre'] = int(math.ceil(resto / r['pz_per_barra'])) if r.get('pz_per_barra') else None
     barre_fuori = sum(r['nr_barre'] or 0 for r in righe if not r.get('nel_piano'))
-    if caricati is None:
-        caricati = caricati_extra(o.id, centro_id)
     extra = [{'codice': c, 'previsti': q, 'caricati': caricati.get(c, 0),
               'da_caricare': max(q - caricati.get(c, 0), 0)}
              for c, q in piano_totale['extra'].items()]
@@ -285,16 +257,27 @@ def _valida_e_salva(s, d):
             raise ValueError(f'{codice}: quantità o lunghezza non valida')
         if qta <= 0:
             raise ValueError(f'{codice}: quantità per barra deve essere almeno 1')
-        righe.append((codice, qta, lung))
+        righe.append((codice, qta, lung, bool(r.get('attiva_schema'))))
     if not righe:
         raise ValueError('Inserisci almeno un codice nello schema')
-    usati = sum((l or 0) * q for _c, q, l in righe)
+    usati = sum((l or 0) * q for _c, q, l, _a in righe)
     if usati > barra + 0.01:
         raise ValueError(f'I pezzi ({usati:.0f} mm) superano la barra ({barra:.0f} mm)')
+    attivatori = [c for c, _q, _l, a in righe if a]
+    if not attivatori:
+        raise ValueError('Spunta almeno un codice che attiva lo schema (quando si taglia quel codice si usa questo schema)')
+    if bool(d.get('attivo', True)):
+        doppi = (db.session.query(SchemaTaglioRigaWood.codice, SchemaTaglioWood.nome)
+                 .join(SchemaTaglioWood, SchemaTaglioWood.id == SchemaTaglioRigaWood.schema_id)
+                 .filter(SchemaTaglioWood.attivo.is_(True), SchemaTaglioRigaWood.attiva_schema.is_(True),
+                         db.func.upper(SchemaTaglioRigaWood.codice).in_(attivatori),
+                         SchemaTaglioWood.id != (s.id or -1)).first())
+        if doppi:
+            raise ValueError(f'{doppi[0]} attiva già lo schema {doppi[1]}: un codice può attivare un solo schema')
     s.materiale, s.nome, s.lunghezza_barra_mm = materiale, nome, barra
     s.note = str(d.get('note') or '').strip()[:300]
     s.attivo = bool(d.get('attivo', True))
-    s.righe = [SchemaTaglioRigaWood(codice=c, quantita=q, lunghezza_mm=l) for c, q, l in righe]
+    s.righe = [SchemaTaglioRigaWood(codice=c, quantita=q, lunghezza_mm=l, attiva_schema=a) for c, q, l, a in righe]
 
 
 @schemi_taglio_bp.post('/api/schemi-taglio')
