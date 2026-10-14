@@ -23,6 +23,7 @@
 <div class="page-toolbar">
   <div class="page-title">🚦 KANBAN HPI — Evasione Ordini</div>
   <button class="btn btn-ghost" onclick="caricaKanbanHpi()">🔄 Aggiorna</button>
+  <button class="btn btn-ghost" id="btn-sync-wms" onclick="sincronizzaOraDaWms()" title="Riallinea TUTTE le schede Kanban da MasterLogistic-WMS (riservato clienti, Finiti IS…), come il tasto 🔄 di ogni riga">⇄ Riallinea tutto da WMS</button>
 </div>
 
 <div style="font-size:12px;color:var(--text-dim);margin:-6px 0 14px">
@@ -409,6 +410,40 @@ async function aggiornaRigheHpiAttive(ids){
 }
 
 caricaKanbanHpi();
+
+// ══ RIALLINEAMENTO AUTOMATICO DA WMS (ogni 4 ore, vedi sync_auto.py) ═════════
+function _oraLocale(iso){ return iso ? new Date(iso).toLocaleString('it-IT', {day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}) : '—'; }
+async function caricaStatoSyncWms(){
+  const box = document.getElementById('stato-sync-wms'); if(!box) return;
+  try{
+    const d = await (await fetch('/api/kanban-hpi/sync-stato')).json();
+    if(!d.ok) throw new Error(d.error);
+    box.innerHTML = d.in_corso
+      ? `⏳ Riallineamento da WMS <b>in corso</b> (avviato ${_oraLocale(d.ultimo_avvio_iso)}) — le righe si aggiornano alla fine`
+      : (d.ogni_ore > 0
+        ? `⇄ Riservato clienti e stock riallineati da WMS in automatico ogni <b>${d.ogni_ore} ore</b> · ultimo: <b>${_oraLocale(d.ultima_fine_iso)}</b>${d.esito ? ' (' + d.esito + ')' : ''} · prossimo: ${_oraLocale(d.prossimo_iso)}`
+        : `⇄ Riallineamento automatico da WMS spento (KANBAN_SYNC_ORE=0) · ultimo manuale: <b>${_oraLocale(d.ultima_fine_iso)}</b>${d.esito ? ' (' + d.esito + ')' : ''}`);
+    document.getElementById('btn-sync-wms').disabled = !!d.in_corso;
+    if(d.in_corso) setTimeout(() => caricaStatoSyncWms().then(() => {}), 20000);
+    if(window._eraInCorsoSync && !d.in_corso) caricaKanbanHpi();
+    window._eraInCorsoSync = d.in_corso;
+  }catch(e){ box.textContent = 'Stato riallineamento WMS non disponibile'; }
+}
+async function sincronizzaOraDaWms(){
+  const btn = document.getElementById('btn-sync-wms'); btn.disabled = true;
+  try{ await fetch('/api/kanban-hpi/sync-ora', {method:'POST'}); }catch(e){}
+  window._eraInCorsoSync = true;
+  setTimeout(caricaStatoSyncWms, 1500);
+}
+(function(){
+  const intro = document.querySelector('[onclick="caricaKanbanHpi()"]');
+  const box = document.createElement('div');
+  box.id = 'stato-sync-wms';
+  box.style.cssText = 'font-size:12px;color:var(--text-dim);margin:6px 0 10px';
+  const pagina = intro ? intro.closest('div') : null;
+  (pagina && pagina.parentNode ? pagina.parentNode : document.body).insertBefore(box, pagina ? pagina.nextSibling : null);
+  caricaStatoSyncWms();
+})();
 
 // ══ SCHEDA PRODOTTO — stessa identica logica del tabellone Kanban ══════════
 function apriSchedaWms(pid, nome) {

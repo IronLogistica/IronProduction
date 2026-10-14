@@ -2307,6 +2307,18 @@ class SostituzioneMaterialeOP(db.Model):
     revocata_il           = db.Column(db.DateTime, nullable=True)
 
 
+
+class EsecuzioneJobWood(db.Model):
+    """Registro dei lavori automatici periodici (es. riallineamento Kanban da
+    WMS ogni 4 ore). Una riga per lavoro: serve anche da LOCK fra i worker
+    gunicorn — chi riesce ad aggiornare ultimo_avvio con un UPDATE condizionato
+    esegue il giro, gli altri no (vedi blueprints/kanban/sync_auto.py)."""
+    __tablename__ = 'esecuzioni_job_wood'
+    nome          = db.Column(db.String(60), primary_key=True)
+    ultimo_avvio  = db.Column(db.DateTime, nullable=True)
+    ultima_fine   = db.Column(db.DateTime, nullable=True)
+    esito         = db.Column(db.String(300), default='')
+
 def kanban_per_codice(codice):
     """Scheda Kanban dello SKU ESATTO 'codice' (fix 12/10/2026, DDT terzista 2955:
     65 T200 rientrati ma mai caricati su T200). Prima ogni chiamante cercava

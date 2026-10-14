@@ -795,13 +795,26 @@ def api_risincronizza_wms(kid):
     test, senza aspettare il prossimo giro).
     """
     p = KanbanProdotto.query.get_or_404(kid)
-    sku = sku_da_nome_prodotto(p.prodotto)
-    if not sku:
+    if not sku_da_nome_prodotto(p.prodotto):
         return jsonify({'ok': False, 'error': 'Impossibile ricavare lo SKU dal nome prodotto'}), 400
     try:
-        wms = ottieni_scheda_kanban(sku)
+        risincronizza_prodotto_da_wms(p)
     except MasterLogisticError as e:
         return jsonify({'ok': False, 'error': str(e)}), 502
+    db.session.commit()
+    return jsonify({'ok': True, **kanban_to_dict(p)})
+
+
+def risincronizza_prodotto_da_wms(p, timeout=8):
+    """Logica del pulsante 🔄 della singola scheda (consolidata, mai causa di
+    incidenti), estratta senza modifiche per poterla riusare anche dal
+    riallineamento automatico ogni 4 ore (sync_auto.py). Se WMS non risponde
+    solleva MasterLogisticError PRIMA di toccare qualunque campo: i valori
+    precedenti restano intatti. Non fa commit (lo fa il chiamante)."""
+    sku = sku_da_nome_prodotto(p.prodotto)
+    if not sku:
+        return False
+    wms = ottieni_scheda_kanban(sku, timeout=timeout)
     p.riservato = int(wms.get('riservato_clienti') or 0)
     p.finiti_is = int(wms.get('stock_verniciati') or 0)
     p.finiti_is_aggiornato_il = datetime.utcnow()
@@ -811,8 +824,7 @@ def api_risincronizza_wms(kid):
     p.aggiornato_il = datetime.utcnow()
     log(f'Kanban: risincronizzato {p.prodotto} — grezzi={p.grezzi}, in_vern={p.in_vern}, '
         f'riservato={p.riservato}, finiti_is={p.finiti_is}, in_prod={p.in_prod}')
-    db.session.commit()
-    return jsonify({'ok': True, **kanban_to_dict(p)})
+    return True
 
 
 @kanban_bp.route('/api/kanban/sincronizza-wms-tutti', methods=['POST'])
@@ -1452,6 +1464,39 @@ def _stato_evasione(pronti, riservato, in_trattamento, grezzo, ordinato_produzio
     if pronti > 0:
         return ('parziale_pianifica', '⏳ PARZIALMENTE EVADIBILE — PIANIFICARE PRODUZIONE', 'red')
     return ('fare_produzione', '⚠ FARE PRODUZIONE', 'red')
+
+
+@kanban_bp.route('/api/kanban-hpi/sync-stato')
+def api_kanban_sync_stato():
+    """Quando è stato fatto l'ultimo riallineamento automatico da WMS (sync_auto.py)."""
+    from blueprints.kanban import sync_auto
+    try:
+        return jsonify({'ok': True, **sync_auto.stato()})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
+
+@kanban_bp.route('/api/kanban-hpi/sync-ora', methods=['POST'])
+def api_kanban_sync_ora():
+    """Avvia SUBITO un giro di riallineamento da WMS in sottofondo (stessa logica
+    del giro automatico). Se un giro è già in corso non ne parte un secondo."""
+    import threading
+    from flask import current_app
+    from blueprints.kanban import sync_auto
+    if not sync_auto.prenota_giro(forza=True):
+        return jsonify({'ok': True, 'avviato': False, 'messaggio': 'Riallineamento già in corso'})
+    app = current_app._get_current_object()
+
+    def _giro():
+        with app.app_context():
+            try:
+                sync_auto.esegui_giro()
+            except Exception as e:
+                db.session.rollback()
+                log(f'Kanban sync manuale: errore {e}')
+    threading.Thread(target=_giro, daemon=True, name='kanban-sync-wms-ora').start()
+    return jsonify({'ok': True, 'avviato': True})
 
 
 @kanban_bp.route('/kanban-hpi')

@@ -128,6 +128,14 @@ def create_app():
                 'sidebar_gruppi': gruppi_launchpad(app)}
 
 
+    # Riallineamento automatico Kanban da WMS ogni KANBAN_SYNC_ORE ore (default 4):
+    # thread avviato alla prima richiesta di ogni worker (vedi blueprints/kanban/sync_auto.py)
+    from blueprints.kanban.sync_auto import avvia_se_serve as _avvia_sync_kanban
+
+    @app.before_request
+    def _avvia_sync_kanban_wms():
+        _avvia_sync_kanban(app)
+
     @app.route('/launchpad')
     def launchpad():
         return render_template('launchpad/index.html', active='launchpad', gruppi=gruppi_launchpad(app))
