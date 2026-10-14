@@ -31,6 +31,7 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _wip_fase_per_codice, _gia_disponibile_per_fase, _valore_wip_a_fase, _consuma_wip_multi_fase)
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
+from blueprints.produzione_pp.piano_taglio import applica_piano_al_gruppo
 from blueprints.produzione_pp.avanzamento import (calcola_avanzamento_commesse,
                     _capacita_giornaliera_ore, DEFAULT_ORE_GIORNO)
 from masterlogistic_client import assegna_ubicazione_wip, rimuovi_ubicazione_wip, segnala_semilavorato_da_allocare, MasterLogisticError
@@ -4229,7 +4230,26 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
     totale_pz = totale_fatti = 0
     for materiale, righe in sorted(righe_per_materiale.items()):
         ha_barra_gruppo = any(r['lunghezza_barra_mm'] for r in righe)
-        if ha_barra_gruppo:
+        # Schemi di taglio (14/10/2026): se il materiale ne ha, le barre dei codici
+        # coperti vengono dal Piano di Taglio (meno barre, pezzi extra a magazzino).
+        esito_piano = applica_piano_al_gruppo(o, centro.id, materiale, righe) if materiale != '—' else None
+        piano_taglio = extra_taglio = None
+        if esito_piano:
+            piano_taglio, extra_taglio, barre_fuori_piano = esito_piano
+            barre_piano = piano_taglio['barre_totali'] if piano_taglio else 0
+            lung_piano = (piano_taglio or {}).get('lunghezza_barra_mm') or \
+                next((r['lunghezza_barra_mm'] for r in righe if r['lunghezza_barra_mm']), 0) or 0
+            nr_barre_tot = barre_piano + barre_fuori_piano
+            metri_piano = piano_taglio['metri_barre'] if piano_taglio else 0
+            metri_fuori = barre_fuori_piano * (next((r['lunghezza_barra_mm'] for r in righe
+                                                      if r['lunghezza_barra_mm'] and not r.get('nel_piano')), lung_piano) or 0) / 1000
+            necessario_qta = round(metri_piano + metri_fuori, 3)
+            um_default = 'mt'
+            ha_barra_gruppo = True
+            for r in righe:
+                if r.get('nel_piano') and not r.get('lunghezza_barra_mm'):
+                    r['lunghezza_barra_mm'] = lung_piano
+        elif ha_barra_gruppo:
             nr_barre_tot = sum(r['nr_barre'] or 0 for r in righe)
             lunghezza_m = (next((r['lunghezza_barra_mm'] for r in righe if r['lunghezza_barra_mm']), 0) or 0) / 1000
             necessario_qta = round(nr_barre_tot * lunghezza_m, 3)
@@ -4250,6 +4270,7 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
             'materiale': materiale, 'righe': righe, 'nr_barre_totale': nr_barre_tot,
             'quantita_necessaria': necessario_qta, 'unita_misura': um, 'disponibile': disponibile_qta,
             'stato_materiale': stato_materiale, 'ha_barra': ha_barra_gruppo,
+            'piano_taglio': piano_taglio, 'extra_taglio': extra_taglio,
         })
         totale_pz += sum(r['nr_pz_da_fare'] for r in righe)
         totale_fatti += sum(r['pezzi_fatti'] for r in righe)

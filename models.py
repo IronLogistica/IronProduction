@@ -2324,6 +2324,48 @@ class SostituzioneMaterialeOP(db.Model):
 
 
 
+class SchemaTaglioWood(db.Model):
+    """Schema di taglio di una barra (richiesta Mauri, 14/10/2026): come Angelo
+    taglia DAVVERO una barra di un materiale, combinando piu' codici. Es. barra
+    TTD32SP15L7 da 7.000: schema A = 1 TPD32L3940 + 1 TR2502DT (scarto 600),
+    schema B = 2 TR2502DT + 2 TPD32L780. Il Piano di Taglio dell'Ordine di Lavoro
+    sceglie la combinazione di schemi con MENO barre; i pezzi che escono in piu'
+    (codici non richiesti dall'OL) vanno a magazzino come semilavorato."""
+    __tablename__ = 'schemi_taglio_wood'
+    id                 = db.Column(db.Integer, primary_key=True)
+    materiale          = db.Column(db.String(100), nullable=False, index=True)
+    nome               = db.Column(db.String(60), nullable=False)
+    lunghezza_barra_mm = db.Column(db.Float, nullable=False)
+    note               = db.Column(db.String(300), default='')
+    attivo             = db.Column(db.Boolean, nullable=False, default=True)
+    creato_il          = db.Column(db.DateTime, default=datetime.utcnow)
+    righe              = db.relationship('SchemaTaglioRigaWood', backref='schema', cascade='all, delete-orphan',
+                                         order_by='SchemaTaglioRigaWood.id')
+
+
+class SchemaTaglioRigaWood(db.Model):
+    """Un codice che esce da una barra dello schema: quanti pezzi e lunghezza."""
+    __tablename__ = 'schemi_taglio_righe_wood'
+    id          = db.Column(db.Integer, primary_key=True)
+    schema_id   = db.Column(db.Integer, db.ForeignKey('schemi_taglio_wood.id', ondelete='CASCADE'), nullable=False, index=True)
+    codice      = db.Column(db.String(100), nullable=False)
+    quantita    = db.Column(db.Integer, nullable=False, default=1)
+    lunghezza_mm = db.Column(db.Float, nullable=True)
+
+
+class CaricoExtraTaglioWood(db.Model):
+    """Pezzi in piu' usciti dal piano di taglio di un OP (es. zampe TPD32L780 dagli
+    scarti delle barre) caricati a magazzino come semilavorato."""
+    __tablename__ = 'carichi_extra_taglio_wood'
+    id          = db.Column(db.Integer, primary_key=True)
+    op_id       = db.Column(db.Integer, nullable=False, index=True)
+    op_codice   = db.Column(db.String(40), nullable=False)
+    centro_id   = db.Column(db.Integer, nullable=True)
+    codice      = db.Column(db.String(100), nullable=False)
+    quantita    = db.Column(db.Float, nullable=False)
+    creato_il   = db.Column(db.DateTime, default=datetime.utcnow)
+
+
 class EsecuzioneJobWood(db.Model):
     """Registro dei lavori automatici periodici (es. riallineamento Kanban da
     WMS ogni 4 ore). Una riga per lavoro: serve anche da LOCK fra i worker

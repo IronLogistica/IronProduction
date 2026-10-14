@@ -53,6 +53,7 @@ LAUNCHPAD_GRUPPI = [
         {'label': 'Centri di Costo', 'icona': '🏭', 'url': '/centri-costo-wood'},
         {'label': 'Costo Standard', 'icona': '💰', 'url': '/costo-standard-wood'},
         {'label': 'Parametri di Lavorazione', 'icona': '⚙️', 'url': '/parametri-lavorazione-wood'},
+        {'label': 'Schemi di Taglio', 'icona': '✂️', 'url': '/schemi-taglio'},
         {'label': 'Contapieghe', 'icona': '🔧', 'url': '/contapieghe-wood'},
         {'label': 'Esploratore Prodotto', 'icona': '🌳', 'url': '/esploratore-prodotto'},
         {'label': 'Matrice Competenze', 'icona': '🧩', 'url': '/matrice-competenze'},
@@ -98,6 +99,7 @@ def create_app():
     from blueprints.acquisti_wood.routes import acquisti_wood_bp
     from blueprints.commesse.routes import commesse_bp
     from blueprints.totem_acquisti.routes import totem_acquisti_bp
+    from blueprints.produzione_pp.piano_taglio import schemi_taglio_bp
     # Conto lavoro: registrato SOLO con CL_ENABLED acceso — spento, le sue
     # rotte non esistono proprio (vedi blueprints/conto_lavoro/routes.py).
     from blueprints.conto_lavoro.routes import cl_bp
@@ -111,6 +113,7 @@ def create_app():
     app.register_blueprint(acquisti_wood_bp)
     app.register_blueprint(commesse_bp)
     app.register_blueprint(totem_acquisti_bp)
+    app.register_blueprint(schemi_taglio_bp)
     if app.config.get('CL_ENABLED'):
         app.register_blueprint(cl_bp)
 

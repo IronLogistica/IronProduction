@@ -57,11 +57,23 @@
 
   .foto-placeholder{margin-top:20px;padding:14px;border:1px dashed var(--border);font-size:11px;color:#999;text-align:center}
 
+  .piano-taglio{margin:8px 0 14px;border:2px solid #1f6f43;border-radius:6px;padding:8px 10px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .piano-taglio .pt-titolo{font-weight:900;font-size:14px;color:#1f6f43;margin-bottom:6px}
+  .piano-taglio table{width:100%;border-collapse:collapse;font-size:12px}
+  .piano-taglio th,.piano-taglio td{border:1px solid #bbb;padding:4px 6px;text-align:center;vertical-align:middle}
+  .piano-taglio th{background:#e8f4ed}
+  .piano-taglio td.pt-nome{font-weight:900;font-size:14px}.piano-taglio td.pt-barre{font-weight:900;font-size:18px}
+  .piano-taglio .pt-mag{background:#7b3fbf;color:#fff;font-size:10px;font-weight:800;padding:1px 5px;border-radius:8px}
+  .piano-taglio .pt-extra{margin-top:6px;font-size:12px;color:#3d1f63}
+  .piano-taglio .pt-nota{margin-top:4px;font-size:11px;color:#666}
+  .extra-panel{margin:14px 0;background:#f5effc;border:2px solid #7b3fbf;border-radius:8px;padding:10px 14px;font-family:inherit;font-size:13px;color:#3d1f63}
+  .extra-panel table{border-collapse:collapse;margin-top:6px}.extra-panel td,.extra-panel th{padding:3px 10px;text-align:left}
+  .extra-panel input{width:70px;padding:4px}.extra-panel button{background:#7b3fbf;color:#fff;border:0;border-radius:5px;padding:5px 10px;cursor:pointer;font-weight:700}
   .timbro-scorta{margin:6px 0;border:3px solid #7b3fbf;color:#7b3fbf;font-weight:900;font-size:20px;letter-spacing:1px;text-align:center;padding:4px 6px;border-radius:6px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .timbro-scorta small{display:block;font-size:10px;font-weight:700;letter-spacing:0}
   @media print{
     body{background:#fff;padding:0}
-    .toolbar{display:none}
+    .toolbar,.extra-panel{display:none}
     .sheet{border-width:1px;box-shadow:none}
   }
 </style>
@@ -71,6 +83,7 @@
   <a class="btn-torna" href="/liste-lavoro/{{ centro.id }}" onclick="return tornaIndietro(event)">← Torna a Ordine Lavoro {{ centro.nome }}</a>
   <button class="btn-print" onclick="window.print()">🖨️ Stampa</button>
 </div>
+
 <script>
   // Questa pagina viene SEMPRE aperta con window.open(...,'_blank') — sia
   // dal totem di produzione sia dalla pagina admin di Liste di Lavoro — mai
@@ -216,7 +229,7 @@
         <td>{{ r.nr_pz_da_fare }}</td>
         <td>{{ r.pezzi_fatti }}</td>
         <td style="font-weight:700">{{ r.saldo }}</td>
-        {% if dati.ha_barra %}<td>{{ r.pz_per_barra or '—' }}</td><td>{{ r.nr_barre if r.nr_barre is not none else '—' }}</td>{% endif %}
+        {% if dati.ha_barra %}{% if r.nel_piano %}<td colspan="2" style="font-weight:700;color:#1f6f43">✂️ vedi piano di taglio</td>{% else %}<td>{{ r.pz_per_barra or '—' }}</td><td>{{ r.nr_barre if r.nr_barre is not none else '—' }}</td>{% endif %}{% endif %}
       </tr>
       {% if r.nota %}<tr><td></td><td colspan="99" class="nota-cell">{{ r.nota }}</td></tr>{% endif %}
       {% endfor %}
@@ -231,12 +244,61 @@
       </tr>
     </tfoot>
   </table>
+  {% if g.piano_taglio %}{% set p = g.piano_taglio %}
+  <div class="piano-taglio">
+    <div class="pt-titolo">✂️ PIANO DI TAGLIO {{ g.materiale }} — {{ p.barre_totali }} barre{% if p.lunghezza_barra_mm %} da {{ (p.lunghezza_barra_mm/1000)|round(2) }} m{% endif %}</div>
+    <table>
+      <thead><tr><th class="check">Check</th><th>Schema</th><th>N° barre</th><th>Da ogni barra si tagliano</th><th>Pezzi totali</th><th>Scarto/barra</th></tr></thead>
+      <tbody>
+      {% for rp in p.righe_piano %}
+        <tr>
+          <td class="check">☐</td>
+          <td class="pt-nome">{{ rp.nome }}</td>
+          <td class="pt-barre">{{ rp.barre }}</td>
+          <td>{% for c in rp.composizione %}{{ c.quantita }} × <b>{{ c.codice }}</b>{% if c.lunghezza_mm %} (L.{{ '{:,.0f}'.format(c.lunghezza_mm).replace(',', '.') }}){% endif %}{% if not c.richiesto %} <span class="pt-mag">→ MAGAZZINO</span>{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+          <td>{% for c in rp.composizione %}{{ c.pezzi_totali }} {{ c.codice }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+          <td>{{ (rp.scarto_mm|int) ~ ' mm' if rp.scarto_mm is not none else '—' }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table>
+    {% if p.extra %}<div class="pt-extra">📦 Pezzi in più da portare a <b>MAGAZZINO</b> (semilavorato):
+      {% for c, q in p.extra.items() %}<b>{{ q }} {{ c }}</b>{% if not loop.last %}, {% endif %}{% endfor %}</div>{% endif %}
+    {% if p.non_coperti %}<div class="pt-nota">Codici senza schema, tagliati a barra intera come sopra: {{ p.non_coperti|join(', ') }}</div>{% endif %}
+  </div>
+  {% endif %}
   {% endfor %}
 
   {% if not dati.gruppi %}
   <p style="text-align:center;color:#999;margin-top:30px">Nessuna operazione su {{ centro.nome }} per questo articolo secondo il Ciclo di Lavoro.</p>
   {% endif %}
 
+{% set extra_tutti = [] %}{% for g in dati.gruppi %}{% for e in (g.extra_taglio or []) %}{% set _ = extra_tutti.append(e) %}{% endfor %}{% endfor %}
+{% if extra_tutti %}
+<div class="extra-panel">
+  <b>📦 Pezzi extra del piano di taglio → carico a magazzino</b> (non si stampa)
+  <table><tr><th>Codice</th><th>Previsti</th><th>Già caricati</th><th>Da caricare</th><th></th></tr>
+  {% for e in extra_tutti %}
+    <tr><td><b>{{ e.codice }}</b></td><td>{{ e.previsti|round(0)|int }}</td><td>{{ e.caricati|round(0)|int }}</td><td>{{ e.da_caricare|round(0)|int }}</td>
+    <td>{% if e.da_caricare > 0 %}<input type="number" min="1" max="{{ e.da_caricare|int }}" value="{{ e.da_caricare|int }}" id="ex-{{ loop.index }}">
+      <button onclick="caricaExtra('{{ e.codice }}', 'ex-{{ loop.index }}')">Carica a magazzino</button>{% else %}✅ caricati{% endif %}</td></tr>
+  {% endfor %}
+  </table>
+  <small>Caricali quando la Segatrice li ha tagliati davvero (anche a più riprese). Serve il PIN Direzione.</small>
+</div>
+<script>
+async function caricaExtra(codice, inputId){
+  const quantita = document.getElementById(inputId).value;
+  const pin = prompt(`Caricare ${quantita} pz ${codice} a magazzino?\nPIN Direzione:`);
+  if(!pin) return;
+  const r = await fetch('/api/ordini-produzione/{{ dati.op_codice }}/lista-lavoro/{{ centro.id }}/carica-extra-taglio',
+    {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({codice, quantita, pin})});
+  const d = await r.json();
+  if(!d.ok){ alert('⚠️ ' + d.error); return; }
+  alert(`✅ ${quantita} pz ${codice} caricati a magazzino.`); location.reload();
+}
+</script>
+{% endif %}
   <div class="totali-finali">
     <div><div class="lbl">Totale Pezzi</div><div class="val">{{ dati.totale_pz }}</div></div>
     <div><div class="lbl">Effettuati</div><div class="val" style="color:#1a7a3c">{{ dati.pz_effettuati }}</div></div>
