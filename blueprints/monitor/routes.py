@@ -301,7 +301,8 @@ def _righe_macchina(centro):
             credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
                                                   figli_a_padri, fatti_totali_per_componente,
                                                   moltiplicatori={c['codice']: c['moltiplicatore']
-                                                                  for c in componenti_per_op[o.id]})
+                                                                  for c in componenti_per_op[o.id]},
+                                                  giacenza_disponibile=giacenza_di_op)
             # Decisione di Angelo (07/10/2026): con giacenza negativa il credito da
             # valle non chiude la riga, resta un avviso (OP-2026-000063).
             credito_da_valle, credito_non_dichiarato = _credito_valle_applicabile(codice_comp, credito_da_valle)

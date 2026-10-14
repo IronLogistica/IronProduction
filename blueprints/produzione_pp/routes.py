@@ -2107,7 +2107,7 @@ def _fatti_totali_per_componente(codici_op):
 
 
 def _credito_da_valle(o, codice_comp, codici_di_questo_op, figli_a_padri, fatti_totali_per_componente,
-                      moltiplicatori=None):
+                      moltiplicatori=None, giacenza_disponibile=None):
     """Credito 'da valle' (segnalato da Mauri, 06/10/2026 — caso reale
     PINXTT110 -> PINX110-A -> PINX110-B -> PINX110, riapparso identico il
     stesso giorno sul Monitor Macchina/Inventario Codice Padre per la stessa
@@ -2146,9 +2146,19 @@ def _credito_da_valle(o, codice_comp, codici_di_questo_op, figli_a_padri, fatti_
         m_comp = moltiplicatori.get(codice_comp) or 0
         intermedi = [a for a in antenati if a != o.codice_articolo]
         if m_comp > 0:
-            giac = ({g.codice: g.quantita or 0 for g in
-                     GiacenzaWood.query.filter(GiacenzaWood.codice.in_(intermedi)).all()}
-                    if intermedi else {})
+            # BUG CORRETTO (Mauri, 14/10/2026 — OP-2026-000078 T250DT, commessa
+            # 26100078): qui si leggeva la giacenza LORDA dei semilavorati a valle.
+            # I TR2501 a magazzino erano gia' impegnati da altre commesse, ma l'OL
+            # Segatrice li contava lo stesso come "gia' passati" e dava TPD32L3940
+            # "Da produrre 0", mentre la card Situazione (giacenza al netto degli
+            # altri OP) diceva giustamente "Mancante 40". Il chiamante passa ora la
+            # giacenza DISPONIBILE per questo OP (stessa usata per 'presenti_qui').
+            if giacenza_disponibile is not None:
+                giac = {a: giacenza_disponibile.get(a, 0) or 0 for a in intermedi}
+            else:
+                giac = ({g.codice: g.quantita or 0 for g in
+                         GiacenzaWood.query.filter(GiacenzaWood.codice.in_(intermedi)).all()}
+                        if intermedi else {})
             credito_giacenza = 0.0
             for a in intermedi:
                 m_a = moltiplicatori.get(a) or 0
@@ -4143,7 +4153,8 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         # chiuso — stesso calcolo, stesso helper condiviso, mai due versioni.
         credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
                                               figli_a_padri, fatti_totali_per_componente,
-                                              moltiplicatori=moltiplicatore_per_codice)
+                                              moltiplicatori=moltiplicatore_per_codice,
+                                              giacenza_disponibile=residuo_giacenza_per_op)
         # Decisione di Angelo (07/10/2026): con giacenza negativa il credito da
         # valle non chiude la riga, resta un avviso (_credito_valle_applicabile).
         credito_da_valle, credito_non_dichiarato = _credito_valle_applicabile(codice_comp, credito_da_valle)
@@ -4825,6 +4836,8 @@ def api_dichiarazione_op_aperti(cid):
 
     mappa_distinta = _carica_mappa_distinta_base_wood()
     componenti_per_op = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini}
+    # giacenza disponibile per ciascun OP (in ordine di priorita'), per il credito da valle
+    _residuo_dichiarazione = _residuo_giacenza_progressivo(op_aperti=ordini, mappa=mappa_distinta)
     tutti_i_codici = {c['codice'] for lista in componenti_per_op.values() for c in lista}
     fasi_per_codice = {}
     if tutti_i_codici:
@@ -5018,7 +5031,8 @@ def api_dichiarazione_op_aperti(cid):
             credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op,
                                                   figli_a_padri, fatti_totali_per_componente,
                                                   moltiplicatori={c['codice']: c['moltiplicatore']
-                                                                  for c in componenti_per_op[o.id]})
+                                                                  for c in componenti_per_op[o.id]},
+                                                  giacenza_disponibile=_residuo_dichiarazione[0].get(o.id, _residuo_dichiarazione[1]))
             # DECISIONE DI ANGELO (07/10/2026, caso OP-2026-000063): se il
             # codice ha giacenza NEGATIVA il credito da valle non chiude la
             # riga (vedi _credito_valle_applicabile): resta dichiarabile e

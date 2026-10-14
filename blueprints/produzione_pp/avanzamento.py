@@ -306,7 +306,8 @@ def calcola_avanzamento_commesse():
                 credito, _non_dich = _credito_valle_applicabile(
                     codice, _credito_da_valle(o, codice, set(moltiplicatore_per_codice), figli_a_padri,
                                               fatti_totali_per_componente,
-                                              moltiplicatori=moltiplicatore_per_codice))
+                                              moltiplicatori=moltiplicatore_per_codice,
+                                              giacenza_disponibile=residuo_per_op.get(o.id, {})))
                 # FIX 12/10/2026 (OP-2026-000072, OL Saldatura LIST/047: PINX110-A/B 'Prodotti 158,
                 # Da Produrre 0' con Residuo 416 a piede pagina): i pezzi gia' dichiarati qui
                 # CONTENGONO gia' quelli poi passati a valle — sommare il credito da valle ai
