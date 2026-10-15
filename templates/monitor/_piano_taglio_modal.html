@@ -1,0 +1,85 @@
+{# Monitor LIVE — riquadro "⚡ PIANO DI TAGLIO" (richiesta Mauri, 15/10/2026).
+   Il bollino compare accanto ai codici che attivano uno Schema di Taglio; il
+   riquadro mostra il piano di QUESTO OL (stesso calcolo dell'Ordine di Lavoro). #}
+<style>
+  .pt-badge{display:inline-block;margin-left:8px;padding:2px 9px;border:0;border-radius:10px;background:#f5c518;color:#111;
+    font-weight:900;font-size:.68rem;letter-spacing:.3px;cursor:pointer;vertical-align:middle;white-space:nowrap;
+    animation:ptPulse 2s ease-in-out infinite}
+  @keyframes ptPulse{0%,100%{box-shadow:0 0 0 0 rgba(245,197,24,.7)}50%{box-shadow:0 0 0 6px rgba(245,197,24,0)}}
+  .pt-ov{display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center;padding:16px}
+  .pt-ov.on{display:flex}
+  .pt-box{background:#fff;color:#111;border-radius:10px;width:960px;max-width:100%;max-height:92vh;overflow:auto;padding:20px 24px;
+    font-family:'Segoe UI',Arial,sans-serif}
+  .pt-box h2{margin:0 0 2px;font-size:1.4rem}.pt-box .pt-sub{color:#555;font-size:.9rem;margin-bottom:12px}
+  .pt-box .pt-mat{background:#ffef00;font-weight:900;font-style:italic;text-align:center;font-size:1.3rem;padding:6px;margin:12px 0 6px}
+  .pt-box .pt-riga{border-top:1px solid #ddd;padding:10px 0}
+  .pt-box .pt-testa{font-size:1.05rem}
+  .pt-box .pt-bar{display:flex;margin:10px 0 4px;padding-top:66px}
+  .pt-box .pt-pz{position:relative;min-width:0}
+  .pt-box .pt-lbl{position:absolute;bottom:16px;left:0;right:0;text-align:center;font-size:.9rem;line-height:1.2;white-space:nowrap}
+  .pt-box .pt-tubo{height:10px;background:#9a9a9a;margin-right:4px}
+  .pt-box .pt-sc .pt-tubo{background:repeating-linear-gradient(45deg,#ddd,#ddd 5px,#aaa 5px,#aaa 10px)}
+  .pt-box .pt-cut{position:absolute;right:0;top:-66px;bottom:-8px;border-right:2px dashed #111}
+  .pt-box .pt-cut span{position:absolute;top:0;right:5px;font-size:.8rem;font-weight:800;white-space:nowrap}
+  .pt-box .pt-mag{background:#7b3fbf;color:#fff;font-size:.7rem;font-weight:800;padding:1px 6px;border-radius:8px}
+  .pt-box .pt-extra{margin-top:8px;color:#3d1f63;font-size:.95rem}
+  .pt-box .pt-az{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
+  .pt-box .pt-az a,.pt-box .pt-az button{border:0;border-radius:7px;padding:10px 18px;font-weight:700;font-size:.95rem;cursor:pointer;text-decoration:none}
+  .pt-box .pt-az a{background:#1f6f43;color:#fff}.pt-box .pt-az button{background:#e5e7eb;color:#111}
+</style>
+<div class="pt-ov" id="pt-ov" onclick="if(event.target===this)chiudiPianoTaglio()">
+  <div class="pt-box"><div id="pt-corpo">Caricamento…</div>
+    <div class="pt-az"><a id="pt-link-ol" href="#" target="_blank">🖨️ Apri Ordine di Lavoro</a><button onclick="chiudiPianoTaglio()">Chiudi</button></div>
+  </div>
+</div>
+<script>
+(function(){
+  const e=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const mm=n=>Number(n||0).toLocaleString('it-IT',{maximumFractionDigits:0});
+  function barra(lunghezza, composizione, scarto){
+    let html='', n=0;
+    for(const c of composizione){ for(let k=0;k<c.quantita;k++){ n++;
+      html+=`<div class="pt-pz" style="flex:${c.lunghezza_mm||lunghezza/4}"><div class="pt-lbl"><b>1x L.${mm(c.lunghezza_mm)}</b><br>${e(c.codice)}</div>`+
+            `<div class="pt-tubo"></div><div class="pt-cut"><span>${n}° taglio</span></div></div>`; } }
+    if(scarto>0) html+=`<div class="pt-pz pt-sc" style="flex:${scarto}"><div class="pt-lbl"><i>Scarto<br>L.${mm(scarto)}</i></div><div class="pt-tubo"></div></div>`;
+    return `<div class="pt-bar">${html}</div>`;
+  }
+  // Mentre il riquadro e' aperto il monitor non si ricarica (come per il riquadro KPI);
+  // si richiude da solo dopo 5 minuti per non bloccare l'aggiornamento del LIVE.
+  let timerChiusura=null;
+  const blocca=v=>{ try{ _kpiOverlayAperto=v; }catch(_){} };
+  window.chiudiPianoTaglio=function(){ document.getElementById('pt-ov').classList.remove('on'); clearTimeout(timerChiusura); blocca(false); };
+  window.apriPianoTaglio=async function(codice, op, cid){
+    const corpo=document.getElementById('pt-corpo'); corpo.innerHTML='Caricamento…';
+    document.getElementById('pt-ov').classList.add('on'); blocca(true);
+    clearTimeout(timerChiusura); timerChiusura=setTimeout(window.chiudiPianoTaglio, 5*60*1000);
+    try{
+      const r=await fetch(`/api/ordini-produzione/${encodeURIComponent(op)}/lista-lavoro/${cid}/piano-taglio?codice=${encodeURIComponent(codice)}`);
+      const d=await r.json(); if(!d.ok) throw new Error(d.error||'errore');
+      document.getElementById('pt-link-ol').href=d.url_ol;
+      let html=`<h2>⚡ Piano di taglio — ${e(codice)}</h2><div class="pt-sub">Commessa <b>${e(d.commessa)}</b> · ${e(d.op_codice)} · ${e(d.codice_articolo)} · ${e(d.centro)}</div>`;
+      const gruppi=d.gruppi.filter(g=>g.piano);
+      if(gruppi.length){
+        for(const g of gruppi){
+          const p=g.piano;
+          html+=`<div class="pt-mat">${e(g.materiale)} — ${p.barre_totali} barre${p.lunghezza_barra_mm?' da '+(p.lunghezza_barra_mm/1000).toLocaleString('it-IT')+' metri':''}</div>`;
+          for(const rp of p.righe_piano){
+            html+=`<div class="pt-riga"><div class="pt-testa"><b>${rp.barre} barre</b> con lo <b>schema ${e(rp.nome)}</b> <small>(per tagliare ${e(rp.attivato_da)})</small> → `+
+              rp.composizione.map(c=>`<b>${c.pezzi_totali} ${e(c.codice)}</b>${c.richiesto?'':' <span class="pt-mag">→ MAGAZZINO</span>'}`).join(' + ')+`</div>`+
+              barra(rp.lunghezza_barra_mm, rp.composizione, rp.scarto_mm)+`</div>`;
+          }
+          const ex=Object.entries(p.extra||{});
+          if(ex.length) html+=`<div class="pt-extra">📦 Pezzi in più da portare a <b>MAGAZZINO</b>: ${ex.map(([c,q])=>`<b>${q} ${e(c)}</b>`).join(', ')}</div>`;
+        }
+      } else if(d.schemi.length){
+        html+=`<p>Su questa commessa non resta niente da tagliare con lo schema. Quando si taglia <b>${e(codice)}</b> si usa sempre:</p>`;
+        for(const s of d.schemi){
+          html+=`<div class="pt-riga"><div class="pt-testa"><b>Schema ${e(s.nome)}</b> — barra ${e(s.materiale)} da ${mm(s.lunghezza_barra_mm)} mm</div>`+
+                barra(s.lunghezza_barra_mm, s.righe, s.scarto_mm)+`</div>`;
+        }
+      } else html+='<p>Nessuno schema di taglio attivo per questo codice.</p>';
+      corpo.innerHTML=html;
+    }catch(err){ corpo.innerHTML='⚠️ Impossibile caricare il piano di taglio: '+e(err.message); }
+  };
+})();
+</script>

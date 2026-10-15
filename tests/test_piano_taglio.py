@@ -172,6 +172,19 @@ class TestPianoNellOrdineDiLavoro(unittest.TestCase):
             self.assertIsNone(piano, 'niente piu da tagliare')
             self.assertEqual(extra[0]['previsti'], 50)
 
+    def test_monitor_live_bollino_e_riquadro(self):
+        """Monitor LIVE (15/10/2026): bollino sui codici che attivano uno schema e API del riquadro."""
+        with self.app.test_request_context():
+            html = render_template('monitor/_piano_taglio_modal.html')
+            self.assertIn('apriPianoTaglio', html)
+            from blueprints.produzione_pp.piano_taglio import _attivatori
+            self.assertEqual(_attivatori(), {'TR2502DT': 'A'})
+        d = self.c.get(f'/api/ordini-produzione/OP-2026-000090/lista-lavoro/{self.seg_id}/piano-taglio?codice=tr2502dt').get_json()
+        self.assertTrue(d['ok'])
+        self.assertEqual(d['gruppi'][0]['piano']['barre_totali'], 100)
+        self.assertEqual(d['schemi'][0]['nome'], 'A')
+        self.assertEqual(d['url_ol'], f'/ordini-produzione/OP-2026-000090/lista-lavoro/{self.seg_id}')
+
     def test_senza_schemi_ol_invariato(self):
         with self.app.app_context():
             db.session.query(SchemaTaglioRigaWood).delete()

@@ -191,7 +191,7 @@
           <tbody>
             {% for c in g.componenti %}
             <tr class="{{ 'componente-completo' if c.completato else '' }}">
-              <td class="codice-cell">{{ c.codice_lavorato }}{{ ' (prodotto finito)' if c.componente_finale else '' }}{{ ' ✅' if c.completato else '' }}{% if c.avviso_a_valle %}<div style="font-size:.62rem;color:#e6b800;font-weight:700;margin-top:2px">⚠️ {{ c.avviso_a_valle }} pz già lavorati a valle: dichiarazione dimenticata?</div>{% endif %}</td>
+              <td class="codice-cell">{{ c.codice_lavorato }}{{ ' (prodotto finito)' if c.componente_finale else '' }}{{ ' ✅' if c.completato else '' }}{% if not c.completato and schema_taglio_attivato is defined and schema_taglio_attivato(c.codice_lavorato) %}<button type="button" class="pt-badge" title="Questo codice si taglia con uno schema di taglio: tocca per vederlo" onclick="event.stopPropagation();apriPianoTaglio('{{ c.codice_lavorato }}','{{ g.op_codice }}',{{ centro.id }})">⚡ PIANO DI TAGLIO</button>{% endif %}{% if c.avviso_a_valle %}<div style="font-size:.62rem;color:#e6b800;font-weight:700;margin-top:2px">⚠️ {{ c.avviso_a_valle }} pz già lavorati a valle: dichiarazione dimenticata?</div>{% endif %}</td>
               <td class="muted">{{ c.descrizione_lavorata or '—' }}</td>
               <td>{% if not c.completato %}<span class="prod-badge {{ c.stato_producibilita }}">{{ ETICHETTA_PRODUCIBILITA[c.stato_producibilita] }}</span>
                 {% if c.stato_producibilita != 'producibile' and c.fase_precedente %}
@@ -334,5 +334,6 @@ async function ripristinaKpi(){
 }
 {% endif %}
 </script>
+{% include 'monitor/_piano_taglio_modal.html' %}
 </body>
 </html>

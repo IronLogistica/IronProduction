@@ -22,7 +22,7 @@ import math
 import os
 import re
 
-from flask import Blueprint, jsonify, render_template, request
+from flask import Blueprint, g, jsonify, render_template, request
 
 from models import (db, SchemaTaglioWood, SchemaTaglioRigaWood, CaricoExtraTaglioWood, OrdineProduzione,
                     DistintaBaseWood, GiacenzaWood, ParametriLavorazioneWood, CentroCostoWood, AuditPP)
@@ -354,3 +354,48 @@ def api_carica_extra(op_codice, cid):
                            dettaglio=f'{qta:g} pz {codice} caricati a magazzino dal piano di taglio ({centro.nome})'))
     db.session.commit()
     return jsonify(ok=True, codice=codice, caricati=voce['caricati'] + qta)
+
+
+# ---------------------------------------------------------------------------
+# Monitor LIVE: bollino "⚡ PIANO DI TAGLIO" sui codici che attivano uno schema
+# (richiesta Mauri, 15/10/2026)
+# ---------------------------------------------------------------------------
+
+def _attivatori():
+    """{codice attivatore: nome schema} degli schemi attivi, una query per richiesta."""
+    if not hasattr(g, '_schemi_taglio_attivatori'):
+        try:
+            righe = (db.session.query(SchemaTaglioRigaWood.codice, SchemaTaglioWood.nome)
+                     .join(SchemaTaglioWood, SchemaTaglioWood.id == SchemaTaglioRigaWood.schema_id)
+                     .filter(SchemaTaglioWood.attivo.is_(True), SchemaTaglioRigaWood.attiva_schema.is_(True)).all())
+            g._schemi_taglio_attivatori = {_norm(c): n for c, n in righe}
+        except Exception:
+            db.session.rollback()
+            g._schemi_taglio_attivatori = {}
+    return g._schemi_taglio_attivatori
+
+
+@schemi_taglio_bp.app_context_processor
+def _contesto_schemi_taglio():
+    return {'schema_taglio_attivato': lambda codice: _attivatori().get(_norm(codice))}
+
+
+@schemi_taglio_bp.get('/api/ordini-produzione/<op_codice>/lista-lavoro/<int:cid>/piano-taglio')
+def api_piano_taglio_ol(op_codice, cid):
+    """Il piano di taglio dell'OL di questo OP su questo centro (stesso calcolo
+    dell'Ordine di Lavoro) — per il riquadro del monitor LIVE."""
+    from blueprints.produzione_pp.routes import _lista_lavoro_op
+    o = OrdineProduzione.query.filter_by(codice=op_codice).first_or_404()
+    centro = CentroCostoWood.query.get_or_404(cid)
+    codice = _norm(request.args.get('codice'))
+    dati = _lista_lavoro_op(o, centro, assegna_numero=False)
+    gruppi = [{'materiale': gr['materiale'], 'piano': gr['piano_taglio'], 'extra': gr.get('extra_taglio') or []}
+              for gr in dati['gruppi'] if gr.get('piano_taglio') or gr.get('extra_taglio')]
+    schemi = []
+    if codice:
+        schemi = [_schema_dict(s) for s in SchemaTaglioWood.query.join(SchemaTaglioRigaWood)
+                  .filter(SchemaTaglioWood.attivo.is_(True), SchemaTaglioRigaWood.attiva_schema.is_(True),
+                          db.func.upper(SchemaTaglioRigaWood.codice) == codice).all()]
+    return jsonify(ok=True, op_codice=o.codice, commessa=o.commessa or '', codice_articolo=o.codice_articolo,
+                   centro=centro.nome, gruppi=gruppi, schemi=schemi,
+                   url_ol=f'/ordini-produzione/{o.codice}/lista-lavoro/{centro.id}')
