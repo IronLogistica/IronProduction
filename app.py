@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from flask import Flask, redirect, url_for, render_template
 from config import Config
-from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate, assicura_lunghezze_barra_default, assicura_unita_misura_articoli, assicura_finiti_is_kanban, assicura_lead_time_esterno_centri, assicura_ordinato_cliente_wms, assicura_operatore_evento_consuntivo, assicura_visionato_evento_consuntivo, assicura_contestuale_distinta_base, assicura_event_id_varianza_produzione, assicura_contapieghe_matrici, migra_parametri_lavorazione_flat, assicura_bandiera_stato_op, assicura_op_a_scorta, assicura_schemi_taglio_attivazione, assicura_import_consumabili_sicurezza, assicura_categoria_acquisto_config, assicura_lotto_trasferimento_minimo, assicura_ddt_carico_confermato, assicura_mappa_mw_fase, assicura_mappa_mw_bersagli_multipli, assicura_origine_ordine_acquisto_wood, assicura_campi_stampa_ordine_fornitore, assicura_finiti_is_wms, assicura_quantita_verificata_ddt, assicura_verifica_ingresso_merci, assicura_ripartizione_produzione_parametri
+from models import db, init_db, inizializza_schema_pp, get_kanban_gruppi, get_macchine_monitor, migra_schede_lavorazione_unificate, assicura_lunghezze_barra_default, assicura_unita_misura_articoli, assicura_finiti_is_kanban, assicura_lead_time_esterno_centri, assicura_ordinato_cliente_wms, assicura_operatore_evento_consuntivo, assicura_visionato_evento_consuntivo, assicura_contestuale_distinta_base, assicura_event_id_varianza_produzione, assicura_contapieghe_matrici, migra_parametri_lavorazione_flat, assicura_bandiera_stato_op, assicura_op_a_scorta, assicura_badge_operatori, assicura_schemi_taglio_attivazione, assicura_import_consumabili_sicurezza, assicura_categoria_acquisto_config, assicura_lotto_trasferimento_minimo, assicura_ddt_carico_confermato, assicura_mappa_mw_fase, assicura_mappa_mw_bersagli_multipli, assicura_origine_ordine_acquisto_wood, assicura_campi_stampa_ordine_fornitore, assicura_finiti_is_wms, assicura_quantita_verificata_ddt, assicura_verifica_ingresso_merci, assicura_ripartizione_produzione_parametri
 
 LAUNCHPAD_GRUPPI = [
     {'nome': 'Produzione', 'icona': '🏭', 'colore': '#1e6fa5', 'voci': [
@@ -100,6 +100,7 @@ def create_app():
     from blueprints.commesse.routes import commesse_bp
     from blueprints.totem_acquisti.routes import totem_acquisti_bp
     from blueprints.produzione_pp.piano_taglio import schemi_taglio_bp
+    from blueprints.produzione_pp.badge_totem import badge_totem_bp
     # Conto lavoro: registrato SOLO con CL_ENABLED acceso — spento, le sue
     # rotte non esistono proprio (vedi blueprints/conto_lavoro/routes.py).
     from blueprints.conto_lavoro.routes import cl_bp
@@ -114,6 +115,7 @@ def create_app():
     app.register_blueprint(commesse_bp)
     app.register_blueprint(totem_acquisti_bp)
     app.register_blueprint(schemi_taglio_bp)
+    app.register_blueprint(badge_totem_bp)
     if app.config.get('CL_ENABLED'):
         app.register_blueprint(cl_bp)
 
@@ -173,6 +175,7 @@ def create_app():
         assicura_event_id_varianza_produzione()
         assicura_bandiera_stato_op()
         assicura_op_a_scorta()
+        assicura_badge_operatori()
         assicura_schemi_taglio_attivazione()
         assicura_lotto_trasferimento_minimo()
         assicura_origine_ordine_acquisto_wood()

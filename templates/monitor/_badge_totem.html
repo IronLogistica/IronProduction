@@ -1,0 +1,121 @@
+{# Badge operatore sul Totem Alessandro (Mauri, 16/10/2026): totem bloccato finché un
+   Dichiaratore non passa il badge QR; ogni dichiarazione porta il suo nome; si richiude
+   dopo 2 minuti senza attività. Attivo solo quando Angelo lo accende dal Cruscotto KPI. #}
+<style>
+  #bt-lock{display:none;position:fixed;inset:0;z-index:99999;background:rgba(5,12,22,.97);color:#fff;
+    flex-direction:column;align-items:center;justify-content:center;text-align:center;font-family:'Segoe UI',Arial,sans-serif}
+  #bt-lock.on{display:flex}
+  #bt-lock .ico{font-size:90px;line-height:1}
+  #bt-lock h1{font-size:44px;margin:16px 0 6px;letter-spacing:1px}
+  #bt-lock p{font-size:20px;color:#9fb8d0;margin:4px 0}
+  #bt-lock .esito{min-height:34px;font-size:22px;font-weight:700;margin-top:18px}
+  #bt-lock .manuale{margin-top:26px;display:flex;gap:8px;justify-content:center}
+  #bt-lock .manuale input{font-size:18px;padding:10px 14px;border-radius:8px;border:1px solid #3a7ebf;background:#0d1b2e;color:#fff;width:260px;text-transform:uppercase}
+  #bt-lock .manuale button{font-size:18px;padding:10px 18px;border-radius:8px;border:0;background:#1e6fa5;color:#fff;font-weight:700;cursor:pointer}
+  #bt-chip{display:none;position:fixed;bottom:14px;right:14px;z-index:9000;background:#1f9d55;color:#fff;border-radius:22px;
+    padding:6px 8px 6px 14px;font-family:'Segoe UI',Arial,sans-serif;font-size:15px;font-weight:700;align-items:center;gap:10px;box-shadow:0 4px 14px rgba(0,0,0,.4)}
+  #bt-chip.on{display:flex}
+  #bt-chip small{font-weight:400;opacity:.85}
+  #bt-chip button{border:0;border-radius:16px;background:#fff;color:#1f9d55;font-weight:800;padding:5px 12px;cursor:pointer}
+</style>
+<div id="bt-lock"><div class="ico">🔒</div><h1>PASSA IL BADGE</h1>
+  <p>Avvicina il QR del tuo badge al lettore per sbloccare il totem</p>
+  <div class="esito" id="bt-esito"></div>
+  <div class="manuale"><input id="bt-manuale" placeholder="oppure scrivi il codice" autocomplete="off"><button onclick="btSblocca(document.getElementById('bt-manuale').value)">Sblocca</button></div>
+</div>
+<div id="bt-chip">👷 <span id="bt-nome"></span> <small id="bt-timer"></small><button onclick="btBlocca('Uscito')">Esci</button></div>
+<script>
+(function(){
+  const URL_DICHIARAZIONE = /^\/api\/dichiarazione-produzione(\/libera)?$/;
+  let attivo = false, token = null, nome = '', limiteMs = 2 * 60 * 1000, ultimo = Date.now(), buffer = '', ultimoTasto = 0;
+  // Il totem si ricarica da solo ogni minuto: l'operatore collegato resta collegato
+  // (solo in questa scheda e solo entro i 2 minuti dall'ultima attività).
+  const CHIAVE = 'badge_totem_sessione';
+  function salva(){ try{ token ? sessionStorage.setItem(CHIAVE, JSON.stringify({token, nome, ultimo})) : sessionStorage.removeItem(CHIAVE); }catch(e){} }
+  try{
+    const s = JSON.parse(sessionStorage.getItem(CHIAVE) || 'null');
+    if(s && s.token && Date.now() - s.ultimo < limiteMs){ token = s.token; nome = s.nome; ultimo = s.ultimo; }
+  }catch(e){}
+
+  function mostraLock(msg){
+    document.getElementById('bt-lock').classList.add('on');
+    document.getElementById('bt-chip').classList.remove('on');
+    document.getElementById('bt-esito').textContent = msg || '';
+    document.getElementById('bt-esito').style.color = '#e6b800';
+    document.getElementById('bt-manuale').value = '';
+    buffer = '';
+  }
+  window.btBlocca = function(msg){ token = null; nome = ''; salva(); if(attivo) mostraLock(msg); };
+  function mostraChip(){
+    document.getElementById('bt-nome').textContent = nome;
+    document.getElementById('bt-lock').classList.remove('on');
+    document.getElementById('bt-chip').classList.add('on');
+  }
+
+  window.btSblocca = async function(codice){
+    codice = (codice || '').trim();
+    if(!codice) return;
+    const esito = document.getElementById('bt-esito');
+    esito.style.color = '#9fb8d0'; esito.textContent = 'Verifica badge…';
+    try{
+      const r = await window._btFetchOriginale('/api/totem-badge/sblocca', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({codice})});
+      const d = await r.json();
+      if(!d.ok){ esito.style.color = '#ff6b6b'; esito.textContent = '❌ ' + (d.error || 'Badge non valido'); buffer = ''; return; }
+      token = d.token; nome = d.nome; ultimo = Date.now();
+      if(d.minuti_inattivita) limiteMs = d.minuti_inattivita * 60 * 1000;
+      salva(); mostraChip();
+    }catch(e){ esito.style.color = '#ff6b6b'; esito.textContent = '❌ Errore di rete, riprova'; }
+  };
+
+  // Il lettore USB "scrive" il codice come una tastiera e preme Invio.
+  document.addEventListener('keydown', function(e){
+    if(!document.getElementById('bt-lock').classList.contains('on')) return;
+    if(e.target && e.target.id === 'bt-manuale'){ if(e.key === 'Enter') btSblocca(e.target.value); return; }
+    const ora = Date.now();
+    if(ora - ultimoTasto > 300) buffer = '';      // tasti lenti = non è il lettore
+    ultimoTasto = ora;
+    if(e.key === 'Enter'){ btSblocca(buffer); buffer = ''; e.preventDefault(); return; }
+    if(e.key.length === 1){ buffer += e.key; e.preventDefault(); }
+  }, true);
+
+  ['pointerdown', 'keydown', 'touchstart', 'wheel'].forEach(ev => document.addEventListener(ev, () => { ultimo = Date.now(); }, true));
+  setInterval(function(){
+    if(!attivo || !token) return;
+    const resto = limiteMs - (Date.now() - ultimo);
+    if(resto <= 0){ btBlocca('Totem richiuso per inattività'); return; }
+    salva();
+    const s = Math.ceil(resto / 1000);
+    document.getElementById('bt-timer').textContent = `· si chiude tra ${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+  }, 1000);
+
+  // Ogni dichiarazione del totem porta il badge di chi è collegato.
+  window._btFetchOriginale = window.fetch.bind(window);
+  window.fetch = async function(url, opt){
+    const percorso = typeof url === 'string' ? url.split('?')[0] : '';
+    if(URL_DICHIARAZIONE.test(percorso) && opt && (opt.method || '').toUpperCase() === 'POST'){
+      opt = Object.assign({}, opt);
+      opt.headers = Object.assign({}, opt.headers || {}, {'X-Totem': 'alessandro'});
+      try{ const corpo = JSON.parse(opt.body || '{}'); corpo.badge_token = token; opt.body = JSON.stringify(corpo); }catch(e){}
+      ultimo = Date.now();
+      const r = await window._btFetchOriginale(url, opt);
+      if(r.status === 401){ try{ const d = await r.clone().json(); if(d.badge_richiesto) btBlocca(d.error); }catch(e){} }
+      return r;
+    }
+    return window._btFetchOriginale(url, opt);
+  };
+
+  async function stato(){
+    try{
+      const d = await (await window._btFetchOriginale('/api/totem-badge/stato')).json();
+      const prima = attivo;
+      attivo = !!d.attivo;
+      if(d.minuti_inattivita) limiteMs = d.minuti_inattivita * 60 * 1000;
+      if(attivo && !token) mostraLock();
+      if(attivo && token) mostraChip();
+      if(!attivo && prima){ document.getElementById('bt-lock').classList.remove('on'); document.getElementById('bt-chip').classList.remove('on'); token = null; }
+    }catch(e){}
+  }
+  stato();
+  setInterval(stato, 60000);    // se Angelo attiva/disattiva, il totem se ne accorge entro un minuto
+})();
+</script>

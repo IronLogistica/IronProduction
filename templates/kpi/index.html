@@ -1,6 +1,21 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-toolbar"><div class="page-title">📈 Cruscotto KPI</div></div>
+<div id="badge-totem-box" class="badge-totem off">
+  <div class="bt-testo"><b>🪪 Badge operatore sul Totem Alessandro</b>
+    <span id="bt-stato">…</span>
+    <div class="bt-sub">Quando è attivo il totem resta bloccato finché un <b>Dichiaratore</b> non passa il badge, e ogni dichiarazione porta il suo nome. Si richiude dopo 2 minuti senza attività. Dichiaratori e badge: <a href="/matrice-competenze">Matrice Competenze</a>.</div></div>
+  <button id="bt-pulsante" class="btn" onclick="cambiaBadgeTotem()">…</button>
+</div>
+<style>
+  .badge-totem{display:flex;gap:16px;align-items:center;justify-content:space-between;border-radius:10px;padding:12px 16px;margin-bottom:16px;border:2px solid #6b8aaa;background:rgba(107,138,170,.12)}
+  .badge-totem.on{border-color:#1f9d55;background:rgba(31,157,85,.12)}
+  .badge-totem .bt-sub{font-size:12px;color:var(--text-dim,#8aa);margin-top:3px}
+  .badge-totem #bt-stato{margin-left:8px;font-weight:800;padding:2px 9px;border-radius:9px;background:#6b8aaa;color:#fff;font-size:12px}
+  .badge-totem.on #bt-stato{background:#1f9d55}
+  .badge-totem button{white-space:nowrap}
+  .badge-totem a{color:#5dade2;font-weight:700}
+</style>
 <div class="kpi-grid">
   <div class="kpi-card"><div class="kpi-value">{{ kpi.tot_prodotti_kanban }}</div><div class="kpi-label">Prodotti Totali a Kanban</div></div>
   <div class="kpi-card warn"><div class="kpi-value">{{ kpi.da_programmare }}</div><div class="kpi-label">⚠️ Da Programmare</div></div>
@@ -79,6 +94,30 @@
 </div>
 {% endblock %}
 {% block scripts %}
+let _badgeTotemAttivo = false;
+async function caricaBadgeTotem(){
+  try{
+    const d = await (await fetch('/api/totem-badge/stato')).json();
+    _badgeTotemAttivo = d.attivo;
+    document.getElementById('badge-totem-box').classList.toggle('on', d.attivo);
+    document.getElementById('bt-stato').textContent = d.attivo
+      ? 'ATTIVO dal ' + new Date(d.attivato_il + 'Z').toLocaleString('it-IT', {day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit'})
+      : 'NON ATTIVO';
+    document.getElementById('bt-pulsante').textContent = d.attivo ? '⏸️ Disattiva' : '▶️ Attiva da adesso';
+  }catch(e){}
+}
+async function cambiaBadgeTotem(){
+  const attiva = !_badgeTotemAttivo;
+  const msg = attiva
+    ? 'Attivare il badge sul Totem Alessandro DA ADESSO?\n\nDa questo momento si dichiara solo passando il badge.\nPrima assicurati che i Dichiaratori abbiano il loro badge stampato.'
+    : 'Disattivare il badge? Il totem tornerà a dichiarare senza riconoscere l\'operatore.';
+  if(!confirm(msg)) return;
+  const pin = prompt('PIN Direzione:'); if(!pin) return;
+  const d = await (await fetch('/api/totem-badge/attiva', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({attivo: attiva, pin})})).json();
+  if(!d.ok){ alert('⚠️ ' + d.error); return; }
+  caricaBadgeTotem();
+}
+caricaBadgeTotem();
 const AC_CIANO = '#7EEEEF';
 const AC_ZONE = [['taglio','Taglio'], ['fori','Fori'], ['curvatura','Curvatura'], ['sgola_sati','Sgola/Sati'], ['saldatura','Saldatura']];
 

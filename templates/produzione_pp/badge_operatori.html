@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="it"><head><meta charset="utf-8"><title>Badge operatori — Totem</title>
+<style>
+  body{font-family:'Segoe UI',Arial,sans-serif;background:#e7ebef;margin:0;padding:20px}
+  .barra{display:flex;gap:10px;align-items:center;margin-bottom:16px}
+  .barra button{border:0;border-radius:7px;padding:10px 18px;font-weight:700;cursor:pointer;background:#1f4e79;color:#fff}
+  .foglio{display:flex;flex-wrap:wrap;gap:6mm}
+  .badge{width:85.6mm;height:54mm;box-sizing:border-box;background:#fff;border:1px solid #999;border-radius:3mm;
+    display:flex;align-items:center;gap:4mm;padding:4mm;page-break-inside:avoid;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .badge .qr{width:40mm;height:40mm;flex:0 0 40mm}.badge .qr svg{width:100%;height:100%}
+  .badge .testo{flex:1;min-width:0}
+  .badge .ditta{font-size:9pt;font-weight:800;color:#1f4e79;letter-spacing:.5px}
+  .badge .nome{font-size:13pt;font-weight:900;margin:2mm 0;line-height:1.15;word-break:keep-all;overflow-wrap:normal}
+  .badge .ruolo{display:inline-block;background:#1f9d55;color:#fff;font-size:8pt;font-weight:800;padding:1mm 2.5mm;border-radius:2mm}
+  .badge .codice{font-family:Consolas,monospace;font-size:8pt;color:#555;margin-top:2mm}
+  .badge .uso{font-size:7pt;color:#777;margin-top:1mm}
+  .vuoto{background:#fff;padding:20px;border-radius:8px}
+  @media print{body{background:#fff;padding:0}.barra{display:none}@page{size:A4;margin:10mm}}
+</style></head><body>
+<div class="barra"><button onclick="window.print()">🖨️ Stampa badge</button>
+<span>{{ badge|length }} badge · formato carta di credito (85,6 × 54 mm) · da ritagliare e plastificare</span></div>
+{% if badge %}<div class="foglio">
+{% for b in badge %}<div class="badge"><div class="qr">{{ b.qr|safe }}</div>
+<div class="testo"><div class="ditta">IRON SEGNALETICA</div><div class="nome">{{ b.nome }}</div>
+<span class="ruolo">DICHIARATORE</span><div class="codice">{{ b.codice }}</div>
+<div class="uso">Passalo sul lettore per sbloccare il Totem</div></div></div>{% endfor %}
+</div>{% else %}<div class="vuoto">Nessun operatore "Dichiaratore" con badge. Segna la qualifica in Matrice Competenze.</div>{% endif %}
+</body></html>

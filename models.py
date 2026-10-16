@@ -388,6 +388,20 @@ class OperatoreWood(db.Model):
     nome = db.Column(db.String(100), nullable=False)
     attivo = db.Column(db.Boolean, default=True)
     creato_il = db.Column(db.DateTime, default=datetime.utcnow)
+    # Badge del Totem Alessandro (Mauri, 16/10/2026): solo i "dichiaratori" possono
+    # sbloccare il totem e dichiarare produzione. Il codice è stampato come QR sul
+    # badge; rigenerarlo (badge perso) rende inutilizzabile quello vecchio.
+    dichiaratore = db.Column(db.Boolean, nullable=False, default=False)
+    codice_badge = db.Column(db.String(40), unique=True, nullable=True)
+
+
+class ImpostazioneTotemWood(db.Model):
+    """Riga unica: Angelo decide da quando il Totem Alessandro richiede il badge."""
+    __tablename__ = 'impostazioni_totem_wood'
+    id = db.Column(db.Integer, primary_key=True)
+    badge_attivo = db.Column(db.Boolean, nullable=False, default=False)
+    attivato_il = db.Column(db.DateTime, nullable=True)
+    aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class CompetenzaOperatoreWood(db.Model):
@@ -1910,6 +1924,27 @@ def assicura_schemi_taglio_attivazione():
         if 'attiva_schema' not in colonne:
             db.session.execute(text("ALTER TABLE schemi_taglio_righe_wood ADD COLUMN attiva_schema BOOLEAN NOT NULL DEFAULT 0"))
             db.session.commit()
+
+
+def assicura_badge_operatori():
+    """Colonne operatori_wood.dichiaratore e codice_badge (badge del Totem Alessandro)."""
+    db_url = os.environ.get('DATABASE_URL', '')
+    if 'postgresql' in db_url or 'postgres' in db_url:
+        for ddl in ("ALTER TABLE operatori_wood ADD COLUMN IF NOT EXISTS dichiaratore BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ALTER TABLE operatori_wood ADD COLUMN IF NOT EXISTS codice_badge VARCHAR(40)",
+                    "CREATE UNIQUE INDEX IF NOT EXISTS uq_operatori_wood_codice_badge ON operatori_wood (codice_badge)"):
+            try:
+                db.session.execute(text(ddl))
+                db.session.commit()
+            except Exception:
+                db.session.rollback()
+    else:
+        colonne = {c['name'] for c in inspect(db.engine).get_columns('operatori_wood')}
+        if 'dichiaratore' not in colonne:
+            db.session.execute(text("ALTER TABLE operatori_wood ADD COLUMN dichiaratore BOOLEAN NOT NULL DEFAULT 0"))
+        if 'codice_badge' not in colonne:
+            db.session.execute(text("ALTER TABLE operatori_wood ADD COLUMN codice_badge VARCHAR(40)"))
+        db.session.commit()
 
 
 def assicura_op_a_scorta():

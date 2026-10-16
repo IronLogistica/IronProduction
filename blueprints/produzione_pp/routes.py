@@ -32,6 +32,7 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
 from blueprints.produzione_pp.varianze_calc import (varianza_quantita_materiale, varianza_prezzo_materiale,
                     varianza_efficienza_tempo, varianza_tariffa)
 from blueprints.produzione_pp.piano_taglio import applica_piano_al_gruppo
+from blueprints.produzione_pp.badge_totem import operatore_dichiarazione
 from blueprints.produzione_pp.avanzamento import (calcola_avanzamento_commesse,
                     _capacita_giornaliera_ore, DEFAULT_ORE_GIORNO)
 from masterlogistic_client import assegna_ubicazione_wip, rimuovi_ubicazione_wip, segnala_semilavorato_da_allocare, MasterLogisticError
@@ -1090,7 +1091,8 @@ def api_matrice_competenze():
     centri = CentroCostoWood.query.order_by(CentroCostoWood.nome).all()
     competenze = {(c.operatore_id, c.centro_costo_id) for c in CompetenzaOperatoreWood.query.all()}
     return jsonify({
-        'operatori': [{'id': o.id, 'nome': o.nome} for o in operatori],
+        'operatori': [{'id': o.id, 'nome': o.nome, 'dichiaratore': bool(o.dichiaratore),
+                       'ha_badge': bool(o.codice_badge)} for o in operatori],
         'centri': [{'id': c.id, 'nome': c.nome} for c in centri],
         'competenze': [[op_id, centro_id] for op_id, centro_id in competenze],
     })
@@ -2529,6 +2531,9 @@ def api_dichiarazione_libera_conferma():
     disponibile a magazzino invece che a saldo zero.
     """
     d = request.get_json(force=True)
+    operatore_badge, errore_badge = operatore_dichiarazione(d)
+    if errore_badge:
+        return jsonify(ok=False, error=errore_badge, badge_richiesto=True), 401
     codice = (d.get('codice') or '').strip()
     try:
         quantita = float(d.get('quantita'))
@@ -2544,7 +2549,7 @@ def api_dichiarazione_libera_conferma():
     else:
         _esplodi_per_dichiarazione_libera(codice, quantita, consumi, set())
 
-    note = f"Dichiarazione libera — {quantita} pz di {codice} (nessun OP)"
+    note = f"Dichiarazione libera — {quantita} pz di {codice} (nessun OP)" + (f" — {operatore_badge}" if operatore_badge else '')
     for cod, qta_consumata in consumi.items():
         if qta_consumata:
             costo_corrente = _calcola_costo_standard(cod)['costo_totale']
@@ -5128,6 +5133,10 @@ def api_dichiarazione_crea():
     un Modulo Non Conformità 8D (semplificato) APPROVATO da Angelo per
     ESATTAMENTE questa quantità — vedi ModuloNonConformita8D."""
     d = request.get_json(force=True)
+    # Badge del Totem Alessandro (16/10/2026): chi dichiara. Vale solo per il totem.
+    operatore_badge, errore_badge = operatore_dichiarazione(d)
+    if errore_badge:
+        return jsonify(ok=False, error=errore_badge, badge_richiesto=True), 401
     o = OrdineProduzione.query.filter_by(codice=(d.get('op_code') or '').strip()).first()
     if not o:
         return jsonify(ok=False, error='Ordine di produzione non trovato'), 404
@@ -5168,7 +5177,7 @@ def api_dichiarazione_crea():
     event_id = str(uuid.uuid4())
     avviso_magazzino = _registra_evento_consuntivo(o, centro.nome, datetime.utcnow(), good, scrap, tempo, event_id,
                                                      componente=componente, consumi_override=consumi_override,
-                                                     approvato_direzione=True)
+                                                     approvato_direzione=True, operatore=operatore_badge)
 
     # Se questa dichiarazione era autorizzata da un 8D approvato, lo consuma:
     # non autorizza più nessuna dichiarazione futura, un'eccedenza successiva
@@ -5892,6 +5901,7 @@ def api_dichiarazione_storico(cid):
         'codice_articolo': articolo_per_op.get(e.op_code, '—'),
         'timestamp': e.timestamp_evento.strftime('%d/%m/%Y %H:%M'),
         'pezzi_buoni': e.pezzi_buoni, 'pezzi_scarto': e.pezzi_scarto, 'tempo_minuti': e.tempo_minuti,
+        'operatore': e.operatore or '',
         'approvato_direzione': e.approvato_direzione,
         'approvato_il': e.approvato_il.strftime('%d/%m/%Y %H:%M') if e.approvato_il else None,
     } for e in eventi])

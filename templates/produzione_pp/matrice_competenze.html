@@ -18,7 +18,12 @@
         <div id="operatore-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
       </div>
       <button class="btn btn-primary" onclick="creaOperatore()">➕ Aggiungi Operatore</button>
+      <a class="btn btn-ghost" href="/operatori/badge" target="_blank" style="margin-left:auto">🪪 Stampa badge di tutti i Dichiaratori</a>
     </div>
+    <p style="font-size:12.5px;color:var(--text-dim);margin:-6px 0 14px">
+      <b>Dichiaratore</b> = può sbloccare il <b>Totem Alessandro</b> con il suo badge QR e dichiarare produzione.
+      Spunta la casella, stampa il badge (🪪) e consegnalo. Badge perso? 🔄 ne genera uno nuovo e quello vecchio non funziona più.
+    </p>
     <div id="matrice-box" style="overflow-x:auto">Caricamento...</div>
   </div>
 </div>
@@ -30,6 +35,9 @@
   table.matrice th.centro-hdr{writing-mode:vertical-rl;transform:rotate(180deg);white-space:nowrap;padding:10px 6px;font-size:11px}
   .casella-competenza{width:26px;height:26px;border-radius:5px;border:1px solid var(--border);cursor:pointer;background:var(--surface)}
   .casella-competenza.attiva{background:#2a9d5c;border-color:#2a9d5c;color:#fff;font-weight:900}
+  table.matrice td.col-dich{white-space:nowrap;background:rgba(31,157,85,.08)}
+  .casella-dich.attiva{background:#1f6fb2;border-color:#1f6fb2}
+  .link-badge{font-size:17px;text-decoration:none;margin-left:4px;vertical-align:middle}
   .btn-elimina-piccolo{background:none;border:none;color:#c0392b;cursor:pointer;font-size:14px;padding:2px 6px}
 </style>
 {% endblock %}
@@ -58,11 +66,13 @@ function renderMatrice(){
     return;
   }
   const competenzeSet = new Set(DATI.competenze.map(c => c[0] + '-' + c[1]));
-  let html = '<table class="matrice"><thead><tr><th class="nome-operatore">Operatore</th>';
+  let html = '<table class="matrice"><thead><tr><th class="nome-operatore">Operatore</th><th class="col-dich">Dichiaratore<br><span style="font-weight:400;font-size:10px">badge Totem</span></th>';
   DATI.centri.forEach(c => { html += `<th class="centro-hdr">${c.nome}</th>`; });
   html += '<th></th></tr></thead><tbody>';
   DATI.operatori.forEach(op => {
     html += `<tr><td class="nome-operatore">${op.nome}</td>`;
+    html += `<td class="col-dich"><div class="casella-competenza casella-dich ${op.dichiaratore ? 'attiva' : ''}" title="Può dichiarare dal Totem Alessandro" onclick="toggleDichiaratore(${op.id}, this)">${op.dichiaratore ? '✓' : ''}</div>`
+          + (op.dichiaratore && op.ha_badge ? ` <a href="/operatori/badge?id=${op.id}" target="_blank" title="Stampa badge QR" class="link-badge">🪪</a><button class="btn-elimina-piccolo" title="Badge perso: genera un nuovo QR" onclick="rigeneraBadge(${op.id}, '${op.nome.replace(/'/g,"\\'")}')">🔄</button>` : '') + `</td>`;
     DATI.centri.forEach(c => {
       const attiva = competenzeSet.has(op.id + '-' + c.id);
       html += `<td><div class="casella-competenza ${attiva ? 'attiva' : ''}" onclick="toggleCompetenza(${op.id}, ${c.id}, this)">${attiva ? '✓' : ''}</div></td>`;
@@ -73,6 +83,25 @@ function renderMatrice(){
   box.innerHTML = html;
 }
 
+async function toggleDichiaratore(operatoreId, casella){
+  const nuovo = !casella.classList.contains('attiva');
+  try{
+    const r = await fetch(`/api/operatori/${operatoreId}/dichiaratore`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({dichiaratore: nuovo})});
+    const d = await r.json();
+    if(!d.ok){ alert(d.error || 'Errore'); return; }
+    const op = DATI.operatori.find(o => o.id === operatoreId);
+    op.dichiaratore = d.dichiaratore; op.ha_badge = d.ha_badge;
+    renderMatrice();
+  }catch(e){ alert('Errore di rete'); }
+}
+async function rigeneraBadge(operatoreId, nome){
+  if(!confirm(`Generare un NUOVO badge per ${nome}?\n\nIl badge attuale smetterà subito di funzionare: andrà ristampato e riconsegnato.`)) return;
+  const pin = prompt('PIN Direzione:'); if(!pin) return;
+  const r = await fetch(`/api/operatori/${operatoreId}/badge/rigenera`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({pin})});
+  const d = await r.json();
+  if(!d.ok){ alert(d.error || 'Errore'); return; }
+  window.open(`/operatori/badge?id=${operatoreId}`, '_blank');
+}
 async function toggleCompetenza(operatoreId, centroId, casella){
   casella.style.opacity = '0.4';
   try{
