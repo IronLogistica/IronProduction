@@ -3330,6 +3330,28 @@ class RigaOrdineAcquistoWood(db.Model):
     ordine = db.relationship('OrdineAcquistoWood', backref=db.backref('righe', cascade='all, delete-orphan'))
 
 
+class AllegatoOrdineAcquistoWood(db.Model):
+    """
+    Fascicolo documentale dell'Ordine di Acquisto — stesso pattern già usato
+    in MasterLogistic-WMS: 5 slot fissi (01 Ordine Fornitore, 02 Conferma
+    Ordine, 03-05 Allegati generici), ciascuno con un documento caricabile,
+    sostituibile e cancellabile. Vive nel DB locale (Postgres) come
+    'contenuto' blob, non su file, perché su Railway il filesystem è
+    effimero e verrebbe azzerato ad ogni redeploy (stesso motivo di
+    OrdineAcquistoWood.pdf_bytes qui sopra).
+    """
+    __tablename__ = 'allegati_ordine_acquisto_wood'
+    id          = db.Column(db.Integer, primary_key=True)
+    ordine_id   = db.Column(db.Integer, db.ForeignKey('ordini_acquisto_wood.id'), nullable=False, index=True)
+    slot        = db.Column(db.Integer, nullable=False)   # 1=Ordine Fornitore, 2=Conferma Ordine, 3-5=Allegati
+    nome_file   = db.Column(db.String(255), nullable=False)
+    mime        = db.Column(db.String(100), nullable=False, default='application/octet-stream')
+    contenuto   = db.Column(db.LargeBinary, nullable=False)
+    caricato_il = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    ordine = db.relationship('OrdineAcquistoWood', backref=db.backref('allegati', cascade='all, delete-orphan'))
+    __table_args__ = (db.UniqueConstraint('ordine_id', 'slot', name='uq_allegato_oa_wood_slot'),)
+
+
 class MappaCodiceFornitoreWood(db.Model):
     """
     Mappa codice-articolo-del-fornitore -> codice interno IronProduction.
