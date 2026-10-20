@@ -94,9 +94,14 @@ async function caricaGanttCommesse(){
     const parse = s => { const [y,m,d] = s.split('-').map(Number); return new Date(y, m-1, d); };
     const giorniTra = (a,b) => Math.round((b-a) / 86400000);
 
-    const fineMax = righe.reduce((mx,o) => Math.max(mx, giorniTra(oggi, parse(o.data_consegna_iso))), 1);
-    const totaleGiorni = Math.max(fineMax + 2, 14);
-    const scala = Math.max(720 / totaleGiorni, 8);
+    // Orizzonte fisso (max 90gg): una singola commessa con consegna lontanissima
+    // (data mancante/anomala, es. stima di default) non deve più schiacciare la
+    // scala di TUTTE le altre righe — la barra viene troncata con una freccina
+    // e la data vera resta nel tooltip, invece di allungare tutto il grafico.
+    const ORIZZONTE_MAX_GG = 90;
+    const fineMaxGrezzo = righe.reduce((mx,o) => Math.max(mx, giorniTra(oggi, parse(o.data_consegna_iso))), 1);
+    const totaleGiorni = Math.min(Math.max(fineMaxGrezzo + 2, 14), ORIZZONTE_MAX_GG);
+    const scala = 720 / totaleGiorni;
     const trackWidth = Math.round(totaleGiorni * scala);
 
     let righeHtml = '';
@@ -104,12 +109,19 @@ async function caricaGanttCommesse(){
       const gInizio = Math.max(giorniTra(oggi, parse(o.data_inizio_iso)), 0);
       const gFineInt = Math.max(giorniTra(oggi, parse(o.data_fine_produzione_iso)), gInizio);
       const gFineEst = Math.max(giorniTra(oggi, parse(o.data_consegna_iso)), gFineInt);
-      const intLeft = Math.round(gInizio * scala);
-      const intWidth = Math.max(Math.round((gFineInt - gInizio) * scala), 3);
-      const estLeft = Math.round(gFineInt * scala);
-      const estWidth = Math.round((gFineEst - gFineInt) * scala);
+      const oltreScala = gFineEst > totaleGiorni;
+      const gInizioC = Math.min(gInizio, totaleGiorni);
+      const gFineIntC = Math.min(gFineInt, totaleGiorni);
+      const gFineEstC = Math.min(gFineEst, totaleGiorni);
+      const intLeft = Math.round(gInizioC * scala);
+      const intWidth = Math.max(Math.round((gFineIntC - gInizioC) * scala), 3);
+      const estLeft = Math.round(gFineIntC * scala);
+      const estWidth = Math.round((gFineEstC - gFineIntC) * scala);
       const estBar = estWidth > 2
         ? `<div style="position:absolute;left:${estLeft}px;width:${estWidth}px;top:6px;height:16px;background:#eb9f27;border-radius:4px;opacity:.85"></div>`
+        : '';
+      const freccia = oltreScala
+        ? `<div style="position:absolute;right:-2px;top:4px;font-size:14px;color:#f09595;cursor:help" title="Consegna stimata ${o.data_consegna_stimata} — oltre i ${ORIZZONTE_MAX_GG}gg visibili">➜</div>`
         : '';
       righeHtml += `<div style="display:flex;align-items:center;margin-bottom:10px">
         <div style="width:170px;flex-shrink:0;padding-right:8px">
@@ -121,6 +133,7 @@ async function caricaGanttCommesse(){
           <div style="position:absolute;left:${intLeft}px;width:${intWidth}px;top:6px;height:16px;background:#2589c7;border-radius:4px"
                title="${o.data_inizio_produzione_stimata} → ${o.data_fine_produzione_stimata}"></div>
           ${estBar}
+          ${freccia}
         </div>
       </div>`;
     });
