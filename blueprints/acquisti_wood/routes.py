@@ -10,7 +10,7 @@ from models import (db, OrdineAcquistoWood, RigaOrdineAcquistoWood,
                     DDTCaricoWood, RigaDDTCaricoWood, MappaCodiceFornitoreWood,
                     OrdineProduzione, GiacenzaWood, ArticoloApprovvigionamento, ScortaMinimaWood,
                     AnagraficaAziendaWood, AnagraficaFornitoreWood, CatalogoFornitoreWood, Terzista,
-                    ScartoFornitoreWood, DistintaBaseWood)
+                    ScartoFornitoreWood, DistintaBaseWood, AllegatoOrdineAcquistoWood)
 from blueprints.magazzino.routes import (_registra_movimento_giacenza, api_fabbisogno_produzione,
                     _netta_e_esplodi_wood, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO, _saldo_materiale_op,
                     _calcola_campi_giacenza, LABEL_TIPO_APPROVVIGIONAMENTO, _leggi_file_tabellare_tollerante,
@@ -589,6 +589,80 @@ def api_scarica_pdf(oid):
         return jsonify({'errore': True, 'messaggio': 'PDF non disponibile per questo ordine.'}), 404
     return Response(o.pdf_bytes, mimetype='application/pdf',
                      headers={'Content-Disposition': f'inline; filename="{o.filename}"'})
+
+
+# ── Fascicolo documentale dell'Ordine di Acquisto — stesso pattern già
+# presente in MasterLogistic-WMS: 5 slot fissi, ciascuno caricabile/
+# sostituibile/cancellabile singolarmente, indipendenti dal PDF originale
+# dell'ordine (quello resta gestito da pdf_bytes/upload/stampa qui sopra).
+FASCICOLO_OA_WOOD_SLOT_LABELS = {
+    1: 'Ordine Fornitore', 2: 'Conferma Ordine',
+    3: 'Allegato 1', 4: 'Allegato 2', 5: 'Allegato 3',
+}
+FASCICOLO_OA_WOOD_MAX_BYTES = 20 * 1024 * 1024  # 20 MB, stesso limite di ClAllegato (conto lavoro)
+
+
+@acquisti_wood_bp.route('/api/ordini_acquisto_wood/<int:oid>/fascicolo')
+def api_fascicolo_ordine_acquisto(oid):
+    OrdineAcquistoWood.query.get_or_404(oid)
+    esistenti = {a.slot: a for a in AllegatoOrdineAcquistoWood.query.filter_by(ordine_id=oid).all()}
+    slots = []
+    for slot, etichetta in FASCICOLO_OA_WOOD_SLOT_LABELS.items():
+        a = esistenti.get(slot)
+        slots.append({
+            'slot': slot, 'etichetta': f'{slot:02d} · {etichetta}',
+            'caricato': a is not None,
+            'nome_file': a.nome_file if a else None,
+            'caricato_il': a.caricato_il.strftime('%d/%m/%Y %H:%M') if a else None,
+        })
+    return jsonify(ok=True, slots=slots, caricati=len(esistenti), totale=len(FASCICOLO_OA_WOOD_SLOT_LABELS))
+
+
+@acquisti_wood_bp.route('/api/ordini_acquisto_wood/<int:oid>/fascicolo/<int:slot>', methods=['POST'])
+def api_fascicolo_ordine_acquisto_upload(oid, slot):
+    if slot not in FASCICOLO_OA_WOOD_SLOT_LABELS:
+        return jsonify(ok=False, error='Slot non valido'), 400
+    OrdineAcquistoWood.query.get_or_404(oid)
+    file = request.files.get('file')
+    if not file or not file.filename:
+        return jsonify(ok=False, error='Nessun file selezionato'), 400
+    contenuto = file.read()
+    if not contenuto:
+        return jsonify(ok=False, error='File vuoto'), 400
+    if len(contenuto) > FASCICOLO_OA_WOOD_MAX_BYTES:
+        return jsonify(ok=False, error='File troppo grande (max 20 MB)'), 400
+    esistente = AllegatoOrdineAcquistoWood.query.filter_by(ordine_id=oid, slot=slot).first()
+    if esistente:
+        esistente.nome_file = file.filename
+        esistente.mime = file.mimetype or 'application/octet-stream'
+        esistente.contenuto = contenuto
+        esistente.caricato_il = datetime.utcnow()
+    else:
+        db.session.add(AllegatoOrdineAcquistoWood(
+            ordine_id=oid, slot=slot, nome_file=file.filename,
+            mime=file.mimetype or 'application/octet-stream', contenuto=contenuto,
+        ))
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+@acquisti_wood_bp.route('/ordini_acquisto_wood/<int:oid>/fascicolo/<int:slot>')
+def api_fascicolo_ordine_acquisto_scarica(oid, slot):
+    a = AllegatoOrdineAcquistoWood.query.filter_by(ordine_id=oid, slot=slot).first()
+    if not a:
+        return jsonify(ok=False, error='Documento non presente in questo slot'), 404
+    return Response(a.contenuto, mimetype=a.mime or 'application/octet-stream',
+                     headers={'Content-Disposition': f'inline; filename="{a.nome_file}"'})
+
+
+@acquisti_wood_bp.route('/api/ordini_acquisto_wood/<int:oid>/fascicolo/<int:slot>', methods=['DELETE'])
+def api_fascicolo_ordine_acquisto_elimina(oid, slot):
+    a = AllegatoOrdineAcquistoWood.query.filter_by(ordine_id=oid, slot=slot).first()
+    if not a:
+        return jsonify(ok=False, error='Documento non presente in questo slot'), 404
+    db.session.delete(a)
+    db.session.commit()
+    return jsonify(ok=True)
 
 
 @acquisti_wood_bp.route('/materiale-in-arrivo')
