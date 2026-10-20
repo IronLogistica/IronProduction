@@ -14,7 +14,8 @@
       <div style="position:relative">
         <input id="nuovo-operatore-nome" type="text" placeholder="Nome nuovo operatore..." autocomplete="off"
                style="padding:8px 12px;border-radius:6px;border:1px solid var(--border);background:var(--dark3);color:var(--text)"
-               oninput="_operatoreRicercaInput(this)" onfocus="_operatoreRicercaInput(this)">
+               oninput="_operatoreRicercaInput(this)" onfocus="_operatoreRicercaInput(this)"
+               onkeydown="if(event.key==='Enter'){ event.preventDefault(); document.getElementById('operatore-dropdown').style.display='none'; creaOperatore(); }">
         <div id="operatore-dropdown" style="display:none;position:fixed;z-index:9999;background:var(--dark3);border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.4);max-height:280px;overflow-y:auto"></div>
       </div>
       <button class="btn btn-primary" onclick="creaOperatore()">➕ Aggiungi Operatore</button>
@@ -70,7 +71,7 @@ function renderMatrice(){
   DATI.centri.forEach(c => { html += `<th class="centro-hdr">${c.nome}</th>`; });
   html += '<th></th></tr></thead><tbody>';
   DATI.operatori.forEach(op => {
-    html += `<tr><td class="nome-operatore">${op.nome}</td>`;
+    html += `<tr id="op-row-${op.id}"><td class="nome-operatore">${op.nome}</td>`;
     html += `<td class="col-dich"><div class="casella-competenza casella-dich ${op.dichiaratore ? 'attiva' : ''}" title="Può dichiarare dal Totem Alessandro" onclick="toggleDichiaratore(${op.id}, this)">${op.dichiaratore ? '✓' : ''}</div>`
           + (op.dichiaratore && op.ha_badge ? ` <a href="/operatori/badge?id=${op.id}" target="_blank" title="Stampa badge QR" class="link-badge">🪪</a><button class="btn-elimina-piccolo" title="Badge perso: genera un nuovo QR" onclick="rigeneraBadge(${op.id}, '${op.nome.replace(/'/g,"\\'")}')">🔄</button>` : '') + `</td>`;
     DATI.centri.forEach(c => {
@@ -170,12 +171,17 @@ async function creaOperatore(){
     const r = await fetch('/api/operatori', {
       method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({nome})
     });
-    const d = await r.json();
-    if(!d.ok){ alert(d.error || 'Errore.'); return; }
+    let d;
+    try{ d = await r.json(); }
+    catch(e){ showToast(`❌ Errore del server (${r.status}) — l'operatore non è stato creato.`, true); return; }
+    if(!d.ok){ showToast('⚠️ ' + (d.error || 'Errore.'), true); return; }
     input.value = '';
     _operatoriDaRegistrareCache = null;  // il nome appena aggiunto non deve più comparire nei suggerimenti
-    caricaMatrice();
-  }catch(e){ alert('Errore di rete.'); }
+    await caricaMatrice();
+    showToast(`✅ ${nome} aggiunto`);
+    const riga = document.getElementById('op-row-' + d.id);
+    if(riga){ riga.scrollIntoView({behavior:'smooth', block:'center'}); riga.style.outline = '2px solid #2a9d5c'; setTimeout(() => riga.style.outline = '', 2500); }
+  }catch(e){ showToast('❌ Errore di rete — l\'operatore potrebbe non essere stato creato, controlla la lista.', true); }
 }
 
 async function eliminaOperatore(id, nome){
