@@ -140,12 +140,30 @@ async function _operatoreRicercaInput(input){
       }catch(e){ _operatoriDaRegistrareCache = []; }
     }
     const q = input.value.trim().toLowerCase();
-    const risultati = q ? _operatoriDaRegistrareCache.filter(n => n.toLowerCase().includes(q)) : _operatoriDaRegistrareCache;
+    const daRegistrare = q ? _operatoriDaRegistrareCache.filter(n => n.toLowerCase().includes(q)) : _operatoriDaRegistrareCache;
+
+    // Oltre ai nomi già visti/pianificati (sopra), cerca anche nell'INTERA
+    // anagrafica MasterWork — live, non in cache (richiesta Mauri
+    // 20/10/2026: 'BISC' deve suggerire 'BISCARO PARRINI' anche se non ha
+    // mai lavorato qui) — solo da 2 caratteri in su.
+    let daMasterwork = [];
+    if(q.length >= 2){
+      try{
+        const r2 = await fetch('/api/matrice-competenze/cerca-operatore-masterwork?q=' + encodeURIComponent(q));
+        daMasterwork = await r2.json();
+      }catch(e){ daMasterwork = []; }
+    }
+
+    const vistiLower = new Set(daRegistrare.map(n => n.toLowerCase()));
+    const risultati = [
+      ...daRegistrare.map(n => ({nome: n, etichetta: 'visto da MasterWork, non ancora registrato'})),
+      ...daMasterwork.filter(n => !vistiLower.has(n.toLowerCase())).map(n => ({nome: n, etichetta: 'anagrafica MasterWork'})),
+    ];
     if(!risultati.length){ dropdown.style.display = 'none'; dropdown.innerHTML = ''; return; }
-    dropdown.innerHTML = risultati.map(nome => {
+    dropdown.innerHTML = risultati.map(({nome, etichetta}) => {
       const n = nome.replace(/'/g, "\\'").replace(/"/g, '&quot;');
       return `<div class="wms-item" onmousedown="_operatoreSceltaNome('${n}')">
-        <div>${nome} <span style="font-size:10px;color:var(--text-dim)">— visto da MasterWork, non ancora registrato</span></div>
+        <div>${nome} <span style="font-size:10px;color:var(--text-dim)">— ${etichetta}</span></div>
       </div>`;
     }).join('');
     _posizionaOperatoreDropdown(input);

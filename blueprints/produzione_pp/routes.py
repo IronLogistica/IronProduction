@@ -1143,6 +1143,37 @@ def api_matrice_competenze_operai_da_registrare():
     return jsonify(mancanti)
 
 
+@pp_bp.route('/api/matrice-competenze/cerca-operatore-masterwork')
+def api_matrice_competenze_cerca_operatore_masterwork():
+    """
+    Ricerca libera sull'INTERA anagrafica dipendenti di MasterWork
+    (endpoint /api/dipendenti/ricerca lato MasterWork) — a differenza di
+    operai-da-registrare qui sopra, che mostra solo chi ha GIA'
+    dichiarato o è pianificato nel Ghost Plan, questa interroga TUTTI gli
+    operai schedati in MasterWork, anche chi non ha mai lavorato su
+    Carpenteria Propria (richiesta Mauri 20/10/2026: scrivendo 'BISC'
+    deve suggerire 'BISCARO PARRINI'). Chiamata LIVE a ogni ricerca
+    (nessuna cache, a differenza della lista sopra) perché l'anagrafica è
+    troppo grande per scaricarla intera a ogni tasto — richiede almeno 2
+    caratteri. Nessun errore bloccante se MasterWork non risponde: la
+    lista "operai-da-registrare" resta comunque disponibile.
+    """
+    q = (request.args.get('q') or '').strip()
+    if len(q) < 2:
+        return jsonify([])
+    url = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
+    token = current_app.config.get('PP_API_TOKEN', '')
+    if not (url and token):
+        return jsonify([])
+    try:
+        r = requests.get(f'{url}/api/dipendenti/ricerca', params={'q': q},
+                          headers={'Authorization': f'Bearer {token}'}, timeout=5)
+        r.raise_for_status()
+        return jsonify(sorted({n.strip() for n in r.json() if n and n.strip()}))
+    except requests.exceptions.RequestException:
+        return jsonify([])
+
+
 @pp_bp.route('/api/matrice-competenze/toggle', methods=['POST'])
 def api_matrice_competenze_toggle():
     d = request.get_json(force=True)
