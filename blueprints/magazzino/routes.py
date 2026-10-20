@@ -1946,6 +1946,39 @@ def api_giacenza_impegni_op(codice):
                     totale=round(sum(r['consumato'] for r in righe), 4))
 
 
+@magazzino_bp.route('/api/giacenza_wood/<codice>/ordini-fornitori')
+def api_giacenza_ordini_fornitori(codice):
+    """
+    Per un codice specifico: QUALI Ordini di Acquisto ancora aperti generano
+    l'"Ordinato Fornitori" mostrato nella pagina Materiali, e quanto ciascuno
+    — stesso popup pattern già usato per /impegni-op, qui applicato alle
+    righe di Ordine di Acquisto invece che agli OP di produzione. Stessa
+    regola di residuo usata in _calcola_campi_giacenza per il totale
+    "Ordinato Fornitori" in tabella (qta_originale - qta_ricevuta, solo
+    ordini non ancora ORDINE_RICEVUTO): qui si tiene il dettaglio per-ordine
+    che quel totale scarta.
+    """
+    codice = codice.strip()
+    righe = []
+    query = (db.session.query(RigaOrdineAcquistoWood, OrdineAcquistoWood)
+             .join(OrdineAcquistoWood)
+             .filter(RigaOrdineAcquistoWood.codice == codice,
+                     OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO')
+             .order_by(OrdineAcquistoWood.data_consegna.asc(), OrdineAcquistoWood.id.asc()))
+    for riga, ordine in query.all():
+        residuo = round((riga.qta_originale or 0) - (riga.qta_ricevuta or 0), 4)
+        if residuo <= 0:
+            continue
+        righe.append({
+            'ordine_n': ordine.ordine_n or 'N/D', 'fornitore': ordine.fornitore or 'Sconosciuto',
+            'stato_label': ordine.stato_label,
+            'data_consegna': ordine.data_consegna.strftime('%d/%m/%Y') if ordine.data_consegna else None,
+            'residuo': residuo,
+        })
+    return jsonify(ok=True, codice=codice, ordini=righe,
+                    totale=round(sum(r['residuo'] for r in righe), 4))
+
+
 @magazzino_bp.route('/api/ordini-produzione/<op_code>/diagnostica-esplosione')
 def api_diagnostica_esplosione_op(op_code):
     """
