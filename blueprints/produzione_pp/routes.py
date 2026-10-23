@@ -2835,6 +2835,55 @@ def _avanza_wip_fase_automatico(codice, fase_nome, good, scrap):
         log(f'AVVISO avanzamento automatico WIP per fase non riuscito — {codice}/{fase_nome}: {e}')
 
 
+def _ripristina_wip_multi_fase(codice, qta_ripristinata):
+    """
+    Inverso di _consuma_wip_multi_fase, chiamato dallo STORNO di una
+    dichiarazione che aveva consumato 'codice' come componente.
+
+    BUG REALE (23/10/2026, TR2501 — giacenza 56, WIP 26, differenza 30):
+    lo storno restituiva i pezzi alla giacenza piana (movimento
+    'rettifica_import' / "STORNO consuntivo ...") ma NON alla suddivisione
+    per fase. La dichiarazione originale li aveva tolti dalla fase piu'
+    avanzata (Trapani) via _consuma_wip_multi_fase, lo storno li rimetteva
+    in magazzino e basta: 29+1 pezzi stornati = esattamente i 30 di
+    differenza rimasti tra giacenza e WIP.
+
+    I pezzi tornano sulla fase PIU' AVANZATA del ciclo (da li' erano usciti
+    per primi), ma mai oltre cio' che la giacenza puo' contenere: il totale
+    WIP dopo il ripristino non supera mai la giacenza piana — meglio un
+    residuo da sistemare a mano che un WIP gonfiato. Nessun effetto per un
+    codice mono-fase o senza righe WIP (nessuna suddivisione da tenere
+    allineata). Mai bloccante: un errore resta solo nel log.
+    """
+    if qta_ripristinata <= 0:
+        return
+    try:
+        fasi = (CicloLavoroWood.query.filter_by(codice=codice)
+                .order_by(CicloLavoroWood.sequenza.desc()).all())
+        if len(fasi) < 2:
+            return
+        righe = WipFaseWood.query.filter_by(codice=codice).all()
+        if not righe:
+            return
+        giacenza = GiacenzaWood.query.get((codice or '').strip().upper())
+        spazio = max((giacenza.quantita if giacenza else 0) - sum(r.quantita or 0 for r in righe), 0)
+        da_rimettere = min(qta_ripristinata, spazio)
+        if da_rimettere <= 0:
+            return
+        piu_avanzata = fasi[0]
+        riga = next((r for r in righe if r.centro_costo_id == piu_avanzata.centro_costo_id), None)
+        if riga:
+            riga.quantita = (riga.quantita or 0) + da_rimettere
+            riga.aggiornato_il = datetime.utcnow()
+        else:
+            valore_unitario, versione_costo_id = _valore_wip_a_fase(codice, piu_avanzata.centro_costo_id)
+            db.session.add(WipFaseWood(codice=codice, centro_costo_id=piu_avanzata.centro_costo_id,
+                                        quantita=da_rimettere, valore_unitario=valore_unitario,
+                                        versione_costo_id=versione_costo_id))
+    except Exception as exc:
+        log(f'AVVISO ripristino WIP per fase non riuscito — {codice}: {exc}')
+
+
 def _storna_wip_fase_automatico(codice, fase_nome, good, scrap, escludi_event_id=None):
     """
     Inverso di _avanza_wip_fase_automatico, chiamato dallo STORNO di una
@@ -6236,6 +6285,7 @@ def _storna_evento_consuntivo(e, o):
             if qta_consumata:
                 _registra_movimento_giacenza(cod, qta_consumata, 'rettifica_import',
                                               riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
+                _ripristina_wip_multi_fase(cod, qta_consumata)
         if carica_prodotto_finito and e.pezzi_buoni > 0:
             _registra_movimento_giacenza(codice_lavorato, -e.pezzi_buoni, 'rettifica_import',
                                           riferimento=o.codice, note=f'STORNO consuntivo {e.event_id}')
