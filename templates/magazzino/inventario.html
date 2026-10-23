@@ -372,8 +372,11 @@ function aggiornaContatore(){
 async function salvaInventario(){
   const esito = document.getElementById('esito-salvataggio');
   const n = Object.keys(CONTEGGI).length;
-  if(n === 0){ esito.style.color = '#e6b800'; esito.textContent = 'Nessuna modifica da salvare.'; return; }
-  if(!confirm(`Confermi di salvare l'inventario? ${n} codice/i verranno aggiornati alla nuova giacenza contata.`)) return;
+  if(n === 0 && GRUPPO_KANBAN_ID === null){ esito.style.color = '#e6b800'; esito.textContent = 'Nessuna modifica da salvare.'; return; }
+  if(n === 0){
+    // Gruppo Kanban contato e tutto torna: nessuna giacenza da correggere, ma il gruppo va segnato come contato adesso.
+    if(!confirm('Nessun codice modificato: segno comunque questo gruppo come CONTATO adesso (tutte le giacenze risultano corrette)?')) return;
+  } else if(!confirm(`Confermi di salvare l'inventario? ${n} codice/i verranno aggiornati alla nuova giacenza contata.`)) return;
   esito.style.color = 'var(--text-dim)'; esito.textContent = 'Salvataggio...';
   try{
     const r = await fetch('/api/inventario/salva', {
