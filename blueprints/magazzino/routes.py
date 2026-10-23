@@ -4139,7 +4139,10 @@ def api_inventario_salva():
     d = request.get_json(force=True)
     conteggi = d.get('conteggi') or {}
     gruppo_kanban_id = d.get('gruppo_kanban_id')
-    if not conteggi:
+    # Un gruppo Kanban si puo' dichiarare "contato" anche senza nessuna
+    # differenza (tutto torna): in quel caso non c'e' nessun conteggio da
+    # registrare, ma la data dell'ultimo inventario va comunque aggiornata.
+    if not conteggi and not gruppo_kanban_id:
         return jsonify(ok=False, error='Nessun conteggio da salvare'), 400
     aggiornati = 0
     for codice, valore in conteggi.items():
@@ -4157,6 +4160,17 @@ def api_inventario_salva():
         aggiornati += 1
     # Se il conteggio arriva da un gruppo Kanban di Angelo, registra QUI
     # la data dell'ultimo inventario di quel gruppo — usata per calcolare
+    # se e' "scaduto" (vedi api_inventario_kanban_gruppi). BUG REALE
+    # (23/10/2026): questo aggiornamento mancava del tutto — il commento
+    # era rimasto a meta' — quindi ultimo_inventario_il restava sempre
+    # vuoto e il gruppo risultava per sempre "DA CONTARE".
+    if gruppo_kanban_id:
+        try:
+            gruppo = GruppoInventarioWood.query.get(int(gruppo_kanban_id))
+        except (TypeError, ValueError):
+            gruppo = None
+        if gruppo:
+            gruppo.ultimo_inventario_il = datetime.utcnow()
     db.session.commit()
     return jsonify(ok=True, aggiornati=aggiornati)
 
