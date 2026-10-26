@@ -1622,6 +1622,15 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
     # _lista_lavoro_op: nessun comportamento cambia per i codici senza
     # suddivisione per fase.
     wip_per_codice = _wip_fase_per_codice(tutti_i_codici)
+    # Credito "da valle" e regola del prodotto finito: STESSO calcolo del Monitor Live
+    # (_righe_macchina) e dell'Ordine di Lavoro stampato (_lista_lavoro_op). Senza, la lista
+    # "Ordini di lavoro da stampare" teneva aperto un OP gia' evaso (pezzi avanzati a valle
+    # o gia' coperti) che sul Monitor Live Segatrice non compariva piu' (segnalato da Mauri,
+    # 26/10/2026, commessa 26100077 / OP-2026-000077 PINX110 / CUT/052).
+    figli_a_padri = _figli_a_padri_da_mappa(mappa_distinta)
+    fatti_totali_per_componente = _fatti_totali_per_componente(op_codes)
+    giacenza_negativa = {g.codice for g in GiacenzaWood.query.filter(GiacenzaWood.codice.in_(tutti_i_codici)).all()
+                         if (g.quantita or 0) < 0} if tutti_i_codici else set()
 
     for o in ordini:
         # Un OP che non impegna nulla (es. ancora 'Creato', non
@@ -1631,6 +1640,8 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
         # _residuo_giacenza_progressivo.
         residuo_giacenza_op = residuo_per_op_id.get(o.id, residuo_finale)
         per_centro = {}
+        codici_di_questo_op = {n['codice'] for n in componenti_per_op[o.id]}
+        moltiplicatori_op = {n['codice']: n['moltiplicatore'] for n in componenti_per_op[o.id]}
         for n in componenti_per_op[o.id]:
             codice_comp = n['codice']
             centro_ids = fasi_per_codice.get(codice_comp)
@@ -1652,12 +1663,18 @@ def _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta):
                 # 'già fatto' ai fini del residuo — non serve rifare un
                 # lavoro il cui risultato è già pronto a magazzino.
                 gia_disponibile = max(residuo_giacenza_op.get(codice_comp, 0), 0)
+                # La giacenza del PRODOTTO FINITO dell'OP non scala mai quell'OP (regola 12/10/2026).
+                if codice_comp == o.codice_articolo:
+                    gia_disponibile = 0
                 gia_disponibile = _gia_disponibile_per_fase(codice_comp, centro_id, gia_disponibile, wip_per_codice)
-                # Stesso calcolo di _lista_lavoro_op e del Monitor Live (Mauri, 08/10/2026,
-                # Z01 di OP-2026-000063: la card sparita da 'Ordine Lavoro Trapani'):
-                # i pezzi gia' dichiarati sono GIA' dentro la giacenza/WIP, sommarli
-                # li contava due volte (660 fatti + 660 WIP = tutto 'effettuato').
-                acc['pz_effettuati'] += min(max(pezzi_fatti, gia_disponibile), nr_pz_da_fare)
+                credito_da_valle = _credito_da_valle(o, codice_comp, codici_di_questo_op, figli_a_padri,
+                                                      fatti_totali_per_componente, moltiplicatori=moltiplicatori_op,
+                                                      giacenza_disponibile=residuo_giacenza_op)
+                if codice_comp in giacenza_negativa:      # decisione di Angelo 07/10/2026: la riga resta aperta
+                    credito_da_valle = 0
+                saldo_prima = max(nr_pz_da_fare - pezzi_fatti, 0)
+                coperto = min(saldo_prima, round(max(gia_disponibile + credito_da_valle - pezzi_fatti, 0)))
+                acc['pz_effettuati'] += nr_pz_da_fare - max(saldo_prima - coperto, 0)
         for v in per_centro.values():
             v['residuo_pz'] = max(v['totale_pz'] - v['pz_effettuati'], 0)
         risultato[o.id] = list(per_centro.values())
