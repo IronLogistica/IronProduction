@@ -6829,6 +6829,14 @@ def api_diagnostica_op(op_code):
         return res
     sez('per_reparto', _per_reparto)
 
+    def _kpi():
+        # La tabella "Avanzamento Commesse" (Taglio/Fori/Curvatura/Sgola-Sati/Saldatura): stesse % mostrate in pagina
+        from blueprints.produzione_pp.avanzamento import calcola_avanzamento_commesse
+        risultati, _seg = calcola_avanzamento_commesse()
+        r = next((x for x in risultati if x['op_codice'] == o.codice), None)
+        return None if r is None else {'zone_pct': r['zone'], 'pct_op': r['pct'], 'saldo_op': r['saldo']}
+    sez('avanzamento_commesse_kpi', _kpi)
+
     def _audit():
         return [{'quando': a.creato_il.isoformat() if a.creato_il else None, 'azione': a.azione, 'dettaglio': a.dettaglio}
                 for a in AuditPP.query.filter_by(op_code=o.codice).order_by(AuditPP.id.desc()).limit(80).all()]

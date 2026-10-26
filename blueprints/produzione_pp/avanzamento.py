@@ -273,8 +273,10 @@ def calcola_avanzamento_commesse():
                 # apparire una zona ferma allo 0% invece del suo vero
                 # avanzamento.
                 from blueprints.produzione_pp.routes import _fasi_corrispondono
+                # Solo dichiarazioni APPROVATE (stand-by MasterWork non contano): come Monitor Live e OL stampato.
                 eventi_riga = EventoConsuntivoPP.query.filter(
                     EventoConsuntivoPP.op_code == o.codice,
+                    EventoConsuntivoPP.approvato_direzione == True,  # noqa: E712
                     EventoConsuntivoPP.componente == componente_param if componente_param
                     else EventoConsuntivoPP.componente.is_(None)
                 ).all()
