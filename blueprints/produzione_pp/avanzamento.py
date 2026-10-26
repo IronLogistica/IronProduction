@@ -143,7 +143,10 @@ def calcola_avanzamento_commesse():
                 else (1, o.priorita, o.data_prevista or oggi.date(), o.id))
 
     mappa_distinta = _carica_mappa_distinta_base_wood()
-    residuo_per_op, _ = _residuo_giacenza_progressivo(op_aperti=ordini, mappa=mappa_distinta)
+    # La scorta condivisa si assegna in ordine CANONICO (priorita', id), come Monitor Live e OL:
+    # l'ordine manuale di Angelo (sopra) vale per coda e simulazione date, NON per chi riceve la scorta
+    # (26/10/2026, 26100089 al 98% con la scorta di OP-2026-000077).
+    residuo_per_op, _res_finale_kpi = _residuo_giacenza_progressivo(mappa=mappa_distinta)
     centri = {c.id: c for c in CentroCostoWood.query.all()}
 
     # "WIP Station" (richiesta Mauri, 03/10/2026 — caso reale PINX110/
@@ -189,7 +192,7 @@ def calcola_avanzamento_commesse():
         # prodotto finito stesso, o un semilavorato lavorato internamente) non
         # si "acquista" — la sua "mancanza" viene già risolta dalla sua stessa
         # simulazione di produzione qui sotto, non da un lead time fornitore.
-        giacenza_snapshot = dict(residuo_per_op.get(o.id, {}))
+        giacenza_snapshot = dict(residuo_per_op.get(o.id, _res_finale_kpi))
         righe_netting = {}
         _netta_e_esplodi_wood(o.codice_articolo, saldo_op, giacenza_snapshot, righe_netting, mappa=mappa_distinta, op=o)
         codici_con_ciclo = ({c.codice for c in CicloLavoroWood.query
@@ -301,7 +304,7 @@ def calcola_avanzamento_commesse():
                 # Lavoro Segatrice e Satinatrice erano chiusi — 'da produrre 0', pezzi gia' a magazzino o gia'
                 # passati a valle — ma il Cruscotto mostrava 71%). Stessa formula di _lista_lavoro_op:
                 # giacenza (tetto WIP della fase, scontata dei pezzi dichiarati) + credito da valle.
-                gia_disp = max(residuo_per_op.get(o.id, {}).get(codice, 0), 0)
+                gia_disp = max(residuo_per_op.get(o.id, _res_finale_kpi).get(codice, 0), 0)
                 if codice == o.codice_articolo:
                     gia_disp = 0  # mai il prodotto finito dell'OP stesso (regola 12/10/2026)
                 gia_disp = _gia_disponibile_per_fase(codice, ciclo.centro_costo_id, gia_disp, wip_per_codice)
@@ -309,7 +312,7 @@ def calcola_avanzamento_commesse():
                     codice, _credito_da_valle(o, codice, set(moltiplicatore_per_codice), figli_a_padri,
                                               fatti_totali_per_componente,
                                               moltiplicatori=moltiplicatore_per_codice,
-                                              giacenza_disponibile=residuo_per_op.get(o.id, {})))
+                                              giacenza_disponibile=residuo_per_op.get(o.id, _res_finale_kpi)))
                 # FIX 12/10/2026 (OP-2026-000072, OL Saldatura LIST/047: PINX110-A/B 'Prodotti 158,
                 # Da Produrre 0' con Residuo 416 a piede pagina): i pezzi gia' dichiarati qui
                 # CONTENGONO gia' quelli poi passati a valle — sommare il credito da valle ai

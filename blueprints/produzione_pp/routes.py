@@ -4165,7 +4165,13 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
     # parità o maggiore priorità) già se ne contendono — stessa logica
     # di 'Impegnato/Disponibile' già in uso in Magazzino, non un nuovo
     # calcolo isolato.
-    residuo_giacenza_per_op = _giacenza_residua_dopo_impegni(escludi_op_id=o.id)
+    # Stessa allocazione del Monitor Live (Mauri, 26/10/2026, OP-2026-000077): la scorta
+    # condivisa va agli OP in ordine (priorita', id) e un OP vede solo quanto lasciano
+    # quelli che lo precedono. Prima si toglievano gli impegni di TUTTI gli altri OP,
+    # anche di quelli dopo di lui: l'OL stampato chiedeva di tagliare 25 pezzi che
+    # il Monitor Live dava per coperti.
+    _res_per_op, _res_finale = _residuo_giacenza_progressivo(mappa=_carica_mappa_distinta_base_wood())
+    residuo_giacenza_per_op = _res_per_op.get(o.id, _res_finale)
     # "WIP Station" (richiesta Mauri, 03/10/2026): suddivisione per fase
     # della giacenza, SOLO per i codici che l'hanno — vedi
     # _gia_disponibile_per_fase più sotto.
