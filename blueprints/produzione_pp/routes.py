@@ -1500,7 +1500,18 @@ def elimina(oid):
     legame = LegameCostoStandardOrdineWood.query.get(codice)
     if legame:
         db.session.delete(legame)
-    db.session.delete(o); db.session.commit()
+    # Posizioni manuali (Avanzamento Commesse/KPI e code macchina): puntano all'OP con una chiave esterna.
+    # Su Postgres bloccavano l'eliminazione con un 500 (Safari: "The string did not match the expected
+    # pattern") per ogni commessa che Angelo aveva trascinato nel cruscotto KPI (26/10/2026, OP-2026-000090).
+    SequenzaAvanzamentoKPI.query.filter_by(ordine_produzione_id=o.id).delete(synchronize_session=False)
+    SequenzaMonitorMacchina.query.filter_by(ordine_produzione_id=o.id).delete(synchronize_session=False)
+    db.session.delete(o)
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(ok=False, error='Impossibile eliminare: l\'ordine ha ancora sessioni di lavoro, foto o '
+                                       'manodopera registrate. Usa «Chiudi forzato».'), 409
     return jsonify(ok=True, codice=codice)
 
 @pp_bp.post('/api/ordini-produzione/<int:oid>/rilascia')
