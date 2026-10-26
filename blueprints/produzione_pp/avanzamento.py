@@ -117,7 +117,7 @@ def calcola_avanzamento_commesse():
     Ordinata come la coda di priorità già usata nel resto dell'app (stessa
     priorità = stessa data di consegna stimata sarebbe fuorviante: qui
     l'ordine riflette chi viene servito per primo sui centri condivisi)."""
-    from models import (db, OrdineProduzione, CicloLavoroWood, CentroCostoWood,
+    from models import (chiave_rilascio, db, OrdineProduzione, CicloLavoroWood, CentroCostoWood,
                          EventoConsuntivoPP, ArticoloApprovvigionamento, FotoArticolo,
                          SequenzaAvanzamentoKPI)
     from blueprints.magazzino.routes import (_esplodi_componenti_op, _carica_mappa_distinta_base_wood,
@@ -140,7 +140,7 @@ def calcola_avanzamento_commesse():
     # manuale di una coda macchina nel Monitor (SequenzaMonitorMacchina).
     posizioni_manuali = {s.ordine_produzione_id: s.posizione for s in SequenzaAvanzamentoKPI.query.all()}
     ordini.sort(key=lambda o: (0, posizioni_manuali[o.id]) if o.id in posizioni_manuali
-                else (1, o.priorita, o.data_prevista or oggi.date(), o.id))
+                else (1, chiave_rilascio(o)))
 
     mappa_distinta = _carica_mappa_distinta_base_wood()
     # La scorta condivisa si assegna in ordine CANONICO (priorita', id), come Monitor Live e OL:

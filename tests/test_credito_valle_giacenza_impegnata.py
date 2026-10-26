@@ -5,6 +5,7 @@ dava "Da produrre 0". Causa: il credito da valle contava la giacenza LORDA del
 semilavorato a valle TR2501, gia' impegnata da un'altra commessa. Ora conta solo
 la giacenza disponibile per questo OP (come la card).
 """
+from datetime import datetime
 import unittest
 
 from flask import Flask
@@ -48,10 +49,10 @@ class TestCreditoValleGiacenzaImpegnata(unittest.TestCase):
                                  qta_pianificata=40, stato='Rilasciato', priorita=5),
             ]
             if con_altra_commessa:
-                # commessa precedente, piu' prioritaria, che si prende i 40 TR2501 a magazzino
+                # commessa rilasciata PRIMA (ordine cronologico di rilascio), che si prende i 40 TR2501 a magazzino
                 righe.append(OrdineProduzione(codice='OP-2026-000070', codice_articolo='T250DT',
                                               commessa='26100070', qta_pianificata=40,
-                                              stato='Rilasciato', priorita=1))
+                                              stato='Rilasciato', data_rilascio=datetime(2026, 10, 1, 8, 0)))
             db.session.add_all(righe)
             db.session.commit()
             return seg.id

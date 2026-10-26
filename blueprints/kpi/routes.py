@@ -1,5 +1,5 @@
 from flask import Blueprint, render_template, jsonify, request
-from models import db, Commessa, KanbanProdotto, RigaMonitor, calcola_kpi, OrdineProduzione, SequenzaAvanzamentoKPI
+from models import _ordine_impegno, chiave_rilascio, db, Commessa, KanbanProdotto, RigaMonitor, calcola_kpi, OrdineProduzione, SequenzaAvanzamentoKPI
 from datetime import datetime, date, timedelta
 from blueprints.produzione_pp.avanzamento import calcola_avanzamento_commesse
 
@@ -95,7 +95,7 @@ def api_in_attesa_rilascio():
     """
     from models import OrdineProduzione
     ordini = (OrdineProduzione.query.filter_by(stato='Creato')
-              .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+              .order_by(*_ordine_impegno()).all())
     return jsonify([{
         'id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '',
         'codice_articolo': o.codice_articolo, 'descrizione': o.descrizione or '',

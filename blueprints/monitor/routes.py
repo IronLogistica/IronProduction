@@ -2,7 +2,7 @@ import base64
 import uuid
 from datetime import datetime
 from flask import Blueprint, render_template, jsonify, request, Response
-from models import (db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
+from models import (_ordine_impegno, chiave_rilascio, db, log, CentroCostoWood, CicloLavoroWood, OrdineProduzione,
                     EventoConsuntivoPP, SequenzaAvanzamentoKPI, SequenzaMonitorMacchina, get_macchine_monitor,
                     SessioneLavoroMacchina, DocumentoTecnicoArticolo, FotoLavorazioneMacchina, FotoArticolo,
                     NumeroListaLavoroWood, SchedaLavorazioneWood, ArticoloML, DescrizioneCodiceWood,
@@ -92,7 +92,7 @@ def _righe_macchina(centro):
     """
     ordini = (OrdineProduzione.query
               .filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
-              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+              .order_by(*_ordine_impegno()).all())
 
     # OP 'Creato' ma NON ANCORA rilasciato: non entra nel netting materiale
     # (non è ancora un impegno reale di produzione), ma l'utente deve poter
@@ -101,7 +101,7 @@ def _righe_macchina(centro):
     # solo. Righe semplificate (materiale/% non calcolati), sempre in
     # "IN ATTESA / DA INIZIARE", con 'non_rilasciato': True per il badge.
     ordini_non_rilasciati = (OrdineProduzione.query.filter_by(stato='Creato')
-                              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+                              .order_by(*_ordine_impegno()).all())
 
     # Un OP passa a "IN ESECUZIONE" appena viene emesso il suo Ordine di
     # Lavoro su QUESTA macchina (numero di lista assegnato — vedi
@@ -465,7 +465,7 @@ def _righe_macchina(centro):
 
             posizione_manuale = posizioni_manuali_kpi.get(o.id)
             chiave_ordine = (0, posizione_manuale) if posizione_manuale is not None else (
-                1, o.priorita, o.data_prevista or datetime.max.date(), o.id, codice_comp)
+                1, chiave_rilascio(o), codice_comp)
 
             righe[sezione].append({
                 'op_id': o.id, 'op_codice': o.codice, 'commessa': o.commessa or '', 'a_scorta': bool(getattr(o, 'a_scorta', False)),
@@ -529,7 +529,7 @@ def _righe_macchina(centro):
                 'stato_producibilita': 'in_attesa', 'stato_materiale': 'in_attesa',
                 'fase_precedente': None, 'disponibile_da_monte': None,
                 'soglia_kanban': None,
-                '_chiave_ordine': (2, o.priorita, o.data_prevista or datetime.max.date(), o.id, codice_comp),
+                '_chiave_ordine': (2, chiave_rilascio(o), codice_comp),
             })
 
     for sezione in righe:
@@ -654,7 +654,10 @@ def _contesto_totem(centro):
     # 100%. Ora tutte le righe dello stesso OP restano in UN solo gruppo,
     # qualunque sia il loro stato, e la percentuale aggregata le somma tutte.
     righe_tabella = righe['da_iniziare'] + righe['lavorazione'] + righe['terminati']
-    righe_tabella.sort(key=lambda r: (r['posizione_manuale'] if r['posizione_manuale'] is not None else 999, r['priorita'], r['op_id']))
+    _ril = {o.id: chiave_rilascio(o) for o in OrdineProduzione.query.filter(
+        OrdineProduzione.id.in_({r['op_id'] for r in righe_tabella})).all()} if righe_tabella else {}
+    righe_tabella.sort(key=lambda r: (r['posizione_manuale'] if r['posizione_manuale'] is not None else 999,
+                                      _ril[r['op_id']]))
 
     gruppi = _raggruppa_per_op(righe_tabella)
     # L'ordine di lavoro va SEMPRE mostrato in coda, anche quando manca

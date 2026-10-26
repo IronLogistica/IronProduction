@@ -19,7 +19,7 @@
 <input id="opCliente" name="cliente" maxlength="200" placeholder="Cliente"><input readonly value="La commessa viene generata automaticamente (es. 26070001)" style="color:var(--text-dim);font-style:italic;background:#f4f6f8">
 <input name="qta_pianificata" required type="number" min="0" placeholder="Quantità pianificata *"><input name="asa" required maxlength="100" value="Carpenteria Propria" placeholder="ASA *">
 <label>Inizio <input name="data_inizio" type="date"></label><label>Consegna <input name="data_prevista" type="date"></label>
-<label>Priorità <select name="priorita">{% for n in range(1,10) %}<option value="{{n}}" {% if n==5 %}selected{% endif %}>{{n}}</option>{% endfor %}</select></label>
+<input type="hidden" name="priorita" value="5">
 <label id="opScortaBox" class="scorta-toggle"><input type="checkbox" name="a_scorta" id="opAScorta" onchange="toggleAScorta()">
 <span><b>📦 OP A SCORTA</b> — produzione per <b>magazzino</b>, <b>nessun ordine cliente</b> (es. semilavorati / codici nipote preparati in anticipo).
 <small>Si spunta qui: la commessa resta riconoscibile ovunque con il bollino <span class="badge-scorta">📦 A SCORTA</span>.</small></span></label>
@@ -57,7 +57,7 @@ tr.riga-scorta td{background:rgba(123,63,191,.22)}tr.riga-scorta td:first-child{
     <div style="display:flex;gap:10px">
       <div style="flex:1"><label class="modal-label">Quantità pianificata</label>
         <input id="mod-qta" class="modal-input" type="number" min="1"></div>
-      <div style="flex:1"><label class="modal-label">Priorità</label>
+      <div style="flex:1;display:none"><label class="modal-label">Priorità</label>
         <input id="mod-priorita" class="modal-input" type="number" min="1"></div>
     </div>
     <p style="font-size:11px;color:var(--text-dim);margin-top:6px">
@@ -223,7 +223,7 @@ async function load(){try{const tutti=await api('/api/ordini-produzione');
   rows.innerHTML=list.map(x=>{
   const puoModificare = x.stato==='Creato' || x.stato==='Rilasciato' || x.stato==='In esecuzione' || x.stato==='Tecnicamente completato';
   const puoEliminare = x.stato==='Creato' || (x.stato==='Rilasciato' && x.qta_buona===0);
-  const priorita = (x.stato==='Creato'||x.stato==='Rilasciato')?`<select style="width:52px;font-size:11px;padding:1px" onchange="cambiaPriorita(${x.id},this.value)">${Array.from({length:9},(_,i)=>i+1).map(n=>`<option value="${n}" ${n===x.priorita?'selected':''}>P${n}</option>`).join('')}</select>`:`<small>P${x.priorita}</small>`;
+  const priorita = '';   // niente piu' P1/P2/...: gli impegni seguono data e ora di rilascio
   let azioni = '';
   if(x.stato==='Creato') azioni += `<button class="btn btn-primary" onclick="releaseOp(${x.id})">Rilascia</button> `;
   if(x.stato==='Tecnicamente completato') azioni += `<button class="btn btn-ghost" onclick="closeCo(${x.id})">Chiudi CO</button> `;

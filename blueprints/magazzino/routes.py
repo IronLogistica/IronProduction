@@ -9,7 +9,7 @@ from sqlalchemy import text
 import contextvars
 from contextlib import contextmanager
 from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError, _kanban_stock_grezzo
-from models import (db, SostituzioneMaterialeOP, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
+from models import (_ordine_impegno, chiave_rilascio, db, SostituzioneMaterialeOP, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
                     TIPI_APPROVVIGIONAMENTO, GiacenzaWood, MovimentoGiacenzaWood, OrdineProduzione,
                     ImpostazioneCostoWood, CostoStandardWood, VarianzaProduzioneWood,
@@ -1925,7 +1925,7 @@ def api_giacenza_impegni_op(codice):
     codice = codice.strip()
     giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
     op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
-                 .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+                 .order_by(*_ordine_impegno()).all())
     mappa = _carica_mappa_distinta_base_wood()
     righe = []
     for op in op_aperti:
@@ -2701,7 +2701,7 @@ def _giacenza_residua_dopo_impegni(escludi_op_id=None, mappa=None, fabbisogno_lo
     """
     giacenza_residua = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
     op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
-                 .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+                 .order_by(*_ordine_impegno()).all())
     out_condiviso = {} if fabbisogno_lordo_out is not None else None
     for op in op_aperti:
         if escludi_op_id and op.id == escludi_op_id:
@@ -2741,7 +2741,7 @@ def impegni_op_per_codice(giacenza_iniziale=None, mappa=None):
     if mappa is None:
         mappa = _carica_mappa_distinta_base_wood()
     op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
-                 .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+                 .order_by(*_ordine_impegno()).all())
     risultato = {}
     for op in op_aperti:
         saldo = _saldo_materiale_op(op)
@@ -2790,7 +2790,7 @@ def _residuo_giacenza_progressivo(op_aperti=None, mappa=None):
     """
     if op_aperti is None:
         op_aperti = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
-                     .order_by(OrdineProduzione.priorita.asc(), OrdineProduzione.id.asc()).all())
+                     .order_by(*_ordine_impegno()).all())
     giacenza = {g.codice: g.quantita for g in GiacenzaWood.query.all()}
     residuo_per_op = {}
     for op in op_aperti:

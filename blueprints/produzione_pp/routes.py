@@ -5,7 +5,7 @@ import requests
 from datetime import datetime, date, timedelta
 from flask import Blueprint, current_app, jsonify, render_template, request, Response
 from sqlalchemy.exc import IntegrityError
-from models import (db, log, SostituzioneMaterialeOP, OrdineProduzione, EventoConsuntivoPP, AuditPP,
+from models import (_ordine_impegno, chiave_rilascio, db, log, SostituzioneMaterialeOP, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     STATI_ORDINE_PP, ASA_MASTERWORK, prossimo_codice_ordine_pp,
                     prossimo_numero_commessa, GiacenzaWood, MovimentoGiacenzaWood, CicloLavoroWood,
                     CentroCostoWood, VarianzaProduzioneWood, ArticoloApprovvigionamento,
@@ -1693,7 +1693,7 @@ def api_ordini_riepilogo_disponibilita():
     coerente con /api/fabbisogno_disponibilita.
     """
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato != 'Chiuso CO')
-              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+              .order_by(*_ordine_impegno()).all())
     oggi = datetime.utcnow().date()
     # Un solo giro per sapere quali codici_articolo hanno ALMENO una fase di
     # Ciclo di Lavoro impostata — alimenta il flag diagnostico ha_ciclo_lavoro.
@@ -4583,7 +4583,7 @@ def api_liste_lavoro(cid):
     """
     centro = CentroCostoWood.query.get_or_404(cid)
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato != 'Chiuso CO')
-              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+              .order_by(*_ordine_impegno()).all())
     mappa_distinta = _carica_mappa_distinta_base_wood()
     riepilogo_per_op = _riepilogo_ordini_lavoro_per_op(ordini, mappa_distinta)
     risultato = []
@@ -4754,7 +4754,7 @@ def api_verniciatura_interna_ricerca_commesse():
     migliore_op_per_codice = {}
     for o in ordini_aperti:
         attuale = migliore_op_per_codice.get(o.codice_articolo)
-        if attuale is None or (o.priorita or 999) < (attuale.priorita or 999):
+        if attuale is None or chiave_rilascio(o) < chiave_rilascio(attuale):
             migliore_op_per_codice[o.codice_articolo] = o
 
     descrizioni = {c.codice: c.descrizione for c in candidati}
@@ -4861,7 +4861,7 @@ def api_reintegro_scarti():
     """
     centro_filtro = request.args.get('centro_id', type=int)
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
-              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+              .order_by(*_ordine_impegno()).all())
     if not ordini:
         return jsonify([])
 
@@ -4959,7 +4959,7 @@ def api_dichiarazione_op_aperti(cid):
     """
     centro = CentroCostoWood.query.get_or_404(cid)
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
-              .order_by(OrdineProduzione.priorita, OrdineProduzione.id).all())
+              .order_by(*_ordine_impegno()).all())
     if not ordini:
         return jsonify([])
 

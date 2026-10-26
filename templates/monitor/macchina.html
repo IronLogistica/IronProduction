@@ -60,7 +60,7 @@
       {% set multi = g.componenti|length > 1 %}
       <tr id="grp-{{ gid }}" {% if multi %}style="cursor:pointer" onclick="toggleGruppo('{{ gid }}')"{% endif %}>
         <td onclick="event.stopPropagation()" title="{{ 'Priorità impostata su Avanzamento Commesse (KPI)' if g.posizione_manuale is not none else 'Ordine di default — priorità/data consegna. Per anticiparla, vai su Avanzamento Commesse' }}">
-          {% if g.posizione_manuale is not none %}<span style="font-weight:800;color:var(--accent2)">#{{ g.posizione_manuale }}</span>{% else %}<span style="color:var(--text-dim)">{{ g.priorita }}</span>{% endif %}
+          {% if g.posizione_manuale is not none %}<span style="font-weight:800;color:var(--accent2)">#{{ g.posizione_manuale }}</span>{% else %}<span style="color:var(--text-dim)" title="Ordine di rilascio">—</span>{% endif %}
         </td>
         <td class="comm-id">{{ g.commessa }}</td>
         <td class="codice" style="cursor:pointer" onclick="event.stopPropagation();apriSituazioneOP('{{ g.op_codice }}')">{{ g.op_codice }}

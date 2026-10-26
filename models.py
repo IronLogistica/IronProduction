@@ -3567,3 +3567,13 @@ def inizializza_schema_pp():
             except Exception:
                 db.session.rollback()  # colonna già presente o DB non ancora inizializzato
 
+
+# ── Ordine di IMPEGNO (Mauri, 26/10/2026): niente piu' priorita' P1/P2/...: scorte, impegni e ordini di
+# lavoro seguono la data e l'ora di RILASCIO dell'ordine (se manca, la creazione), a parita' il numero.
+# E' la sola regola: l'ordine manuale del cruscotto KPI non sposta mai chi riceve la scorta.
+def chiave_rilascio(o):
+    return (o.data_rilascio or o.creato_il or datetime.min, o.id or 0)
+
+
+def _ordine_impegno():
+    return (db.func.coalesce(OrdineProduzione.data_rilascio, OrdineProduzione.creato_il), OrdineProduzione.id)

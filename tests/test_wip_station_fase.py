@@ -1,3 +1,4 @@
+from datetime import datetime
 """
 Regressione "WIP Station" (richiesta Mauri, 03/10/2026 — caso reale
 PINX110/PINXTT110): un codice con Ciclo di Lavoro a più fasi (TAGLIO poi
@@ -119,10 +120,11 @@ class TestWipStationFase(unittest.TestCase):
         mai aumentarlo oltre quanto un secondo OP a priorità più alta ha
         già impegnato sullo stesso codice."""
         with self.app.app_context():
-            # Un secondo OP, priorità più alta (numero più basso), che
+            # Un secondo OP, rilasciato prima (ordine cronologico), che
             # impegna già 250 dei 287 pezzi — restano liberi solo 37.
             db.session.add(OrdineProduzione(codice='OP-ALTRO', codice_articolo='PINX110',
-                                             qta_pianificata=250, stato='Rilasciato', priorita=0))
+                                             qta_pianificata=250, stato='Rilasciato',
+                                             data_rilascio=datetime(2026, 10, 1, 8, 0)))
             db.session.add_all([
                 WipFaseWood(codice='PINXTT110', centro_costo_id=self.taglio_id, quantita=96),
                 WipFaseWood(codice='PINXTT110', centro_costo_id=self.satinatura_id, quantita=191),
