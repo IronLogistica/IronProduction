@@ -14,6 +14,7 @@ PARAMETRI = {
     'storico_mesi':             (12, 3, 36, 'Mesi di storico ordini per proporre mix e previsioni', 'mesi', 'R1'),
     'ore_giorno':               (8, 1, 24, 'Ore lavorative al giorno (default reparti)', 'ore', 'R2'),
     'giorni_settimana':         (5, 1, 7, 'Giorni lavorativi a settimana (default reparti)', 'giorni', 'R2'),
+    'settimane_per_livello':    (1, 0, 4, 'Tempo di produzione di ogni livello di distinta', 'settimane', 'R2'),
     'lead_time_default_giorni': (15, 1, 365, 'Lead time prudente se il fornitore non è compilato', 'giorni lavorativi', 'R2'),
 }
 

@@ -59,3 +59,20 @@ class TestMotore(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestMrp(unittest.TestCase):
+    def test_netta_ordine_e_ritardo(self):
+        from blueprints.masterplan.mrp import netta
+        lordo = [0, 0, 50, 0, 30, 0]
+        righe, ordini = netta(lordo, giacenza=20, arrivi=[0, 0, 0, 0, 0, 0], lead_sett=2)
+        self.assertEqual([o['quantita'] for o in ordini], [30, 30])
+        self.assertEqual((ordini[0]['arrivo'], ordini[0]['ordina_in'], ordini[0]['in_ritardo']), (2, 0, False))
+        self.assertEqual((ordini[1]['arrivo'], ordini[1]['ordina_in']), (4, 2))
+        righe, ordini = netta([40, 0, 0], giacenza=0, arrivi=None, lead_sett=2)
+        self.assertTrue(ordini[0]['in_ritardo'])
+
+    def test_netta_arrivi_coprono(self):
+        from blueprints.masterplan.mrp import netta
+        _r, ordini = netta([0, 40, 0], giacenza=10, arrivi=[0, 30, 0], lead_sett=1)
+        self.assertEqual(ordini, [])

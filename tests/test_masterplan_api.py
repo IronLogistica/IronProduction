@@ -116,3 +116,24 @@ class TestMasterplanApi(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestMrpApi(TestMasterplanApi):
+    def test_esplosione_con_date_giacenza_e_ordini_aperti(self):
+        from models import GiacenzaWood
+        with self.app.app_context():
+            db.session.add_all([
+                DistintaBaseWood(codice_padre='FIN1', codice_figlio='COMP1', quantita=2),
+                ArticoloApprovvigionamento(codice='COMP1', tipo_approvvigionamento='COMPONENTE_ACQUISTO',
+                                           lead_time_fornitura_giorni=10),
+                GiacenzaWood(codice='COMP1', quantita=20),
+                OrdineProduzione(codice='OP1', codice_articolo='FIN1', qta_pianificata=40, stato='Rilasciato',
+                                 data_prevista=date.today() + timedelta(days=28))])
+            db.session.commit()
+        d = self.c.get('/api/masterplan/mrp').get_json()
+        comp = {c['codice']: c for c in d['codici']}['COMP1']
+        self.assertEqual(sum(r['lordo'] for r in comp['righe']), 80)          # 40 pz × 2
+        self.assertEqual(comp['lead_time_settimane'], 2)                       # 10 gg / 5
+        self.assertEqual(sum(o['quantita'] for o in comp['ordini_pianificati']), 60)   # 80 − 20 di giacenza
+        self.assertTrue(comp['acquisto'])
+        self.assertEqual(self.c.get('/masterplan/mrp').status_code, 200)

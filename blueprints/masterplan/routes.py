@@ -3,7 +3,7 @@ from datetime import date, datetime
 
 from flask import Blueprint, jsonify, render_template, request
 
-from blueprints.masterplan import calcolo, dati, impostazioni, qualita, storico
+from blueprints.masterplan import calcolo, dati, impostazioni, mrp, qualita, storico
 from blueprints.masterplan.modelli import (AFFIDABILITA, MpFamiglia, MpFamigliaCodice, MpPrevisione)
 from blueprints.masterplan.motore import MixNonValido, aggiungi_mesi, controlla_mix, primo_del_mese
 from models import db
@@ -39,6 +39,16 @@ def pagina_previsioni():
 @masterplan_bp.route('/masterplan/domanda')
 def pagina_domanda():
     return render_template('masterplan/domanda.html', active='masterplan', sezione='domanda')
+
+
+@masterplan_bp.route('/masterplan/mrp')
+def pagina_mrp():
+    return render_template('masterplan/mrp.html', active='masterplan', sezione='mrp')
+
+
+@masterplan_bp.route('/api/masterplan/mrp')
+def api_mrp():
+    return jsonify(mrp.calcola_mrp())
 
 
 @masterplan_bp.route('/masterplan/impostazioni')
