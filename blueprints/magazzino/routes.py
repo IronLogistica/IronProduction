@@ -34,6 +34,73 @@ def index():
     return render_template('magazzino/index.html', active='magazzino')
 
 
+# ── Scheda magazzino: più informazioni e rettifiche correggibili (richiesta Pierantonio, 03/11/2026) ──
+TIPI_RETTIFICA_CORREGGIBILI = ('rettifica_inventario', 'carico_manuale', 'scarico_manuale')
+MINUTI_RIUSO_RETTIFICA = 30   # un secondo conteggio entro mezz'ora corregge il primo invece di aggiungere righe
+
+
+def _fornitori_dei_movimenti(movimenti):
+    """{riferimento: fornitore} per i carichi da acquisto: il riferimento del movimento è il file del DDT."""
+    from models import DDTCaricoWood
+    nomi = {m.riferimento for m in movimenti if m.tipo == 'carico_acquisto' and m.riferimento}
+    if not nomi:
+        return {}
+    return {d.filename: (d.fornitore or '').strip()
+            for d in DDTCaricoWood.query.filter(DDTCaricoWood.filename.in_(nomi)).all()}
+
+
+def _registra_rettifica(codice, nuova_quantita, tipo, note):
+    """Porta la giacenza di un codice a 'nuova_quantita'. Se l'ULTIMO movimento di quel codice è una
+    rettifica dello stesso tipo fatta da meno di MINUTI_RIUSO_RETTIFICA minuti (es. inventario rifatto
+    perché si era scritto un numero sbagliato) la corregge invece di aggiungere una riga nuova.
+    Ritorna 'nuova' | 'corretta' | 'annullata' | None (niente da fare)."""
+    codice = (codice or '').strip().upper()
+    g = GiacenzaWood.query.get(codice)
+    attuale = (g.quantita if g else 0) or 0
+    delta = nuova_quantita - attuale
+    if delta == 0:
+        return None
+    ultimo = (MovimentoGiacenzaWood.query.filter_by(codice=codice)
+              .order_by(MovimentoGiacenzaWood.creato_il.desc(), MovimentoGiacenzaWood.id.desc()).first())
+    tipi_simili = TIPI_RETTIFICA_CORREGGIBILI[1:] if tipo in TIPI_RETTIFICA_CORREGGIBILI[1:] else (tipo,)
+    if (ultimo and ultimo.tipo in tipi_simili and ultimo.creato_il
+            and (datetime.utcnow() - ultimo.creato_il).total_seconds() < MINUTI_RIUSO_RETTIFICA * 60):
+        prima_della_rettifica = attuale - ultimo.quantita
+        ultimo.quantita = nuova_quantita - prima_della_rettifica
+        g.quantita = nuova_quantita
+        g.aggiornato_il = datetime.utcnow()
+        if ultimo.quantita == 0:
+            db.session.delete(ultimo)
+            return 'annullata'
+        if tipo != 'rettifica_inventario':
+            ultimo.tipo = 'carico_manuale' if ultimo.quantita > 0 else 'scarico_manuale'
+        ultimo.note = (f'{note} — da {prima_della_rettifica:g} a {nuova_quantita:g}'
+                       f' (corretta alle {datetime.now().strftime("%H:%M")})')[:300]
+        return 'corretta'
+    if tipo != 'rettifica_inventario':
+        tipo = 'carico_manuale' if delta > 0 else 'scarico_manuale'
+    _registra_movimento_giacenza(codice, delta, tipo, note=f'{note} — da {attuale:g} a {nuova_quantita:g}'[:300])
+    return 'nuova'
+
+
+def _movimenti_json(codice, limite=50):
+    """Ultimi movimenti (dal più recente) con fornitore e saldo dopo ciascun movimento."""
+    codice = (codice or '').strip().upper()
+    movimenti = (MovimentoGiacenzaWood.query.filter_by(codice=codice)
+                 .order_by(MovimentoGiacenzaWood.creato_il.desc(), MovimentoGiacenzaWood.id.desc()).limit(limite).all())
+    fornitori = _fornitori_dei_movimenti(movimenti)
+    g = GiacenzaWood.query.get(codice)
+    saldo = (g.quantita if g else 0) or 0
+    righe = []
+    for m in movimenti:
+        righe.append({'id': m.id, 'tipo': m.tipo, 'quantita': m.quantita, 'riferimento': m.riferimento or '',
+                      'note': m.note or '', 'fornitore': fornitori.get(m.riferimento, ''),
+                      'saldo_dopo': round(saldo, 4), 'correggibile': m.tipo in TIPI_RETTIFICA_CORREGGIBILI,
+                      'creato_il': m.creato_il.strftime('%d/%m/%Y %H:%M') if m.creato_il else ''})
+        saldo -= m.quantita
+    return righe
+
+
 @magazzino_bp.route('/scheda-magazzino')
 def pagina_scheda_magazzino():
     """
@@ -78,7 +145,8 @@ def pagina_scheda_magazzino():
             except ValueError:
                 pass
 
-        movimenti = query_base.order_by(MovimentoGiacenzaWood.creato_il).all()
+        movimenti = query_base.order_by(MovimentoGiacenzaWood.creato_il, MovimentoGiacenzaWood.id).all()
+        fornitori = _fornitori_dei_movimenti(movimenti)
         saldo_prog = saldo_apertura
         for m in movimenti:
             carico = m.quantita if m.quantita > 0 else 0
@@ -87,8 +155,11 @@ def pagina_scheda_magazzino():
             totale_carichi += carico
             totale_scarichi += scarico
             righe_out.append({
-                'data': m.creato_il.strftime('%d/%m/%Y') if m.creato_il else '',
+                'id': m.id, 'data': m.creato_il.strftime('%d/%m/%Y') if m.creato_il else '',
+                'ora': m.creato_il.strftime('%H:%M') if m.creato_il else '',
                 'causale': m.tipo, 'riferimento': m.riferimento or '', 'note': m.note or '',
+                'fornitore': fornitori.get(m.riferimento, ''),
+                'correggibile': m.tipo in TIPI_RETTIFICA_CORREGGIBILI,
                 'carico': carico, 'scarico': scarico, 'saldo_progressivo': round(saldo_prog, 4),
                 'costo_unitario': m.costo_unitario, 'valore': m.valore,
             })
@@ -2213,12 +2284,39 @@ def api_imposta_scorta_minima_locale(codice):
 
 @magazzino_bp.route('/api/giacenza_wood/<codice>/movimenti')
 def api_giacenza_movimenti(codice):
-    righe = (MovimentoGiacenzaWood.query.filter_by(codice=codice)
-             .order_by(MovimentoGiacenzaWood.creato_il.desc()).limit(100).all())
-    return jsonify([{
-        'id': m.id, 'tipo': m.tipo, 'quantita': m.quantita, 'riferimento': m.riferimento,
-        'note': m.note, 'creato_il': m.creato_il.strftime('%d/%m/%Y %H:%M') if m.creato_il else '',
-    } for m in righe])
+    limite = min(max(request.args.get('limite', 50, type=int) or 50, 1), 500)
+    return jsonify(_movimenti_json(codice, limite))
+
+
+@magazzino_bp.route('/api/movimento-giacenza/<int:mid>/correggi', methods=['POST'])
+def api_correggi_movimento(mid):
+    """Corregge la quantità di una rettifica (inventario o modifica manuale) già registrata, senza
+    aggiungere righe: la giacenza si sposta della sola differenza. Non vale per carichi/scarichi
+    di acquisto o produzione, che hanno il loro documento."""
+    m = MovimentoGiacenzaWood.query.get_or_404(mid)
+    if m.tipo not in TIPI_RETTIFICA_CORREGGIBILI:
+        return jsonify(ok=False, error='Si possono correggere solo le rettifiche (inventario o modifiche manuali)'), 400
+    try:
+        nuova = float((request.get_json(silent=True) or {}).get('quantita'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Quantità non valida'), 400
+    differenza = nuova - m.quantita
+    if differenza == 0:
+        return jsonify(ok=True, invariata=True)
+    g = GiacenzaWood.query.get(m.codice)
+    if not g:
+        g = GiacenzaWood(codice=m.codice, quantita=0)
+        db.session.add(g)
+    g.quantita = (g.quantita or 0) + differenza
+    g.aggiornato_il = datetime.utcnow()
+    vecchia = m.quantita
+    m.quantita = nuova
+    if m.tipo != 'rettifica_inventario' and nuova != 0:
+        m.tipo = 'carico_manuale' if nuova > 0 else 'scarico_manuale'
+    m.note = (f'{m.note or ""} · corretta il {datetime.now().strftime("%d/%m %H:%M")} (era {vecchia:+g})').strip(' ·')[:300]
+    db.session.commit()
+    log(f'Rettifica {mid} su {m.codice} corretta: {vecchia} -> {nuova}')
+    return jsonify(ok=True, codice=m.codice, giacenza=g.quantita)
 
 
 @magazzino_bp.route('/api/giacenza_wood/rettifica', methods=['POST'])
@@ -2235,7 +2333,16 @@ def api_giacenza_rettifica():
     if delta == 0:
         return jsonify({'errore': True, 'messaggio': 'La quantità non può essere zero'}), 400
     tipo = 'carico_manuale' if delta > 0 else 'scarico_manuale'
-    _registra_movimento_giacenza(codice, delta, tipo, note=(d.get('note') or '').strip())
+    if d.get('nuovo_stock') is not None:
+        # Dalla tabella Magazzino si scrive lo stock VERO: se lo si ricorregge entro mezz'ora
+        # si aggiusta la rettifica appena fatta invece di aggiungere un'altra riga.
+        try:
+            nuovo_stock = float(d.get('nuovo_stock'))
+        except (TypeError, ValueError):
+            return jsonify({'errore': True, 'messaggio': 'Stock non valido'}), 400
+        _registra_rettifica(codice, nuovo_stock, tipo, (d.get('note') or 'Modifica da Magazzino').strip())
+    else:
+        _registra_movimento_giacenza(codice, delta, tipo, note=(d.get('note') or '').strip())
     unita = (d.get('unita_misura') or '').strip().upper()[:20]
     if unita:
         articolo = ArticoloApprovvigionamento.query.filter_by(codice=codice).first()
@@ -4152,12 +4259,8 @@ def api_inventario_salva():
             continue
         g = GiacenzaWood.query.get(codice)
         qta_precedente = (g.quantita if g else 0) or 0
-        delta = qta_contata - qta_precedente
-        if delta == 0:
-            continue
-        _registra_movimento_giacenza(codice, delta, 'rettifica_inventario',
-                                      note=f'Inventario fisico — da {qta_precedente} a {qta_contata}')
-        aggiornati += 1
+        if _registra_rettifica(codice, qta_contata, 'rettifica_inventario', 'Inventario fisico'):
+            aggiornati += 1
     # Se il conteggio arriva da un gruppo Kanban di Angelo, registra QUI
     # la data dell'ultimo inventario di quel gruppo — usata per calcolare
     # se e' "scaduto" (vedi api_inventario_kanban_gruppi). BUG REALE
@@ -4387,12 +4490,8 @@ def api_inventario_codice_padre_salva():
             continue
         g = GiacenzaWood.query.get(codice)
         qta_precedente = (g.quantita if g else 0) or 0
-        delta = qta_contata - qta_precedente
-        if delta == 0:
-            continue
-        _registra_movimento_giacenza(codice, delta, 'rettifica_inventario',
-                                      note=f'Inventario Codice Padre — da {qta_precedente} a {qta_contata}')
-        aggiornati += 1
+        if _registra_rettifica(codice, qta_contata, 'rettifica_inventario', 'Inventario Codice Padre'):
+            aggiornati += 1
 
     fasi_aggiornate = 0
     for codice, fasi in conteggi_fasi.items():

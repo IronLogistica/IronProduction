@@ -360,7 +360,8 @@ async function caricaMagazzinoWood(){
       <th class="mt-th-fabb">(=) Fabbisogno<div class="mt-formula">MAX(Scorta Minima (WMS) + Ordinato da Cliente (WMS) − Disp. Contabile Allargata*, 0)</div></th></tr></thead><tbody>`;
     righe.forEach(g=>{
       html += `<tr>
-        <td class="codice">${g.codice}</td>
+        <td class="codice"><div style="display:flex;align-items:center;gap:6px">${g.codice}
+          <button class="btn btn-ghost" style="padding:2px 6px;font-size:12px" onclick="apriMovimenti('${esc(g.codice)}')" title="Ultimi 50 movimenti di magazzino">📜</button></div></td>
         <td class="prod-name">${g.descrizione || '—'}</td>
         <td style="font-size:11px;color:${g.tipologia==='Codice Padre'?'#5debb0':(g.tipologia==='Da classificare'?'#e67e22':'var(--text-dim)')};font-weight:${g.tipologia==='Codice Padre'?'700':'400'}">
           ${g.tipologia}${g.codice_padre_manuale?' <span title="Marcato manualmente, nessun OP proprio" style="font-size:9px">✋</span>':''}
@@ -429,6 +430,63 @@ async function caricaMagazzinoWood(){
   }
 }
 
+
+// ── Ultimi 50 movimenti di un codice (richiesta Pierantonio, 03/11/2026) ──
+const ETICHETTE_MOV = {carico_acquisto:'Carico acquisto', carico_produzione:'Carico produzione', scarico_produzione:'Scarico produzione',
+  carico_manuale:'Carico manuale', scarico_manuale:'Scarico manuale', rettifica_inventario:'Rettifica inventario',
+  rettifica_import:'Rettifica import', carico_iniziale:'Carico iniziale', carico_masterledger:'Carico MasterLedger'};
+let _movCodice = null;
+async function apriMovimenti(codice){
+  _movCodice = codice;
+  let ov = document.getElementById('modal-movimenti');
+  if(!ov){
+    ov = document.createElement('div'); ov.id = 'modal-movimenti'; ov.className = 'modal-overlay';
+    ov.innerHTML = `<div class="modal-box" style="width:1000px;max-height:86vh;display:flex;flex-direction:column">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+        <h3 id="mov-titolo" style="margin:0"></h3>
+        <div style="display:flex;gap:8px"><a id="mov-scheda" class="btn btn-ghost" style="font-size:12px" target="_blank">📒 Scheda completa</a>
+        <button class="btn btn-ghost" onclick="document.getElementById('modal-movimenti').classList.remove('open')">✕</button></div></div>
+      <div id="mov-corpo" style="overflow:auto"></div></div>`;
+    ov.addEventListener('click', e => { if(e.target === ov) ov.classList.remove('open'); });
+    document.body.appendChild(ov);
+  }
+  document.getElementById('mov-titolo').textContent = '📜 Ultimi 50 movimenti — ' + codice;
+  document.getElementById('mov-scheda').href = '/scheda-magazzino?codice=' + encodeURIComponent(codice);
+  document.getElementById('mov-corpo').innerHTML = 'Caricamento…';
+  ov.classList.add('open');
+  try{
+    const righe = await (await fetch('/api/giacenza_wood/' + encodeURIComponent(codice) + '/movimenti?limite=50')).json();
+    if(!righe.length){ document.getElementById('mov-corpo').innerHTML = '<p style="color:var(--text-dim)">Nessun movimento registrato.</p>'; return; }
+    document.getElementById('mov-corpo').innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr style="text-align:left;border-bottom:1.5px solid var(--border)"><th style="padding:5px">Data</th><th style="padding:5px">Causale</th>
+      <th style="padding:5px">Fornitore / Riferimento</th><th style="padding:5px">Note</th><th style="padding:5px;text-align:right">Carico</th>
+      <th style="padding:5px;text-align:right">Scarico</th><th style="padding:5px;text-align:right">Saldo</th><th></th></tr></thead><tbody>` +
+      righe.map(m => `<tr style="border-bottom:1px solid rgba(255,255,255,.05)">
+        <td style="padding:5px;white-space:nowrap;color:var(--text-dim)">${esc(m.creato_il)}</td>
+        <td style="padding:5px;font-weight:700">${esc(ETICHETTE_MOV[m.tipo] || m.tipo)}</td>
+        <td style="padding:5px">${m.fornitore ? `<b style="color:#5dade2">🚚 ${esc(m.fornitore)}</b><br>` : ''}<span style="color:var(--text-dim)">${esc(m.riferimento)}</span></td>
+        <td style="padding:5px;color:var(--text-dim);font-size:11px">${esc(m.note)}</td>
+        <td style="padding:5px;text-align:right;color:#1a9e5c;font-weight:700">${m.quantita > 0 ? m.quantita : ''}</td>
+        <td style="padding:5px;text-align:right;color:#c0392b;font-weight:700">${m.quantita < 0 ? -m.quantita : ''}</td>
+        <td style="padding:5px;text-align:right;font-weight:800">${m.saldo_dopo}</td>
+        <td style="padding:5px">${m.correggibile ? `<button class="btn btn-ghost" style="padding:2px 6px;font-size:11px" title="Correggi questa rettifica senza aggiungere righe" onclick="correggiMovimento(${m.id}, ${m.quantita}, ${m.saldo_dopo})">✏️</button>` : ''}</td>
+      </tr>`).join('') + '</tbody></table>';
+  }catch(e){ document.getElementById('mov-corpo').innerHTML = '❌ Errore di rete'; }
+}
+async function correggiMovimento(id, quantita, saldoDopo){
+  const v = prompt(`Saldo corretto dopo questa rettifica?\n\nOra risulta ${saldoDopo}. Scrivi il numero giusto: la rettifica viene corretta, senza aggiungere righe.`, saldoDopo);
+  if(v === null) return;
+  const giusto = parseFloat(String(v).replace(',', '.'));
+  if(isNaN(giusto)){ alert('⚠️ Valore non valido.'); return; }
+  const r = await fetch('/api/movimento-giacenza/' + id + '/correggi', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({quantita: quantita + (giusto - saldoDopo)})});
+  const d = await r.json();
+  if(!d.ok){ alert('⚠️ ' + d.error); return; }
+  showToast('✅ Rettifica corretta');
+  if(_movCodice) apriMovimenti(_movCodice);
+  if(typeof caricaMagazzinoWood === 'function') caricaMagazzinoWood();
+}
+
 async function salvaStock(codice){
   const input = document.getElementById('stock-' + codice);
   const nuovoValore = parseFloat(input.value);
@@ -445,7 +503,7 @@ async function salvaStock(codice){
     if(delta === 0){ return; }
     const r = await fetch('/api/giacenza_wood/rettifica', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({codice: codice, quantita: delta, note: 'Modifica da Magazzino'})
+      body: JSON.stringify({codice: codice, quantita: delta, nuovo_stock: nuovoValore, note: 'Modifica da Magazzino'})
     });
     const d = await r.json();
     if(d.errore){ alert('⚠️ ' + d.messaggio); return; }

@@ -58,27 +58,30 @@
         <tr style="text-align:left;border-bottom:1.5px solid var(--border)">
           <th style="padding:6px 8px">Data</th>
           <th style="padding:6px 8px">Causale</th>
-          <th style="padding:6px 8px">Riferimento</th>
+          <th style="padding:6px 8px">Fornitore / Riferimento</th>
           <th style="padding:6px 8px">Note</th>
           <th style="padding:6px 8px;text-align:right">Carico</th>
           <th style="padding:6px 8px;text-align:right">Scarico</th>
           <th style="padding:6px 8px;text-align:right">Saldo prog.</th>
           <th style="padding:6px 8px;text-align:right">Costo unit.</th>
           <th style="padding:6px 8px;text-align:right">Valore</th>
+          <th style="padding:6px 8px"></th>
         </tr>
       </thead>
       <tbody>
         {% for r in righe %}
         <tr style="border-bottom:1px solid rgba(255,255,255,.05)">
-          <td style="padding:6px 8px;color:var(--text-dim);white-space:nowrap">{{ r.data }}</td>
+          <td style="padding:6px 8px;color:var(--text-dim);white-space:nowrap">{{ r.data }} <span style="font-size:10px">{{ r.ora }}</span></td>
           <td style="padding:6px 8px;font-weight:700">{{ r.causale }}</td>
-          <td style="padding:6px 8px;color:var(--text-dim)">{{ r.riferimento }}</td>
+          <td style="padding:6px 8px;color:var(--text-dim)">{% if r.fornitore %}<b style="color:#5dade2">🚚 {{ r.fornitore }}</b><br>{% endif %}{{ r.riferimento }}</td>
           <td style="padding:6px 8px;color:var(--text-dim);font-size:11px">{{ r.note }}</td>
           <td style="padding:6px 8px;text-align:right;color:#1a9e5c;font-weight:700">{{ r.carico if r.carico else '' }}</td>
           <td style="padding:6px 8px;text-align:right;color:#c0392b;font-weight:700">{{ r.scarico if r.scarico else '' }}</td>
           <td style="padding:6px 8px;text-align:right;font-weight:800">{{ r.saldo_progressivo }}</td>
           <td style="padding:6px 8px;text-align:right;color:var(--text-dim)">{{ '%.5f'|format(r.costo_unitario) if r.costo_unitario is not none else '—' }}</td>
           <td style="padding:6px 8px;text-align:right;color:var(--text-dim)">{{ '%.2f'|format(r.valore) if r.valore is not none else '—' }}</td>
+          <td style="padding:6px 8px">{% if r.correggibile %}<button class="btn btn-ghost" style="padding:2px 6px;font-size:11px" title="Correggi questa rettifica senza aggiungere righe"
+              onclick="correggiRettifica({{ r.id }}, {{ r.carico - r.scarico }}, {{ r.saldo_progressivo }})">✏️</button>{% endif %}</td>
         </tr>
         {% endfor %}
       </tbody>
@@ -86,4 +89,18 @@
     {% endif %}
   </div>
 </div>
+{% endblock %}
+{% block scripts %}
+// Correggi una rettifica di inventario/modifica manuale senza aggiungere righe (richiesta Pierantonio, 03/11/2026)
+async function correggiRettifica(id, quantita, saldoDopo){
+  const v = prompt(`Saldo corretto dopo questa rettifica?\n\nOra risulta ${saldoDopo}. Scrivi il numero giusto: la rettifica viene corretta, senza aggiungere righe.`, saldoDopo);
+  if(v === null) return;
+  const giusto = parseFloat(String(v).replace(',', '.'));
+  if(isNaN(giusto)){ alert('⚠️ Valore non valido.'); return; }
+  const r = await fetch('/api/movimento-giacenza/' + id + '/correggi', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({quantita: quantita + (giusto - saldoDopo)})});
+  const d = await r.json();
+  if(!d.ok){ alert('⚠️ ' + d.error); return; }
+  location.reload();
+}
 {% endblock %}
