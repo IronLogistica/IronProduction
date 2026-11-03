@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+{% include "masterplan/_menu.html" %}
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;font-size:14px;line-height:1.55">
+  <p><b>AMPS — Advanced Material &amp; Production Scheduling.</b> Dalle previsioni di vendita e dagli ordini certi calcola la domanda settimanale per codice. Legge distinte, cicli e ordini esistenti, <b>non modifica nulla</b> di operativo.</p>
+  <div id="stato" style="margin:14px 0;color:#666">Caricamento…</div>
+  <ol style="padding-left:20px">
+    <li><a href="/masterplan/qualita-dati"><b>Qualità dati</b></a> — cosa manca per far funzionare l'MRP (classificazioni, cicli, lead time).</li>
+    <li><a href="/masterplan/famiglie"><b>Famiglie e mix</b></a> — raggruppa i prodotti finiti e fissa la quota % di ciascun codice.</li>
+    <li><a href="/masterplan/previsioni"><b>Previsioni</b></a> — per articolo o famiglia, per mese e affidabilità; bozza → approvata.</li>
+    <li><a href="/masterplan/domanda"><b>Domanda settimanale</b></a> — ordini certi + previsione residua, con consumo della previsione.</li>
+  </ol>
+  <p style="color:#888;font-size:12px">Prossimi rilasci: esplosione distinta con date, griglia MRP settimanale, proposte di acquisto/produzione, scenari, misura dell'errore.</p>
+</div>
+{% endblock %}
+{% block scripts %}
+Promise.all([fetch('/api/masterplan/qualita').then(r=>r.json()), fetch('/api/masterplan/domanda').then(r=>r.json())]).then(([q,d])=>{
+  const s=q.sintesi;
+  document.getElementById('stato').innerHTML=`<div class="kanban-stats">
+   <div class="kstat kstat-total"><span class="kstat-num">${s.prodotti_finiti}</span><span class="kstat-lbl">Prodotti finiti</span></div>
+   <div class="kstat kstat-ok"><span class="kstat-num">${s.percentuale_pronti}%</span><span class="kstat-lbl">Pronti per l'MRP</span></div>
+   <div class="kstat kstat-warn"><span class="kstat-num">${q.problemi.length}</span><span class="kstat-lbl">Problemi dati</span></div>
+   <div class="kstat kstat-total"><span class="kstat-num">${d.totali.domanda}</span><span class="kstat-lbl">Pezzi di domanda (${d.impostazioni.orizzonte_settimane} sett.)</span></div></div>`;
+}).catch(()=>{document.getElementById('stato').textContent='Errore nel caricamento.';});
+{% endblock %}

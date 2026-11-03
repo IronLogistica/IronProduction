@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+{% include "masterplan/_menu.html" %}
+<div id="box" style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;font-size:13px">Controllo in corso…</div>
+{% endblock %}
+{% block scripts %}
+const ETI={DA_CLASSIFICARE:'Da classificare (comprare o produrre?)',SENZA_CICLO:'Prodotto senza ciclo di lavoro',PRODUTTIVITA_ZERO:'Produttività oraria = 0',SENZA_LEAD_TIME:'Acquisto senza lead time',UM_INCOERENTE:'Unità di misura incoerente',UM_MANCANTE:'Unità di misura mancante'};
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+fetch('/api/masterplan/qualita').then(r=>r.json()).then(q=>{
+  const s=q.sintesi,c=q.copertura;
+  let h=`<div class="kanban-stats" style="margin-bottom:14px">
+   <div class="kstat kstat-total"><span class="kstat-num">${s.prodotti_finiti}</span><span class="kstat-lbl">Prodotti finiti</span></div>
+   <div class="kstat kstat-ok"><span class="kstat-num">${s.pronti}</span><span class="kstat-lbl">Pronti (${s.percentuale_pronti}%)</span></div>
+   <div class="kstat kstat-warn"><span class="kstat-num">${s.bloccati}</span><span class="kstat-lbl">Bloccati</span></div></div>
+   <p>Copertura: categoria su ${c.prodotti_con_categoria}/${c.prodotti_totali} prodotti · lead time su ${c.con_lead_time}/${c.da_acquistare} codici da acquistare · storico ordini ${c.mesi_storico} mesi (${c.ordini_totali} OP).</p>`;
+  if(!q.problemi.length){h+='<p style="color:green"><b>Nessun problema rilevato.</b></p>';}
+  else{
+    h+='<table class="kanban-table"><thead><tr><th>Problema</th><th>Codice</th><th>Dettaglio</th><th>Prodotti finiti coinvolti</th></tr></thead><tbody>';
+    q.problemi.forEach(p=>{h+=`<tr><td>${esc(ETI[p.tipo]||p.tipo)}</td><td class="codice">${esc(p.codice)}</td><td>${esc(p.dettaglio)}</td><td>${esc(p.finito)}</td></tr>`;});
+    h+='</tbody></table>';
+  }
+  document.getElementById('box').innerHTML=h;
+}).catch(()=>{document.getElementById('box').textContent='Errore nel controllo.';});
+{% endblock %}

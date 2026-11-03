@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+{% include "masterplan/_menu.html" %}
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;font-size:13px;max-width:760px">
+  <table class="kanban-table"><tbody>
+  {% for k,p in parametri.items() %}
+   <tr><td>{{ p[3] }}</td><td style="width:140px"><input type="number" id="p_{{k}}" min="{{p[1]}}" max="{{p[2]}}" style="width:80px"> {{ p[4] }}</td></tr>
+  {% endfor %}
+  </tbody></table>
+  <p><button id="salva" class="btn btn-primary" style="margin-top:10px;padding:7px 16px">Salva</button> <span id="esito"></span></p>
+</div>
+{% endblock %}
+{% block scripts %}
+const chiavi={{ parametri.keys()|list|tojson }};
+function carica(v){chiavi.forEach(k=>document.getElementById('p_'+k).value=v[k]);}
+fetch('/api/masterplan/impostazioni').then(r=>r.json()).then(r=>carica(r.valori));
+document.getElementById('salva').onclick=()=>{
+  const body={};chiavi.forEach(k=>body[k]=document.getElementById('p_'+k).value);
+  fetch('/api/masterplan/impostazioni',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
+   .then(r=>r.json()).then(r=>{const e=document.getElementById('esito');if(r.ok){carica(r.valori);e.style.color='green';e.textContent='Salvato';}else{e.style.color='red';e.textContent=r.error;}});
+};
+{% endblock %}

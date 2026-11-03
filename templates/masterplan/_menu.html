@@ -1,0 +1,8 @@
+<div class="page-toolbar" style="flex-wrap:wrap;gap:6px">
+  <div class="page-title">🧭 MASTERPLAN · AMPS <span style="font-size:12px;font-weight:400;color:#888">Pianificazione previsionale MPS + MRP</span></div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap">
+    {% for url, lab, key in [('/masterplan','Panoramica','index'),('/masterplan/qualita-dati','1 · Qualità dati','qualita'),('/masterplan/famiglie','2 · Famiglie','famiglie'),('/masterplan/previsioni','3 · Previsioni','previsioni'),('/masterplan/domanda','4 · Domanda','domanda'),('/masterplan/impostazioni','Impostazioni','impostazioni')] %}
+    <a href="{{ url }}" class="btn {% if sezione==key %}btn-primary{% endif %}" style="padding:6px 12px;border-radius:6px;border:1px solid var(--border);text-decoration:none;font-size:13px;{% if sezione==key %}background:var(--accent2);color:#fff{% else %}background:var(--white);color:#333{% endif %}">{{ lab }}</a>
+    {% endfor %}
+  </div>
+</div>

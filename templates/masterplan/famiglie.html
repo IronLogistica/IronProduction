@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block content %}
+{% include "masterplan/_menu.html" %}
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;font-size:13px">
+  <p style="color:#666">Una famiglia raggruppa prodotti finiti: prevedi sulla famiglia e AMPS divide secondo il mix (deve fare 100%). Un codice sta in una sola famiglia.</p>
+  <div style="margin-bottom:10px"><button class="btn btn-primary" id="nuova" style="padding:6px 14px">+ Nuova famiglia</button>
+   <button class="btn" id="proponi" style="padding:6px 14px">💡 Proponi dalle categorie</button></div>
+  <div id="proposte"></div>
+  <div id="lista">Caricamento…</div>
+  <div id="editor" style="display:none;margin-top:14px;padding:12px;border:1px solid var(--border);border-radius:8px">
+    <input id="f_codice" placeholder="Codice famiglia" style="width:200px"> <input id="f_desc" placeholder="Descrizione" style="width:300px">
+    <div style="margin:8px 0">Aggiungi prodotto finito: <select id="f_sel"></select> <button class="btn" id="f_add">Aggiungi</button></div>
+    <table class="kanban-table"><thead><tr><th>Codice</th><th>Mix %</th><th></th></tr></thead><tbody id="f_righe"></tbody></table>
+    <div id="f_somma" style="margin:6px 0"></div>
+    <button class="btn btn-primary" id="f_salva" style="padding:6px 14px">Salva famiglia</button> <button class="btn" id="f_annulla">Chiudi</button> <span id="f_esito"></span>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let fam=[],finiti=[],cur=null;
+const J=(u,o)=>fetch(u,o).then(r=>r.json());
+function lista(){
+  document.getElementById('lista').innerHTML=fam.length?'<table class="kanban-table"><thead><tr><th>Famiglia</th><th>Descrizione</th><th>Codici</th><th>Somma mix</th><th></th></tr></thead><tbody>'+
+   fam.map(f=>`<tr><td class="codice">${esc(f.codice)}</td><td>${esc(f.descrizione)}</td><td>${f.codici.map(c=>esc(c.codice)+' '+c.mix_pct+'%').join(', ')}</td><td>${f.somma_mix}%</td><td><button class="btn" onclick="modifica(${f.id})">Modifica</button> <button class="btn" onclick="elimina(${f.id})">Elimina</button></td></tr>`).join('')+'</tbody></table>':'<p style="color:#aaa;font-style:italic">Nessuna famiglia.</p>';
+}
+function carica(){J('/api/masterplan/famiglie').then(d=>{fam=d;lista();});}
+function apri(f){cur=f;document.getElementById('editor').style.display='block';
+  document.getElementById('f_codice').value=f.codice||'';document.getElementById('f_desc').value=f.descrizione||'';righe();}
+function righe(){
+  document.getElementById('f_righe').innerHTML=cur.codici.map((c,i)=>`<tr><td class="codice">${esc(c.codice)}</td><td><input type="number" step="0.1" value="${c.mix_pct}" style="width:80px" oninput="cur.codici[${i}].mix_pct=parseFloat(this.value)||0;somma()"></td><td><button class="btn" onclick="cur.codici.splice(${i},1);righe()">✕</button></td></tr>`).join('');somma();}
+function somma(){const s=cur.codici.reduce((a,c)=>a+c.mix_pct,0);const e=document.getElementById('f_somma');e.textContent='Somma mix: '+Math.round(s*100)/100+'%';e.style.color=(!cur.codici.length||Math.abs(s-100)<0.01)?'green':'red';}
+function modifica(id){apri(JSON.parse(JSON.stringify(fam.find(f=>f.id===id))));}
+function elimina(id){if(confirm('Eliminare la famiglia e le sue previsioni?'))fetch('/api/masterplan/famiglie/'+id,{method:'DELETE'}).then(carica);}
+document.getElementById('nuova').onclick=()=>apri({codice:'',descrizione:'',codici:[]});
+document.getElementById('f_add').onclick=()=>{const c=document.getElementById('f_sel').value;if(c&&!cur.codici.find(x=>x.codice===c)){cur.codici.push({codice:c,mix_pct:0});righe();}};
+document.getElementById('f_annulla').onclick=()=>{document.getElementById('editor').style.display='none';};
+document.getElementById('f_salva').onclick=()=>{
+  cur.codice=document.getElementById('f_codice').value;cur.descrizione=document.getElementById('f_desc').value;
+  J('/api/masterplan/famiglie',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cur)}).then(r=>{
+    const e=document.getElementById('f_esito');if(r.ok){e.style.color='green';e.textContent='Salvata';document.getElementById('editor').style.display='none';carica();}else{e.style.color='red';e.textContent=r.error;}});
+};
+document.getElementById('proponi').onclick=()=>J('/api/masterplan/famiglie/proposta').then(p=>{
+  window._prop=p;document.getElementById('proposte').innerHTML=p.length?'<div style="margin:8px 0;padding:10px;background:#f4f8fc;border-radius:8px"><b>Proposte (mix dallo storico):</b><ul>'+p.map((x,i)=>`<li>${esc(x.codice)}: ${x.codici.map(c=>esc(c.codice)+' '+c.mix_pct+'%').join(', ')} <button class="btn" onclick="usa(${i})">Usa</button></li>`).join('')+'</ul></div>':'<p style="color:#888">Nessuna proposta: servono prodotti con categoria compilata.</p>';});
+function usa(i){const p=window._prop[i];apri({codice:p.codice,descrizione:p.descrizione,origine:'CATEGORIA',codici:p.codici});}
+J('/api/masterplan/prodotti-finiti').then(d=>{finiti=d;document.getElementById('f_sel').innerHTML=d.map(x=>`<option value="${esc(x.codice)}">${esc(x.codice)} ${esc(x.descrizione)}</option>`).join('');});
+carica();
+{% endblock %}

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block content %}
+{% include "masterplan/_menu.html" %}
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;font-size:13px">
+  <p style="color:#666">Inserisci le quantità per mese. Ogni modifica va in <b>BOZZA</b>: solo le previsioni <b>APPROVATE</b> entrano nel calcolo.</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:end;margin-bottom:12px">
+    <label>Livello <select id="liv"><option value="ARTICOLO">Articolo</option><option value="FAMIGLIA">Famiglia</option></select></label>
+    <label>Prodotto <select id="rif" style="max-width:260px"></select></label>
+    <label>Cliente <input id="cli" style="width:140px" placeholder="(facoltativo)"></label>
+    <label>Affidabilità <select id="aff"><option>CERTA</option><option>PROBABILE</option><option>POSSIBILE</option></select></label>
+    <label>Mese <input type="month" id="mese"></label>
+    <label>Quantità <input type="number" min="0" id="qta" style="width:90px"></label>
+    <button class="btn btn-primary" id="add" style="padding:6px 14px">Aggiungi</button>
+    <button class="btn" id="prop" style="padding:6px 14px">💡 Proponi da storico</button>
+    <button class="btn" id="appr" style="padding:6px 14px">✅ Approva tutte le bozze</button>
+  </div>
+  <div id="esito" style="margin-bottom:8px"></div>
+  <div id="lista">Caricamento…</div>
+</div>
+{% endblock %}
+{% block scripts %}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const J=(u,o)=>fetch(u,o).then(r=>r.json());
+const POST=(u,b)=>J(u,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b||{})});
+let finiti=[],fam=[];
+function msg(t,ok){const e=document.getElementById('esito');e.textContent=t;e.style.color=ok?'green':'red';}
+function opzioni(){const l=document.getElementById('liv').value;
+  document.getElementById('rif').innerHTML=(l==='ARTICOLO'?finiti.map(x=>`<option value="${esc(x.codice)}">${esc(x.codice)} ${esc(x.descrizione)}</option>`):fam.map(f=>`<option value="${f.id}">${esc(f.codice)}</option>`)).join('');}
+document.getElementById('liv').onchange=opzioni;
+function corpo(){const l=document.getElementById('liv').value,r=document.getElementById('rif').value;
+  return {livello:l,codice:l==='ARTICOLO'?r:null,famiglia_id:l==='FAMIGLIA'?parseInt(r):null,cliente:document.getElementById('cli').value,affidabilita:document.getElementById('aff').value};}
+function lista(){J('/api/masterplan/previsioni').then(d=>{
+  document.getElementById('lista').innerHTML=d.length?'<table class="kanban-table"><thead><tr><th>Livello</th><th>Prodotto</th><th>Cliente</th><th>Affidabilità</th><th>Mese</th><th>Q.tà</th><th>Stato</th><th></th></tr></thead><tbody>'+
+   d.map(p=>`<tr><td>${p.livello}</td><td class="codice">${esc(p.codice||p.famiglia)}</td><td>${esc(p.cliente)}</td><td>${p.affidabilita}</td><td>${p.mese.slice(0,7)}</td><td class="num">${p.quantita}</td><td>${p.stato==='APPROVATA'?'<span class="badge badge-ok">Approvata</span>':'<span class="badge badge-warn">Bozza</span>'}</td><td><button class="btn" onclick="del(${p.id})">✕</button></td></tr>`).join('')+'</tbody></table>':'<p style="color:#aaa;font-style:italic">Nessuna previsione.</p>';});}
+function del(id){fetch('/api/masterplan/previsioni/'+id,{method:'DELETE'}).then(lista);}
+document.getElementById('add').onclick=()=>{const m=document.getElementById('mese').value;if(!m)return msg('Scegli il mese',false);
+  POST('/api/masterplan/previsioni',Object.assign(corpo(),{mese:m+'-01',quantita:document.getElementById('qta').value})).then(r=>{r.ok?(msg('Salvata (bozza)',true),lista()):msg(r.error,false);});};
+document.getElementById('appr').onclick=()=>POST('/api/masterplan/previsioni/approva').then(r=>{msg(r.approvate+' previsioni approvate',true);lista();});
+document.getElementById('prop').onclick=()=>{const b=corpo();if(b.livello!=='ARTICOLO')return msg('La proposta da storico vale per un articolo',false);
+  J('/api/masterplan/previsioni/proposta/'+encodeURIComponent(b.codice)).then(async p=>{if(!p.length)return msg('Storico insufficiente per questo codice',false);
+   for(const x of p)await POST('/api/masterplan/previsioni',Object.assign({},b,{mese:x.mese,quantita:x.quantita,origine:'STORICO'}));msg(p.length+' mesi proposti in bozza',true);lista();});};
+Promise.all([J('/api/masterplan/prodotti-finiti'),J('/api/masterplan/famiglie')]).then(([a,b])=>{finiti=a;fam=b;opzioni();});
+lista();
+{% endblock %}

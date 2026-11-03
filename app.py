@@ -17,6 +17,7 @@ LAUNCHPAD_GRUPPI = [
         {'label': 'Monitor', 'icona': '⚙️', 'url': '/monitor'},
     ]},
     {'nome': 'Pianificazione & KPI', 'icona': '📈', 'colore': '#2589c7', 'voci': [
+        {'label': 'MASTERPLAN · AMPS', 'icona': '🧭', 'url': '/masterplan'},
         {'label': 'Cruscotto KPI', 'icona': '📈', 'url': '/kpi'},
         {'label': 'Gantt Centri di Costo', 'icona': '📊', 'url': '/gantt-centri-costo'},
         {'label': 'Pianificazione Generale', 'icona': '🗓️', 'url': '/gantt-generale'},
@@ -104,6 +105,7 @@ def create_app():
     # Conto lavoro: registrato SOLO con CL_ENABLED acceso — spento, le sue
     # rotte non esistono proprio (vedi blueprints/conto_lavoro/routes.py).
     from blueprints.conto_lavoro.routes import cl_bp
+    from blueprints.masterplan.routes import masterplan_bp
 
     app.register_blueprint(monitor_bp)
     app.register_blueprint(kanban_bp)
@@ -116,6 +118,7 @@ def create_app():
     app.register_blueprint(totem_acquisti_bp)
     app.register_blueprint(schemi_taglio_bp)
     app.register_blueprint(badge_totem_bp)
+    app.register_blueprint(masterplan_bp)
     if app.config.get('CL_ENABLED'):
         app.register_blueprint(cl_bp)
 
