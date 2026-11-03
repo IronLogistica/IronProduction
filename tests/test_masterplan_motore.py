@@ -67,6 +67,8 @@ class TestMrp(unittest.TestCase):
         lordo = [0, 0, 50, 0, 30, 0]
         righe, ordini = netta(lordo, giacenza=20, arrivi=[0, 0, 0, 0, 0, 0], lead_sett=2)
         self.assertEqual([o['quantita'] for o in ordini], [30, 30])
+        _r, o2 = netta(lordo, giacenza=20, arrivi=None, lead_sett=2, lotto_minimo=100)
+        self.assertEqual([o['quantita'] for o in o2], [100])      # il lotto copre anche il secondo fabbisogno
         self.assertEqual((ordini[0]['arrivo'], ordini[0]['ordina_in'], ordini[0]['in_ritardo']), (2, 0, False))
         self.assertEqual((ordini[1]['arrivo'], ordini[1]['ordina_in']), (4, 2))
         righe, ordini = netta([40, 0, 0], giacenza=0, arrivi=None, lead_sett=2)

@@ -3,8 +3,9 @@ from datetime import date, datetime
 
 from flask import Blueprint, jsonify, render_template, request
 
-from blueprints.masterplan import calcolo, dati, impostazioni, mrp, qualita, storico
-from blueprints.masterplan.modelli import (AFFIDABILITA, MpFamiglia, MpFamigliaCodice, MpPrevisione)
+from blueprints.masterplan import calcolo, dati, errore, impostazioni, mrp, qualita, storico
+from blueprints.masterplan.modelli import (AFFIDABILITA, MpFamiglia, MpFamigliaCodice, MpParametroArticolo,
+                                           MpPrevisione)
 from blueprints.masterplan.motore import MixNonValido, aggiungi_mesi, controlla_mix, primo_del_mese
 from models import db
 
@@ -48,7 +49,62 @@ def pagina_mrp():
 
 @masterplan_bp.route('/api/masterplan/mrp')
 def api_mrp():
-    return jsonify(mrp.calcola_mrp())
+    return jsonify(mrp.calcola_mrp(scenario=request.args.get('scenario', 'base')))
+
+
+@masterplan_bp.route('/masterplan/proposte')
+def pagina_proposte():
+    return render_template('masterplan/proposte.html', active='masterplan', sezione='proposte')
+
+
+@masterplan_bp.route('/masterplan/scenari')
+def pagina_scenari():
+    return render_template('masterplan/scenari.html', active='masterplan', sezione='scenari')
+
+
+@masterplan_bp.route('/masterplan/errore')
+def pagina_errore():
+    return render_template('masterplan/errore.html', active='masterplan', sezione='errore')
+
+
+@masterplan_bp.route('/api/masterplan/scenari')
+def api_scenari():
+    """Confronto dei tre scenari: domanda totale, codici da ordinare, ordini in ritardo, reparti saturi."""
+    out = []
+    for sc in calcolo.SCENARI:
+        r = mrp.calcola_mrp(scenario=sc)
+        d = calcolo.calcola(scenario=sc)
+        out.append({'scenario': sc, 'domanda': d['totali']['domanda'], 'previsione': d['totali']['previsione'],
+                    'ordini': d['totali']['ordini'], **r['totali'],
+                    'pezzi_da_ordinare': sum(p['quantita'] for p in r['proposte']['acquisto'])})
+    return jsonify(out)
+
+
+@masterplan_bp.route('/api/masterplan/errore')
+def api_errore():
+    return jsonify(errore.misura())
+
+
+@masterplan_bp.route('/api/masterplan/parametri-articolo', methods=['GET', 'POST'])
+def api_parametri_articolo():
+    """Lotto minimo e multiplo d'ordine per codice (0 = nessun vincolo)."""
+    if request.method == 'POST':
+        d = request.get_json(force=True) or {}
+        codice = (d.get('codice') or '').strip().upper()
+        if not codice:
+            return _err('Codice obbligatorio')
+        try:
+            lm, mu = float(d.get('lotto_minimo') or 0), float(d.get('multiplo') or 0)
+        except (TypeError, ValueError):
+            return _err('Valori non validi')
+        if lm < 0 or mu < 0:
+            return _err('I valori non possono essere negativi')
+        p = db.session.get(MpParametroArticolo, codice) or MpParametroArticolo(codice=codice)
+        p.lotto_minimo, p.multiplo = lm, mu
+        db.session.add(p)
+        db.session.commit()
+    return jsonify([{'codice': p.codice, 'lotto_minimo': p.lotto_minimo, 'multiplo': p.multiplo}
+                    for p in MpParametroArticolo.query.order_by(MpParametroArticolo.codice).all()])
 
 
 @masterplan_bp.route('/masterplan/impostazioni')
@@ -65,7 +121,7 @@ def api_qualita():
 
 @masterplan_bp.route('/api/masterplan/domanda')
 def api_domanda():
-    r = calcolo.calcola()
+    r = calcolo.calcola(scenario=request.args.get('scenario', 'base'))
     r['settimane'] = [w.isoformat() for w in r['settimane']]
     for c in r['codici']:
         for x in c['righe']:

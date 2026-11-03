@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block content %}
+{% include "masterplan/_menu.html" %}
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;font-size:13px">
+  <p style="color:#666">Previsto (approvato) contro pezzi effettivamente ordinati nei mesi già chiusi. <b>WAPE</b> = errore assoluto totale / effettivo (più basso è meglio). <b>Bias</b> positivo = sovrastima, negativo = sottostima.</p>
+  <div id="box">Calcolo…</div>
+</div>
+{% endblock %}
+{% block scripts %}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const pc=v=>v===null||v===undefined?'—':v+'%';
+fetch('/api/masterplan/errore').then(r=>r.json()).then(d=>{
+  if(!d.righe.length){document.getElementById('box').innerHTML='<p style="color:#aaa;font-style:italic">Ancora niente da misurare: servono previsioni approvate su mesi già chiusi. La misura parte da sola quando passa il primo mese previsto.</p>';return;}
+  const t=d.totale;
+  let h=`<div class="kanban-stats" style="margin-bottom:14px"><div class="kstat kstat-total"><span class="kstat-num">${pc(t.wape)}</span><span class="kstat-lbl">WAPE totale</span></div><div class="kstat kstat-warn"><span class="kstat-num">${pc(t.bias)}</span><span class="kstat-lbl">Bias</span></div></div>`;
+  h+='<h3>Per prodotto</h3><table class="kanban-table"><thead><tr><th>Livello</th><th>Prodotto/famiglia</th><th>Mesi</th><th>Previsto</th><th>Effettivo</th><th>WAPE</th><th>Bias</th></tr></thead><tbody>'+d.per_prodotto.map(p=>`<tr><td>${p.livello}</td><td class="codice">${esc(p.chiave)}</td><td class="num">${p.mesi}</td><td class="num">${p.previsto}</td><td class="num">${p.effettivo}</td><td class="num">${pc(p.wape)}</td><td class="num">${pc(p.bias)}</td></tr>`).join('')+'</tbody></table>';
+  h+='<h3 style="margin-top:16px">Per mese</h3><table class="kanban-table"><thead><tr><th>Mese</th><th>Prodotto/famiglia</th><th>Previsto</th><th>Effettivo</th><th>Errore</th></tr></thead><tbody>'+d.righe.map(r=>`<tr><td>${r.mese.slice(0,7)}</td><td class="codice">${esc(r.chiave)}</td><td class="num">${r.previsto}</td><td class="num">${r.effettivo}</td><td class="num" style="color:${r.errore>0?'#c60':'#1a6'}">${r.errore>0?'+':''}${r.errore}</td></tr>`).join('')+'</tbody></table>';
+  document.getElementById('box').innerHTML=h;
+}).catch(()=>{document.getElementById('box').textContent='Errore nel calcolo.';});
+{% endblock %}

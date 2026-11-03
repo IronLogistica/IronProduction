@@ -5,23 +5,30 @@ Solo lettura: il risultato viene restituito, non salvato.
 from datetime import date
 
 from blueprints.masterplan import dati, impostazioni
-from blueprints.masterplan.modelli import MpFamiglia, MpPrevisione
+from blueprints.masterplan.modelli import AFFIDABILITA, MpFamiglia, MpPrevisione
 from blueprints.masterplan.motore import (MixNonValido, chiudi_domanda, consuma_famiglia, consuma_previsione,
                                           distribuisci_famiglia, elenco_settimane, mensile_su_settimane)
 
 
-def _quantita_pesata(imp, p):
-    """Quantità della cella dopo il peso di affidabilità. 'Possibile' è esclusa dallo scenario base."""
-    if p.affidabilita == 'POSSIBILE':
+SCENARI = ('pessimista', 'base', 'ottimista')
+
+
+def _quantita_pesata(imp, p, scenario='base'):
+    """
+    Quantità della cella dopo il peso di affidabilità.
+    pessimista: solo «Certa» · base: «Certa» + «Probabile» · ottimista: anche «Possibile».
+    """
+    ammesse = {'pessimista': ('CERTA',), 'base': ('CERTA', 'PROBABILE')}.get(scenario, AFFIDABILITA)
+    if p.affidabilita not in ammesse:
         return 0.0
     return p.quantita * impostazioni.peso_affidabilita(imp, p.affidabilita)
 
 
-def previsioni_mensili(imp):
+def previsioni_mensili(imp, scenario='base'):
     """({codice: {mese: pezzi}} per articolo, {famiglia_id: {mese: pezzi}}) — solo celle APPROVATA, arrotondate al pezzo."""
     art, fam = {}, {}
     for p in MpPrevisione.query.filter_by(stato='APPROVATA').all():
-        q = _quantita_pesata(imp, p)
+        q = _quantita_pesata(imp, p, scenario)
         if p.livello == 'ARTICOLO':
             tgt = art.setdefault(p.codice.upper(), {})
         else:
@@ -31,12 +38,13 @@ def previsioni_mensili(imp):
     return arrot(art), arrot(fam)
 
 
-def calcola(oggi=None):
+def calcola(oggi=None, scenario='base'):
     oggi = oggi or date.today()
+    scenario = scenario if scenario in SCENARI else 'base'
     imp = impostazioni.valori()
     settimane = elenco_settimane(oggi, imp['orizzonte_settimane'])
     avvisi = []
-    art_mese, fam_mese = previsioni_mensili(imp)
+    art_mese, fam_mese = previsioni_mensili(imp, scenario)
     ordini, senza_data = dati.ordini_certi_per_settimana(settimane)
     if senza_data:
         avvisi.append(f"{len(senza_data)} ordini aperti senza data prevista: contati nella prima settimana ({', '.join(senza_data[:5])}{'…' if len(senza_data) > 5 else ''})")
@@ -90,6 +98,6 @@ def calcola(oggi=None):
         out.append({'codice': c, 'descrizione': desc.get(c, ''), 'righe': r,
                     'tot_ordini': sum(x['ordini'] for x in r), 'tot_previsto': sum(x['previsto'] for x in r),
                     'tot_residuo': sum(x['residuo_contato'] for x in r), 'tot_domanda': sum(x['domanda'] for x in r)})
-    return {'settimane': settimane, 'impostazioni': imp, 'codici': out, 'avvisi': avvisi,
+    return {'scenario': scenario, 'settimane': settimane, 'impostazioni': imp, 'codici': out, 'avvisi': avvisi,
             'totali': {'ordini': sum(o['tot_ordini'] for o in out), 'previsione': sum(o['tot_residuo'] for o in out),
                        'domanda': sum(o['tot_domanda'] for o in out)}}

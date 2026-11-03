@@ -3,12 +3,14 @@
 {% include "masterplan/_menu.html" %}
 <div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;font-size:13px">
   <p style="color:#666">Domanda = ordini certi + previsione residua dopo il consumo (non la somma). Nella zona congelata contano solo gli ordini.</p>
+  <p>Scenario: <select id="scen"><option value="pessimista">Pessimista (solo Certa)</option><option value="base" selected>Base (Certa + Probabile)</option><option value="ottimista">Ottimista (anche Possibile)</option></select></p>
   <div id="avvisi"></div><div id="box" style="overflow-x:auto">Calcolo in corso…</div>
 </div>
 {% endblock %}
 {% block scripts %}
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-fetch('/api/masterplan/domanda').then(r=>r.json()).then(d=>{
+const SC=new URLSearchParams(location.search).get('scenario')||'base';document.getElementById('scen').value=SC;document.getElementById('scen').onchange=e=>location.search='?scenario='+e.target.value;
+fetch('/api/masterplan/domanda?scenario='+SC).then(r=>r.json()).then(d=>{
   document.getElementById('avvisi').innerHTML=d.avvisi.map(a=>`<div style="padding:6px 10px;margin-bottom:4px;background:#fff6e0;border-radius:6px">⚠️ ${esc(a)}</div>`).join('');
   if(!d.codici.length){document.getElementById('box').innerHTML='<p style="color:#aaa;font-style:italic">Nessuna domanda: non ci sono ordini aperti né previsioni approvate.</p>';return;}
   const ses=d.settimane.map(w=>w.slice(5).split('-').reverse().join('/'));

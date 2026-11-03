@@ -4,6 +4,7 @@
 <div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;font-size:13px">
   <p style="color:#666">Dalla domanda dei prodotti finiti scende lungo la distinta (ogni livello anticipa il fabbisogno). Per ogni codice: fabbisogno lordo, arrivi da ordini fornitore, disponibile proiettato e <b>ordine pianificato</b> con la settimana entro cui ordinarlo.</p>
   <label><input type="checkbox" id="solo"> Solo codici da acquistare</label> <label style="margin-left:12px"><input type="checkbox" id="crit"> Solo con ordine da fare</label>
+  <p>Scenario: <select id="scen"><option value="pessimista">Pessimista (solo Certa)</option><option value="base" selected>Base (Certa + Probabile)</option><option value="ottimista">Ottimista (anche Possibile)</option></select></p>
   <div id="avvisi" style="margin-top:8px"></div><div id="box" style="overflow-x:auto;margin-top:8px">Calcolo in corso…</div>
 </div>
 {% endblock %}
@@ -25,7 +26,8 @@ function disegna(){
   });
   document.getElementById('box').innerHTML=h+'</tbody></table>';
 }
-fetch('/api/masterplan/mrp').then(r=>r.json()).then(d=>{D=d;
+const SC=new URLSearchParams(location.search).get('scenario')||'base';document.getElementById('scen').value=SC;document.getElementById('scen').onchange=e=>location.search='?scenario='+e.target.value;
+fetch('/api/masterplan/mrp?scenario='+SC).then(r=>r.json()).then(d=>{D=d;
   document.getElementById('avvisi').innerHTML=(d.totali.in_ritardo?`<div style="padding:6px 10px;margin-bottom:4px;background:#fdecea;border-radius:6px">🚨 ${d.totali.in_ritardo} codici con ordine già in ritardo (il lead time supera il tempo disponibile)</div>`:'')+d.avvisi.map(a=>`<div style="padding:6px 10px;margin-bottom:4px;background:#fff6e0;border-radius:6px">⚠️ ${esc(a)}</div>`).join('');
   disegna();}).catch(()=>{document.getElementById('box').textContent='Errore nel calcolo.';});
 document.getElementById('solo').onchange=document.getElementById('crit').onchange=()=>D&&disegna();

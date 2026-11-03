@@ -64,3 +64,11 @@ class MpPrevisione(db.Model):
     aggiornato_il = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     famiglia = db.relationship('MpFamiglia')
     __table_args__ = (db.UniqueConstraint('chiave_rif', 'cliente', 'affidabilita', 'mese', name='uq_mp_previsione_cella'),)
+
+
+class MpParametroArticolo(db.Model):
+    """Lotto minimo e multiplo d'ordine per codice (usati nelle proposte di acquisto/produzione)."""
+    __tablename__ = 'mp_parametri_articolo'
+    codice = db.Column(db.String(100), primary_key=True)
+    lotto_minimo = db.Column(db.Float, nullable=False, default=0)
+    multiplo = db.Column(db.Float, nullable=False, default=0)

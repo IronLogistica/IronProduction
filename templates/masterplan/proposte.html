@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block content %}
+{% include "masterplan/_menu.html" %}
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;font-size:13px">
+  <p>Scenario: <select id="scen"><option value="pessimista">Pessimista</option><option value="base" selected>Base</option><option value="ottimista">Ottimista</option></select>
+   <span style="color:#666">· le proposte non creano ordini: sono l'elenco da cui decidere.</span></p>
+  <div id="avvisi"></div>
+  <h3>🛒 Da acquistare</h3><div id="acq">Calcolo…</div>
+  <h3 style="margin-top:18px">🏭 Da produrre (semilavorati)</h3><div id="prod"></div>
+  <h3 style="margin-top:18px">⚙️ Carico reparti (% della capacità settimanale)</h3><div id="car" style="overflow-x:auto"></div>
+  <h3 style="margin-top:18px">📦 Lotto minimo e multiplo</h3>
+  <p style="color:#666">0 = nessun vincolo. Vale per acquisto e produzione del codice.</p>
+  <div><input id="l_cod" placeholder="Codice" style="width:160px"> <input id="l_min" type="number" min="0" placeholder="Lotto minimo" style="width:110px"> <input id="l_mul" type="number" min="0" placeholder="Multiplo" style="width:100px"> <button class="btn btn-primary" id="l_ok" style="padding:5px 12px">Salva</button> <span id="l_es"></span></div>
+  <div id="lotti" style="margin-top:8px"></div>
+</div>
+{% endblock %}
+{% block scripts %}
+const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fd=w=>w.slice(8)+'/'+w.slice(5,7);
+const SC=new URLSearchParams(location.search).get('scenario')||'base';
+document.getElementById('scen').value=SC;document.getElementById('scen').onchange=e=>location.search='?scenario='+e.target.value;
+function tab(rows,vuoto){return rows.length?'<table class="kanban-table"><thead><tr><th>Codice</th><th>Descrizione</th><th>Quantità</th><th>Ordina/lancia entro (sett.)</th><th>Serve per (sett.)</th><th>Lotto min / mult.</th></tr></thead><tbody>'+
+  rows.map(r=>`<tr style="${r.in_ritardo?'background:#fdecea':''}"><td class="codice">${esc(r.codice)}</td><td>${esc(r.descrizione)}</td><td class="num"><b>${r.quantita}</b></td><td>${fd(r.ordina_data)}${r.in_ritardo?' 🚨 in ritardo':''}${r.stimato?' <span style="color:#c60">(LT stimato)</span>':''}</td><td>${fd(r.arrivo_data)}</td><td>${r.lotto_minimo||'—'} / ${r.multiplo||'—'}</td></tr>`).join('')+'</tbody></table>':`<p style="color:#aaa;font-style:italic">${vuoto}</p>`;}
+function lotti(){fetch('/api/masterplan/parametri-articolo').then(r=>r.json()).then(d=>{document.getElementById('lotti').innerHTML=d.length?'<table class="kanban-table"><thead><tr><th>Codice</th><th>Lotto min.</th><th>Multiplo</th></tr></thead><tbody>'+d.map(p=>`<tr><td class="codice">${esc(p.codice)}</td><td class="num">${p.lotto_minimo}</td><td class="num">${p.multiplo}</td></tr>`).join('')+'</tbody></table>':'';});}
+document.getElementById('l_ok').onclick=()=>fetch('/api/masterplan/parametri-articolo',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({codice:document.getElementById('l_cod').value,lotto_minimo:document.getElementById('l_min').value,multiplo:document.getElementById('l_mul').value})}).then(r=>r.json()).then(r=>{const e=document.getElementById('l_es');if(r.error){e.style.color='red';e.textContent=r.error;}else{e.style.color='green';e.textContent='Salvato — ricarico';setTimeout(()=>location.reload(),600);}});
+fetch('/api/masterplan/mrp?scenario='+SC).then(r=>r.json()).then(d=>{
+  document.getElementById('avvisi').innerHTML=d.avvisi.map(a=>`<div style="padding:6px 10px;margin-bottom:4px;background:#fff6e0;border-radius:6px">⚠️ ${esc(a)}</div>`).join('');
+  document.getElementById('acq').innerHTML=tab(d.proposte.acquisto,'Nessun acquisto da fare nell\'orizzonte.');
+  document.getElementById('prod').innerHTML=tab(d.proposte.produzione,'Nessun semilavorato da produrre oltre la giacenza.');
+  document.getElementById('car').innerHTML=d.carico.length?`<table class="kanban-table"><thead><tr><th>Reparto</th><th>Capacità h/sett.</th>${d.settimane.map(w=>`<th>${fd(w)}</th>`).join('')}</tr></thead><tbody>`+
+   d.carico.map(c=>`<tr><td>${esc(c.centro)}${c.esterno?' (esterno)':''}</td><td class="num">${c.capacita_ore}</td>${c.saturazione.map((s,i)=>`<td class="num" title="${c.ore[i]} h" style="${s>100?'background:#fdecea;font-weight:700':s>85?'background:#fff6e0':''}">${s||''}</td>`).join('')}</tr>`).join('')+'</tbody></table>':'<p style="color:#aaa;font-style:italic">Nessun carico: servono domanda e cicli di lavoro.</p>';
+});
+lotti();
+{% endblock %}

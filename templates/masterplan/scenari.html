@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+{% include "masterplan/_menu.html" %}
+<div style="background:var(--white);border-radius:var(--radius);box-shadow:var(--shadow);padding:16px;font-size:13px">
+  <p style="color:#666"><b>Pessimista</b>: solo previsioni «Certa». <b>Base</b>: «Certa» + «Probabile». <b>Ottimista</b>: anche «Possibile». Le percentuali di affidabilità sono in Impostazioni. Gli ordini certi sono uguali in tutti gli scenari.</p>
+  <div id="box">Calcolo dei tre scenari…</div>
+</div>
+{% endblock %}
+{% block scripts %}
+const NOMI={pessimista:'Pessimista',base:'Base',ottimista:'Ottimista'};
+fetch('/api/masterplan/scenari').then(r=>r.json()).then(d=>{
+  const R=[['Ordini certi (pezzi)','ordini'],['Previsione residua (pezzi)','previsione'],['Domanda totale (pezzi)','domanda'],['Codici da acquistare con ordine','da_ordinare'],['Pezzi da ordinare','pezzi_da_ordinare'],['Ordini già in ritardo','in_ritardo'],['Reparti oltre il 100%','reparti_saturi']];
+  document.getElementById('box').innerHTML='<table class="kanban-table"><thead><tr><th></th>'+d.map(x=>`<th>${NOMI[x.scenario]}</th>`).join('')+'</tr></thead><tbody>'+
+   R.map(([l,k])=>`<tr><td>${l}</td>${d.map(x=>`<td class="num">${x[k]}</td>`).join('')}</tr>`).join('')+'</tbody></table>'+
+   '<p style="margin-top:10px">Apri il dettaglio: '+d.map(x=>`<a href="/masterplan/proposte?scenario=${x.scenario}">proposte ${NOMI[x.scenario].toLowerCase()}</a>`).join(' · ')+'</p>';
+}).catch(()=>{document.getElementById('box').textContent='Errore nel calcolo.';});
+{% endblock %}
