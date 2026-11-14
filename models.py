@@ -2454,11 +2454,16 @@ def kanban_per_codice(codice):
 
 def storico_aggiungi_auto(kanban_id, delta_pezzi, anno=None, mese=None):
     """
-    Chiamare ogni volta che verniciati aumenta su un KanbanProdotto.
-    delta_pezzi = differenza positiva (nuovi pezzi prodotti finiti).
-    Accumula in qta_auto per il mese/anno corrente.
+    Contatore automatico dello Storico Produzione (qta_auto, per mese/anno).
+    REGOLA (Mauri, 14/11/2026): conta quando il prodotto finito entra in
+    GREZZI IW — cioè alla dichiarazione APPROVATA dell'ULTIMA fase del Ciclo
+    di Lavoro del codice padre (stessa regola di _grezzo_iw_per_codici) —
+    NON più al rientro dal terzista: gli articoli inox non vanno mai dal
+    terzista e non venivano mai contati.
+    delta_pezzi > 0 = pezzi prodotti; delta_pezzi < 0 = storno di una
+    dichiarazione già contata (mai sotto zero).
     """
-    if delta_pezzi <= 0:
+    if not delta_pezzi:
         return
     ora = datetime.utcnow()
     anno = anno or ora.year
@@ -2468,8 +2473,10 @@ def storico_aggiungi_auto(kanban_id, delta_pezzi, anno=None, mese=None):
             kanban_id=kanban_id, anno=anno, mese=mese
         ).first()
         if riga:
-            riga.qta_auto = (riga.qta_auto or 0) + delta_pezzi
+            riga.qta_auto = max(0, (riga.qta_auto or 0) + delta_pezzi)
             riga.aggiornato_il = ora
+        elif delta_pezzi < 0:
+            return
         else:
             db.session.add(StoricoProduzione(
                 kanban_id=kanban_id, anno=anno, mese=mese,

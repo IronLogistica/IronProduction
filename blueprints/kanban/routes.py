@@ -1,6 +1,6 @@
 from flask import Blueprint, render_template, jsonify, request, redirect
 from models import (db, KanbanProdotto, KanbanGruppo, KanbanCiclo, FaseWip,
-                    StoricoProduzione, storico_aggiungi_auto, storico_get,
+                    StoricoProduzione, storico_aggiungi_auto, storico_get, kanban_per_codice,
                     kanban_to_dict, log, get_kanban_gruppi,
                     registra_ciclo_se_necessario, calcola_analisi_takt, PIN_ADMIN,
                     TIPI_APPROVVIGIONAMENTO, ArticoloApprovvigionamento,
@@ -718,8 +718,6 @@ def api_aggiorna(kid):
         p = KanbanProdotto.query.get_or_404(kid)
         stato_prima = p.stato
         d = request.get_json(force=True)
-        # ── Accumulo storico produzione: intercetta aumento di verniciati ──
-        verniciati_prima = p.verniciati
         # 'in_prod' NON è più qui: è sempre ricalcolato in automatico
         # all'apertura della board (_aggiorna_residuo_produzione), un valore
         # inserito a mano verrebbe sovrascritto al primo refresh — vedi
@@ -733,12 +731,8 @@ def api_aggiorna(kid):
         # editabile: è il buffer di sicurezza del Kanban.
         for campo in ['lotto','riserva','riservato']:
             if campo in d: setattr(p, campo, int(d[campo]))
-        delta_verniciati = p.verniciati - verniciati_prima
-        # Solo dal 01/07/2026 in poi (data go-live accumulo automatico)
-        ora_now = datetime.utcnow()
-        go_live = datetime(2026, 7, 1)
-        if ora_now >= go_live and delta_verniciati > 0:
-            storico_aggiungi_auto(p.id, delta_verniciati)
+        # Storico Produzione: non dipende più da 'verniciati' (Finiti IW) —
+        # conta all'ingresso in GREZZI IW (vedi produzione_pp).
         if 'val_medio'   in d: p.val_medio   = float(d['val_medio'])
         if 'lavorazioni' in d: p.lavorazioni = d['lavorazioni']
         if 'tipo_approvvigionamento' in d:
@@ -1270,6 +1264,107 @@ def api_storico_import(kid):
     except Exception as e:
         db.session.rollback()
         return jsonify({'ok': False, 'error': str(e)}), 500
+
+def storico_ricalcola_da_grezzi_iw(kanban_id=None):
+    """
+    Ricostruisce il contatore AUTOMATICO (qta_auto) dello Storico Produzione
+    con la regola nuova (Mauri, 14/11/2026): pezzi entrati in GREZZI IW =
+    dichiarazioni APPROVATE dell'ULTIMA fase del Ciclo di Lavoro del codice
+    padre (componente NULL) — stessa regola di _grezzo_iw_per_codici — per
+    mese della dichiarazione, dal 01/07/2026 in poi.
+    qta_import (Import CSV) NON viene toccato. kanban_id=None = tutte le schede.
+    Ritorna il numero di schede aggiornate. Non fa commit.
+    """
+    from blueprints.produzione_pp.routes import _fasi_corrispondono, STORICO_GO_LIVE
+    from models import EventoConsuntivoPP, OrdineProduzione, CicloLavoroWood
+
+    q_storico = StoricoProduzione.query
+    if kanban_id:
+        q_storico = q_storico.filter_by(kanban_id=kanban_id)
+    for r in q_storico.all():
+        r.qta_auto = 0
+
+    eventi = (db.session.query(OrdineProduzione.codice_articolo, EventoConsuntivoPP.fase,
+                                EventoConsuntivoPP.pezzi_buoni, EventoConsuntivoPP.timestamp_evento)
+              .join(EventoConsuntivoPP, EventoConsuntivoPP.op_code == OrdineProduzione.codice)
+              .filter(EventoConsuntivoPP.componente.is_(None),
+                      EventoConsuntivoPP.approvato_direzione.is_(True),
+                      EventoConsuntivoPP.timestamp_evento >= STORICO_GO_LIVE).all())
+    codici = {(c or '').strip() for c, _, _, _ in eventi if c}
+    ultima_fase = {}
+    if codici:
+        for c in (CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(codici))
+                  .order_by(CicloLavoroWood.codice, CicloLavoroWood.sequenza.desc()).all()):
+            if c.codice not in ultima_fase and c.centro_costo:
+                ultima_fase[c.codice] = c.centro_costo.nome
+
+    kanban_cache, somme = {}, {}
+    for cod, fase, buoni, ts in eventi:
+        if not buoni or not cod or not ts:
+            continue
+        uf = ultima_fase.get(cod)
+        if uf and not _fasi_corrispondono(uf, fase or ''):
+            continue
+        if cod not in kanban_cache:
+            kanban_cache[cod] = kanban_per_codice(cod)
+        p = kanban_cache[cod]
+        if not p or (kanban_id and p.id != kanban_id):
+            continue
+        chiave = (p.id, ts.year, ts.month)
+        somme[chiave] = somme.get(chiave, 0) + buoni
+
+    db.session.flush()
+    for (kid, anno, mese), qta in somme.items():
+        r = StoricoProduzione.query.filter_by(kanban_id=kid, anno=anno, mese=mese).first()
+        if r:
+            r.qta_auto = qta
+            r.aggiornato_il = datetime.utcnow()
+        else:
+            db.session.add(StoricoProduzione(kanban_id=kid, anno=anno, mese=mese,
+                                             qta_import=0, qta_auto=qta, aggiornato_il=datetime.utcnow()))
+    return len({k[0] for k in somme})
+
+
+def storico_ricalcolo_una_tantum():
+    """Al deploy: ricalcola UNA SOLA VOLTA tutti i contatori con la regola
+    Grezzi IW. Marcatore in tabella migrazioni_dati: con più worker gunicorn
+    solo il primo che inserisce il marcatore esegue il ricalcolo."""
+    from sqlalchemy import text
+    nome = 'storico_produzione_da_grezzi_iw_v1'
+    try:
+        db.session.execute(text("CREATE TABLE IF NOT EXISTS migrazioni_dati "
+                                "(nome VARCHAR(120) PRIMARY KEY, eseguita_il TIMESTAMP)"))
+        db.session.commit()
+        ris = db.session.execute(text("INSERT INTO migrazioni_dati (nome, eseguita_il) VALUES (:n, :t) "
+                                      "ON CONFLICT (nome) DO NOTHING"), {'n': nome, 't': datetime.utcnow()})
+        if ris.rowcount != 1:
+            db.session.rollback()
+            return
+        n = storico_ricalcola_da_grezzi_iw()
+        db.session.commit()
+        log(f'Storico produzione: ricalcolati i contatori da Grezzi IW ({n} schede)')
+    except Exception as exc:
+        db.session.rollback()
+        log(f'⚠️ Ricalcolo storico produzione non riuscito: {exc}')
+
+
+@kanban_bp.route('/api/kanban/<int:kid>/storico/ricalcola', methods=['POST'])
+def api_storico_ricalcola(kid):
+    """Ricalcola il contatore automatico di UNA scheda (o di tutte con
+    tutti=true) dalle dichiarazioni Grezzi IW — richiede PIN."""
+    try:
+        d = request.get_json(force=True)
+        if d.get('pin', '') != PIN_ADMIN:
+            return jsonify({'ok': False, 'error': 'PIN non valido', 'pin_error': True}), 403
+        KanbanProdotto.query.get_or_404(kid)
+        n = storico_ricalcola_da_grezzi_iw(None if d.get('tutti') else kid)
+        db.session.commit()
+        log(f'Storico: ricalcolato da Grezzi IW ({n} schede)')
+        return jsonify({'ok': True, 'schede': n})
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'ok': False, 'error': str(e)}), 500
+
 
 @kanban_bp.route('/api/kanban/<int:kid>/storico/reset', methods=['POST'])
 def api_storico_reset(kid):

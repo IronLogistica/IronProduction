@@ -43,8 +43,9 @@ def _aggiorna_kanban_da_rientro_ddt(codice, qta_rientrata_ora):
     p = kanban_per_codice(sku)
     if p:
         p.verniciati = max(0, (p.verniciati or 0) + qta_rientrata_ora)
-        if datetime.utcnow() >= datetime(2026, 7, 1):
-            storico_aggiungi_auto(p.id, qta_rientrata_ora)
+        # Storico Produzione NON si aggiorna più qui (Mauri, 14/11/2026):
+        # conta all'ingresso in GREZZI IW (vedi _storico_kanban_da_grezzi_iw
+        # in produzione_pp) — gli inox non passano mai dal terzista.
     else:
         log(f'Rientro terzista {sku}: nessuna scheda Kanban con questo SKU esatto — '
             f'caricato solo il magazzino locale')

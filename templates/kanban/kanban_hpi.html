@@ -180,6 +180,7 @@
       📊 Storico Produzione
       <span style="margin-left:auto;display:flex;gap:6px;align-items:center">
         <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px" onclick="apriImportStorico()">📥 Import CSV</button>
+        <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px" title="Ricalcola il contatore automatico dalle dichiarazioni entrate in Grezzi IW" onclick="apriRicalcolaStorico()">🔄 Ricalcola</button>
         <button class="btn btn-ghost" style="font-size:10px;padding:3px 8px;color:#f07070" onclick="apriResetStorico()">🗑️ Reset</button>
       </span>
     </div>
@@ -648,6 +649,22 @@ function eseguiImportStorico() {
       esito.textContent = '❌ ' + (d.error || 'Errore');
     }
   }).catch(() => { esito.style.color = '#f07070'; esito.textContent = '❌ Errore di rete'; });
+}
+
+function apriRicalcolaStorico() {
+  const pin = prompt('PIN per ricalcolare lo storico da Grezzi IW:');
+  if (!pin) return;
+  const tutti = confirm('Ricalcolare TUTTE le schede?\nOK = tutte · Annulla = solo questa');
+  fetch(`/api/kanban/${_wmsPid}/storico/ricalcola`, {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({pin, tutti})
+  }).then(r=>r.json()).then(d => {
+    if (d.ok) {
+      showToast('🔄 Storico ricalcolato da Grezzi IW');
+      fetch(`/api/kanban/${_wmsPid}/storico`).then(r=>r.json()).then(_renderStorico);
+    } else if (d.pin_error) showToast('🔐 PIN errato', true);
+    else showToast('❌ ' + (d.error||'Errore'), true);
+  });
 }
 
 function apriResetStorico() {

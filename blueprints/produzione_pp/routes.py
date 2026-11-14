@@ -2968,6 +2968,26 @@ def _storna_wip_fase_automatico(codice, fase_nome, good, scrap, escludi_event_id
         log(f'AVVISO storno WIP per fase non riuscito — {codice}/{fase_nome}: {exc}')
 
 
+STORICO_GO_LIVE = datetime(2026, 7, 1)  # prima di questa data lo storico arriva solo da Import CSV
+
+
+def _storico_kanban_da_grezzi_iw(codice_padre, delta, ts):
+    """Aggiorna lo Storico Produzione della scheda Kanban dello SKU esatto
+    quando cambia GREZZI IW (delta>0 dichiarazione, delta<0 storno). Non
+    blocca mai la dichiarazione."""
+    try:
+        if not delta:
+            return
+        ts = ts or datetime.utcnow()
+        if ts < STORICO_GO_LIVE:
+            return
+        p = kanban_per_codice(codice_padre)
+        if p:
+            storico_aggiungi_auto(p.id, delta, ts.year, ts.month)
+    except Exception as exc:
+        log(f'Storico produzione: aggiornamento non riuscito per {codice_padre}: {exc}')
+
+
 def _applica_effetti_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, event_id,
                                         componente_finale, codice_lavorato, avanza_op, consumi_override=None):
     """
@@ -2985,6 +3005,11 @@ def _applica_effetti_evento_consuntivo(o, fase_nome, ts, good, scrap, tempo, eve
     o.tempo_consuntivo_minuti += tempo
     if avanza_op:
         o.qta_buona += good; o.qta_scarto += scrap
+        # Storico Produzione Kanban (Mauri, 14/11/2026): conta QUI, quando il
+        # prodotto finito entra in GREZZI IW (ultima fase del ciclo del codice
+        # padre, approvata) — non più al rientro dal terzista, che gli inox non
+        # fanno mai. Mese = data della dichiarazione.
+        _storico_kanban_da_grezzi_iw(o.codice_articolo, good, ts)
         if o.stato == 'Rilasciato': o.stato = 'In esecuzione'
         if o.qta_pianificata and o.qta_buona >= o.qta_pianificata:
             o.stato, o.data_completamento = 'Tecnicamente completato', datetime.utcnow()
@@ -6148,16 +6173,9 @@ def api_dichiarazione_approva(eid):
     db.session.add(AuditPP(op_code=e.op_code, event_id=e.event_id, azione='APPROVAZIONE_DIREZIONE',
                             dettaglio=f'dichiarazione {e.event_id} approvata dalla Direzione — movimentazione applicata ora'
                             + (f' — ⚠️ {avviso_magazzino}' if avviso_magazzino else '')))
-    # Aggancio Storico Produzione Kanban: questa approvazione è ESATTAMENTE
-    # la stessa condizione che fa salire "Grezzo IW" in Magazzino
-    # (componente NULL, fase Saldatura, approvato dalla Direzione — vedi
-    # _calcola_campi_giacenza) — quindi lo Storico Produzione del Kanban
-    # deve contarla nello stesso istante, non restare fermo ai soli rientri
-    # DDT dalla verniciatura.
-    if e.componente is None and 'sald' in (e.fase or '').strip().lower() and e.pezzi_buoni > 0:
-        p = kanban_per_codice(o.codice_articolo)  # SKU esatto (fix 12/10/2026)
-        if p:
-            storico_aggiungi_auto(p.id, e.pezzi_buoni)
+    # Storico Produzione Kanban: ora lo aggiorna _applica_effetti_evento_consuntivo
+    # (chiamata qui sopra) — un solo punto, sia per le dichiarazioni manuali
+    # sia per quelle MasterWork approvate qui.
     db.session.commit()
     return jsonify(ok=True, avviso_magazzino=avviso_magazzino)
 
@@ -6283,6 +6301,7 @@ def _storna_evento_consuntivo(e, o):
     if avanza_op:
         o.qta_buona = max((o.qta_buona or 0) - e.pezzi_buoni, 0)
         o.qta_scarto = max((o.qta_scarto or 0) - e.pezzi_scarto, 0)
+        _storico_kanban_da_grezzi_iw(o.codice_articolo, -(e.pezzi_buoni or 0), e.timestamp_evento)
         if o.stato == 'Tecnicamente completato':
             o.stato = 'In esecuzione'
     _audit(o, 'ANNULLO_CONSUNTIVO', f'storno evento {e.event_id}: componente={codice_lavorato}; '

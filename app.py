@@ -189,6 +189,8 @@ def create_app():
         assicura_import_consumabili_sicurezza()
         assicura_categoria_acquisto_config()
         assicura_ripartizione_produzione_parametri()
+        from blueprints.kanban.routes import storico_ricalcolo_una_tantum
+        storico_ricalcolo_una_tantum()
 
     # Conto lavoro: il suo DDL NON gira all'avvio — salvo consenso esplicito
     # dato impostando a mano su Railway CL_MIGRA_AUTO=<numero migrazione>
