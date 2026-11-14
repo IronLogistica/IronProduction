@@ -49,17 +49,32 @@
   </label>
 </div>
 
-<div style="margin-bottom:16px;font-size:11px">
-  <div style="color:var(--text-dim);margin-bottom:6px">Filtra per stato:</div>
-  <div id="hpi-filtro-stati" style="display:flex;gap:12px;flex-wrap:wrap">
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="evadibile" checked onchange="renderKanbanHpi()"> 🟢 Ordini Evadibili</label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="dopo_verniciatura" checked onchange="renderKanbanHpi()"> 🟡 Evadibile dopo Verniciatura</label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="parziale_in_produzione" checked onchange="renderKanbanHpi()"> 🔵 Parz. Evadibile — In Produzione</label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="dopo_produzione" checked onchange="renderKanbanHpi()"> 🔵 Evadibile dopo Produzione</label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="parziale_pianifica" checked onchange="renderKanbanHpi()"> 🔴 Parz. Evadibile — Pianificare</label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="fare_produzione" checked onchange="renderKanbanHpi()"> 🔴 Fare Produzione</label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="pianifica_scorta" checked onchange="renderKanbanHpi()"> 🟠 Pianificare (sotto scorta)</label>
-    <label style="display:flex;align-items:center;gap:5px;cursor:pointer"><input type="checkbox" class="hpi-stato-check" value="nessun_ordine" checked onchange="renderKanbanHpi()"> ⚪ Nessun ordine</label>
+<style>
+  .hpi-filtro-btn{display:inline-flex;align-items:center;gap:7px;cursor:pointer;user-select:none;
+    padding:8px 14px;border-radius:8px;border:1px solid var(--border,rgba(255,255,255,.18));
+    background:rgba(255,255,255,.03);font-size:13px;font-weight:600}
+  .hpi-filtro-btn input{width:16px;height:16px;cursor:pointer}
+  .hpi-filtro-btn:has(input:checked){border-color:var(--accent2,#3b9ae1);background:rgba(59,154,225,.18);color:#fff}
+  .hpi-filtro-top{padding:12px 22px;font-size:16px;font-weight:800;border-width:2px}
+  .hpi-filtro-top input{width:20px;height:20px}
+  .hpi-filtro-top:has(input:checked){border-color:#e67e22;background:rgba(230,126,34,.22)}
+</style>
+<div style="margin-bottom:16px">
+  <div style="color:var(--text-dim);margin-bottom:8px;font-size:12px">
+    Filtra per stato — <b>nessun pulsante spuntato = vedi tutto</b>; spunta uno o più pulsanti per vedere solo quelli.
+    <a href="#" onclick="azzeraFiltriHpi();return false" style="margin-left:10px;color:var(--accent2,#3b9ae1)">✖ Togli filtri</a>
+  </div>
+  <div id="hpi-filtro-principali" style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:10px">
+    <label class="hpi-filtro-btn hpi-filtro-top"><input type="checkbox" class="hpi-stato-check" value="fare_produzione" onchange="renderKanbanHpi()"> 🔴 Fare Produzione</label>
+    <label class="hpi-filtro-btn hpi-filtro-top"><input type="checkbox" class="hpi-stato-check" value="pianifica_scorta" onchange="renderKanbanHpi()"> 🟠 Pianificare (sotto scorta)</label>
+  </div>
+  <div id="hpi-filtro-stati" style="display:flex;gap:10px;flex-wrap:wrap">
+    <label class="hpi-filtro-btn"><input type="checkbox" class="hpi-stato-check" value="evadibile" onchange="renderKanbanHpi()"> 🟢 Ordini Evadibili</label>
+    <label class="hpi-filtro-btn"><input type="checkbox" class="hpi-stato-check" value="dopo_verniciatura" onchange="renderKanbanHpi()"> 🟡 Evadibile dopo Verniciatura</label>
+    <label class="hpi-filtro-btn"><input type="checkbox" class="hpi-stato-check" value="parziale_in_produzione" onchange="renderKanbanHpi()"> 🔵 Parz. Evadibile — In Produzione</label>
+    <label class="hpi-filtro-btn"><input type="checkbox" class="hpi-stato-check" value="dopo_produzione" onchange="renderKanbanHpi()"> 🔵 Evadibile dopo Produzione</label>
+    <label class="hpi-filtro-btn"><input type="checkbox" class="hpi-stato-check" value="parziale_pianifica" onchange="renderKanbanHpi()"> 🔴 Parz. Evadibile — Pianificare</label>
+    <label class="hpi-filtro-btn"><input type="checkbox" class="hpi-stato-check" value="nessun_ordine" onchange="renderKanbanHpi()"> ⚪ Nessun ordine</label>
   </div>
 </div>
 
@@ -287,6 +302,11 @@ async function caricaKanbanHpi(){
   }
 }
 
+function azzeraFiltriHpi(){
+  document.querySelectorAll('.hpi-stato-check').forEach(el => { el.checked = false; });
+  renderKanbanHpi();
+}
+
 function renderKanbanHpi(aggiornaLive = true){
   const box = document.getElementById('hpi-contenuto');
   if(!_hpiGruppi.length){ box.innerHTML = '<p style="color:var(--text-dim);font-style:italic">Nessun prodotto Kanban trovato.</p>'; return; }
@@ -312,7 +332,7 @@ function renderKanbanHpi(aggiornaLive = true){
     // (anche senza nessun ordine in corso — serve comunque pianificare
     // produzione per rifornire la scorta di sicurezza).
     const prodottiFiltrati = (soloRiservati ? g.prodotti.filter(p => p.riservato_clienti > 0 || p.sotto_scorta) : g.prodotti)
-      .filter(p => statiSelezionati.has(p.stato_codice));
+      .filter(p => !statiSelezionati.size || statiSelezionati.has(p.stato_codice));  // nessun filtro spuntato = tutto
     if(!prodottiFiltrati.length) return;
     almenoUnGruppoMostrato = true;
     idsVisibili.push(...prodottiFiltrati.map(p => p.id));
