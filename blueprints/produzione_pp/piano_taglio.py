@@ -348,10 +348,26 @@ def api_carica_extra(op_codice, cid):
         return jsonify(ok=False, error=f'Al massimo {voce["da_caricare"]:g} pz ancora da caricare per {codice} '
                                        f'(previsti {voce["previsti"]:g}, già caricati {voce["caricati"]:g})'), 400
     nota = f'Pezzi extra dal piano di taglio — {o.codice} commessa {o.commessa or ""} ({centro.nome})'
-    _registra_movimento_giacenza(codice, qta, 'carico_produzione', riferimento=o.codice, note=nota)
+    # Decisione Mauri/Angelo (18/11/2026): le zampe extra (es. TPD32L780 dallo schema B)
+    # SCARICANO il ferro secondo la loro distinta, come una dichiarazione libera. Con la
+    # distinta tarata (TR2502DT 2,722 m + 2 TPD32L780 0,778 m = 7 m) ogni barra scarica
+    # esattamente 7 m, e l'operaio non deve ricordarsi la dichiarazione libera.
+    from blueprints.produzione_pp.routes import _esplodi_per_dichiarazione_libera
+    from blueprints.magazzino.routes import _calcola_costo_standard, _consuma_wip_multi_fase
+    consumi = {}
+    _esplodi_per_dichiarazione_libera(codice, qta, consumi, set())
+    for cod, q in consumi.items():
+        if q:
+            _registra_movimento_giacenza(cod, -q, 'scarico_produzione', riferimento=o.codice,
+                                         note=f'{nota} — {qta:g} pz {codice}',
+                                         costo_unitario=_calcola_costo_standard(cod)['costo_totale'])
+            _consuma_wip_multi_fase(cod, q)
+    _registra_movimento_giacenza(codice, qta, 'carico_produzione', riferimento=o.codice, note=nota,
+                                 costo_unitario=_calcola_costo_standard(codice)['costo_totale'])
     db.session.add(CaricoExtraTaglioWood(op_id=o.id, op_codice=o.codice, centro_id=centro.id, codice=codice, quantita=qta))
     db.session.add(AuditPP(op_code=o.codice, event_id='', azione='CARICO_EXTRA_TAGLIO',
-                           dettaglio=f'{qta:g} pz {codice} caricati a magazzino dal piano di taglio ({centro.nome})'))
+                           dettaglio=f'{qta:g} pz {codice} caricati a magazzino dal piano di taglio ({centro.nome})'
+                                     + (' — scaricati ' + ', '.join(f'{q:g} {c}' for c, q in consumi.items() if q) if consumi else '')))
     db.session.commit()
     return jsonify(ok=True, codice=codice, caricati=voce['caricati'] + qta)
 

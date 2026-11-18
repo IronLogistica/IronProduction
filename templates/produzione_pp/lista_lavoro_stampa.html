@@ -290,12 +290,12 @@
       <button onclick="caricaExtra('{{ e.codice }}', 'ex-{{ loop.index }}')">Carica a magazzino</button>{% else %}✅ caricati{% endif %}</td></tr>
   {% endfor %}
   </table>
-  <small>Caricali quando la Segatrice li ha tagliati davvero (anche a più riprese). Serve il PIN Direzione.</small>
+  <small>Caricali quando la Segatrice li ha tagliati davvero (anche a più riprese). Il carico <b>scarica anche il ferro</b> secondo la distinta del pezzo: NON dichiararli anche con la Dichiarazione Libera. Serve il PIN Direzione.</small>
 </div>
 <script>
 async function caricaExtra(codice, inputId){
   const quantita = document.getElementById(inputId).value;
-  const pin = prompt(`Caricare ${quantita} pz ${codice} a magazzino?\nPIN Direzione:`);
+  const pin = prompt(`Caricare ${quantita} pz ${codice} a magazzino?\n(scarica anche il ferro dalla distinta)\nPIN Direzione:`);
   if(!pin) return;
   const r = await fetch('/api/ordini-produzione/{{ dati.op_codice }}/lista-lavoro/{{ centro.id }}/carica-extra-taglio',
     {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({codice, quantita, pin})});

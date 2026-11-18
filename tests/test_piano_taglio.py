@@ -155,6 +155,8 @@ class TestPianoNellOrdineDiLavoro(unittest.TestCase):
         self.assertTrue(self.c.post(url, json={'codice': 'tpd32l3940', 'quantita': 30, 'pin': PIN}).get_json()['ok'])
         with self.app.app_context():
             self.assertEqual(db.session.get(GiacenzaWood, 'TPD32L3940').quantita, 30)
+            # 18/11/2026: il carico extra scarica anche il ferro (30 x 3,94 m)
+            self.assertAlmostEqual(db.session.get(GiacenzaWood, 'TTD32SP15L7').quantita, 1000 - 30 * 3.94, places=3)
         e = self._ol()['gruppi'][0]['extra_taglio'][0]
         self.assertEqual((e['caricati'], e['da_caricare']), (30, 20))
         self.assertTrue(self.c.post(url, json={'codice': 'TPD32L3940', 'quantita': 20, 'pin': PIN}).get_json()['ok'])
