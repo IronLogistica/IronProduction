@@ -9,7 +9,7 @@ from sqlalchemy import text
 import contextvars
 from contextlib import contextmanager
 from masterlogistic_client import ottieni_scheda_kanban, MasterLogisticError, _kanban_stock_grezzo
-from models import (_ordine_impegno, chiave_rilascio, db, SostituzioneMaterialeOP, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
+from models import (_ordine_impegno, chiave_rilascio, db, SostituzioneMaterialeOP, AggiuntaMaterialeOP, ArticoloML, DistintaBaseML, DistintaBaseWood, Commessa, RigaCommessa,
                     CentroCostoWood, CicloLavoroWood, ArticoloApprovvigionamento,
                     TIPI_APPROVVIGIONAMENTO, GiacenzaWood, MovimentoGiacenzaWood, OrdineProduzione,
                     ImpostazioneCostoWood, CostoStandardWood, VarianzaProduzioneWood,
@@ -453,15 +453,67 @@ def sostituzioni_per_op(op_id):
     return {(r.codice_padre, r.materiale_originale): r for r in righe}
 
 
+# ── Componente aggiunto per commessa (20/11/2026) ───────────────────────────
+# Stesso meccanismo: dentro sostituzioni_attive(o) _righe_bom_attive_wood
+# AGGIUNGE alle righe del padre i componenti in piu' indicati per quell'OP
+# (AggiuntaMaterialeOP) — impegnati, scaricati alla dichiarazione del padre,
+# nell'Ordine di Lavoro e nei costi. Fuori da questo contesto, niente.
+_AGGIUNTE_CTX = contextvars.ContextVar('aggiunte_materiale_op', default=None)
+
+
+def aggiunte_per_op(op_id):
+    """{codice_padre: [AggiuntaMaterialeOP]} attive per l'OP."""
+    if not op_id:
+        return {}
+    try:
+        righe = AggiuntaMaterialeOP.query.filter_by(op_id=op_id, revocata_il=None).order_by(AggiuntaMaterialeOP.id).all()
+    except Exception:
+        db.session.rollback()   # tabella non ancora creata (primo deploy): nessuna aggiunta
+        return {}
+    out = {}
+    for r in righe:
+        out.setdefault(r.codice_padre, []).append(r)
+    return out
+
+
 @contextmanager
 def sostituzioni_attive(o):
-    """Applica le sostituzioni materiale dell'OP 'o' a tutte le letture di
-    distinta fatte dentro il blocco 'with'. Annidabile; con o=None non fa nulla."""
-    token = _SOSTITUZIONI_CTX.set(sostituzioni_per_op(getattr(o, 'id', None)) or None)
+    """Applica le sostituzioni materiale E i componenti aggiunti dell'OP 'o' a
+    tutte le letture di distinta fatte dentro il blocco 'with'. Annidabile;
+    con o=None non fa nulla."""
+    op_id = getattr(o, 'id', None)
+    token = _SOSTITUZIONI_CTX.set(sostituzioni_per_op(op_id) or None)
+    token_agg = _AGGIUNTE_CTX.set(aggiunte_per_op(op_id) or None)
     try:
         yield
     finally:
+        _AGGIUNTE_CTX.reset(token_agg)
         _SOSTITUZIONI_CTX.reset(token)
+
+
+class _RigaBomAggiunta:
+    """Riga di distinta 'virtuale' per un componente aggiunto solo a questo OP
+    (AggiuntaMaterialeOP): si comporta come una riga normale di
+    distinta_base_wood, senza alternative, non contestuale. Non esiste nel
+    database della distinta: id negativo per non confondersi con le righe vere."""
+    gruppo_alternativa = None
+    preferita = True
+    pezzi_per_barra = None
+    sviluppo = None
+    contestuale = False
+    data_flag_contestuale = None
+    livello = 1
+    materiale_originale = None
+    sostituzione = None
+
+    def __init__(self, agg):
+        self.aggiunta = agg
+        self.id = -agg.id
+        self.codice_padre = agg.codice_padre
+        self.codice_figlio = agg.codice_figlio
+        self.quantita = agg.quantita
+        self.note = f'Aggiunto solo per questa commessa: {agg.motivo}'
+        self.creato_il = agg.creato_il
 
 
 class _RigaBomSostituita:
@@ -513,6 +565,9 @@ def _righe_bom_attive_wood(codice_padre, query=None, mappa=None):
     if sost:
         risultato = [_RigaBomSostituita(r, sost[(r.codice_padre, r.codice_figlio)])
                      if (r.codice_padre, r.codice_figlio) in sost else r for r in risultato]
+    aggiunte = _AGGIUNTE_CTX.get()
+    if aggiunte and codice_padre in aggiunte:
+        risultato = risultato + [_RigaBomAggiunta(a) for a in aggiunte[codice_padre]]
     return risultato
 
 

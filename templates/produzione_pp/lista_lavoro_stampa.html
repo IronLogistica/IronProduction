@@ -181,6 +181,12 @@
     <div style="font-size:11.5px;color:#555">Controllare i parametri macchina (pz per barra, punto zero) se spessore o lunghezza sono diversi.</div>
   </div>
   {% endif %}
+  {% if dati.aggiunte %}
+  <div style="border:3px solid #1e6fa5;background:#e8f2fb;border-radius:6px;padding:8px 12px;margin:10px 0;font-size:13px">
+    <b style="color:#1e6fa5">➕ COMPONENTE IN PIÙ SOLO PER QUESTA COMMESSA</b>
+    {% for a in dati.aggiunte %}<div>• in <b>{{ a.codice_padre }}</b>: aggiungere <b>{{ a.codice }}</b> × {{ '%g'|format(a.quantita) }} per pezzo — {{ a.motivo }}</div>{% endfor %}
+  </div>
+  {% endif %}
   {% for g in dati.gruppi %}
   {% if mostra_controllo_materiale %}
   <table class="materiale-info">

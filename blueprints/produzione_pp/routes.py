@@ -5,7 +5,7 @@ import requests
 from datetime import datetime, date, timedelta
 from flask import Blueprint, current_app, jsonify, render_template, request, Response
 from sqlalchemy.exc import IntegrityError
-from models import (_ordine_impegno, chiave_rilascio, db, log, SostituzioneMaterialeOP, OrdineProduzione, EventoConsuntivoPP, AuditPP,
+from models import (_ordine_impegno, chiave_rilascio, db, log, SostituzioneMaterialeOP, AggiuntaMaterialeOP, OrdineProduzione, EventoConsuntivoPP, AuditPP,
                     STATI_ORDINE_PP, ASA_MASTERWORK, prossimo_codice_ordine_pp,
                     prossimo_numero_commessa, GiacenzaWood, MovimentoGiacenzaWood, CicloLavoroWood,
                     CentroCostoWood, VarianzaProduzioneWood, ArticoloApprovvigionamento,
@@ -25,7 +25,7 @@ from blueprints.magazzino.routes import (_esplodi_bom_wood, _flatten_componenti,
                     _registra_movimento_giacenza, _giacenza_residua_dopo_impegni,
                     _netta_e_esplodi_wood, _calcola_costo_standard, _crea_versione_costo_standard,
                     _grezzo_iw_per_codici,
-                    _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood, sostituzioni_attive, sostituzioni_per_op,
+                    _overhead_pct, _esplodi_componenti_op, _righe_bom_attive_wood, sostituzioni_attive, sostituzioni_per_op, aggiunte_per_op,
                     _residuo_giacenza_progressivo, _carica_mappa_distinta_base_wood, STATI_CHE_IMPEGNANO,
                     _contestuale_attivo_per_op, _saldo_materiale_op, impegni_op_per_codice, calcola_alert_fabbisogno_codici_padre,
                     _wip_fase_per_codice, _gia_disponibile_per_fase, _valore_wip_a_fase, _consuma_wip_multi_fase)
@@ -4441,6 +4441,9 @@ def _lista_lavoro_op(o, centro, assegna_numero=True):
         'sostituzioni': [{'codice_padre': x.codice_padre, 'originale': x.materiale_originale,
                           'sostitutivo': x.materiale_sostitutivo, 'motivo': x.motivo}
                          for x in sostituzioni_per_op(o.id).values()],
+        'aggiunte': [{'codice_padre': x.codice_padre, 'codice': x.codice_figlio, 'quantita': x.quantita,
+                      'motivo': x.motivo}
+                     for lista in aggiunte_per_op(o.id).values() for x in lista],
     }
 
 
@@ -7033,6 +7036,112 @@ def api_sostituzioni_materiale_attive():
     """{op_id: n. sostituzioni attive} — per il segnale sulla lista Ordini di Produzione."""
     try:
         righe = SostituzioneMaterialeOP.query.filter_by(revocata_il=None).all()
+    except Exception:
+        db.session.rollback()
+        righe = []
+    conteggio = {}
+    for x in righe:
+        conteggio[str(x.op_id)] = conteggio.get(str(x.op_id), 0) + 1
+    return jsonify(conteggio)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  COMPONENTE AGGIUNTO PER COMMESSA (richiesta Mauri, 20/11/2026)
+#  Es. T250DT: per una commessa va saldata anche la targhetta TAVR1015, che la
+#  distinta non prevede. Non si cambia un materiale: se ne AGGIUNGE uno, solo
+#  per quell'OP. Viene impegnato a magazzino e scaricato alla dichiarazione del
+#  padre come una riga normale di distinta (vedi AggiuntaMaterialeOP e
+#  sostituzioni_attive in magazzino). La distinta base resta invariata.
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _padri_aggiunta_op(o):
+    """Dove si puo' aggiungere un componente: il prodotto finito dell'OP e i
+    suoi semilavorati (codici della distinta che hanno a loro volta figli)."""
+    padri = [o.codice_articolo]
+    for r in _righe_distinta_originale_op(o):
+        if not r['materia_prima'] and r['materiale'] not in padri:
+            padri.append(r['materiale'])
+    return padri
+
+
+def _aggiunta_dict(x):
+    return {'id': x.id, 'codice_padre': x.codice_padre, 'codice': x.codice_figlio, 'quantita': x.quantita,
+            'motivo': x.motivo, 'creato_il': x.creato_il.strftime('%d/%m/%Y %H:%M') if x.creato_il else ''}
+
+
+@pp_bp.get('/api/ordini-produzione/<int:oid>/aggiunte-materiale')
+def api_aggiunte_materiale_op(oid):
+    o = OrdineProduzione.query.get_or_404(oid)
+    padri = _padri_aggiunta_op(o)
+    descr = _descrizioni_per_codici(set(padri))
+    return jsonify(op={'id': o.id, 'codice': o.codice, 'commessa': o.commessa or '',
+                       'codice_articolo': o.codice_articolo, 'stato': o.stato},
+                   attive=[_aggiunta_dict(x) for lista in aggiunte_per_op(o.id).values() for x in lista],
+                   padri=[{'codice': p, 'descrizione': descr.get(p, ''), 'prodotto_finito': p == o.codice_articolo}
+                          for p in padri])
+
+
+@pp_bp.post('/api/ordini-produzione/<int:oid>/aggiunte-materiale')
+def api_crea_aggiunta_materiale(oid):
+    d = request.get_json(force=True) or {}
+    if not _verifica_pin_direzione(d):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    o = OrdineProduzione.query.get_or_404(oid)
+    if o.stato in ('Tecnicamente completato', 'Chiuso CO'):
+        return jsonify(ok=False, error='Ordine gia\' completato: non si possono piu\' aggiungere componenti'), 400
+    padre = (d.get('codice_padre') or o.codice_articolo).strip()
+    codice = (d.get('codice') or '').strip().upper()
+    motivo = (d.get('motivo') or '').strip()
+    try:
+        quantita = float(str(d.get('quantita', '')).replace(',', '.'))
+    except ValueError:
+        quantita = 0
+    if not motivo:
+        return jsonify(ok=False, error='Il motivo e\' obbligatorio'), 400
+    if quantita <= 0:
+        return jsonify(ok=False, error='Indica quanti pezzi servono per ogni pezzo (es. 1)'), 400
+    if not codice or codice == padre.upper():
+        return jsonify(ok=False, error='Indica il codice del componente da aggiungere'), 400
+    if padre not in _padri_aggiunta_op(o):
+        return jsonify(ok=False, error=f'{padre} non fa parte di questo ordine'), 400
+    conosciuto = (GiacenzaWood.query.get(codice) is not None
+                  or ArticoloApprovvigionamento.query.filter_by(codice=codice).first() is not None
+                  or DistintaBaseWood.query.filter_by(codice_figlio=codice).first() is not None)
+    if not conosciuto:
+        return jsonify(ok=False, error=f'Codice {codice} sconosciuto: non risulta ne\' a magazzino ne\' in anagrafica acquisti. '
+                                       'Controlla di averlo scritto giusto.'), 400
+    gia = AggiuntaMaterialeOP.query.filter_by(op_id=o.id, codice_padre=padre, codice_figlio=codice, revocata_il=None).first()
+    if gia:
+        return jsonify(ok=False, error=f'{codice} e\' gia\' aggiunto a {padre} su questa commessa: '
+                                       'revocalo prima se vuoi cambiare la quantita\''), 400
+    x = AggiuntaMaterialeOP(op_id=o.id, codice_padre=padre, codice_figlio=codice, quantita=quantita, motivo=motivo)
+    db.session.add(x)
+    _audit(o, 'AGGIUNTA_MATERIALE',
+           f'{padre}: aggiunto {codice} x {quantita:g} solo per questa commessa — motivo: {motivo}')
+    db.session.commit()
+    return jsonify(ok=True, aggiunta=_aggiunta_dict(x))
+
+
+@pp_bp.post('/api/aggiunte-materiale/<int:aid>/revoca')
+def api_revoca_aggiunta_materiale(aid):
+    d = request.get_json(force=True) or {}
+    if not _verifica_pin_direzione(d):
+        return jsonify(ok=False, error='PIN Direzione non valido'), 403
+    x = AggiuntaMaterialeOP.query.get_or_404(aid)
+    if x.revocata_il is None:
+        x.revocata_il = datetime.utcnow()
+        o = OrdineProduzione.query.get(x.op_id)
+        if o:
+            _audit(o, 'AGGIUNTA_MATERIALE_REVOCATA', f'{x.codice_padre}: tolto {x.codice_figlio} x {x.quantita:g}')
+        db.session.commit()
+    return jsonify(ok=True)
+
+
+@pp_bp.get('/api/aggiunte-materiale/attive')
+def api_aggiunte_materiale_attive():
+    """{op_id: n. componenti aggiunti attivi} — per il segnale sulla lista Ordini di Produzione."""
+    try:
+        righe = AggiuntaMaterialeOP.query.filter_by(revocata_il=None).all()
     except Exception:
         db.session.rollback()
         righe = []

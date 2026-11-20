@@ -11,6 +11,7 @@
   </ol>
   La sostituzione vale <b>SOLO per quella commessa</b> (Ordini di Lavoro, LIVE, Dichiarazione, fabbisogni, scarico magazzino, costi) e
   <b>finisce da sola alla chiusura dell'ordine</b>: le altre commesse continuano a usare il materiale della distinta. Si può revocare in qualsiasi momento.
+  <div style="margin-top:6px">Se invece serve un <b>componente IN PIÙ</b> che la distinta non prevede (es. una targhetta da saldare), usa <b>➕ Aggiungi componente</b>: viene impegnato a magazzino e scaricato alla dichiarazione del codice padre, sempre solo per quella commessa.</div>
 </div>
 <div class="card" style="padding:18px;margin-bottom:16px"><form id="opForm" class="op-grid">
 <div style="position:relative"><input id="opCodiceArticolo" name="codice_articolo" required maxlength="100" placeholder="Codice articolo *" autocomplete="off" oninput="suggerisciCodiciOP()" onfocus="suggerisciCodiciOP()" onblur="autocompilaDescrizioneOP()">
@@ -97,10 +98,81 @@ tr.riga-scorta td{background:rgba(123,63,191,.22)}tr.riga-scorta td:first-child{
     </div>
   </div>
 </div>
+<div class="modal-overlay" id="modal-aggiunta-materiale">
+  <div class="modal-box" style="width:720px;max-width:96vw;max-height:90vh;overflow:auto">
+    <h3>➕ Aggiungi componente — <span id="am-titolo"></span></h3>
+    <div style="background:rgba(37,137,199,.15);border:1px solid #2589c7;border-radius:6px;padding:8px 10px;font-size:12.5px;margin-bottom:12px">
+      Componente <b>IN PIÙ</b> rispetto alla distinta, <b>SOLO per questa commessa</b>. Viene impegnato a magazzino e scaricato alla dichiarazione del codice padre. La Distinta Base non viene modificata.</div>
+    <div id="am-attive"></div>
+    <label class="modal-label">Dove va aggiunto (prodotto finito o semilavorato)</label>
+    <select id="am-padre" class="modal-input"></select>
+    <label class="modal-label" style="margin-top:8px">Codice del componente da aggiungere</label>
+    <div style="position:relative">
+      <input id="am-codice" class="modal-input" placeholder="Scrivi o scegli dall'elenco (es. TAVR1015)" style="text-transform:uppercase"
+             autocomplete="off" oninput="amSuggerisci()" onfocus="amSuggerisci()" onblur="setTimeout(()=>amBox().style.display='none',200)">
+      <div id="am-suggerimenti" style="display:none;position:absolute;top:100%;left:0;right:0;z-index:600;background:#0f1e35;border:1px solid #2589c7;border-radius:6px;max-height:280px;overflow-y:auto;box-shadow:0 10px 30px rgba(0,0,0,.6)"></div>
+    </div>
+    <label class="modal-label" style="margin-top:8px">Quantità per ogni pezzo del codice scelto sopra</label>
+    <input id="am-quantita" class="modal-input" type="number" min="0" step="any" value="1">
+    <label class="modal-label" style="margin-top:8px">Motivo (obbligatorio)</label>
+    <input id="am-motivo" class="modal-input" placeholder="es. targhetta richiesta dal cliente">
+    <label class="modal-label" style="margin-top:8px">PIN Direzione</label>
+    <input id="am-pin" class="modal-input" type="password" autocomplete="off">
+    <p id="am-msg" style="margin-top:8px"></p>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modal-aggiunta-materiale')">Chiudi</button>
+      <button class="btn btn-primary" onclick="salvaAggiuntaMateriale()">💾 Aggiungi a questa commessa</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
-let sostAttive={};
-async function caricaSostAttive(){ try{ sostAttive=await api('/api/sostituzioni-materiale/attive'); }catch(e){ sostAttive={}; } }
+let sostAttive={}; let aggAttive={};
+async function caricaSostAttive(){ try{ sostAttive=await api('/api/sostituzioni-materiale/attive'); }catch(e){ sostAttive={}; }
+  try{ aggAttive=await api('/api/aggiunte-materiale/attive'); }catch(e){ aggAttive={}; } }
+let amOpId=null;
+async function apriAggiuntaMateriale(oid){
+  amOpId=oid; document.getElementById('am-msg').textContent='';
+  ['am-codice','am-motivo','am-pin'].forEach(i=>document.getElementById(i).value=''); document.getElementById('am-quantita').value='1';
+  const d=await api(`/api/ordini-produzione/${oid}/aggiunte-materiale`);
+  document.getElementById('am-titolo').textContent=`${d.op.codice} · commessa ${d.op.commessa} · ${d.op.codice_articolo}`;
+  document.getElementById('am-padre').innerHTML=d.padri.map(p=>
+    `<option value="${esc(p.codice)}">${p.prodotto_finito?'🏁 prodotto finito':'⚙️ semilavorato'} · ${esc(p.codice)} ${p.descrizione?'— '+esc(p.descrizione):''}</option>`).join('');
+  document.getElementById('am-attive').innerHTML=d.attive.length?
+    `<div style="margin-bottom:10px"><b>Componenti aggiunti su questa commessa:</b>`+d.attive.map(a=>
+      `<div style="display:flex;gap:8px;align-items:center;margin-top:4px;font-size:13px">➕ <b style="color:#2589c7">${esc(a.codice)}</b> × ${a.quantita} in ${esc(a.codice_padre)} <span style="color:var(--text-dim)">(${esc(a.motivo)} · ${esc(a.creato_il)})</span>
+       <button class="btn btn-ghost" style="color:#c0392b;margin-left:auto" onclick="revocaAggiuntaMateriale(${a.id})">✖ Togli</button></div>`).join('')+`</div>`:'';
+  openModal('modal-aggiunta-materiale');
+}
+const amBox=()=>document.getElementById('am-suggerimenti');
+let amTimer=null;
+function amSuggerisci(){ clearTimeout(amTimer); amTimer=setTimeout(async()=>{
+  const q=document.getElementById('am-codice').value.trim(); const box=amBox();
+  if(!q){ box.innerHTML='<div style="padding:8px 12px;color:#6b8aaa;font-size:12.5px">Scrivi un codice per cercare</div>'; box.style.display='block'; return; }
+  let lista=[]; try{ lista=await api(`/api/sostituzioni-materiale/cerca?q=${encodeURIComponent(q)}`);}catch(e){}
+  if(!lista.length){ box.innerHTML='<div style="padding:8px 12px;color:#6b8aaa;font-size:12.5px">Nessun codice trovato</div>'; box.style.display='block'; return; }
+  box.innerHTML=lista.map(r=>`<div onmousedown="amScegli('${esc(r.codice)}')" style="padding:7px 12px;cursor:pointer;border-top:1px solid rgba(30,111,165,.25);display:flex;gap:10px;align-items:center">
+      <b style="min-width:120px">${esc(r.codice)}</b><span style="flex:1;color:#c8ddf0;font-size:12.5px">${esc(r.descrizione||'')}</span>
+      <span style="font-size:12px;font-weight:700;color:${r.giacenza>0?'#3fd68b':'#ef6b5c'}">${r.giacenza>0?'giac. '+r.giacenza+' '+esc(r.unita_misura):'non a magazzino'}</span></div>`).join('');
+  box.style.display='block';
+},200); }
+function amScegli(c){ document.getElementById('am-codice').value=c; amBox().style.display='none'; }
+async function salvaAggiuntaMateriale(){
+  const msg=document.getElementById('am-msg');
+  try{
+    await api(`/api/ordini-produzione/${amOpId}/aggiunte-materiale`,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({codice_padre:document.getElementById('am-padre').value,codice:document.getElementById('am-codice').value,
+        quantita:document.getElementById('am-quantita').value,motivo:document.getElementById('am-motivo').value,
+        pin:document.getElementById('am-pin').value})});
+    await caricaSostAttive(); closeModal('modal-aggiunta-materiale'); if(typeof load==='function') load();
+  }catch(e){ msg.style.color='#c0392b'; msg.textContent='❌ '+e.message; }
+}
+async function revocaAggiuntaMateriale(aid){
+  const pin=prompt('PIN Direzione per togliere il componente aggiunto:'); if(!pin) return;
+  try{ await api(`/api/aggiunte-materiale/${aid}/revoca`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pin})});
+       await caricaSostAttive(); await apriAggiuntaMateriale(amOpId); if(typeof load==='function') load(); }
+  catch(e){ alert(e.message); }
+}
 let cmOpId=null;
 async function apriCambioMateriale(oid){
   cmOpId=oid; document.getElementById('cm-msg').textContent='';
@@ -231,7 +303,9 @@ async function load(){try{const tutti=await api('/api/ordini-produzione');
   if(x.stato==='Chiuso CO') azioni += `<button class="btn btn-ghost" onclick="riapriOp(${x.id},'${esc(x.codice)}')" style="color:#5debb0">↩️ Riapri</button> `;
   if(puoModificare) azioni += `<button class="btn btn-ghost" onclick='apriModificaOp(${JSON.stringify(x)})'>✏️ Modifica</button> `;
   if(x.stato!=='Chiuso CO'){ const ns=sostAttive[String(x.id)]||0;
-    azioni += `<button class="btn btn-ghost" onclick="apriCambioMateriale(${x.id})" style="color:#e8760a">🔁 Cambia materiale${ns?` <b style="background:#e8760a;color:#fff;border-radius:8px;padding:0 6px">${ns}</b>`:''}</button> `; }
+    azioni += `<button class="btn btn-ghost" onclick="apriCambioMateriale(${x.id})" style="color:#e8760a">🔁 Cambia materiale${ns?` <b style="background:#e8760a;color:#fff;border-radius:8px;padding:0 6px">${ns}</b>`:''}</button> `;
+    if(x.stato!=='Tecnicamente completato'){ const na=aggAttive[String(x.id)]||0;
+      azioni += `<button class="btn btn-ghost" onclick="apriAggiuntaMateriale(${x.id})" style="color:#2589c7">➕ Aggiungi componente${na?` <b style="background:#2589c7;color:#fff;border-radius:8px;padding:0 6px">${na}</b>`:''}</button> `; } }
   if(puoEliminare) azioni += `<button class="btn btn-ghost" onclick="deleteOp(${x.id},'${esc(x.codice)}')" style="color:#c0392b">🗑️ Elimina</button> `;
   if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/analisi-costo">📊 Analisi Costo</a> `;
   if(x.stato!=='Creato') azioni += `<a class="btn btn-ghost" href="/ordini-produzione/${esc(x.codice)}/cartellino" target="_blank">🖨️ Cartellino</a>`;

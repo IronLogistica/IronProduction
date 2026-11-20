@@ -2374,6 +2374,26 @@ class SostituzioneMaterialeOP(db.Model):
     revocata_il           = db.Column(db.DateTime, nullable=True)
 
 
+class AggiuntaMaterialeOP(db.Model):
+    """Componente IN PIU' rispetto alla distinta base, SOLO per un Ordine di
+    Produzione (richiesta Mauri, 20/11/2026 — es. T250DT: per una commessa va
+    saldata anche la targhetta TAVR1015, che la distinta non prevede). La
+    distinta base NON viene toccata: come per SostituzioneMaterialeOP, la riga
+    aggiunta vale solo nelle esplosioni di QUESTO OP (Ordini di Lavoro, impegni
+    e fabbisogni, scarico magazzino alla dichiarazione del padre, costi) e
+    finisce da sola quando l'OP si chiude. Revocabile, sempre con PIN Direzione.
+    'quantita' = pezzi del componente per OGNI pezzo di codice_padre."""
+    __tablename__ = 'aggiunte_materiale_op'
+    id            = db.Column(db.Integer, primary_key=True)
+    op_id         = db.Column(db.Integer, nullable=False, index=True)
+    codice_padre  = db.Column(db.String(100), nullable=False)
+    codice_figlio = db.Column(db.String(100), nullable=False)
+    quantita      = db.Column(db.Float, nullable=False, default=1.0)
+    motivo        = db.Column(db.String(500), nullable=False)
+    creato_il     = db.Column(db.DateTime, default=datetime.utcnow)
+    revocata_il   = db.Column(db.DateTime, nullable=True)
+
+
 
 class SchemaTaglioWood(db.Model):
     """Schema di taglio di una barra (richiesta Mauri, 14/10/2026): come Angelo
