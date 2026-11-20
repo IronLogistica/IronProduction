@@ -1639,6 +1639,7 @@ def assicura_finiti_is_kanban():
             db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS finiti_is INTEGER NOT NULL DEFAULT 0"))
             db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS finiti_is_aggiornato_il TIMESTAMP"))
             db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS budget_mensile_pz FLOAT"))
+            db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN IF NOT EXISTS scorta_minima_wms FLOAT"))
             db.session.commit()
         except Exception:
             db.session.rollback()
@@ -1652,6 +1653,9 @@ def assicura_finiti_is_kanban():
             db.session.commit()
         if 'budget_mensile_pz' not in colonne:
             db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN budget_mensile_pz FLOAT"))
+            db.session.commit()
+        if 'scorta_minima_wms' not in colonne:
+            db.session.execute(text("ALTER TABLE kanban_prodotti ADD COLUMN scorta_minima_wms FLOAT"))
             db.session.commit()
 
 def assicura_lead_time_esterno_centri():
@@ -2209,6 +2213,13 @@ class KanbanProdotto(db.Model):
     # board (blueprints/kanban/routes.py::_aggiorna_finiti_is_da_wms), mai
     # a mano.
     finiti_is    = db.Column(db.Integer, default=0)
+    # Scorta minima impostata in MasterLogistic-WMS per questo SKU (la STESSA
+    # che mostra la Scheda Kanban: "Scorta min. WMS"). Salvata dal
+    # riallineamento automatico / pulsante 🔄 (risincronizza_prodotto_da_wms)
+    # perché Kanban HPI la usi senza chiamare WMS per ogni riga. None = mai
+    # letta (si ricade su 'riserva'). Richiesta Mauri 20/11/2026: S-14 sotto
+    # scorta (-158) non compariva in Kanban HPI, che guardava solo 'riserva'.
+    scorta_minima_wms = db.Column(db.Float, nullable=True)
     # Timestamp dell'ultimo aggiornamento di finiti_is da WMS — usato per
     # evitare di richiamare MasterLogistic-WMS per lo stesso prodotto più
     # spesso di FINITI_IS_TTL_SECONDI a ogni apertura board (era la causa

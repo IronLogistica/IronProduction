@@ -70,3 +70,50 @@ class TestKanbanSyncAuto(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestKanbanHpiSottoScortaWms(unittest.TestCase):
+    """Mauri 20/11/2026: S-14 nella Scheda Kanban è sotto scorta (Saldo C/Scorta
+    -158, scorta min. WMS 240) senza impegni clienti, ma in Kanban HPI non
+    compariva: la lista guardava solo 'riserva' della scheda (0)."""
+    @classmethod
+    def setUpClass(cls):
+        cls.app = Flask(__name__, template_folder='../templates')
+        cls.app.config.update(TESTING=True, SQLALCHEMY_DATABASE_URI='sqlite:///:memory:',
+                               SQLALCHEMY_TRACK_MODIFICATIONS=False)
+        db.init_app(cls.app)
+        cls.app.register_blueprint(kanban_bp)
+        with cls.app.app_context():
+            db.create_all(bind_key=None)
+
+    def setUp(self):
+        with self.app.app_context():
+            db.session.query(KanbanProdotto).delete()
+            db.session.add(KanbanProdotto(categoria='Cavalletti', sheet_key='Cavalletti',
+                                          prodotto='S-14 — CAVALLETTO S-14 D.90-TR.120',
+                                          riserva=0, riservato=0, finiti_is=82))
+            db.session.commit()
+
+    def _riga_s14(self):
+        with mock.patch('blueprints.kanban.routes._snapshot_campi_kanban_principale', return_value={}):
+            dati = self.app.test_client().get('/api/kanban-hpi/dati').get_json()
+        return [p for g in dati for p in g['prodotti'] if p['nome'].startswith('S-14')][0]
+
+    def test_scorta_wms_salvata_dal_riallineamento_e_usata_in_hpi(self):
+        with self.app.app_context():
+            self.assertFalse(self._riga_s14()['sotto_scorta'], 'prima del riallineamento: nessuna scorta nota')
+            p = KanbanProdotto.query.first()
+            with mock.patch('blueprints.kanban.routes.ottieni_scheda_kanban',
+                            return_value={'riservato_clienti': 0, 'stock_verniciati': 82, 'scorta_minima': 240}), \
+                    mock.patch('blueprints.kanban.routes._aggiorna_grezzi_e_trattamento'), \
+                    mock.patch('blueprints.kanban.routes._aggiorna_residuo_produzione'), \
+                    mock.patch('blueprints.kanban.routes._sincronizza_finiti_iw_da_magazzino'):
+                from blueprints.kanban.routes import risincronizza_prodotto_da_wms
+                self.assertTrue(risincronizza_prodotto_da_wms(p))
+            db.session.commit()
+            self.assertEqual(KanbanProdotto.query.first().scorta_minima_wms, 240)
+            riga = self._riga_s14()
+            self.assertTrue(riga['sotto_scorta'])
+            self.assertEqual(riga['scorta_minima'], 240)
+            self.assertLess(riga['saldo_c_scorta'], 0)
+            self.assertEqual(riga['stato_codice'], 'pianifica_scorta', 'compare con "Pianificare (sotto scorta)"')

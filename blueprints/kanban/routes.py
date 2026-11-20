@@ -812,6 +812,8 @@ def risincronizza_prodotto_da_wms(p, timeout=8):
     p.riservato = int(wms.get('riservato_clienti') or 0)
     p.finiti_is = int(wms.get('stock_verniciati') or 0)
     p.finiti_is_aggiornato_il = datetime.utcnow()
+    if wms.get('scorta_minima') is not None:   # stessa scorta della Scheda Kanban, per Kanban HPI
+        p.scorta_minima_wms = wms.get('scorta_minima')
     _aggiorna_grezzi_e_trattamento(p)
     _aggiorna_residuo_produzione(p)
     _sincronizza_finiti_iw_da_magazzino(p)
@@ -1666,7 +1668,14 @@ def api_kanban_hpi_dati():
         # Saldo C/Riserva = Saldo Contabile meno il buffer configurato
         # direttamente nella scheda Kanban principale. Nessun dato della
         # pagina Lead Time Rifornimento entra in questo calcolo.
-        scorta_minima = p.riserva or 0  # buffer/scorta della scheda Kanban principale
+        # CORRETTO 20/11/2026 (S-14: Scheda Kanban -158 sotto scorta, ma in
+        # HPI non compariva): si usava solo 'riserva' della scheda (spesso 0),
+        # mentre la Scheda Kanban usa la Scorta minima WMS. Ora: Scorta minima
+        # WMS salvata dal riallineamento automatico; se mai letta, 'riserva'.
+        if p.scorta_minima_wms is not None:
+            scorta_minima = p.scorta_minima_wms
+        else:
+            scorta_minima = p.riserva or 0
         saldo_c_scorta = (saldo_contabile - scorta_minima) if scorta_minima is not None else None
         sotto_scorta = saldo_c_scorta is not None and saldo_c_scorta < 0
 
