@@ -106,6 +106,7 @@ def create_app():
     # rotte non esistono proprio (vedi blueprints/conto_lavoro/routes.py).
     from blueprints.conto_lavoro.routes import cl_bp
     from blueprints.masterplan.routes import masterplan_bp
+    from blueprints.mastercontrol.routes import mastercontrol_bp
 
     app.register_blueprint(monitor_bp)
     app.register_blueprint(kanban_bp)
@@ -119,6 +120,7 @@ def create_app():
     app.register_blueprint(schemi_taglio_bp)
     app.register_blueprint(badge_totem_bp)
     app.register_blueprint(masterplan_bp)
+    app.register_blueprint(mastercontrol_bp)  # contatori per la plancia MASTERCONTROL
     if app.config.get('CL_ENABLED'):
         app.register_blueprint(cl_bp)
 
