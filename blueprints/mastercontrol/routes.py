@@ -248,4 +248,9 @@ def api_control_counters():
             db.session.rollback()
             continue
         out.append({'code': code, 'area': area, 'label': label, 'value': valore, 'url': base + path})
-    return jsonify(counters=out)
+    # Indirizzi degli altri programmi che IronProduction già conosce: servono a
+    # MASTERCONTROL per collegarli da solo, senza inserire gli URL a mano.
+    fonti = {}
+    if os.environ.get('MASTERLOGISTIC_URL', '').strip():
+        fonti['masterlogistic'] = os.environ['MASTERLOGISTIC_URL'].strip().rstrip('/')
+    return jsonify(counters=out, fonti=fonti)

@@ -145,6 +145,16 @@ class TestMasterControlCounters(unittest.TestCase):
             self.assertIn(c['area'], ('ACQUISTI_PRODUZIONE', 'PRODUZIONE', 'MAGAZZINO_PRODUZIONE'))
             self.assertTrue(c['url'].startswith('http'))
 
+    def test_comunica_indirizzo_wms(self):
+        os.environ['MASTERLOGISTIC_URL'] = 'https://wms.example.app/'
+        try:
+            with mock.patch('blueprints.acquisti_wood.routes.calcola_lista_fabbisogni', return_value=[]), \
+                    mock.patch('blueprints.magazzino.routes._grezzo_iw_per_codici', return_value={}):
+                d = self.c.get('/api/control/counters', headers={'X-Control-Token': 'tok-test'}).get_json()
+            self.assertEqual(d['fonti'], {'masterlogistic': 'https://wms.example.app'})
+        finally:
+            os.environ.pop('MASTERLOGISTIC_URL', None)
+
     def test_contatore_rotto_non_blocca_gli_altri(self):
         originale = list(mc.CONTATORI)
         try:
