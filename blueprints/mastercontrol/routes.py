@@ -5,12 +5,21 @@ repo IronSegnaletica/MASTERCONTROL).
     GET /api/control/counters
     Header: X-Control-Token: <MASTERCONTROL_TOKEN>
 
-Restituisce SOLO numeri (quanti OP in ritardo, quante dichiarazioni da
-approvare, ...), ognuno con il link alla pagina di IronProduction dove si
-vede l'elenco. Sola lettura: non scrive niente nel database.
-I filtri sono gli STESSI già usati dalla dashboard/totem di IronProduction,
-così il numero in plancia non può mai essere diverso da quello che si vede
-qui dentro.
+Restituisce SOLO numeri, ognuno con il link alla pagina di IronProduction
+dove si vede l'elenco. Sola lettura: non scrive niente nel database.
+Dove esiste già un calcolo in IronProduction (Kanban HPI, Lista Fabbisogni,
+Grezzo IW, In Trattamento) si usa QUELLO, così il numero in plancia è lo
+stesso che si vede qui dentro.
+
+Elenco indicatori deciso da Mauri il 21/11/2026:
+  ACQUISTI PRODUZIONE: da confermare, in arrivo, da ritirare, in ritardo
+  PRODUZIONE: articoli sottoscorta da pianificare, OP con materiali da
+    ordinare, OP da iniziare in ritardo (>10 gg dal rilascio senza nessuna
+    fase iniziata), OP da saldare in ritardo (>7 gg dalla fine delle fasi
+    prima della Saldatura)
+  MAGAZZINO PRODUZIONE: materie prime / laserati / altri articoli
+    sottoscorta, giacenza negativa (grezzi IW e finiti IW), articoli da
+    trattare (Grezzo IW > 0), articoli in trattamento esterno
 
 Variabile Railway: MASTERCONTROL_TOKEN (stesso valore messo in
 MASTERCONTROL → Fonti → ironproduction). Vuota = endpoint disabilitato.
@@ -18,110 +27,205 @@ MASTERCONTROL → Fonti → ironproduction). Vuota = endpoint disabilitato.
 import hmac
 import logging
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from flask import Blueprint, abort, jsonify, request
 
-from models import (db, OrdineProduzione, EventoConsuntivoPP, LavorazioneTerzista,
-                    OrdineAcquistoWood, GiacenzaWood, ModuloNonConformita8D)
+from models import (db, OrdineProduzione, EventoConsuntivoPP, OrdineAcquistoWood,
+                    GiacenzaWood, CicloLavoroWood)
 
 mastercontrol_bp = Blueprint('mastercontrol', __name__)
 log = logging.getLogger('ironproduction.mastercontrol')
 
 STATI_OP_APERTI = ('Creato', 'Rilasciato', 'In esecuzione')
-STATI_OP_CHIUSI = ('Tecnicamente completato', 'Chiuso CO')
-STATI_TERZISTI_APERTI = ('ATTESA_RIENTRO', 'IN_RITARDO', 'PARZIALE')
+GIORNI_INIZIO_RITARDO = 10     # OP rilasciato da più di 10 gg e nessuna fase iniziata
+GIORNI_SALDATURA_RITARDO = 7   # fasi prima della Saldatura ferme da più di 7 gg, Saldatura non finita
 
 
-# ── Funzioni di conteggio (ognuna ritorna un intero) ─────────────────────
+def _oggi():
+    return date.today()
 
-def conta_op_in_ritardo(oggi=None):
-    """OP ancora aperti con data prevista di fine già passata."""
-    oggi = oggi or date.today()
-    return OrdineProduzione.query.filter(
+
+# ── ACQUISTI PRODUZIONE (Ordini Acquisto Iron Wood) ──────────────────────
+
+def _oa_aperti():
+    return OrdineAcquistoWood.query.filter(OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all()
+
+
+def conta_oa_da_confermare(ctx):
+    return sum(1 for o in _oa_aperti() if o.stato_label in ('DA_CONFERMARE', 'LETTURA_DA_VERIFICARE'))
+
+
+def conta_oa_in_arrivo(ctx):
+    """Confermati, non ancora ricevuti e NON in ritardo (quelli in ritardo hanno il loro riquadro)."""
+    oggi = _oggi()
+    return sum(1 for o in _oa_aperti()
+               if o.stato_label in ('ORDINE_CONFERMATO', 'ORDINE_IN_ARRIVO')
+               and not (o.data_consegna and o.data_consegna < oggi))
+
+
+def conta_oa_da_ritirare(ctx):
+    return sum(1 for o in _oa_aperti() if o.stato_label == 'ORDINE_DA_RITIRARE')
+
+
+def conta_oa_in_ritardo(ctx):
+    """Stessa regola della dashboard/Totem Acquisti: non ricevuti con data consegna passata."""
+    oggi = _oggi()
+    return sum(1 for o in _oa_aperti() if o.data_consegna and o.data_consegna < oggi)
+
+
+# ── PRODUZIONE ───────────────────────────────────────────────────────────
+
+def _kanban_hpi(ctx):
+    if 'hpi' not in ctx:
+        from blueprints.kanban.routes import api_kanban_hpi_dati
+        dati = api_kanban_hpi_dati().get_json()
+        ctx['hpi'] = [p for g in dati for p in g.get('prodotti', [])]
+    return ctx['hpi']
+
+
+def _fabbisogni(ctx):
+    if 'fabbisogni' not in ctx:
+        from blueprints.acquisti_wood.routes import calcola_lista_fabbisogni
+        ctx['fabbisogni'] = calcola_lista_fabbisogni()
+    return ctx['fabbisogni']
+
+
+def conta_sottoscorta_da_pianificare(ctx):
+    """Prodotti Kanban sotto la scorta minima (stesso calcolo di Kanban HPI)."""
+    return sum(1 for p in _kanban_hpi(ctx) if p.get('sotto_scorta'))
+
+
+def conta_op_materiali_da_ordinare(ctx):
+    """OP aperti con almeno un materiale DA ORDINARE (Lista Fabbisogni) ancora mancante per loro."""
+    op = set()
+    for r in _fabbisogni(ctx):
+        if r.get('stato') != 'DA_ORDINARE':
+            continue
+        for i in r.get('impegni', []):
+            if (i.get('mancante') or 0) > 0:
+                op.add(i['op_code'])
+    return len(op)
+
+
+def _eventi_per_op(op_codes):
+    eventi = {}
+    if not op_codes:
+        return eventi
+    for e in EventoConsuntivoPP.query.filter(EventoConsuntivoPP.op_code.in_(op_codes)).all():
+        eventi.setdefault(e.op_code, []).append(e)
+    return eventi
+
+
+def conta_op_inizio_ritardo(ctx, oggi=None):
+    """OP rilasciati da più di 10 giorni su cui non è ancora stata dichiarata NESSUNA fase."""
+    oggi = oggi or _oggi()
+    limite = datetime.combine(oggi, datetime.min.time()) - timedelta(days=GIORNI_INIZIO_RITARDO)
+    candidati = OrdineProduzione.query.filter(
         OrdineProduzione.stato.in_(STATI_OP_APERTI),
-        OrdineProduzione.data_prevista.isnot(None),
-        OrdineProduzione.data_prevista < oggi,
-    ).count()
+        OrdineProduzione.data_rilascio.isnot(None),
+        OrdineProduzione.data_rilascio < limite,
+    ).all()
+    eventi = _eventi_per_op([o.codice for o in candidati])
+    return sum(1 for o in candidati if not eventi.get(o.codice))
 
 
-def conta_op_sospesi():
-    """OP con bandiera SOSPESA (fermi). ATTESA_MATERIALI NON conta: lì il
-    materiale è già in arrivo, non c'è niente da sollecitare."""
-    return OrdineProduzione.query.filter(
-        OrdineProduzione.bandiera_stato == 'SOSPESA',
-        OrdineProduzione.stato.notin_(STATI_OP_CHIUSI),
-    ).count()
+def _e_saldatura(nome_fase):
+    return 'sald' in (nome_fase or '').lower()
 
 
-def conta_dichiarazioni_da_approvare():
-    """Stesso filtro della tile lampeggiante (api_masterwork_pendenti_conteggio)."""
-    return EventoConsuntivoPP.query.filter_by(visionato=False, approvato_direzione=False).count()
-
-
-def conta_moduli_8d_in_attesa():
-    return ModuloNonConformita8D.query.filter_by(stato='IN_ATTESA').count()
-
-
-def conta_terzisti_in_ritardo(oggi=None):
-    """Stessa logica della dashboard: lavorazioni aperte con rientro previsto (gg/mm/aaaa) già passato."""
-    oggi = oggi or date.today()
+def conta_op_saldatura_ritardo(ctx, oggi=None):
+    """OP con Saldatura nel ciclo: le fasi PRIMA della Saldatura sono ferme da più
+    di 7 giorni (ultima dichiarazione) e la Saldatura non è ancora completa."""
+    oggi = oggi or _oggi()
+    limite = datetime.combine(oggi, datetime.min.time()) - timedelta(days=GIORNI_SALDATURA_RITARDO)
+    aperti = OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_OP_APERTI)).all()
+    if not aperti:
+        return 0
+    codici = {o.codice_articolo for o in aperti}
+    con_saldatura = {c.codice for c in CicloLavoroWood.query.filter(CicloLavoroWood.codice.in_(codici)).all()
+                     if c.centro_costo and _e_saldatura(c.centro_costo.nome)}
+    aperti = [o for o in aperti if o.codice_articolo in con_saldatura]
+    eventi = _eventi_per_op([o.codice for o in aperti])
     n = 0
-    for lav in LavorazioneTerzista.query.filter(LavorazioneTerzista.stato.in_(STATI_TERZISTI_APERTI)).all():
-        if not lav.data_rientro_prev:
-            continue
-        try:
-            prevista = datetime.strptime(lav.data_rientro_prev.strip(), '%d/%m/%Y').date()
-        except ValueError:
-            continue
-        if prevista < oggi:
+    for o in aperti:
+        ev = eventi.get(o.codice, [])
+        prima = [e for e in ev if not _e_saldatura(e.fase)]
+        if not prima:
+            continue          # le fasi prima della Saldatura non sono neanche iniziate
+        saldati = sum(e.pezzi_buoni or 0 for e in ev if _e_saldatura(e.fase) and e.componente is None)
+        if saldati >= (o.qta_pianificata or 0):
+            continue          # Saldatura completata
+        if max(e.timestamp_evento for e in prima) < limite:
             n += 1
     return n
 
 
-def conta_oa_non_confermati():
-    return OrdineAcquistoWood.query.filter(
-        OrdineAcquistoWood.stato_label.in_(('DA_CONFERMARE', 'LETTURA_DA_VERIFICARE'))).count()
+# ── MAGAZZINO PRODUZIONE ─────────────────────────────────────────────────
+
+def _sottoscorta(ctx):
+    return [r for r in _fabbisogni(ctx) if (r.get('sottoscorta') or 0) > 0]
 
 
-def conta_oa_da_ritirare():
-    return OrdineAcquistoWood.query.filter_by(stato_label='ORDINE_DA_RITIRARE').count()
+def conta_mp_sottoscorta(ctx):
+    return sum(1 for r in _sottoscorta(ctx) if r.get('tipo') == 'MATERIA_PRIMA_FORNITORE')
 
 
-def conta_oa_in_ritardo(oggi=None):
-    """Stessa logica della dashboard: ordini non ricevuti con data consegna passata."""
-    oggi = oggi or date.today()
-    return OrdineAcquistoWood.query.filter(
-        OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO',
-        OrdineAcquistoWood.data_consegna.isnot(None),
-        OrdineAcquistoWood.data_consegna < oggi,
-    ).count()
+def conta_laserati_sottoscorta(ctx):
+    return sum(1 for r in _sottoscorta(ctx) if r.get('tipo') == 'LASERATO')
 
 
-def conta_giacenze_negative():
-    return GiacenzaWood.query.filter(GiacenzaWood.quantita < 0).count()
+def conta_altri_sottoscorta(ctx):
+    return sum(1 for r in _sottoscorta(ctx) if r.get('tipo') not in ('MATERIA_PRIMA_FORNITORE', 'LASERATO'))
 
 
-def conta_codici_padre_sotto_scorta():
-    from blueprints.magazzino.routes import calcola_alert_fabbisogno_codici_padre
-    return len(calcola_alert_fabbisogno_codici_padre())
+def _grezzo_iw(ctx):
+    if 'grezzo' not in ctx:
+        from blueprints.magazzino.routes import _grezzo_iw_per_codici
+        codici = [r[0] for r in db.session.query(OrdineProduzione.codice_articolo).distinct().all()]
+        ctx['grezzo'] = _grezzo_iw_per_codici(codici) if codici else {}
+    return ctx['grezzo']
+
+
+def conta_giacenza_negativa(ctx):
+    """Codici con giacenza negativa: Finiti IW / magazzino (GiacenzaWood) oppure Grezzo IW."""
+    negativi = {g.codice.upper() for g in GiacenzaWood.query.filter(GiacenzaWood.quantita < 0).all() if g.codice}
+    negativi |= {c.upper() for c, q in _grezzo_iw(ctx).items() if (q or 0) < 0}
+    return len(negativi)
+
+
+def conta_da_trattare(ctx):
+    """Stessa fonte di Terzisti → Materiali da trattare: Grezzo IW > 0."""
+    return sum(1 for q in _grezzo_iw(ctx).values() if (q or 0) > 0)
+
+
+def conta_in_trattamento(ctx):
+    """Codici con pezzi ancora presso il terzista (spediti e non rientrati)."""
+    from blueprints.magazzino.routes import _in_trattamento_per_codici
+    codici = [r[0] for r in db.session.query(OrdineProduzione.codice_articolo).distinct().all()]
+    return sum(1 for q in _in_trattamento_per_codici(codici).values() if (q or 0) > 0)
 
 
 # code, area, label, funzione, pagina di dettaglio
 CONTATORI = [
-    ('PRODUZIONE_OP_RITARDO', 'PRODUZIONE', 'OP in ritardo', conta_op_in_ritardo, '/ordini-produzione'),
-    ('PRODUZIONE_OP_FERMI', 'PRODUZIONE', 'OP sospesi', conta_op_sospesi, '/kpi'),
-    ('PRODUZIONE_DICHIARAZIONI_DA_APPROVARE', 'PRODUZIONE', 'Dichiarazioni da approvare',
-     conta_dichiarazioni_da_approvare, '/dichiarazione-produzione'),
-    ('PRODUZIONE_TERZISTI_RITARDO', 'PRODUZIONE', 'Rientri terzisti in ritardo', conta_terzisti_in_ritardo, '/terzisti'),
-    ('PRODUZIONE_8D_IN_ATTESA', 'PRODUZIONE', 'Moduli 8D da decidere', conta_moduli_8d_in_attesa, '/dichiarazione-produzione'),
+    ('ACQ_PROD_DA_CONFERMARE', 'ACQUISTI_PRODUZIONE', 'Ordini da confermare', conta_oa_da_confermare, '/ordini-acquisto-wood'),
+    ('ACQ_PROD_IN_ARRIVO', 'ACQUISTI_PRODUZIONE', 'Ordini in arrivo', conta_oa_in_arrivo, '/materiale-in-arrivo'),
+    ('ACQ_PROD_DA_RITIRARE', 'ACQUISTI_PRODUZIONE', 'Ordini da ritirare', conta_oa_da_ritirare, '/ordini-acquisto-wood'),
+    ('ACQ_PROD_RITARDO', 'ACQUISTI_PRODUZIONE', 'Ordini in ritardo', conta_oa_in_ritardo, '/ordini-acquisto-wood'),
 
-    ('ACQUISTI_IW_NON_CONFERMATI', 'ACQUISTI', 'Ordini fornitori IW non confermati', conta_oa_non_confermati, '/ordini-acquisto-wood'),
-    ('ACQUISTI_IW_DA_RITIRARE', 'ACQUISTI', 'Ordini fornitori IW da ritirare', conta_oa_da_ritirare, '/ordini-acquisto-wood'),
-    ('ACQUISTI_IW_RITARDO', 'ACQUISTI', 'Ordini fornitori IW in ritardo', conta_oa_in_ritardo, '/ordini-acquisto-wood'),
+    ('PROD_SOTTOSCORTA_DA_PIANIFICARE', 'PRODUZIONE', 'Articoli sottoscorta da pianificare',
+     conta_sottoscorta_da_pianificare, '/kanban-hpi'),
+    ('PROD_OP_MATERIALI_DA_ORDINARE', 'PRODUZIONE', 'OP con materiali da ordinare',
+     conta_op_materiali_da_ordinare, '/lista-fabbisogni'),
+    ('PROD_OP_INIZIO_RITARDO', 'PRODUZIONE', 'OP da iniziare in ritardo', conta_op_inizio_ritardo, '/ordini-produzione'),
+    ('PROD_OP_SALDATURA_RITARDO', 'PRODUZIONE', 'OP da saldare in ritardo', conta_op_saldatura_ritardo, '/ordini-produzione'),
 
-    ('MAGAZZINO_IW_GIACENZE_NEGATIVE', 'MAGAZZINO', 'Giacenze negative IW', conta_giacenze_negative, '/magazzino'),
-    ('MAGAZZINO_IW_PADRI_SOTTOSCORTA', 'MAGAZZINO', 'Codici padre sotto scorta', conta_codici_padre_sotto_scorta, '/alert-scorte'),
+    ('MAGP_MP_SOTTOSCORTA', 'MAGAZZINO_PRODUZIONE', 'Materie prime sottoscorta', conta_mp_sottoscorta, '/lista-fabbisogni'),
+    ('MAGP_LASERATI_SOTTOSCORTA', 'MAGAZZINO_PRODUZIONE', 'Laserati sottoscorta', conta_laserati_sottoscorta, '/lista-fabbisogni'),
+    ('MAGP_ALTRI_SOTTOSCORTA', 'MAGAZZINO_PRODUZIONE', 'Altri articoli sottoscorta', conta_altri_sottoscorta, '/lista-fabbisogni'),
+    ('MAGP_GIACENZA_NEGATIVA', 'MAGAZZINO_PRODUZIONE', 'Giacenza reale negativa', conta_giacenza_negativa, '/magazzino'),
+    ('MAGP_DA_TRATTARE', 'MAGAZZINO_PRODUZIONE', 'Articoli da trattare', conta_da_trattare, '/terzisti/da-trattare'),
+    ('MAGP_IN_TRATTAMENTO', 'MAGAZZINO_PRODUZIONE', 'Articoli in trattamento esterno', conta_in_trattamento, '/terzisti'),
 ]
 
 
@@ -133,10 +237,11 @@ def api_control_counters():
     base = (os.environ.get('PUBLIC_URL') or request.host_url).rstrip('/')
     if base.startswith('http://') and 'localhost' not in base and '127.0.0.1' not in base:
         base = 'https://' + base[len('http://'):]  # Railway: dietro proxy arriva come http
+    ctx = {}   # calcoli pesanti (Kanban HPI, Lista Fabbisogni, Grezzo IW) fatti UNA volta per richiesta
     out = []
     for code, area, label, fn, path in CONTATORI:
         try:
-            valore = int(fn())
+            valore = int(fn(ctx))
         except Exception:
             # un contatore rotto non deve bloccare gli altri: MASTERCONTROL lo mostra grigio
             log.exception('Contatore MASTERCONTROL %s in errore', code)

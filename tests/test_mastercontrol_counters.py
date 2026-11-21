@@ -1,16 +1,19 @@
 """
-Contatori per MASTERCONTROL (GET /api/control/counters): token obbligatorio,
-numeri calcolati con gli stessi filtri della dashboard di IronProduction.
+Contatori per MASTERCONTROL (GET /api/control/counters) — elenco deciso da
+Mauri il 21/11/2026: Acquisti Produzione, Produzione, Magazzino Produzione.
 """
+import json
 import os
 import unittest
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
+from unittest import mock
 
 from flask import Flask
 
-from models import (db, OrdineProduzione, EventoConsuntivoPP, LavorazioneTerzista,
-                    OrdineAcquistoWood, GiacenzaWood, ModuloNonConformita8D)
-from blueprints.mastercontrol.routes import mastercontrol_bp, CONTATORI
+from models import (db, OrdineProduzione, EventoConsuntivoPP, OrdineAcquistoWood, GiacenzaWood,
+                    CentroCostoWood, CicloLavoroWood, LavorazioneTerzista)
+import blueprints.mastercontrol.routes as mc
+from blueprints.mastercontrol.routes import mastercontrol_bp
 
 
 class TestMasterControlCounters(unittest.TestCase):
@@ -29,41 +32,79 @@ class TestMasterControlCounters(unittest.TestCase):
         oggi = date.today()
         ieri = oggi - timedelta(days=1)
         domani = oggi + timedelta(days=1)
+        adesso = datetime.utcnow()
         with self.app.app_context():
-            for m in (OrdineProduzione, EventoConsuntivoPP, LavorazioneTerzista,
-                      OrdineAcquistoWood, GiacenzaWood, ModuloNonConformita8D):
+            for m in (OrdineProduzione, EventoConsuntivoPP, OrdineAcquistoWood, GiacenzaWood,
+                      CicloLavoroWood, CentroCostoWood, LavorazioneTerzista):
                 db.session.query(m).delete()
+            taglio = CentroCostoWood(nome='Taglio')
+            sald = CentroCostoWood(nome='Saldatura')
+            db.session.add_all([taglio, sald])
+            db.session.flush()
             db.session.add_all([
-                # OP: 2 in ritardo (aperti, data passata), 1 nei tempi, 1 chiuso con data passata
-                OrdineProduzione(codice='OP1', codice_articolo='A', stato='Rilasciato', data_prevista=ieri),
-                OrdineProduzione(codice='OP2', codice_articolo='A', stato='In esecuzione', data_prevista=ieri,
-                                 bandiera_stato='SOSPESA'),
-                OrdineProduzione(codice='OP3', codice_articolo='A', stato='Rilasciato', data_prevista=domani,
-                                 bandiera_stato='ATTESA_MATERIALI'),
-                OrdineProduzione(codice='OP4', codice_articolo='A', stato='Chiuso CO', data_prevista=ieri,
-                                 bandiera_stato='SOSPESA'),
-                # dichiarazioni: 1 da approvare, 1 visionata, 1 approvata
-                EventoConsuntivoPP(event_id='e1', op_code='OP1', fase='A', timestamp_evento=oggi),
-                EventoConsuntivoPP(event_id='e2', op_code='OP1', fase='A', timestamp_evento=oggi, visionato=True),
-                EventoConsuntivoPP(event_id='e3', op_code='OP1', fase='A', timestamp_evento=oggi, approvato_direzione=True),
-                # terzisti: 1 in ritardo, 1 nei tempi, 1 rientrata
-                LavorazioneTerzista(stato='ATTESA_RIENTRO', data_rientro_prev=ieri.strftime('%d/%m/%Y')),
-                LavorazioneTerzista(stato='ATTESA_RIENTRO', data_rientro_prev=domani.strftime('%d/%m/%Y')),
-                LavorazioneTerzista(stato='RIENTRATA', data_rientro_prev=ieri.strftime('%d/%m/%Y')),
+                CicloLavoroWood(codice='C10', sequenza=1, centro_costo_id=taglio.id),
+                CicloLavoroWood(codice='C10', sequenza=2, centro_costo_id=sald.id),
+                # OP-INIZIO: rilasciato 15 gg fa, nessuna fase -> da iniziare in ritardo
+                OrdineProduzione(codice='OP-INIZIO', codice_articolo='C10', stato='Rilasciato', qta_pianificata=10,
+                                 data_rilascio=adesso - timedelta(days=15)),
+                # OP-NUOVO: rilasciato 3 gg fa -> ancora nei tempi
+                OrdineProduzione(codice='OP-NUOVO', codice_articolo='C10', stato='Rilasciato', qta_pianificata=10,
+                                 data_rilascio=adesso - timedelta(days=3)),
+                # OP-SALD: taglio finito 9 gg fa, saldatura solo 4/10 -> da saldare in ritardo
+                OrdineProduzione(codice='OP-SALD', codice_articolo='C10', stato='In esecuzione', qta_pianificata=10,
+                                 data_rilascio=adesso - timedelta(days=20)),
+                EventoConsuntivoPP(event_id='s1', op_code='OP-SALD', fase='Taglio', pezzi_buoni=10,
+                                   timestamp_evento=adesso - timedelta(days=9)),
+                EventoConsuntivoPP(event_id='s2', op_code='OP-SALD', fase='Saldatura', pezzi_buoni=4,
+                                   timestamp_evento=adesso - timedelta(days=8)),
+                # OP-OK: taglio 2 gg fa -> nei tempi
+                OrdineProduzione(codice='OP-OK', codice_articolo='C10', stato='In esecuzione', qta_pianificata=10,
+                                 data_rilascio=adesso - timedelta(days=20)),
+                EventoConsuntivoPP(event_id='o1', op_code='OP-OK', fase='Taglio', pezzi_buoni=10,
+                                   timestamp_evento=adesso - timedelta(days=2)),
+                # OP-FATTO: saldatura completa -> niente
+                OrdineProduzione(codice='OP-FATTO', codice_articolo='C10', stato='In esecuzione', qta_pianificata=10,
+                                 data_rilascio=adesso - timedelta(days=30)),
+                EventoConsuntivoPP(event_id='f1', op_code='OP-FATTO', fase='Taglio', pezzi_buoni=10,
+                                   timestamp_evento=adesso - timedelta(days=20)),
+                EventoConsuntivoPP(event_id='f2', op_code='OP-FATTO', fase='Saldatura', pezzi_buoni=10,
+                                   timestamp_evento=adesso - timedelta(days=19)),
                 # ordini fornitore
                 OrdineAcquistoWood(filename='a.pdf', stato_label='DA_CONFERMARE'),
                 OrdineAcquistoWood(filename='b.pdf', stato_label='LETTURA_DA_VERIFICARE'),
-                OrdineAcquistoWood(filename='c.pdf', stato_label='ORDINE_DA_RITIRARE', confermato=True, data_consegna=ieri),
-                OrdineAcquistoWood(filename='d.pdf', stato_label='ORDINE_RICEVUTO', confermato=True, data_consegna=ieri),
-                # giacenze: 1 negativa
+                OrdineAcquistoWood(filename='c.pdf', stato_label='ORDINE_CONFERMATO', confermato=True, data_consegna=domani),
+                OrdineAcquistoWood(filename='d.pdf', stato_label='ORDINE_IN_ARRIVO', confermato=True, data_consegna=ieri),
+                OrdineAcquistoWood(filename='e.pdf', stato_label='ORDINE_DA_RITIRARE', confermato=True, data_consegna=domani),
+                OrdineAcquistoWood(filename='f.pdf', stato_label='ORDINE_RICEVUTO', confermato=True, data_consegna=ieri),
+                # giacenze
                 GiacenzaWood(codice='X', quantita=-3),
                 GiacenzaWood(codice='Y', quantita=5),
+                # terzista: C10 con 6 pezzi ancora fuori
+                LavorazioneTerzista(stato='ATTESA_RIENTRO', qta=6, note=json.dumps({'codice': 'C10', 'qta_rientrata': 0})),
             ])
             db.session.commit()
         self.c = self.app.test_client()
 
-    def _valori(self):
-        r = self.c.get('/api/control/counters', headers={'X-Control-Token': 'tok-test'})
+    def _valori(self, fabbisogni=None, hpi=None, grezzo=None):
+        fabbisogni = fabbisogni if fabbisogni is not None else [
+            {'codice': 'T6030', 'tipo': 'MATERIA_PRIMA_FORNITORE', 'sottoscorta': 50, 'stato': 'DA_ORDINARE',
+             'impegni': [{'op_code': 'OP-INIZIO', 'mancante': 3}, {'op_code': 'OP-NUOVO', 'mancante': 0}]},
+            {'codice': 'L1', 'tipo': 'LASERATO', 'sottoscorta': 5, 'stato': 'COPERTO_DA_ORDINI',
+             'impegni': [{'op_code': 'OP-OK', 'mancante': 2}]},
+            {'codice': 'V1', 'tipo': 'COMPONENTE_ACQUISTO', 'sottoscorta': 0, 'stato': 'DA_ORDINARE',
+             'impegni': [{'op_code': 'OP-SALD', 'mancante': 1}]},
+            {'codice': 'V2', 'tipo': 'MATERIALE_CONSUMO', 'sottoscorta': 2, 'stato': 'COPERTO_DA_ORDINI', 'impegni': []},
+        ]
+        hpi = hpi if hpi is not None else [{'prodotti': [{'sotto_scorta': True}, {'sotto_scorta': False}, {'sotto_scorta': True}]}]
+        grezzo = grezzo if grezzo is not None else {'C10': 40, 'S14': 0, 'Z9': -2}
+
+        class _R:
+            def __init__(self, d): self._d = d
+            def get_json(self): return self._d
+        with mock.patch('blueprints.acquisti_wood.routes.calcola_lista_fabbisogni', return_value=fabbisogni), \
+                mock.patch('blueprints.kanban.routes.api_kanban_hpi_dati', return_value=_R(hpi)), \
+                mock.patch('blueprints.magazzino.routes._grezzo_iw_per_codici', return_value=grezzo):
+            r = self.c.get('/api/control/counters', headers={'X-Control-Token': 'tok-test'})
         self.assertEqual(r.status_code, 200)
         return {c['code']: c for c in r.get_json()['counters']}
 
@@ -71,37 +112,48 @@ class TestMasterControlCounters(unittest.TestCase):
         self.assertEqual(self.c.get('/api/control/counters').status_code, 403)
         self.assertEqual(self.c.get('/api/control/counters', headers={'X-Control-Token': 'no'}).status_code, 403)
         os.environ['MASTERCONTROL_TOKEN'] = ''
-        self.assertEqual(self.c.get('/api/control/counters', headers={'X-Control-Token': ''}).status_code, 403,
-                         'token vuoto su Railway = endpoint disabilitato')
+        self.assertEqual(self.c.get('/api/control/counters', headers={'X-Control-Token': ''}).status_code, 403)
 
-    def test_conteggi(self):
+    def test_acquisti_produzione(self):
         v = self._valori()
-        self.assertEqual(v['PRODUZIONE_OP_RITARDO']['value'], 2, 'OP chiuso non conta anche se in ritardo')
-        self.assertEqual(v['PRODUZIONE_OP_FERMI']['value'], 1, 'ATTESA_MATERIALI e OP chiusi esclusi')
-        self.assertEqual(v['PRODUZIONE_DICHIARAZIONI_DA_APPROVARE']['value'], 1)
-        self.assertEqual(v['PRODUZIONE_TERZISTI_RITARDO']['value'], 1)
-        self.assertEqual(v['ACQUISTI_IW_NON_CONFERMATI']['value'], 2)
-        self.assertEqual(v['ACQUISTI_IW_DA_RITIRARE']['value'], 1)
-        self.assertEqual(v['ACQUISTI_IW_RITARDO']['value'], 1, 'solo non ricevuti con data consegna passata')
-        self.assertEqual(v['MAGAZZINO_IW_GIACENZE_NEGATIVE']['value'], 1)
+        self.assertEqual(v['ACQ_PROD_DA_CONFERMARE']['value'], 2)
+        self.assertEqual(v['ACQ_PROD_IN_ARRIVO']['value'], 1, 'quello in ritardo non conta come "in arrivo"')
+        self.assertEqual(v['ACQ_PROD_DA_RITIRARE']['value'], 1)
+        self.assertEqual(v['ACQ_PROD_RITARDO']['value'], 1, 'il ricevuto non conta')
 
-    def test_link_e_aree(self):
+    def test_produzione(self):
         v = self._valori()
-        self.assertTrue(v['PRODUZIONE_OP_RITARDO']['url'].endswith('/ordini-produzione'))
+        self.assertEqual(v['PROD_SOTTOSCORTA_DA_PIANIFICARE']['value'], 2)
+        self.assertEqual(v['PROD_OP_MATERIALI_DA_ORDINARE']['value'], 2,
+                         'OP-INIZIO e OP-SALD: solo materiali DA_ORDINARE con mancante > 0')
+        self.assertEqual(v['PROD_OP_INIZIO_RITARDO']['value'], 1, 'solo OP-INIZIO (>10 gg, nessuna fase)')
+        self.assertEqual(v['PROD_OP_SALDATURA_RITARDO']['value'], 1, 'solo OP-SALD (>7 gg, saldatura 4/10)')
+
+    def test_magazzino_produzione(self):
+        v = self._valori()
+        self.assertEqual(v['MAGP_MP_SOTTOSCORTA']['value'], 1)
+        self.assertEqual(v['MAGP_LASERATI_SOTTOSCORTA']['value'], 1)
+        self.assertEqual(v['MAGP_ALTRI_SOTTOSCORTA']['value'], 1, 'V1 ha sottoscorta 0: non conta')
+        self.assertEqual(v['MAGP_GIACENZA_NEGATIVA']['value'], 2, 'X a magazzino + Z9 grezzo IW')
+        self.assertEqual(v['MAGP_DA_TRATTARE']['value'], 1)
+        self.assertEqual(v['MAGP_IN_TRATTAMENTO']['value'], 1)
+
+    def test_aree_e_link(self):
+        v = self._valori()
+        self.assertEqual(len(v), len(mc.CONTATORI))
         for c in v.values():
-            self.assertIn(c['area'], ('PRODUZIONE', 'ACQUISTI', 'MAGAZZINO'))
-            self.assertTrue(c['label'])
+            self.assertIn(c['area'], ('ACQUISTI_PRODUZIONE', 'PRODUZIONE', 'MAGAZZINO_PRODUZIONE'))
+            self.assertTrue(c['url'].startswith('http'))
 
     def test_contatore_rotto_non_blocca_gli_altri(self):
-        import blueprints.mastercontrol.routes as r
-        originale = list(r.CONTATORI)
+        originale = list(mc.CONTATORI)
         try:
-            r.CONTATORI.insert(0, ('ROTTO', 'PRODUZIONE', 'Rotto', lambda: 1 / 0, '/'))
+            mc.CONTATORI.insert(0, ('ROTTO', 'PRODUZIONE', 'Rotto', lambda ctx: 1 / 0, '/'))
             v = self._valori()
             self.assertNotIn('ROTTO', v)
-            self.assertIn('PRODUZIONE_OP_RITARDO', v)
+            self.assertIn('ACQ_PROD_RITARDO', v)
         finally:
-            r.CONTATORI[:] = originale
+            mc.CONTATORI[:] = originale
 
 
 if __name__ == '__main__':
