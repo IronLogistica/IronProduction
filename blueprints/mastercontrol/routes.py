@@ -40,10 +40,19 @@ log = logging.getLogger('ironproduction.mastercontrol')
 STATI_OP_APERTI = ('Creato', 'Rilasciato', 'In esecuzione')
 GIORNI_INIZIO_RITARDO = 10     # OP rilasciato da più di 10 gg e nessuna fase iniziata
 GIORNI_SALDATURA_RITARDO = 7   # fasi prima della Saldatura ferme da più di 7 gg, Saldatura non finita
+MAX_RIGHE = 15                 # righe di dettaglio mandate per ogni riquadro (popup di MASTERCONTROL)
 
 
 def _oggi():
     return date.today()
+
+
+def _gg(d):
+    return d.strftime('%d/%m') if d else 's.d.'
+
+
+def _oa_txt(o, extra=''):
+    return f"{o.fornitore or 'Fornitore ?'} – ordine n. {o.ordine_n or 'N/D'}" + (f" – {extra}" if extra else '')
 
 
 # ── ACQUISTI PRODUZIONE (Ordini Acquisto Iron Wood) ──────────────────────
@@ -53,25 +62,29 @@ def _oa_aperti():
 
 
 def conta_oa_da_confermare(ctx):
-    return sum(1 for o in _oa_aperti() if o.stato_label in ('DA_CONFERMARE', 'LETTURA_DA_VERIFICARE'))
+    return [_oa_txt(o, 'lettura PDF da verificare' if o.stato_label == 'LETTURA_DA_VERIFICARE' else 'senza conferma')
+            for o in _oa_aperti() if o.stato_label in ('DA_CONFERMARE', 'LETTURA_DA_VERIFICARE')]
 
 
 def conta_oa_in_arrivo(ctx):
     """Confermati, non ancora ricevuti e NON in ritardo (quelli in ritardo hanno il loro riquadro)."""
     oggi = _oggi()
-    return sum(1 for o in _oa_aperti()
-               if o.stato_label in ('ORDINE_CONFERMATO', 'ORDINE_IN_ARRIVO')
-               and not (o.data_consegna and o.data_consegna < oggi))
+    righe = [o for o in _oa_aperti()
+             if o.stato_label in ('ORDINE_CONFERMATO', 'ORDINE_IN_ARRIVO')
+             and not (o.data_consegna and o.data_consegna < oggi)]
+    righe.sort(key=lambda o: o.data_consegna or date.max)
+    return [_oa_txt(o, f"consegna {_gg(o.data_consegna)}") for o in righe]
 
 
 def conta_oa_da_ritirare(ctx):
-    return sum(1 for o in _oa_aperti() if o.stato_label == 'ORDINE_DA_RITIRARE')
+    return [_oa_txt(o, f"pronto dal {_gg(o.data_consegna)}") for o in _oa_aperti() if o.stato_label == 'ORDINE_DA_RITIRARE']
 
 
 def conta_oa_in_ritardo(ctx):
     """Stessa regola della dashboard/Totem Acquisti: non ricevuti con data consegna passata."""
     oggi = _oggi()
-    return sum(1 for o in _oa_aperti() if o.data_consegna and o.data_consegna < oggi)
+    righe = sorted((o for o in _oa_aperti() if o.data_consegna and o.data_consegna < oggi), key=lambda o: o.data_consegna)
+    return [_oa_txt(o, f"doveva arrivare il {_gg(o.data_consegna)} (+{(oggi - o.data_consegna).days} gg)") for o in righe]
 
 
 # ── PRODUZIONE ───────────────────────────────────────────────────────────
@@ -93,19 +106,22 @@ def _fabbisogni(ctx):
 
 def conta_sottoscorta_da_pianificare(ctx):
     """Prodotti Kanban sotto la scorta minima (stesso calcolo di Kanban HPI)."""
-    return sum(1 for p in _kanban_hpi(ctx) if p.get('sotto_scorta'))
+    righe = sorted((p for p in _kanban_hpi(ctx) if p.get('sotto_scorta')), key=lambda p: p.get('saldo_c_scorta') or 0)
+    return [f"{(p.get('nome') or '?').split(' — ')[0]} – saldo c/scorta {p.get('saldo_c_scorta') or 0:g}"
+            + (f" – riservato clienti {p['riservato_clienti']}" if p.get('riservato_clienti') else '') for p in righe]
 
 
 def conta_op_materiali_da_ordinare(ctx):
     """OP aperti con almeno un materiale DA ORDINARE (Lista Fabbisogni) ancora mancante per loro."""
-    op = set()
+    op = {}
     for r in _fabbisogni(ctx):
         if r.get('stato') != 'DA_ORDINARE':
             continue
         for i in r.get('impegni', []):
             if (i.get('mancante') or 0) > 0:
-                op.add(i['op_code'])
-    return len(op)
+                op.setdefault(i['op_code'], {'prodotto': i.get('prodotto') or '', 'mancano': []})['mancano'].append(r['codice'])
+    return [f"{codice} {v['prodotto']} – da ordinare: {', '.join(v['mancano'][:4])}{' …' if len(v['mancano']) > 4 else ''}"
+            for codice, v in sorted(op.items())]
 
 
 def _eventi_per_op(op_codes):
@@ -127,7 +143,9 @@ def conta_op_inizio_ritardo(ctx, oggi=None):
         OrdineProduzione.data_rilascio < limite,
     ).all()
     eventi = _eventi_per_op([o.codice for o in candidati])
-    return sum(1 for o in candidati if not eventi.get(o.codice))
+    righe = sorted((o for o in candidati if not eventi.get(o.codice)), key=lambda o: o.data_rilascio)
+    return [f"{o.codice} {o.codice_articolo} – commessa {o.commessa or '-'} – rilasciato il {_gg(o.data_rilascio)}, "
+            f"nessuna fase iniziata da {(oggi - o.data_rilascio.date()).days} gg" for o in righe]
 
 
 def _e_saldatura(nome_fase):
@@ -147,7 +165,7 @@ def conta_op_saldatura_ritardo(ctx, oggi=None):
                      if c.centro_costo and _e_saldatura(c.centro_costo.nome)}
     aperti = [o for o in aperti if o.codice_articolo in con_saldatura]
     eventi = _eventi_per_op([o.codice for o in aperti])
-    n = 0
+    righe = []
     for o in aperti:
         ev = eventi.get(o.codice, [])
         prima = [e for e in ev if not _e_saldatura(e.fase)]
@@ -156,9 +174,11 @@ def conta_op_saldatura_ritardo(ctx, oggi=None):
         saldati = sum(e.pezzi_buoni or 0 for e in ev if _e_saldatura(e.fase) and e.componente is None)
         if saldati >= (o.qta_pianificata or 0):
             continue          # Saldatura completata
-        if max(e.timestamp_evento for e in prima) < limite:
-            n += 1
-    return n
+        ultima = max(e.timestamp_evento for e in prima)
+        if ultima < limite:
+            righe.append((ultima, f"{o.codice} {o.codice_articolo} – commessa {o.commessa or '-'} – fasi prima della "
+                                  f"Saldatura ferme dal {_gg(ultima)}, saldati {saldati}/{o.qta_pianificata or 0}"))
+    return [t for _u, t in sorted(righe)]
 
 
 # ── MAGAZZINO PRODUZIONE ─────────────────────────────────────────────────
@@ -167,16 +187,23 @@ def _sottoscorta(ctx):
     return [r for r in _fabbisogni(ctx) if (r.get('sottoscorta') or 0) > 0]
 
 
+def _txt_sottoscorta(r):
+    um = r.get('unita_misura') or ''
+    return (f"{r['codice']} {r.get('descrizione') or ''}".strip()
+            + f" – disponibile {r.get('disponibilita', 0):g} su scorta {r.get('scorta_minima', 0):g} {um}".rstrip()
+            + (' – già ordinato' if r.get('stato') == 'COPERTO_DA_ORDINI' else ''))
+
+
 def conta_mp_sottoscorta(ctx):
-    return sum(1 for r in _sottoscorta(ctx) if r.get('tipo') == 'MATERIA_PRIMA_FORNITORE')
+    return [_txt_sottoscorta(r) for r in _sottoscorta(ctx) if r.get('tipo') == 'MATERIA_PRIMA_FORNITORE']
 
 
 def conta_laserati_sottoscorta(ctx):
-    return sum(1 for r in _sottoscorta(ctx) if r.get('tipo') == 'LASERATO')
+    return [_txt_sottoscorta(r) for r in _sottoscorta(ctx) if r.get('tipo') == 'LASERATO']
 
 
 def conta_altri_sottoscorta(ctx):
-    return sum(1 for r in _sottoscorta(ctx) if r.get('tipo') not in ('MATERIA_PRIMA_FORNITORE', 'LASERATO'))
+    return [_txt_sottoscorta(r) for r in _sottoscorta(ctx) if r.get('tipo') not in ('MATERIA_PRIMA_FORNITORE', 'LASERATO')]
 
 
 def _grezzo_iw(ctx):
@@ -189,21 +216,29 @@ def _grezzo_iw(ctx):
 
 def conta_giacenza_negativa(ctx):
     """Codici con giacenza negativa: Finiti IW / magazzino (GiacenzaWood) oppure Grezzo IW."""
-    negativi = {g.codice.upper() for g in GiacenzaWood.query.filter(GiacenzaWood.quantita < 0).all() if g.codice}
-    negativi |= {c.upper() for c, q in _grezzo_iw(ctx).items() if (q or 0) < 0}
-    return len(negativi)
+    negativi = {}
+    for g in GiacenzaWood.query.filter(GiacenzaWood.quantita < 0).all():
+        if g.codice:
+            negativi[g.codice.upper()] = f"{g.codice} – giacenza magazzino {g.quantita:g}"
+    for c, q in _grezzo_iw(ctx).items():
+        if (q or 0) < 0:
+            testo = f"{c} – Grezzo IW {q:g}"
+            negativi[c.upper()] = negativi[c.upper()] + f", Grezzo IW {q:g}" if c.upper() in negativi else testo
+    return [negativi[k] for k in sorted(negativi)]
 
 
 def conta_da_trattare(ctx):
     """Stessa fonte di Terzisti → Materiali da trattare: Grezzo IW > 0."""
-    return sum(1 for q in _grezzo_iw(ctx).values() if (q or 0) > 0)
+    return [f"{c} – {q:g} pz grezzi da mandare in trattamento"
+            for c, q in sorted(_grezzo_iw(ctx).items(), key=lambda kv: -(kv[1] or 0)) if (q or 0) > 0]
 
 
 def conta_in_trattamento(ctx):
     """Codici con pezzi ancora presso il terzista (spediti e non rientrati)."""
     from blueprints.magazzino.routes import _in_trattamento_per_codici
     codici = [r[0] for r in db.session.query(OrdineProduzione.codice_articolo).distinct().all()]
-    return sum(1 for q in _in_trattamento_per_codici(codici).values() if (q or 0) > 0)
+    return [f"{c} – {q:g} pz presso il terzista"
+            for c, q in sorted(_in_trattamento_per_codici(codici).items(), key=lambda kv: -(kv[1] or 0)) if (q or 0) > 0]
 
 
 # code, area, label, funzione, pagina di dettaglio
@@ -241,13 +276,19 @@ def api_control_counters():
     out = []
     for code, area, label, fn, path in CONTATORI:
         try:
-            valore = int(fn(ctx))
+            risultato = fn(ctx)
+            # una funzione può restituire l'elenco delle righe (numero = quante sono,
+            # prime MAX_RIGHE nel popup di MASTERCONTROL) oppure solo il numero
+            if isinstance(risultato, list):
+                valore, items = len(risultato), [{'testo': str(t)} for t in risultato[:MAX_RIGHE]]
+            else:
+                valore, items = int(risultato), []
         except Exception:
             # un contatore rotto non deve bloccare gli altri: MASTERCONTROL lo mostra grigio
             log.exception('Contatore MASTERCONTROL %s in errore', code)
             db.session.rollback()
             continue
-        out.append({'code': code, 'area': area, 'label': label, 'value': valore, 'url': base + path})
+        out.append({'code': code, 'area': area, 'label': label, 'value': valore, 'url': base + path, 'items': items})
     # Indirizzi degli altri programmi che IronProduction già conosce: servono a
     # MASTERCONTROL per collegarli da solo, senza inserire gli URL a mano.
     fonti = {}

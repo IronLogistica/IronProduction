@@ -95,7 +95,10 @@ class TestMasterControlCounters(unittest.TestCase):
              'impegni': [{'op_code': 'OP-SALD', 'mancante': 1}]},
             {'codice': 'V2', 'tipo': 'MATERIALE_CONSUMO', 'sottoscorta': 2, 'stato': 'COPERTO_DA_ORDINI', 'impegni': []},
         ]
-        hpi = hpi if hpi is not None else [{'prodotti': [{'sotto_scorta': True}, {'sotto_scorta': False}, {'sotto_scorta': True}]}]
+        hpi = hpi if hpi is not None else [{'prodotti': [
+            {'nome': 'S-14 — CAVALLETTO', 'sotto_scorta': True, 'saldo_c_scorta': -158, 'riservato_clienti': 0},
+            {'nome': 'C10 — CAVALLETTO', 'sotto_scorta': False, 'saldo_c_scorta': 20},
+            {'nome': 'S-20 — CAVALLETTO', 'sotto_scorta': True, 'saldo_c_scorta': -105, 'riservato_clienti': 65}]}]
         grezzo = grezzo if grezzo is not None else {'C10': 40, 'S14': 0, 'Z9': -2}
 
         class _R:
@@ -137,6 +140,17 @@ class TestMasterControlCounters(unittest.TestCase):
         self.assertEqual(v['MAGP_GIACENZA_NEGATIVA']['value'], 2, 'X a magazzino + Z9 grezzo IW')
         self.assertEqual(v['MAGP_DA_TRATTARE']['value'], 1)
         self.assertEqual(v['MAGP_IN_TRATTAMENTO']['value'], 1)
+
+    def test_righe_dettaglio_per_il_popup(self):
+        v = self._valori()
+        self.assertEqual(v['PROD_SOTTOSCORTA_DA_PIANIFICARE']['items'][0]['testo'], 'S-14 – saldo c/scorta -158')
+        self.assertIn('riservato clienti 65', v['PROD_SOTTOSCORTA_DA_PIANIFICARE']['items'][1]['testo'])
+        self.assertIn('OP-INIZIO C10', v['PROD_OP_INIZIO_RITARDO']['items'][0]['testo'])
+        self.assertIn('saldati 4/10', v['PROD_OP_SALDATURA_RITARDO']['items'][0]['testo'])
+        self.assertIn('T6030', v['PROD_OP_MATERIALI_DA_ORDINARE']['items'][0]['testo'])
+        self.assertIn('C10 – 6 pz presso il terzista', v['MAGP_IN_TRATTAMENTO']['items'][0]['testo'])
+        for c in v.values():
+            self.assertEqual(len(c['items']), min(c['value'], mc.MAX_RIGHE), c['code'])
 
     def test_aree_e_link(self):
         v = self._valori()
