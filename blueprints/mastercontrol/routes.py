@@ -206,13 +206,25 @@ def conta_op_saldatura_ritardo(ctx, oggi=None):
 # ── MAGAZZINO PRODUZIONE ─────────────────────────────────────────────────
 
 def _sottoscorta(ctx):
-    return [r for r in _fabbisogni(ctx) if (r.get('sottoscorta') or 0) > 0]
+    """Articoli SOTTO LA SCORTA MINIMA, con la stessa regola della pagina Magazzino:
+    Disp. contabile = giacenza − impegnato OP + ordinato fornitori < scorta minima.
+    CORRETTO 23/11/2026 (TAVR1015: giacenza 24, impegnato 100, ordinato 176, scorta 0
+    risultava sottoscorta): il campo 'sottoscorta' della Lista Fabbisogni non conta
+    gli ordini già fatti e scatta anche senza scorta minima; la mancanza per gli OP
+    ha già il suo riquadro (OP con materiali da ordinare)."""
+    righe = []
+    for r in _fabbisogni(ctx):
+        scorta = r.get('scorta_minima') or 0
+        if scorta > 0 and (r.get('disponibilita') or 0) + (r.get('ordinato') or 0) < scorta:
+            righe.append(r)
+    return righe
 
 
 def _txt_sottoscorta(r):
-    """Codice | Descrizione | UM | Disponibile | Scorta | Ordinato | Da ordinare"""
+    """Codice | Descrizione | UM | Disponibile (giacenza − impegnato) | Ordinato | Disp. contabile | Scorta | Mancano"""
+    contabile = (r.get('disponibilita') or 0) + (r.get('ordinato') or 0)
     return [r['codice'], r.get('descrizione') or '', r.get('unita_misura') or '', _n(r.get('disponibilita')),
-            _n(r.get('scorta_minima')), _n(r.get('ordinato')), _n(r.get('da_ordinare'))]
+            _n(r.get('ordinato')), _n(contabile), _n(r.get('scorta_minima')), _n((r.get('scorta_minima') or 0) - contabile)]
 
 
 def conta_mp_sottoscorta(ctx):
@@ -261,7 +273,7 @@ def conta_in_trattamento(ctx):
 
 # intestazioni della tabella del popup di MASTERCONTROL
 _COL_OA = ['OA N°', 'Fornitore', 'Articoli', 'Qtà da ricevere', 'Data prev.']
-_COL_SCORTA = ['Codice', 'Descrizione', 'UM', 'Disponibile', 'Scorta', 'Ordinato', 'Da ordinare']
+_COL_SCORTA = ['Codice', 'Descrizione', 'UM', 'Giac. − impegnato', 'Ordinato', 'Disp. contabile', 'Scorta', 'Mancano']
 COLONNE = {
     'ACQ_PROD_DA_CONFERMARE': _COL_OA + ['Stato'], 'ACQ_PROD_IN_ARRIVO': _COL_OA, 'ACQ_PROD_DA_RITIRARE': _COL_OA,
     'ACQ_PROD_RITARDO': _COL_OA + ['Ritardo'],

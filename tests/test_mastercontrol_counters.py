@@ -88,12 +88,22 @@ class TestMasterControlCounters(unittest.TestCase):
     def _valori(self, fabbisogni=None, hpi=None, grezzo=None):
         fabbisogni = fabbisogni if fabbisogni is not None else [
             {'codice': 'T6030', 'tipo': 'MATERIA_PRIMA_FORNITORE', 'sottoscorta': 50, 'stato': 'DA_ORDINARE',
+             'disponibilita': 10, 'ordinato': 0, 'scorta_minima': 60,
              'impegni': [{'op_code': 'OP-INIZIO', 'mancante': 3}, {'op_code': 'OP-NUOVO', 'mancante': 0}]},
             {'codice': 'L1', 'tipo': 'LASERATO', 'sottoscorta': 5, 'stato': 'COPERTO_DA_ORDINI',
+             'disponibilita': 5, 'ordinato': 2, 'scorta_minima': 10,
              'impegni': [{'op_code': 'OP-OK', 'mancante': 2}]},
+            # caso reale di Angelo: giacenza 24 − impegnato 100 = −76, ordinato 176, scorta 0 -> NON sottoscorta
+            {'codice': 'TAVR1015', 'tipo': 'LASERATO', 'sottoscorta': 76, 'stato': 'COPERTO_DA_ORDINI',
+             'disponibilita': -76, 'ordinato': 176, 'scorta_minima': 0, 'impegni': []},
+            # coperto dall'ordinato ma con scorta: 3 + 20 >= 10 -> NON sottoscorta
+            {'codice': 'L2', 'tipo': 'LASERATO', 'sottoscorta': 7, 'stato': 'COPERTO_DA_ORDINI',
+             'disponibilita': 3, 'ordinato': 20, 'scorta_minima': 10, 'impegni': []},
             {'codice': 'V1', 'tipo': 'COMPONENTE_ACQUISTO', 'sottoscorta': 0, 'stato': 'DA_ORDINARE',
+             'disponibilita': 0, 'ordinato': 0, 'scorta_minima': 0,
              'impegni': [{'op_code': 'OP-SALD', 'mancante': 1}]},
-            {'codice': 'V2', 'tipo': 'MATERIALE_CONSUMO', 'sottoscorta': 2, 'stato': 'COPERTO_DA_ORDINI', 'impegni': []},
+            {'codice': 'V2', 'tipo': 'MATERIALE_CONSUMO', 'sottoscorta': 2, 'stato': 'COPERTO_DA_ORDINI',
+             'disponibilita': 1, 'ordinato': 0, 'scorta_minima': 3, 'impegni': []},
         ]
         hpi = hpi if hpi is not None else [{'prodotti': [
             {'nome': 'S-14 — CAVALLETTO', 'sotto_scorta': True, 'saldo_c_scorta': -158, 'riservato_clienti': 0},
@@ -144,7 +154,10 @@ class TestMasterControlCounters(unittest.TestCase):
     def test_magazzino_produzione(self):
         v = self._valori()
         self.assertEqual(v['MAGP_MP_SOTTOSCORTA']['value'], 1)
-        self.assertEqual(v['MAGP_LASERATI_SOTTOSCORTA']['value'], 1)
+        self.assertEqual(v['MAGP_LASERATI_SOTTOSCORTA']['value'], 1, 'solo L1: TAVR1015 e L2 sono coperti dall\'ordinato')
+        l1 = v['MAGP_LASERATI_SOTTOSCORTA']['items'][0]['cells']
+        self.assertEqual(l1[0], 'L1')
+        self.assertEqual(l1[3:], ['5', '2', '7', '10', '3'], 'giac−imp, ordinato, disp. contabile, scorta, mancano')
         self.assertEqual(v['MAGP_ALTRI_SOTTOSCORTA']['value'], 1, 'V1 ha sottoscorta 0: non conta')
         self.assertEqual(v['MAGP_GIACENZA_NEGATIVA']['value'], 2, 'X a magazzino + Z9 grezzo IW')
         self.assertEqual(v['MAGP_DA_TRATTARE']['value'], 1)
