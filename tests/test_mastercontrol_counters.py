@@ -34,7 +34,7 @@ class TestMasterControlCounters(unittest.TestCase):
         domani = oggi + timedelta(days=1)
         adesso = datetime.utcnow()
         with self.app.app_context():
-            for m in (OrdineProduzione, EventoConsuntivoPP, OrdineAcquistoWood, GiacenzaWood,
+            for m in (RigaOrdineAcquistoWood, OrdineProduzione, EventoConsuntivoPP, OrdineAcquistoWood, GiacenzaWood,
                       CicloLavoroWood, CentroCostoWood, LavorazioneTerzista):
                 db.session.query(m).delete()
             taglio = CentroCostoWood(nome='Taglio')
