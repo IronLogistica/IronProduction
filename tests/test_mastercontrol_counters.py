@@ -10,7 +10,7 @@ from unittest import mock
 
 from flask import Flask
 
-from models import (db, OrdineProduzione, EventoConsuntivoPP, OrdineAcquistoWood, GiacenzaWood,
+from models import (db, OrdineProduzione, EventoConsuntivoPP, OrdineAcquistoWood, GiacenzaWood, RigaOrdineAcquistoWood,
                     CentroCostoWood, CicloLavoroWood, LavorazioneTerzista)
 import blueprints.mastercontrol.routes as mc
 from blueprints.mastercontrol.routes import mastercontrol_bp
@@ -123,6 +123,15 @@ class TestMasterControlCounters(unittest.TestCase):
         self.assertEqual(v['ACQ_PROD_IN_ARRIVO']['value'], 1, 'quello in ritardo non conta come "in arrivo"')
         self.assertEqual(v['ACQ_PROD_DA_RITIRARE']['value'], 1)
         self.assertEqual(v['ACQ_PROD_RITARDO']['value'], 1, 'il ricevuto non conta')
+        with self.app.app_context():
+            o = OrdineAcquistoWood.query.filter_by(filename='d.pdf').first()
+            o.ordine_n, o.fornitore = '260', 'T&P New Solutions Srl'
+            db.session.add_all([RigaOrdineAcquistoWood(ordine_id=o.id, codice='5010', unita_misura='PZ', qta_originale=500, qta_ricevuta=0),
+                                RigaOrdineAcquistoWood(ordine_id=o.id, codice='5011', unita_misura='PZ', qta_originale=1000, qta_ricevuta=250)])
+            db.session.commit()
+        r = self._valori()['ACQ_PROD_RITARDO']['items'][0]['cells']
+        self.assertEqual(r[:4], ['OA 260', 'T&P New Solutions Srl', '2', '1.250 PZ'], 'qta ancora da ricevere')
+        self.assertEqual(r[-1], '+1 gg')
 
     def test_produzione(self):
         v = self._valori()
@@ -143,14 +152,24 @@ class TestMasterControlCounters(unittest.TestCase):
 
     def test_righe_dettaglio_per_il_popup(self):
         v = self._valori()
-        self.assertEqual(v['PROD_SOTTOSCORTA_DA_PIANIFICARE']['items'][0]['testo'], 'S-14 – saldo c/scorta -158')
-        self.assertIn('riservato clienti 65', v['PROD_SOTTOSCORTA_DA_PIANIFICARE']['items'][1]['testo'])
-        self.assertIn('OP-INIZIO C10', v['PROD_OP_INIZIO_RITARDO']['items'][0]['testo'])
-        self.assertIn('saldati 4/10', v['PROD_OP_SALDATURA_RITARDO']['items'][0]['testo'])
-        self.assertIn('T6030', v['PROD_OP_MATERIALI_DA_ORDINARE']['items'][0]['testo'])
-        self.assertIn('C10 – 6 pz presso il terzista', v['MAGP_IN_TRATTAMENTO']['items'][0]['testo'])
+        sc = v['PROD_SOTTOSCORTA_DA_PIANIFICARE']
+        self.assertEqual(sc['items'][0]['cells'][:2], ['S-14', 'CAVALLETTO'])
+        self.assertEqual(sc['items'][0]['cells'][3], '-158')
+        self.assertEqual(sc['items'][1]['cells'][4], '65', 'riservato clienti')
+        ini = v['PROD_OP_INIZIO_RITARDO']['items'][0]['cells']
+        self.assertEqual(ini[:4], ['OP-INIZIO', 'C10', '10', '-'])
+        self.assertEqual(ini[-1], '15 gg')
+        sal = v['PROD_OP_SALDATURA_RITARDO']['items'][0]['cells']
+        self.assertEqual(sal[:4], ['OP-SALD', 'C10', '10', '4'])
+        mat = v['PROD_OP_MATERIALI_DA_ORDINARE']['items'][0]['cells']
+        self.assertEqual(mat[0], 'OP-INIZIO')
+        self.assertIn('T6030 3', mat[-1])
+        self.assertEqual(v['MAGP_IN_TRATTAMENTO']['items'][0]['cells'], ['C10', '6'])
+        self.assertEqual(v['MAGP_GIACENZA_NEGATIVA']['items'][0]['cells'], ['X', '-3', '—'])
         for c in v.values():
             self.assertEqual(len(c['items']), min(c['value'], mc.MAX_RIGHE), c['code'])
+            for i in c['items']:
+                self.assertEqual(len(i['cells']), len(c['columns']), c['code'])
 
     def test_aree_e_link(self):
         v = self._valori()
