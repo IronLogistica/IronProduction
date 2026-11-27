@@ -5198,6 +5198,14 @@ def api_dichiarazione_op_aperti(cid):
                                                  >= sequenza_richiesta)
                     pezzi_wip_fase_o_oltre = min(pezzi_wip_fase_o_oltre,
                                                   giacenze_per_codice.get(codice_comp, pezzi_wip_fase_o_oltre))
+                    # FIX 27/11/2026 (Mauri — T200DT OP-2026-000109, commessa 26110109): 300 TR2001
+                    # curvati fermi in WIP (di altre commesse) chiudevano il Curvatubi anche per questo
+                    # OP ("Da produrre 120" sull'Ordine di Lavoro, riga assente in Dichiarazione). Come
+                    # fa l'OL, i pezzi WIP valgono per questo OP solo fino alla giacenza che gli spetta
+                    # in ordine di priorita' (residuo progressivo), non tutti a ciascun OP.
+                    if codice_comp != o.codice_articolo:
+                        pezzi_wip_fase_o_oltre = min(pezzi_wip_fase_o_oltre,
+                                                      max(residuo_per_op.get(o.id, {}).get(codice_comp, 0) or 0, 0))
                     presenti_wip = pezzi_wip_fase_o_oltre
                     fatti_eff = max(fatti, min(pezzi_wip_fase_o_oltre, qta_necessaria))
             # Credito "da valle" — vedi nota sopra su fatti_totali_per_componente
