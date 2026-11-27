@@ -4997,10 +4997,22 @@ def api_dichiarazione_op_aperti(cid):
     scarto avvenuto più avanti nel ciclo (es. alla Piega).
     """
     centro = CentroCostoWood.query.get_or_404(cid)
+    # DIAGNOSI (Mauri, 27/11/2026 — T200DT OP-2026-000109: TR2001 non compariva al Curvatubi):
+    # ?diagnosi=1 (eventualmente &op=OP-...) restituisce anche le righe NASCOSTE con tutti i numeri
+    # del calcolo e il motivo, invece di indovinare quale credito ha azzerato il saldo.
+    diagnosi = request.args.get('diagnosi') == '1'
+    op_filtro = (request.args.get('op') or '').strip()
+    nascoste = []
     ordini = (OrdineProduzione.query.filter(OrdineProduzione.stato.in_(STATI_CHE_IMPEGNANO))
               .order_by(*_ordine_impegno()).all())
+    if diagnosi and op_filtro:
+        o_f = OrdineProduzione.query.filter_by(codice=op_filtro).first()
+        if o_f is None:
+            return jsonify({'diagnosi': [{'op': op_filtro, 'motivo': 'OP inesistente'}], 'righe': []})
+        if o_f.stato not in STATI_CHE_IMPEGNANO:
+            return jsonify({'diagnosi': [{'op': op_filtro, 'motivo': f'OP in stato {o_f.stato}: non e\' tra gli stati che impegnano {list(STATI_CHE_IMPEGNANO)}'}], 'righe': []})
     if not ordini:
-        return jsonify([])
+        return jsonify({'diagnosi': [], 'righe': []} if diagnosi else [])
 
     mappa_distinta = _carica_mappa_distinta_base_wood()
     componenti_per_op = {o.id: _esplodi_componenti_op(o, mappa_distinta=mappa_distinta) for o in ordini}
@@ -5130,9 +5142,17 @@ def api_dichiarazione_op_aperti(cid):
             fabbisogno_effettivo = _fabbisogno_propagato_per_op(o, mappa_distinta=mappa_distinta)
         codici_di_questo_op = {c['codice'] for c in componenti_per_op[o.id]}
         gruppo_componenti = []
+        if diagnosi and op_filtro and o.codice != op_filtro:
+            continue
+        if diagnosi:
+            nascoste.append({'op': o.codice, 'commessa': o.commessa, 'stato_op': o.stato,
+                             'componenti_distinta': [c['codice'] for c in componenti_per_op[o.id]]})
         for comp in componenti_per_op[o.id]:
             codice_comp = comp['codice']
             if codice_comp not in fasi_per_codice:
+                if diagnosi:
+                    nascoste.append({'op': o.codice, 'codice': codice_comp,
+                                     'motivo': f'il Ciclo di Lavoro di {codice_comp} non passa da {centro.nome}'})
                 continue  # questo codice non passa da questo centro
             # 'componente_finale' qui decide SOLO cosa mandare come
             # 'componente' nella creazione (None = storicamente sempre
@@ -5237,6 +5257,17 @@ def api_dichiarazione_op_aperti(cid):
             # giacenza entra con un MAX contro i dichiarati (sopra), non sommata:
             # cosi' la scorta preesistente chiude la riga senza contare due volte.
             saldo = max(qta_necessaria - fatti_eff, 0)
+            if diagnosi:
+                nascoste.append({'op': o.codice, 'codice': codice_comp, 'centro': centro.nome,
+                                 'qta_necessaria': qta_necessaria, 'qta_necessaria_base': qta_necessaria_base,
+                                 'fatti_dichiarati_qui': fatti, 'presenti_wip': presenti_wip,
+                                 'presenti_stock_riservati_op': presenti_stock, 'prima_fase': prima_fase,
+                                 'credito_da_valle': credito_da_valle, 'credito_non_dichiarato': credito_non_dichiarato,
+                                 'fatti_effettivi': fatti_eff, 'saldo': saldo,
+                                 'motivo': 'VISIBILE' if saldo > 0 else 'nascosta: saldo 0 (coperta da '
+                                 + ', '.join(n for n, v in (('dichiarazioni', fatti), ('WIP', presenti_wip),
+                                                            ('giacenza riservata all\'OP', presenti_stock),
+                                                            ('credito da valle', credito_da_valle)) if v) + ')'})
             if saldo <= 0:
                 continue  # già completato su questo centro: non dichiarabile
             gruppo_componenti.append({
@@ -5255,7 +5286,28 @@ def api_dichiarazione_op_aperti(cid):
             'saldo': max((o.qta_pianificata or 0) - (o.qta_buona or 0), 0),
             'componenti': gruppo_componenti,
         })
+    if diagnosi:
+        return jsonify({'diagnosi': nascoste, 'righe': risultato})
     return jsonify(risultato)
+
+
+@pp_bp.get('/api/dichiarazione-produzione/diagnosi')
+def api_dichiarazione_diagnosi():
+    """Perche' un OP non compare (o compare) in Dichiarazione Produzione, centro per centro.
+    Uso dal browser: /api/dichiarazione-produzione/diagnosi?op=OP-2026-000109"""
+    from flask import current_app
+    op = (request.args.get('op') or '').strip()
+    if not op:
+        return jsonify(ok=False, error='indica ?op=OP-AAAA-NNNNNN'), 400
+    esito = {}
+    for c in CentroCostoWood.query.filter_by(esterno=False).order_by(CentroCostoWood.nome).all():
+        with current_app.test_request_context(query_string={'diagnosi': '1', 'op': op}):
+            r = api_dichiarazione_op_aperti(c.id)
+        dati = r.get_json() if hasattr(r, 'get_json') else {}
+        righe = [d for d in (dati or {}).get('diagnosi', []) if d.get('codice') and 'non passa da' not in d.get('motivo', '')]
+        if righe or not esito:
+            esito[c.nome] = righe or (dati or {}).get('diagnosi', [])[:1]
+    return jsonify(ok=True, op=op, centri=esito)
 
 
 @pp_bp.post('/api/dichiarazione-produzione')
