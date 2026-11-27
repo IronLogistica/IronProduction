@@ -173,6 +173,18 @@ def calcola_avanzamento_commesse():
                   .order_by(FotoArticolo.caricato_il.desc()).all()):
             foto_per_codice.setdefault(f.codice_articolo, f.id)
 
+    # Ordini d'acquisto aperti (Iron Wood) per codice: servono a distinguere nella colonna Materiale
+    # "mancante da ordinare" da "gia' ordinato, in arrivo" (Mauri, 27/11/2026). Ripartiti tra gli OP
+    # nello stesso ordine di impegno della giacenza: il primo in coda prende per primo l'ordinato.
+    from models import OrdineAcquistoWood, RigaOrdineAcquistoWood
+    ordinato_residuo = {}
+    for cod, q_or, q_ric in (db.session.query(RigaOrdineAcquistoWood.codice, RigaOrdineAcquistoWood.qta_originale,
+                                              RigaOrdineAcquistoWood.qta_ricevuta)
+                             .join(OrdineAcquistoWood).filter(OrdineAcquistoWood.stato_label != 'ORDINE_RICEVUTO').all()):
+        resto = (q_or or 0) - (q_ric or 0)
+        if resto > 0:
+            ordinato_residuo[cod] = ordinato_residuo.get(cod, 0) + resto
+
     cursore_centro = {}   # centro_id -> datetime primo momento libero
     risultati = []
     segmenti_per_centro = {}   # centro_id -> [segmento, ...], stesso ordine di coda
@@ -200,6 +212,15 @@ def calcola_avanzamento_commesse():
                              if righe_netting else set())
         materiali_mancanti = {cod: r['mancante'] for cod, r in righe_netting.items()
                               if r.get('mancante', 0) > 0 and cod not in codici_con_ciclo}
+
+        # Stato materiale: 'ok' | 'ordinato' (manca ma e' tutto coperto da ordini d'acquisto aperti) | 'da_ordinare'
+        da_ordinare = {}
+        for cod, manca in materiali_mancanti.items():
+            preso = min(manca, ordinato_residuo.get(cod, 0))
+            ordinato_residuo[cod] = ordinato_residuo.get(cod, 0) - preso
+            if manca - preso > 1e-6:
+                da_ordinare[cod] = round(manca - preso, 3)
+        stato_materiale = 'ok' if not materiali_mancanti else ('da_ordinare' if da_ordinare else 'ordinato')
 
         data_materiale_pronto = oggi
         if materiali_mancanti:
@@ -298,6 +319,12 @@ def calcola_avanzamento_commesse():
                 pezzi_gia_a_questa_fase = (sum(q for cid, q in wip_righe_codice.items()
                                                if sequenza_per_centro_wip.get(cid, -1) >= ciclo.sequenza)
                                            if wip_righe_codice else 0)
+                # FIX 27/11/2026 (T200 26110101 e T200DT 26110109 entrambe al 100% di Curvatura con 300 TR2001
+                # curvati in WIP): i pezzi in WIP valgono per questo OP solo fino alla giacenza che gli spetta
+                # in ordine di impegno, come in Dichiarazione Produzione e Ordine di Lavoro.
+                if codice != o.codice_articolo:
+                    pezzi_gia_a_questa_fase = min(pezzi_gia_a_questa_fase,
+                                                  max(residuo_per_op.get(o.id, _res_finale_kpi).get(codice, 0) or 0, 0))
                 pezzi_fatti_eff = max(pezzi_fatti, min(pezzi_gia_a_questa_fase, qta_codice_pianificata))
 
                 # Copertura da magazzino e da valle (Pierantonio, 08/10/2026, PINX110 OP-2026-000072: gli Ordini di
@@ -425,6 +452,9 @@ def calcola_avanzamento_commesse():
             'descrizione': o.descrizione or '', 'qta_pianificata': o.qta_pianificata, 'qta_buona': o.qta_buona or 0,
             'saldo': saldo_op, 'pct': pct, 'priorita': o.priorita, 'bandiera_stato': o.bandiera_stato,
             'materiale_completo': not materiali_mancanti,
+            'stato_materiale': stato_materiale,
+            'materiali_mancanti': {k: round(v, 3) for k, v in materiali_mancanti.items()},
+            'materiali_da_ordinare': da_ordinare,
             'centri_in_coda': sorted(centri_con_saldo),
             'zone': zone_pct, 'foto_id': foto,
             'centro_esterno': centro_esterno_nome, 'lead_time_esterno_giorni': lead_time_esterno,

@@ -359,6 +359,8 @@ def _righe_macchina(centro):
                 sequenza_per_centro_comp = {f.centro_costo_id: f.sequenza for f in fasi_ciclo}
                 pezzi_wip_fase0_o_oltre = sum(q for cid, q in wip_righe_comp.items()
                                               if sequenza_per_centro_comp.get(cid, -1) >= fase0.sequenza)
+                if codice_comp != o.codice_articolo:   # WIP ripartito per priorita' (fix 27/11/2026, T200DT)
+                    pezzi_wip_fase0_o_oltre = min(pezzi_wip_fase0_o_oltre, max(giacenza_di_op.get(codice_comp, 0) or 0, 0))
                 pezzi_fatti_fase0 = max(pezzi_fatti_fase0, min(pezzi_wip_fase0_o_oltre, qta_necessaria))
             qta_ancora_da_tagliare = max(qta_necessaria - pezzi_fatti_fase0, 0)
 
@@ -415,6 +417,9 @@ def _righe_macchina(centro):
                     pezzi_wip_fase_prec_o_oltre = sum(
                         q for cid, q in wip_righe_comp.items()
                         if sequenza_per_centro_comp.get(cid, -1) >= fase_prec.sequenza)
+                    if codice_comp != o.codice_articolo:   # WIP ripartito per priorita' (fix 27/11/2026, T200DT)
+                        pezzi_wip_fase_prec_o_oltre = min(pezzi_wip_fase_prec_o_oltre,
+                                                          max(giacenza_di_op.get(codice_comp, 0) or 0, 0))
                     pezzi_fase_precedente = max(pezzi_fase_precedente,
                                                  min(pezzi_wip_fase_prec_o_oltre, qta_necessaria))
                 disponibile_da_monte = max(pezzi_fase_precedente - pezzi_fase, 0)

@@ -187,9 +187,13 @@ async function caricaAvanzamentoCommesse(){
       <th style="background:#e6e6e6;color:#333;padding:6px;font-size:11px;width:5%">Avvisi</th>
       </tr></thead><tbody>` +
       righe.map(o => {
-        const materiale = o.materiale_completo
+        // 3 stati (Mauri 27/11/2026): OK | Materiale ordinato (in arrivo) | Mancante (da ordinare)
+        const _lista = m => Object.entries(m || {}).map(([k, v]) => k + ': ' + v).join('\n');
+        const materiale = (o.stato_materiale || (o.materiale_completo ? 'ok' : 'da_ordinare')) === 'ok'
           ? '<span style="color:#1a9e5c;font-weight:700">✅ OK</span>'
-          : '<span style="color:#c0392b;font-weight:700">🔴 Mancante</span>';
+          : o.stato_materiale === 'ordinato'
+            ? `<span style="color:#1971c2;font-weight:700" title="Già ordinato, in arrivo:\n${_lista(o.materiali_mancanti)}">🚚 Materiale ordinato</span>`
+            : `<span style="color:#c0392b;font-weight:700" title="Da ordinare:\n${_lista(o.materiali_da_ordinare || o.materiali_mancanti)}">🔴 Mancante</span>`;
         const esterno = o.centro_esterno
           ? `${o.centro_esterno}${o.lead_time_esterno_giorni ? ' (+' + o.lead_time_esterno_giorni + 'gg)' : ''}`
           : '<span style="color:#999">—</span>';

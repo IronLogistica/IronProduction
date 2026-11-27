@@ -73,3 +73,37 @@ class TestWipRipartitoPerPriorita(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAvanzamentoCommesseWipEMateriale(TestWipRipartitoPerPriorita):
+    """Stessa regola nella tabella Avanzamento Commesse (Cruscotto) + colonna Materiale a 3 stati."""
+
+    def _riga(self, op):
+        from blueprints.produzione_pp.avanzamento import calcola_avanzamento_commesse
+        righe, _segmenti = calcola_avanzamento_commesse()
+        return next(r for r in righe if r['op_codice'] == op)
+
+    def test_curvatura_al_100_solo_per_chi_ha_davvero_i_pezzi(self):
+        with self.app.app_context():
+            db.session.add(OrdineProduzione(codice='OP-100', codice_articolo='T200DT', commessa='26110100',
+                                            qta_pianificata=300, qta_buona=0, stato='Rilasciato', priorita=1,
+                                            data_rilascio=datetime(2026, 11, 10)))
+            db.session.commit()
+            self.assertEqual(self._riga('OP-100')['zone']['curvatura'], 100)   # i 300 curvati sono suoi
+            self.assertEqual(self._riga('OP-109')['zone']['curvatura'], 0, 'prima della fix: 100% come OP-100')
+
+    def test_materiale_ordinato_o_da_ordinare(self):
+        from models import OrdineAcquistoWood, RigaOrdineAcquistoWood
+        with self.app.app_context():
+            db.session.add(DistintaBaseWood(codice_padre='TR2001', codice_figlio='TPD32L3440', quantita=1.0))
+            db.session.add(CicloLavoroWood(codice='T200DT', sequenza=1, centro_costo_id=self.cur_id))
+            GiacenzaWood.query.filter_by(codice='TR2001').delete()
+            WipFaseWood.query.delete()
+            db.session.commit()
+            self.assertEqual(self._riga('OP-109')['stato_materiale'], 'da_ordinare')
+            oa = OrdineAcquistoWood(ordine_n='99', fornitore='Tubi Srl', stato_label='ORDINE_INVIATO', filename='oa99.pdf')
+            db.session.add(oa)
+            db.session.flush()
+            db.session.add(RigaOrdineAcquistoWood(ordine_id=oa.id, codice='TPD32L3440', qta_originale=120, qta_ricevuta=0))
+            db.session.commit()
+            self.assertEqual(self._riga('OP-109')['stato_materiale'], 'ordinato')
