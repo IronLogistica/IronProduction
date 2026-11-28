@@ -35,8 +35,8 @@
   </div>
   <div style="padding:10px 14px;overflow-x:auto">
     <table class="mon-table" style="width:100%">
-      <thead><tr><th>Numero ordine</th><th>Rif. cliente</th><th>Cliente</th><th>Data</th><th>Stato</th><th>File</th><th></th></tr></thead>
-      <tbody id="lista-ordini"><tr><td colspan="7" style="color:var(--text-dim)">Caricamento...</td></tr></tbody>
+      <thead><tr><th>Numero ordine</th><th>Rif. cliente</th><th>Cliente</th><th>Data</th><th>Stato</th><th title="Ordine ↔ DDT di vendita ↔ Fattura">🔭 Triple Watch</th><th>File</th><th></th></tr></thead>
+      <tbody id="lista-ordini"><tr><td colspan="8" style="color:var(--text-dim)">Caricamento...</td></tr></tbody>
     </table>
   </div>
 </div>
@@ -117,24 +117,37 @@ async function chiama(url, metodo, corpo){
   return d;
 }
 
+// Visto del Triple Watch: ✅ quando ordine, DDT di vendita e fattura tornano tutti e tre
+function vistoTw(x, o){
+  const link = `/conto-lavoro/triple-watch?ordine=${encodeURIComponent(o.numero_ordine)}`;
+  if(!x) return '<span style="color:var(--text-dim)">—</span>';
+  const v = {COMPLETO: ['✅', '#1a9e5c', 'Ordine, DDT e fattura tornano'], PARZIALE: ['🟡', '#e0a800', 'Spedito in parte'],
+             DA_FATTURARE: ['🟡', '#e0a800', 'DDT da fatturare'], NESSUN_DDT: ['⚪', 'var(--text-dim)', 'Nessun DDT']}[x.esito];
+  return `<a href="${link}" onclick="event.stopPropagation()" title="${v[2]}: DDT ${x.ddt.map(d => d.numero).join(', ') || '—'} · fatture ${x.fatture.map(f => f.numero).join(', ') || '—'}"
+            style="text-decoration:none;color:${v[1]};font-weight:800;white-space:nowrap">${v[0]} ${x.esito === 'COMPLETO' ? 'Visto' : v[2]}</a>`;
+}
+
 const BADGE_STATO = {BOZZA: '#e0a800', CONFERMATO: '#1a9e5c', SOSPESO: '#e67e22', ANNULLATO: '#c0392b'};
 
 async function caricaOrdini(){
   if(typeof caricaRiepilogo === 'function' && document.getElementById('riepilogo-box')) caricaRiepilogo();
-  const d = await chiama('/conto-lavoro/api/ordini');
+  const [d, tw] = await Promise.all([chiama('/conto-lavoro/api/ordini'), chiama('/conto-lavoro/api/triple-watch/quadro')]);
   ORDINI = Array.isArray(d) ? d : [];
+  const TW = {};
+  ((tw && tw.ordini) || []).forEach(x => TW[x.ordine_id] = x);
   const tb = document.getElementById('lista-ordini');
   tb.innerHTML = ORDINI.length ? ORDINI.map(o => `
     <tr style="cursor:pointer" onclick="apriOrdine(${o.id})">
       <td><b>${esc(o.numero_ordine)}</b></td><td>${esc(o.rif_cliente) || '—'}</td>
       <td>${esc(o.cliente)}</td><td>${esc(o.data_documento) || '—'}</td>
       <td><span style="color:${BADGE_STATO[o.stato] || '#999'};font-weight:700">${esc(o.stato)}</span></td>
+      <td>${vistoTw(TW[o.id], o)}</td>
       <td>${esc(o.filename)}</td>
       <td>${o.movimentato
           ? `<span style="font-size:11px;color:var(--text-dim)" title="Ha produzione o evasione registrata — non eliminabile">🔒</span>`
           : `<button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" title="Elimina ordine"
                onclick="event.stopPropagation(); eliminaOrdineLista(${o.id})">🗑️</button>`}</td>
-    </tr>`).join('') : '<tr><td colspan="7" style="color:var(--text-dim)">Nessun ordine importato.</td></tr>';
+    </tr>`).join('') : '<tr><td colspan="8" style="color:var(--text-dim)">Nessun ordine importato.</td></tr>';
 }
 
 async function eliminaOrdineLista(id){

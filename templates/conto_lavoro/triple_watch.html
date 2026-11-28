@@ -56,7 +56,7 @@
     <select class="modal-input" id="f-esito" onchange="disegna()" style="width:220px">
       <option value="">Tutti</option><option value="NESSUN_DDT">🔴 Nessun DDT</option>
       <option value="DA_FATTURARE">🟡 DDT da fatturare</option><option value="PARZIALE">🟡 Spedito in parte</option>
-      <option value="COMPLETO">✅ Completo</option></select></div>
+      <option value="COMPLETO">✅ Visto (tutto torna)</option></select></div>
   <div><label class="modal-label" style="margin:0">Cerca</label>
     <input class="modal-input" id="f-ordine" oninput="disegna()" placeholder="numero ordine, DDT, fattura o codice" style="width:260px"></div>
   <div id="tw-conteggi" style="margin-left:auto;font-size:12px;color:var(--text-dim)"></div>
@@ -79,7 +79,7 @@
 
 {% block scripts %}
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const ETICHETTE = {COMPLETO: '✅ Completo', PARZIALE: '🟡 Spedito in parte', DA_FATTURARE: '🟡 DDT da fatturare',
+const ETICHETTE = {COMPLETO: '✅ Visto: tutto torna', PARZIALE: '🟡 Spedito in parte', DA_FATTURARE: '🟡 DDT da fatturare',
                    NESSUN_DDT: '🔴 Nessun DDT'};
 let QUADRO = {ordini: [], ddt_tutti: [], fatture_tutte: [], ddt_senza_ordine: [], fatture_senza_abbinamento: []};
 let VISTA = 'ordini';
@@ -199,10 +199,14 @@ function disegna(){
     `✅ ${conta('COMPLETO')} · 🟡 ${conta('DA_FATTURARE') + conta('PARZIALE')} · 🔴 ${conta('NESSUN_DDT')}`;
   document.getElementById('tw-quadro').innerHTML = lista.length ? `<div class="mon-section" style="padding:10px 14px;overflow-x:auto">
     <table class="mon-table" style="width:100%"><thead><tr>
-      <th>Ordine cliente</th><th>Cliente</th><th>Spedito / ordinato</th><th>🚚 DDT di vendita</th><th>🧾 Fatture</th><th>Esito</th></tr></thead>
+      <th>Ordine cliente</th><th>Cliente</th><th>Visti</th><th>Spedito / ordinato</th><th>🚚 DDT di vendita</th><th>🧾 Fatture</th><th>Esito</th></tr></thead>
     <tbody>${lista.map(o => `<tr>
       <td><b>${esc(o.numero_ordine)}</b><div style="font-size:10px;color:var(--text-dim)">${esc(o.data)}${o.rif_cliente ? ' · rif. ' + esc(o.rif_cliente) : ''}${o.stato === 'SOSPESO' ? ' · ⏸ sospeso' : ''}</div></td>
       <td>${esc(o.cliente)}</td>
+      <td style="white-space:nowrap;font-size:12px" title="Ordine · DDT di vendita · Fattura">
+        <span style="color:#1a9e5c">✔ Ord.</span>
+        <span style="color:${o.ddt.length ? '#1a9e5c' : 'var(--text-dim)'}">${o.ddt.length ? '✔' : '○'} DDT</span>
+        <span style="color:${o.fatture.length && o.ddt.every(d => d.fatturato) ? '#1a9e5c' : (o.fatture.length ? '#e0a800' : 'var(--text-dim)')}">${o.fatture.length ? '✔' : '○'} Fatt.</span></td>
       <td style="white-space:nowrap"><b style="color:${o.spedito + 1e-6 >= o.ordinato ? '#1a9e5c' : '#e0a800'}">${o.spedito}</b> / ${o.ordinato}</td>
       <td>${o.ddt.map(x => docHtml(x, 'DDT')).join('') || '<span style="color:var(--text-dim)">—</span>'}</td>
       <td>${o.fatture.map(x => docHtml(x, 'FATTURA')).join('') || '<span style="color:var(--text-dim)">—</span>'}</td>
@@ -239,5 +243,7 @@ async function apriDoc(id){
   openModal('modalDoc');
 }
 
+const parOrdine = new URLSearchParams(location.search).get('ordine');
+if(parOrdine && document.getElementById('f-ordine')) document.getElementById('f-ordine').value = parOrdine;
 if(document.getElementById('tw-quadro')){ caricaClienti(); caricaQuadro(); }
 {% endblock %}
