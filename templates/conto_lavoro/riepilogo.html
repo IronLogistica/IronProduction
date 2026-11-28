@@ -51,7 +51,7 @@ async function caricaRiepilogo(){
               <td>${r.quantita}</td><td>${r.quantita_prodotta}</td><td>${r.quantita_evasa}</td>
               <td style="font-weight:800;color:${r.saldo_da_produrre > 0 ? '#e0a800' : '#1a9e5c'}">${r.saldo_da_produrre}</td>
               <td>${r.pct}%</td>
-              <td style="white-space:nowrap">${claBadge(r.codice)} ${claPulsanteSegnala(r.articolo_id, r.codice, r.ordine_id, r.descrizione)}</td>
+              <td style="white-space:nowrap">${claBadge(r.codice)}${(CLA.perCodice[r.codice] || []).length ? '' : '<span style="color:var(--text-dim)">—</span>'}</td>
             </tr>`).join('')}</tbody>
         </table>
       </div>
