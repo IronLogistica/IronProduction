@@ -1152,39 +1152,75 @@ _FOTO_MW_TTL = 3600          # foto trovata: 1 ora
 _FOTO_MW_TTL_VUOTA = 120     # foto non trovata: si riprova dopo 2 minuti (MasterWork puo' essere aggiornato)
 
 
-def _foto_masterwork(codice):
+def _info_masterwork(codice):
+    """Foto e CODICE INTERNO di un articolo, letti dal database di MasterWork (anagrafica_articoli).
+    Il codice del Conto Lavoro (codice cliente) viene cercato come codice interno O esterno.
+    Ritorna {'foto': url o '', 'codice_interno': 'FZ240' o ''}."""
     import time
     codice = (codice or '').strip().upper()
     if not codice:
-        return ''
+        return {'foto': '', 'codice_interno': ''}
     ora = time.time()
     in_cache = _FOTO_MW_CACHE.get(codice)
-    if in_cache and ora - in_cache[0] < (_FOTO_MW_TTL if in_cache[1] else _FOTO_MW_TTL_VUOTA):
-        return in_cache[1]
+    if in_cache and isinstance(in_cache[1], dict):
+        trovato = in_cache[1]['foto'] or in_cache[1]['codice_interno']
+        if ora - in_cache[0] < (_FOTO_MW_TTL if trovato else _FOTO_MW_TTL_VUOTA):
+            return in_cache[1]
     url_mw = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
-    trovata = ''
+    info = {'foto': '', 'codice_interno': ''}
     if url_mw:
         # il codice cliente puo' avere un nome diverso dentro MasterWork (mappa codici)
         candidati = [codice] + [m.codice_masterwork.strip().upper() for m in
                                 MappaCodiceMasterWork.query.filter(
                                     db.func.upper(MappaCodiceMasterWork.codice_ironproduction) == codice).all()]
         for c in dict.fromkeys(candidati):
-            # 1) codice interno O esterno (il codice del cliente) — /api/foto_articolo di MasterWork;
-            # 2) vecchio endpoint per codice interno, se MasterWork non e' ancora aggiornato
-            for indirizzo, parametri in ((f'{url_mw}/api/foto_articolo', {'codice': c}),
-                                         (f'{url_mw}/api/fasi_articolo/{requests.utils.quote(c, safe="")}', None)):
+            # 1) codice interno O esterno — /api/foto_articolo di MasterWork
+            try:
+                r = requests.get(f'{url_mw}/api/foto_articolo', params={'codice': c}, timeout=4)
+                j = (r.json() or {}) if r.ok else {}
+            except (requests.exceptions.RequestException, ValueError):
+                j = {}
+            foto = j.get('foto_url') or ''
+            interni = [a.get('codice_interno') for a in (j.get('articoli') or []) if a.get('codice_interno')]
+            if foto and foto != 'None' and not info['foto']:
+                info['foto'] = foto
+            if interni and not info['codice_interno']:
+                info['codice_interno'] = ', '.join(dict.fromkeys(i.strip() for i in interni))
+            # 2) vecchio endpoint per solo codice interno, se MasterWork non e' aggiornato
+            if not info['foto'] and not interni:
                 try:
-                    r = requests.get(indirizzo, params=parametri, timeout=4)
-                    foto = (r.json() or {}).get('foto_url') if r.ok else ''
+                    r = requests.get(f'{url_mw}/api/fasi_articolo/{requests.utils.quote(c, safe="")}', timeout=4)
+                    j = (r.json() or {}) if r.ok else {}
                 except (requests.exceptions.RequestException, ValueError):
-                    foto = ''
+                    j = {}
+                foto = j.get('foto_url') or ''
                 if foto and foto != 'None':
-                    trovata = foto
-                    break
-            if trovata:
+                    info['foto'] = foto
+                if (j.get('fasi_disponibili') or j.get('fasi')) and not info['codice_interno']:
+                    info['codice_interno'] = c
+            if info['foto'] and info['codice_interno']:
                 break
-    _FOTO_MW_CACHE[codice] = (ora, trovata)
-    return trovata
+    _FOTO_MW_CACHE[codice] = (ora, info)
+    return info
+
+
+def _foto_masterwork(codice):
+    return _info_masterwork(codice)['foto']
+
+
+@pp_bp.route('/api/masterwork/codici-interni', methods=['POST'])
+def api_masterwork_codici_interni():
+    """{"codici": [...]} -> {codice: codice_interno MasterWork} per il LIVE Conto Lavoro."""
+    from concurrent.futures import ThreadPoolExecutor
+    codici = [str(c).strip() for c in ((request.get_json(silent=True) or {}).get('codici') or []) if str(c).strip()]
+    codici = list(dict.fromkeys(codici))[:200]
+    app = current_app._get_current_object()
+
+    def uno(c):
+        with app.app_context():
+            return c, _info_masterwork(c)['codice_interno']
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        return jsonify(dict(ex.map(uno, codici)))
 
 
 @pp_bp.route('/api/masterwork/foto-diagnosi/<path:codice>')
@@ -1209,7 +1245,7 @@ def api_foto_masterwork_diagnosi(codice):
             except (requests.exceptions.RequestException, ValueError) as e:
                 prove.append({'codice': c, 'ricerca': nome, 'errore': str(e)[:200]})
     return jsonify({'codice': c0, 'MASTERWORK_URL': url_mw or 'NON IMPOSTATO', 'prove': prove,
-                    'in_cache': _FOTO_MW_CACHE.get(c0, (None, None))[1]})
+                    'in_cache': _FOTO_MW_CACHE.get(c0.upper(), (None, None))[1]})
 
 
 @pp_bp.route('/api/masterwork/foto/<path:codice>')

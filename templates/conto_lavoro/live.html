@@ -24,6 +24,8 @@
     align-items:center;justify-content:center;color:#3d6b8f;font-size:16px}
   .codice{font-weight:800;color:#fff}
   .descr{font-size:10px;color:#9fb8d0}
+  .cod-interno{font-weight:800;color:#7fd3ff;white-space:nowrap}
+  .cod-interno.manca{color:#3d6b8f;font-weight:400}
   .saldo-badge{display:inline-block;min-width:34px;padding:3px 8px;border-radius:6px;border:1px solid #e0a80080;
     color:#e0a800;font-weight:800}
   .saldo-badge.completo{color:#1a9e5c;border-color:#1a9e5c80}
@@ -44,17 +46,33 @@ const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 document.getElementById('contenuto').innerHTML =
   '<div class="vuoto">⚠️ Tabelle del monitor LIVE non ancora create (schema conto_lavoro alla versione {{ schema }}, serve la {{ schema_richiesto }}).</div>';
 {% else %}
+// codice cliente -> codice interno, letto dal database di MasterWork (richiesta di Mauri, 28/11/2026)
+const codiciInterni = {};
+let giri = 0;
+async function caricaCodiciInterni(codici){
+  if(++giri % 15 === 0)   // ogni 5 minuti riprova i codici non trovati
+    for(const k in codiciInterni) if(!codiciInterni[k]) delete codiciInterni[k];
+  const mancanti = codici.filter(c => !(c in codiciInterni));
+  if(!mancanti.length) return;
+  try{
+    const r = await fetch('/api/masterwork/codici-interni', {method:'POST', headers:{'Content-Type':'application/json'},
+                                                             body: JSON.stringify({codici: mancanti})});
+    Object.assign(codiciInterni, await r.json());
+  }catch(e){}
+}
 async function carica(){
   let gruppi;
   try{ gruppi = await (await fetch('/conto-lavoro/api/live')).json(); }
   catch(e){ document.getElementById('contenuto').innerHTML = '<div class="vuoto">❌ Errore di rete.</div>'; return; }
   const box = document.getElementById('contenuto');
+  if(Array.isArray(gruppi))
+    await caricaCodiciInterni([...new Set(gruppi.flatMap(g => g.ordini.flatMap(o => o.righe.map(r => r.codice))))]);
   if(!Array.isArray(gruppi) || !gruppi.length){
     box.innerHTML = '<div class="vuoto">Nessun ordine confermato al momento.</div>';
     return;
   }
   const intestazione = `<tr>
-      <th style="width:26%">Codice</th><th>Ordine</th><th>Ordinata</th><th>Prodotta</th><th>Evasa</th><th>Saldo</th><th style="width:16%">Avanzamento</th>
+      <th style="width:26%">Codice</th><th>Cod. interno</th><th>Ordine</th><th>Ordinata</th><th>Prodotta</th><th>Evasa</th><th>Saldo</th><th style="width:16%">Avanzamento</th>
     </tr>`;
   const rigaHtml = (o, r) => `
     <tr>
@@ -65,6 +83,9 @@ async function carica(){
                  onerror="this.outerHTML='<div class=&quot;miniatura-vuota&quot;>📦</div>'">`}
         <div><div class="codice">${esc(r.codice)}</div><div class="descr">${esc(r.descrizione)}</div></div>
       </td>
+      <td>${codiciInterni[r.codice]
+            ? `<span class="cod-interno">${esc(codiciInterni[r.codice])}</span>`
+            : `<span class="cod-interno manca">—</span>`}</td>
       <td>${esc(o.numero_ordine)}${o.rif_cliente ? `<div class="descr">${esc(o.rif_cliente)}</div>` : ''}</td>
       <td>${r.quantita}</td>
       <td>${r.quantita_prodotta}</td>

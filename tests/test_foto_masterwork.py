@@ -25,6 +25,9 @@ class TestFotoMasterWork(unittest.TestCase):
         r = mock.Mock(ok=True)
         cod = (params or {}).get('codice') or url.rsplit('/', 1)[-1]
         r.json.return_value = {'foto_url': 'https://xyz.supabase.co/foto/s1sx.jpg' if cod == 'S1-SX' else ''}
+        if cod in ('AS_001693', 'S1-SX') and 'foto_articolo' in url:
+            r.json.return_value['articoli'] = [{'codice_interno': 'FZ240' if cod == 'AS_001693' else 'S1-SX',
+                                                'codice_esterno': cod}]
         return r
 
     def test_codice_tradotto_con_la_mappa(self):
@@ -36,6 +39,12 @@ class TestFotoMasterWork(unittest.TestCase):
     def test_senza_foto_404(self):
         with mock.patch.object(pp.requests, 'get', side_effect=self._risposta):
             self.assertEqual(self.app.test_client().get('/api/masterwork/foto/NIENTE').status_code, 404)
+
+    def test_codici_interni_da_masterwork(self):
+        with mock.patch.object(pp.requests, 'get', side_effect=self._risposta):
+            r = self.app.test_client().post('/api/masterwork/codici-interni',
+                                            json={'codici': ['AS_001693', 'STELLA-SX', 'NIENTE']})
+        self.assertEqual(r.json, {'AS_001693': 'FZ240', 'STELLA-SX': 'S1-SX', 'NIENTE': ''})
 
 
 if __name__ == '__main__':
