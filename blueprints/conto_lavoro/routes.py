@@ -225,7 +225,21 @@ def pagina_triple_watch():
     """Triple Watch (Mauri, 28/11/2026): per ogni ordine cliente i DDT di vendita e le
     fatture collegati, dai PDF Zucchetti importati (a fine mese tutte le fatture)."""
     return render_template('conto_lavoro/triple_watch.html', active='conto_lavoro', schema=versione_schema(),
-                           schema_richiesto=VERSIONE_SCHEMA_TRIPLE_WATCH)
+                           schema_richiesto=VERSIONE_SCHEMA_TRIPLE_WATCH, modo='tw')
+
+
+@cl_bp.get('/ddt')
+def pagina_ddt_vendita():
+    """DDT di vendita: caricamento PDF e riepilogo (dati dal database, non dai PDF)."""
+    return render_template('conto_lavoro/triple_watch.html', active='conto_lavoro', schema=versione_schema(),
+                           schema_richiesto=VERSIONE_SCHEMA_TRIPLE_WATCH, modo='ddt')
+
+
+@cl_bp.get('/fatture')
+def pagina_fatture():
+    """Fatture: caricamento PDF (anche tutte quelle del mese) e riepilogo."""
+    return render_template('conto_lavoro/triple_watch.html', active='conto_lavoro', schema=versione_schema(),
+                           schema_richiesto=VERSIONE_SCHEMA_TRIPLE_WATCH, modo='fatture')
 
 
 @cl_bp.get('/anomalie')

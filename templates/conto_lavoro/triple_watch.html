@@ -14,9 +14,12 @@
   .tw-drop{border:2px dashed var(--border);border-radius:10px;padding:16px;text-align:center;color:var(--text-dim)}
 </style>
 <div class="page-toolbar">
-  <div class="page-title">🔭 Conto lavoro — Triple Watch</div>
+  <div class="page-title">{% if modo == 'ddt' %}🚚 Conto lavoro — DDT di vendita{% elif modo == 'fatture' %}🧾 Conto lavoro — Fatture{% else %}🔭 Conto lavoro — Triple Watch{% endif %}</div>
   <a class="btn btn-ghost" href="/conto-lavoro/" style="margin-left:auto">← Conto lavoro</a>
   <a class="btn btn-ghost" href="/conto-lavoro/ordini">📄 Ordini</a>
+  {% if modo != 'ddt' %}<a class="btn btn-ghost" href="/conto-lavoro/ddt">🚚 DDT di vendita</a>{% endif %}
+  {% if modo != 'fatture' %}<a class="btn btn-ghost" href="/conto-lavoro/fatture">🧾 Fatture</a>{% endif %}
+  {% if modo != 'tw' %}<a class="btn btn-ghost" href="/conto-lavoro/triple-watch">🔭 Triple Watch</a>{% endif %}
 </div>
 
 {% if schema < schema_richiesto %}
@@ -24,17 +27,27 @@
   ⚠️ Tabelle non ancora alla versione {{ schema_richiesto }} (attuale: {{ schema }}) — imposta CL_MIGRA_AUTO = {{ '%04d'|format(schema_richiesto) }} su Railway e riavvia.
 </div>
 {% else %}
+{% if modo == 'ddt' %}
+<p style="font-size:12px;color:var(--text-dim);margin:-4px 0 12px">
+  Tutti i <b>DDT di vendita</b> caricati dai PDF di Zucchetti: ordine richiamato, codici e pezzi spediti, e se sono già stati fatturati.
+</p>
+{% elif modo == 'fatture' %}
+<p style="font-size:12px;color:var(--text-dim);margin:-4px 0 12px">
+  Tutte le <b>fatture</b> caricate dai PDF di Zucchetti (anche un unico PDF con tutte quelle del mese): importo, DDT richiamati, ordini e pezzi.
+</p>
+{% else %}
 <p style="font-size:12px;color:var(--text-dim);margin:-4px 0 12px">
   Per ogni <b>ordine cliente</b>: i <b>DDT di vendita</b> con cui è stato spedito e le <b>fatture</b> che li hanno fatturati.
   Si caricano i PDF di Zucchetti (anche tanti insieme, anche un unico PDF con tutte le fatture del mese): il programma legge
   numero, data, cliente e i documenti richiamati (<i>Ns. doc.(ORDCL)</i> sul DDT, il DDT sulla fattura) e li aggancia da solo.
 </p>
+{% endif %}
 
 <div class="mon-section" style="padding:14px;margin-bottom:16px">
   <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
-    <button class="btn btn-primary" style="font-size:15px;padding:10px 18px" onclick="scegli('DDT')">🚚 Carica DDT di vendita</button>
-    <button class="btn btn-primary" style="font-size:15px;padding:10px 18px;background:#6c3fc5;border-color:#6c3fc5" onclick="scegli('FATTURA')">🧾 Carica fatture</button>
-    <span style="font-size:12px;color:var(--text-dim)">PDF di Zucchetti — anche più file insieme, anche un unico PDF con tutte le fatture del mese</span>
+    {% if modo != 'fatture' %}<button class="btn btn-primary" style="font-size:15px;padding:10px 18px" onclick="scegli('DDT')">🚚 Carica DDT di vendita</button>{% endif %}
+    {% if modo != 'ddt' %}<button class="btn btn-primary" style="font-size:15px;padding:10px 18px;background:#6c3fc5;border-color:#6c3fc5" onclick="scegli('FATTURA')">🧾 Carica fatture</button>{% endif %}
+    <span style="font-size:12px;color:var(--text-dim)">PDF di Zucchetti — anche più file insieme{% if modo != 'ddt' %}, anche un unico PDF con tutte le fatture del mese{% else %}, anche un unico PDF con più DDT{% endif %}</span>
     <input type="file" id="tw-file" accept=".pdf" multiple style="display:none" onchange="fileScelti()">
     <input type="hidden" id="tw-tipo" value="AUTO">
   </div>
@@ -47,7 +60,7 @@
   <div id="tw-esito" style="margin-top:12px;font-size:12px"></div>
 </div>
 
-<div style="display:flex;gap:6px;margin-bottom:10px">
+<div style="display:{{ 'flex' if modo == 'tw' else 'none' }};gap:6px;margin-bottom:10px">
   <button class="btn btn-primary tw-tab" data-vista="ordini" onclick="vista(this)">📋 Quadro per ordine</button>
   <button class="btn btn-ghost tw-tab" data-vista="ddt" onclick="vista(this)">🚚 Riepilogo DDT di vendita</button>
   <button class="btn btn-ghost tw-tab" data-vista="fatture" onclick="vista(this)">🧾 Riepilogo fatture</button>
@@ -85,7 +98,7 @@ const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;
 const ETICHETTE = {COMPLETO: '✅ Visto: tutto torna', PARZIALE: '🟡 Spedito in parte', DA_FATTURARE: '🟡 DDT da fatturare',
                    NESSUN_DDT: '🔴 Nessun DDT'};
 let QUADRO = {ordini: [], ddt_tutti: [], fatture_tutte: [], ddt_senza_ordine: [], fatture_senza_abbinamento: []};
-let VISTA = 'ordini';
+let VISTA = {{ ({'ddt': 'ddt', 'fatture': 'fatture'}.get(modo, 'ordini'))|tojson }};
 function vista(b){
   VISTA = b.dataset.vista;
   document.querySelectorAll('.tw-tab').forEach(x => x.className = 'btn tw-tab ' + (x === b ? 'btn-primary' : 'btn-ghost'));
@@ -277,5 +290,6 @@ if(parCarica){
   if(b){ b.style.boxShadow = '0 0 0 3px #ffd84d'; b.focus(); }
 }
 if(parOrdine && document.getElementById('f-ordine')) document.getElementById('f-ordine').value = parOrdine;
+if(VISTA !== 'ordini' && document.getElementById('box-esito')) document.getElementById('box-esito').style.display = 'none';
 if(document.getElementById('tw-quadro')){ caricaClienti(); caricaQuadro(); }
 {% endblock %}
