@@ -229,15 +229,88 @@ def pagina_magazzino():
     return redirect('/conto-lavoro/anagrafiche#magazzino')
 
 
+# ── Postazione LIVE blindata per gli operai (Mauri, 28/11/2026) ─────────────
+# Un dispositivo che apre il LIVE (indirizzo /conto-lavoro/live, senza ?capo=1)
+# diventa "postazione LIVE": un cookie lo blocca sul monitor e QUALSIASI altra
+# pagina di IronProduction lo rimanda al LIVE (anche col tasto Indietro o
+# scrivendo un indirizzo). Si sblocca solo con il PIN di Angelo
+# (/conto-lavoro/live/sblocca). Dal Conto lavoro il capo apre il LIVE con
+# ?capo=1 e il suo browser non viene bloccato.
+COOKIE_TOTEM = 'ip_postazione_live'
+_TOTEM_GET = ('/conto-lavoro/live', '/conto-lavoro/api/live', '/conto-lavoro/api/anomalie-risolte',
+              '/conto-lavoro/api/anomalie-angelo', '/api/masterwork/foto/', '/api/masterwork/tempi-standard/',
+              '/favicon.ico', '/static/')
+_TOTEM_POST = ('/api/masterwork/codici-interni', '/api/masterwork/anomalie')
+
+
+def _consentito_alla_postazione(metodo, percorso):
+    if percorso.startswith('/conto-lavoro/live/sblocca'):
+        return True
+    if metodo in ('GET', 'HEAD'):
+        if percorso.startswith('/conto-lavoro/api/articoli/') and percorso.endswith('/foto'):
+            return True
+        return any(percorso == p or (p.endswith('/') and percorso.startswith(p)) or percorso.startswith(p + '?')
+                   for p in _TOTEM_GET) or percorso == '/conto-lavoro/live'
+    if metodo == 'POST':
+        return percorso in _TOTEM_POST
+    return False
+
+
+@cl_bp.before_app_request
+def _blocca_postazione_live():
+    if request.cookies.get(COOKIE_TOTEM) != '1':
+        return None
+    if _consentito_alla_postazione(request.method, request.path):
+        return None
+    if request.method == 'GET' and 'text/html' in (request.headers.get('Accept') or ''):
+        return redirect('/conto-lavoro/live')
+    return jsonify(ok=False, error='Postazione LIVE: qui si vede solo il monitor del Conto lavoro.'), 403
+
+
 @cl_bp.get('/live')
 def pagina_live():
     """Monitor LIVE Conto lavoro — stile del monitor MasterWork (Saldatura,
     ecc.): niente sidebar/topbar, pensato per un totem/monitor d'officina.
-    URL a parte apposta (indicazione di Mauri, 29/09/2026): dalla dashboard
-    del conto lavoro c'è solo il collegamento, questa pagina vive per conto
-    suo. Nessun login (stessa scelta di tutto il modulo)."""
-    return render_template('conto_lavoro/live.html', schema=versione_schema(),
-                           schema_richiesto=VERSIONE_SCHEMA_LIVE)
+    Aperto senza ?capo=1 il dispositivo diventa POSTAZIONE LIVE (vedi sopra)."""
+    capo = request.args.get('capo') == '1' and request.cookies.get(COOKIE_TOTEM) != '1'
+    risposta = current_app.make_response(render_template('conto_lavoro/live.html', schema=versione_schema(),
+                                                         schema_richiesto=VERSIONE_SCHEMA_LIVE, postazione=not capo))
+    if not capo:
+        risposta.set_cookie(COOKIE_TOTEM, '1', max_age=10 * 365 * 24 * 3600, httponly=True, samesite='Lax',
+                            secure=request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https')
+    risposta.headers['Cache-Control'] = 'no-store'
+    return risposta
+
+
+@cl_bp.route('/live/sblocca', methods=['GET', 'POST'])
+def pagina_sblocca_postazione():
+    """Toglie il blocco "postazione LIVE" da questo dispositivo: serve il PIN di Angelo."""
+    errore = ''
+    if request.method == 'POST':
+        pin = (request.form.get('pin') or '').strip()
+        atteso = _pin_angelo()
+        if not atteso:
+            errore = 'PIN di Angelo non impostato su Railway (CL_PIN_ANGELO): impossibile sbloccare.'
+        elif not pin or not hmac.compare_digest(pin, atteso):
+            errore = 'PIN errato.'
+        else:
+            r = redirect('/conto-lavoro/')
+            r.delete_cookie(COOKIE_TOTEM)
+            return r
+    return f"""<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Sblocca postazione LIVE</title>
+<style>body{{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;background:#07101f;
+color:#eaf4ff;font-family:'Segoe UI',Arial,sans-serif}}form{{background:#0a1623;border:2px solid #1e6fa5;border-radius:12px;
+padding:24px;width:min(380px,92vw)}}input{{width:100%;box-sizing:border-box;padding:12px;font-size:18px;border-radius:8px;
+border:1px solid #1e6fa5;background:#0f2237;color:#fff;margin:10px 0}}button{{width:100%;padding:12px;border:0;border-radius:8px;
+background:#1a9e5c;color:#fff;font-weight:800;font-size:15px;cursor:pointer}}a{{color:#7fd3ff}}</style></head><body>
+<form method="post"><div style="font-size:20px;font-weight:900">🔒 Postazione LIVE</div>
+<div style="font-size:13px;color:#9fb8d0;margin-top:6px">Questo dispositivo può vedere solo il LIVE del Conto lavoro.
+Per sbloccarlo serve il PIN di Angelo.</div>
+<input type="password" name="pin" inputmode="numeric" autofocus placeholder="PIN di Angelo">
+<div style="color:#ff6b6b;font-size:13px;min-height:18px">{errore}</div>
+<button>🔓 Sblocca questo dispositivo</button>
+<div style="margin-top:12px;font-size:13px"><a href="/conto-lavoro/live">← torna al LIVE</a></div></form></body></html>"""
 
 
 @cl_bp.get('/api/stato')

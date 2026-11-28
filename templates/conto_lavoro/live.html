@@ -96,6 +96,12 @@
 <div id="popup" onclick="if(event.target===this) chiudiPopup()"><div class="popup-box" id="popup-box"></div></div>
 
 <script>
+{% if postazione %}
+// Postazione LIVE: il tasto Indietro non porta fuori dal monitor (il server comunque rimanda qui ogni altra pagina)
+history.pushState(null, '', location.href);
+window.addEventListener('popstate', () => history.pushState(null, '', location.href));
+document.addEventListener('contextmenu', e => e.preventDefault());
+{% endif %}
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 {% if schema < schema_richiesto %}
 document.getElementById('contenuto').innerHTML =

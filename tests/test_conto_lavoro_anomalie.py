@@ -130,7 +130,7 @@ class TestAnomalieContoLavoro(unittest.TestCase):
 
     def test_pagine_si_aprono(self):
         self.app.context_processor(lambda: {'now': '', 'kanban_gruppi': [], 'macchine_monitor': [], 'sidebar_gruppi': []})
-        for url in ('/conto-lavoro/anomalie', '/conto-lavoro/anagrafiche', '/conto-lavoro/ordini', '/conto-lavoro/live',
+        for url in ('/conto-lavoro/anomalie', '/conto-lavoro/anagrafiche', '/conto-lavoro/ordini', '/conto-lavoro/live?capo=1',
                     '/conto-lavoro/'):
             self.assertEqual(self.c.get(url).status_code, 200, url)
         self.assertEqual(self.c.get('/conto-lavoro/magazzino').status_code, 302)    # uniti
@@ -152,6 +152,30 @@ class TestAnomalieContoLavoro(unittest.TestCase):
         self.assertTrue(self.c.post('/conto-lavoro/api/articoli', json=corpo).json['ok'])
         self.c.post('/conto-lavoro/api/angelo/esci')
         self.assertEqual(self.c.post('/conto-lavoro/api/articoli', json={**corpo, 'codice': 'URGENTE-2'}).status_code, 403)
+
+    def test_postazione_live_bloccata(self):
+        c = self.app.test_client()
+        r = c.get('/conto-lavoro/live')                       # il dispositivo diventa postazione LIVE
+        self.assertIn('ip_postazione_live=1', r.headers.get('Set-Cookie', ''))
+        html = {'Accept': 'text/html'}
+        for url in ('/conto-lavoro/', '/conto-lavoro/ordini', '/conto-lavoro/anagrafiche', '/launchpad',
+                    '/conto-lavoro/live?capo=1&x=../ordini'):
+            r = c.get(url, headers=html)
+            if url.startswith('/conto-lavoro/live'):
+                self.assertEqual(r.status_code, 200)
+            else:
+                self.assertEqual((r.status_code, r.headers.get('Location')), (302, '/conto-lavoro/live'), url)
+        self.assertEqual(c.get('/conto-lavoro/api/live').status_code, 200)
+        self.assertEqual(c.get('/conto-lavoro/api/ordini').status_code, 403)
+        self.assertEqual(c.post('/conto-lavoro/api/anomalie-angelo', json={}).status_code, 403)
+        self.app.config['CL_PIN_ANGELO'] = '2468'
+        self.assertEqual(c.post('/conto-lavoro/live/sblocca', data={'pin': '1'}).status_code, 200)   # PIN errato
+        r = c.post('/conto-lavoro/live/sblocca', data={'pin': '2468'})
+        self.assertEqual(r.status_code, 302)
+        self.assertEqual(c.get('/conto-lavoro/ordini', headers=html).status_code, 200)   # sbloccato
+        capo = self.app.test_client()
+        r = capo.get('/conto-lavoro/live?capo=1')                # il capo non viene bloccato
+        self.assertNotIn('ip_postazione_live', r.headers.get('Set-Cookie', ''))
 
 
 if __name__ == '__main__':
