@@ -1130,6 +1130,45 @@ def _ordini_per_numero(numero, data_rif=None, cliente_id=None):
     return [max(prima, key=lambda o: o.data_documento)] if prima else candidati[:1]
 
 
+def _ordine_della_riga_ddt(numero_rif, data_doc, cliente_id, ordini_doc):
+    """Ordine evaso da una riga di DDT: quello della sua sezione ORDCL, oppure l'unico richiamato dal DDT."""
+    if numero_rif:
+        trovati = _ordini_per_numero(numero_rif, data_doc, cliente_id) or _ordini_per_numero(numero_rif, data_doc)
+        return trovati[0] if trovati else None
+    return ordini_doc[0] if len(ordini_doc) == 1 else None
+
+
+def _ricalcola_evasa_da_ddt(ordine_ids):
+    """EVASIONE AUTOMATICA (Mauri, 28/11/2026): la quantita' evasa (consegnata) di ogni riga
+    d'ordine = somma dei pezzi di quel codice nei DDT di vendita caricati che evadono quell'ordine.
+    Ricalcolata da zero per gli ordini toccati (caricamento, ricaricamento, eliminazione di un DDT):
+    ricaricare lo stesso DDT non raddoppia mai le quantita'. Se un codice compare su piu' righe
+    dello stesso ordine, i pezzi riempiono le righe in ordine fino alla quantita' ordinata."""
+    ordine_ids = {i for i in ordine_ids if i}
+    if not ordine_ids:
+        return
+    spediti = {}                                   # (ordine_id, CODICE) -> pezzi
+    for d in ClTwDocumento.query.filter_by(tipo='DDT').all():
+        ordini_doc = [o for r in d.riferimenti if r.tipo_rif == 'ORDINE'
+                      for o in (_ordini_per_numero(r.numero_rif, d.data_documento, d.cliente_id) or
+                                _ordini_per_numero(r.numero_rif, d.data_documento))]
+        for r in d.righe:
+            o = _ordine_della_riga_ddt(r.numero_ordine_rif, d.data_documento, d.cliente_id, ordini_doc)
+            if o and o.id in ordine_ids:
+                k = (o.id, (r.codice or '').upper())
+                spediti[k] = spediti.get(k, 0.0) + float(r.quantita or 0)
+    for o in ClOrdine.query.filter(ClOrdine.id.in_(ordine_ids)).all():
+        per_codice = {}
+        for riga in o.righe:
+            per_codice.setdefault((riga.articolo.codice if riga.articolo else '').upper(), []).append(riga)
+        for codice, righe in per_codice.items():
+            resto = spediti.get((o.id, codice), 0.0)
+            for i, riga in enumerate(righe):
+                quota = resto if i == len(righe) - 1 else min(resto, float(riga.quantita or 0))
+                riga.quantita_evasa = round(max(quota, 0), 3)
+                resto -= quota
+
+
 @cl_bp.post('/api/triple-watch/importa')
 def api_tw_importa():
     """Uno o piu' PDF (campo 'files'), tipo AUTO|DDT|FATTURA. Senza conferma=true: solo anteprima.
@@ -1143,6 +1182,7 @@ def api_tw_importa():
     tipo_richiesto = (request.form.get('tipo') or 'AUTO').upper()
     conferma = (request.form.get('conferma') or '').lower() == 'true'
     risultati, salvati, aggiornati = [], 0, 0
+    ordini_toccati = set()
     for f in files:
         if not f.filename.lower().endswith('.pdf'):
             risultati.append({'file': f.filename, 'errore': 'Non è un PDF.'})
@@ -1168,8 +1208,19 @@ def api_tw_importa():
                     'cliente_riconosciuto': bool(cliente), 'importo': d['importo'],
                     'ordini_rif': [n for t, n in d['riferimenti'] if t == 'ORDINE'],
                     'ordini_trovati': [o.numero_ordine for o in ordini_rif],
-                    'ddt_rif': ddt_rif, 'ddt_trovati': ddt_trovati, 'n_righe': len(d['righe']),
-                    'righe': d['righe'][:40]}
+                    'ddt_rif': ddt_rif, 'ddt_trovati': ddt_trovati, 'n_righe': len(d['righe'])}
+            righe_vista = []
+            for r in d['righe'][:200]:
+                rv = dict(r)
+                if d['tipo'] == 'DDT':
+                    o = _ordine_della_riga_ddt(r.get('ordine_rif'), data_doc, cliente.id if cliente else None, ordini_rif)
+                    rv['ordine'] = o.numero_ordine if o else ''
+                    righe_o = [x for x in (o.righe if o else []) if x.articolo and x.articolo.codice.upper() == r['codice']]
+                    rv['in_ordine'] = bool(righe_o)
+                    rv['ordinata'] = sum(float(x.quantita or 0) for x in righe_o) if righe_o else None
+                    rv['evasa_attuale'] = sum(float(x.quantita_evasa or 0) for x in righe_o) if righe_o else None
+                righe_vista.append(rv)
+            voce['righe'] = righe_vista
             if d.get('tipo_diverso'):
                 voce['errore'] = ('Questo PDF sembra una FATTURA: caricalo con "Carica fatture".'
                                   if d['tipo_diverso'] == 'FATTURA' else
@@ -1183,6 +1234,13 @@ def api_tw_importa():
             esistente = ClTwDocumento.query.filter_by(tipo=d['tipo'], numero=d['numero'], anno=anno).first()
             voce['gia_presente'] = bool(esistente)
             if conferma:
+                if d['tipo'] == 'DDT':
+                    ordini_toccati.update(o.id for o in ordini_rif)
+                    ordini_toccati.update(o.id for o in (_ordine_della_riga_ddt(r.get('ordine_rif'), data_doc,
+                                          cliente.id if cliente else None, ordini_rif) for r in d['righe']) if o)
+                    if esistente:   # un DDT ricaricato puo' aver evaso altri ordini: ricalcolo anche quelli
+                        ordini_toccati.update(o.id for r in esistente.riferimenti if r.tipo_rif == 'ORDINE'
+                                              for o in _ordini_per_numero(r.numero_rif, esistente.data_documento))
                 doc = esistente or ClTwDocumento(tipo=d['tipo'], numero=d['numero'], anno=anno)
                 if esistente:
                     doc.riferimenti.clear()
@@ -1206,10 +1264,14 @@ def api_tw_importa():
                 db.session.flush()
             risultati.append(voce)
     if conferma:
+        db.session.flush()
+        _ricalcola_evasa_da_ddt(ordini_toccati)
         _audit('TRIPLE_WATCH_IMPORT', 'cl_tw_documento', '', dopo={'nuovi': salvati, 'aggiornati': aggiornati,
+                                                                   'ordini_evasi': sorted(ordini_toccati),
                                                                    'file': [f.filename[:100] for f in files]})
         db.session.commit()
-    return jsonify(ok=True, anteprima=not conferma, documenti=risultati, nuovi=salvati, aggiornati=aggiornati)
+    return jsonify(ok=True, anteprima=not conferma, documenti=risultati, nuovi=salvati, aggiornati=aggiornati,
+                   ordini_evasi=len(ordini_toccati) if conferma else 0)
 
 
 def _doc_tw_dict(d):
@@ -1359,8 +1421,12 @@ def api_tw_elimina_documento(did):
     if errore:
         return errore
     d = db.session.get(ClTwDocumento, did) or abort(404)
+    toccati = {o.id for r in d.riferimenti if r.tipo_rif == 'ORDINE'
+               for o in _ordini_per_numero(r.numero_rif, d.data_documento)} if d.tipo == 'DDT' else set()
     _audit('TRIPLE_WATCH_DOC_ELIMINATO', 'cl_tw_documento', d.id, prima=_doc_tw_dict(d))
     db.session.delete(d)
+    db.session.flush()
+    _ricalcola_evasa_da_ddt(toccati)
     db.session.commit()
     return jsonify(ok=True)
 

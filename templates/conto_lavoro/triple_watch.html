@@ -137,6 +137,25 @@ function resetAnteprima(){
   document.getElementById('tw-conferma').disabled = true;
 }
 
+// Righe lette dal PDF, PRIMA di importare: per i DDT, quale riga d'ordine evadono
+function dettaglioRighe(x){
+  const ddt = x.tipo === 'DDT';
+  return `<div style="margin-top:12px;border:1px solid var(--border);border-radius:8px;padding:8px 10px">
+    <div style="font-weight:800;margin-bottom:6px">${ddt ? '🚚 DDT' : '🧾 Fattura'} ${esc(x.numero)} — ${x.righe.length} righe lette${x.n_righe > x.righe.length ? ` (mostrate ${x.righe.length} di ${x.n_righe})` : ''}</div>
+    <table class="mon-table" style="width:100%"><thead><tr><th>Codice</th><th>Descrizione</th><th>Q.tà</th>
+      ${ddt ? '<th>Ordine</th><th>Evasione</th>' : ''}</tr></thead>
+    <tbody>${x.righe.map(r => {
+      let controllo = '';
+      if(ddt){
+        if(!r.ordine) controllo = '<span style="color:#e0a800">⚠️ ordine non trovato nel programma: non evade nulla</span>';
+        else if(!r.in_ordine) controllo = `<span style="color:#e0a800">⚠️ codice non presente nell'ordine ${esc(r.ordine)}</span>`;
+        else controllo = `<span style="color:#1a9e5c">✅ evade ${esc(r.ordine)}</span> <span style="color:var(--text-dim)">· ordinata ${r.ordinata} · consegnata ora ${r.evasa_attuale}</span>`;
+      }
+      return `<tr><td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td><td><b>${r.quantita ?? ''}</b></td>
+        ${ddt ? `<td>${esc(r.ordine || r.ordine_rif || '')}</td><td style="font-size:12px">${controllo}</td>` : ''}</tr>`;
+    }).join('')}</tbody></table></div>`;
+}
+
 async function importa(conferma){
   const files = document.getElementById('tw-file').files;
   const esito = document.getElementById('tw-esito');
@@ -164,13 +183,14 @@ async function importa(conferma){
       <td>${x.n_righe ?? ''}</td>
       <td style="font-size:11px">${x.errore ? esc(x.errore) : (x.gia_presente ? '♻️ già presente: verrà aggiornato' : '🆕')}</td>
     </tr>`).join('')}</tbody></table>
-    <div style="font-size:11px;color:var(--text-dim);margin-top:4px">✅ = già trovato nel programma · ❔ = non ancora presente (si aggancerà da solo quando arriva)</div>`;
+    <div style="font-size:11px;color:var(--text-dim);margin-top:4px">✅ = già trovato nel programma · ❔ = non ancora presente (si aggancerà da solo quando arriva)</div>
+    ${d.documenti.filter(x => !x.errore && (x.righe || []).length).map(dettaglioRighe).join('')}`;
   if(d.anteprima){
-    esito.innerHTML = `<b>${validi.length}</b> documento/i letti` + tabella;
+    esito.innerHTML = `<b>${validi.length}</b> documento/i letti — controlla le righe qui sotto e poi premi <b>✅ Conferma importazione</b>` + tabella;
     document.getElementById('tw-conferma').disabled = !validi.length;
     return;
   }
-  esito.innerHTML = `<span style="color:#1a9e5c;font-weight:700">✅ Importati: ${d.nuovi} nuovi, ${d.aggiornati} aggiornati.</span>` + tabella;
+  esito.innerHTML = `<span style="color:#1a9e5c;font-weight:700">✅ Importati: ${d.nuovi} nuovi, ${d.aggiornati} aggiornati.${d.ordini_evasi ? ` Evasione (quantità consegnata) aggiornata su ${d.ordini_evasi} ordine/i.` : ''}</span>` + tabella;
   document.getElementById('tw-conferma').disabled = true;
   document.getElementById('tw-scelta').style.display = 'none';
   document.getElementById('tw-file').value = '';

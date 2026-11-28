@@ -236,6 +236,29 @@ class TestTripleWatch(unittest.TestCase):
         self.assertEqual([f['numero'] for f in q['fatture_senza_abbinamento']], ['46'])
         self.assertEqual(self._carica(pdf(FATT_45), 'f45.pdf')['aggiornati'], 1)   # ricaricare non duplica
 
+    def _evase(self):
+        with self.app.app_context():
+            o = clm.ClOrdine.query.filter_by(numero_ordine='293/IS').first()
+            return [float(r.quantita_evasa) for r in o.righe]
+
+    def test_evasione_automatica_dal_ddt(self):
+        a = self._carica(pdf(DDT_617), 'ddt.pdf', conferma=False)
+        righe = a['documenti'][0]['righe']
+        self.assertEqual([(r['codice'], r['quantita'], r['ordine'], r['in_ordine']) for r in righe],
+                         [('AS_001693', 3.0, '293/IS', True), ('AS_001695', 2.0, '293/IS', True)])
+        self.assertEqual(self._evase(), [0.0, 0.0])                    # l'anteprima non evade
+        r = self._carica(pdf(DDT_617), 'ddt.pdf')
+        self.assertEqual(r['ordini_evasi'], 1)
+        self.assertEqual(self._evase(), [3.0, 2.0])
+        self._carica(pdf(DDT_617), 'ddt.pdf')                          # ricaricato: non raddoppia
+        self.assertEqual(self._evase(), [3.0, 2.0])
+        ddt2 = DDT_617.replace('617 /DDT', '640 /DDT').replace('AS_001693 TELAIO FRANGIZOLLE FCH n. 3,000\n', '')
+        self._carica(pdf(ddt2), 'ddt2.pdf')                            # secondo DDT: si somma
+        self.assertEqual(self._evase(), [3.0, 4.0])
+        did = next(d['id'] for d in self.c.get('/conto-lavoro/api/triple-watch/quadro').json['ddt_tutti'] if d['numero'] == '640')
+        self.c.delete(f'/conto-lavoro/api/triple-watch/documenti/{did}')  # eliminato: torna indietro
+        self.assertEqual(self._evase(), [3.0, 2.0])
+
     def test_ordine_a_mano_poi_pdf(self):
         corpo = {'cliente_id': self.cid, 'numero_ordine': '300/IS', 'righe': [{'codice': 'URG-9', 'quantita': 4}]}
         self.assertEqual(self.c.post('/conto-lavoro/api/ordini/manuale', json=corpo).status_code, 403)
