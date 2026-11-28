@@ -1156,6 +1156,12 @@ def api_tw_importa():
                     'ordini_trovati': [o.numero_ordine for o in ordini_rif],
                     'ddt_rif': ddt_rif, 'ddt_trovati': ddt_trovati, 'n_righe': len(d['righe']),
                     'righe': d['righe'][:40]}
+            if d.get('tipo_diverso'):
+                voce['errore'] = ('Questo PDF sembra una FATTURA: caricalo con "Carica fatture".'
+                                  if d['tipo_diverso'] == 'FATTURA' else
+                                  'Questo PDF sembra un DDT di vendita: caricalo con "Carica DDT di vendita".')
+                risultati.append(voce)
+                continue
             if not d['tipo'] or not d['numero']:
                 voce['errore'] = 'Documento non riconosciuto (né DDT né fattura) o numero non letto.'
                 risultati.append(voce)

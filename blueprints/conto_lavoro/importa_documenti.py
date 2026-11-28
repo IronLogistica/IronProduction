@@ -208,5 +208,8 @@ def estrai_documenti(raw, tipo_richiesto='AUTO'):
                  'cliente_piva': '', 'importo': None, 'riferimenti': [], 'righe': []}
         d['pagine'] = g['pagine']
         d['testo'] = g['testo']
+        riconosciuto = riconosci_tipo(g['testo'])
+        if tipo_richiesto in ('DDT', 'FATTURA') and riconosciuto and riconosciuto != tipo_richiesto:
+            d['tipo_diverso'] = riconosciuto     # es. una fattura caricata col pulsante "Carica DDT"
         documenti.append(d)
     return documenti, None

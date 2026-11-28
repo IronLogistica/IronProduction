@@ -42,10 +42,13 @@
 </div>
 
 <!-- TRIPLE WATCH: pagina dedicata -->
-<a href="/conto-lavoro/triple-watch" class="mon-section" style="display:block;padding:12px 14px;text-decoration:none;color:inherit">
-  <b>🔭 Triple Watch — Ordine ↔ DDT di vendita ↔ Fattura</b>
-  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Importa i PDF dei DDT di vendita e delle fatture (anche tutte quelle del mese) e vedi per ogni ordine cosa è stato spedito e fatturato →</div>
-</a>
+<div class="mon-section" style="padding:12px 14px;display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+  <div style="flex:1;min-width:260px"><b>🔭 Triple Watch — Ordine ↔ DDT di vendita ↔ Fattura</b>
+    <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Carica i PDF dei DDT di vendita e delle fatture (anche tutte quelle del mese): gli ordini prendono il visto ✅ quando tutto torna.</div></div>
+  <a class="btn btn-primary" href="/conto-lavoro/triple-watch?carica=DDT">🚚 Carica DDT di vendita</a>
+  <a class="btn btn-primary" href="/conto-lavoro/triple-watch?carica=FATTURA" style="background:#6c3fc5;border-color:#6c3fc5">🧾 Carica fatture</a>
+  <a class="btn btn-ghost" href="/conto-lavoro/triple-watch">Apri Triple Watch →</a>
+</div>
 {% endif %}
 
 <!-- MODAL IMPORT ORDINE -->

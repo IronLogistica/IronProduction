@@ -147,6 +147,10 @@ class TestFormatiReali(unittest.TestCase):
         o2 = estrai_dati_ordine('Codice Descrizione\n' + riga_faza)
         self.assertEqual((o2['righe'][0]['quantita'], o2['righe'][0]['prezzo_unitario']), (3.0, 25.0))
 
+    def test_pulsante_sbagliato(self):
+        d = estrai_documenti(pdf(FATT_REALE_P1, FATT_REALE_P2), 'DDT')[0][0]
+        self.assertEqual(d.get('tipo_diverso'), 'FATTURA')
+
     def test_ordine_non_scambiato_per_fattura(self):
         self.assertIsNone(estrai_documenti(pdf(ORDINE_FEMAC))[0][0]['tipo'])
 

@@ -31,15 +31,18 @@
 </p>
 
 <div class="mon-section" style="padding:14px;margin-bottom:16px">
-  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
-    <div><label class="modal-label" style="margin:0">Documenti</label>
-      <select class="modal-input" id="tw-tipo" style="width:200px">
-        <option value="AUTO">Riconosci da solo</option><option value="DDT">DDT di vendita</option><option value="FATTURA">Fatture</option>
-      </select></div>
-    <div style="flex:1;min-width:260px"><label class="modal-label" style="margin:0">File PDF (anche più di uno)</label>
-      <input type="file" id="tw-file" accept=".pdf" multiple class="modal-input" onchange="resetAnteprima()"></div>
-    <button class="btn btn-ghost" onclick="importa(false)">🔍 Anteprima</button>
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center">
+    <button class="btn btn-primary" style="font-size:15px;padding:10px 18px" onclick="scegli('DDT')">🚚 Carica DDT di vendita</button>
+    <button class="btn btn-primary" style="font-size:15px;padding:10px 18px;background:#6c3fc5;border-color:#6c3fc5" onclick="scegli('FATTURA')">🧾 Carica fatture</button>
+    <span style="font-size:12px;color:var(--text-dim)">PDF di Zucchetti — anche più file insieme, anche un unico PDF con tutte le fatture del mese</span>
+    <input type="file" id="tw-file" accept=".pdf" multiple style="display:none" onchange="fileScelti()">
+    <input type="hidden" id="tw-tipo" value="AUTO">
+  </div>
+  <div id="tw-scelta" style="display:none;margin-top:12px;align-items:center;gap:10px;flex-wrap:wrap">
+    <span id="tw-scelta-testo" style="font-size:13px"></span>
+    <button class="btn btn-ghost" onclick="importa(false)">🔍 Rileggi anteprima</button>
     <button class="btn btn-primary" id="tw-conferma" onclick="importa(true)" disabled>✅ Conferma importazione</button>
+    <button class="btn btn-ghost" onclick="annullaScelta()">✕ Annulla</button>
   </div>
   <div id="tw-esito" style="margin-top:12px;font-size:12px"></div>
 </div>
@@ -94,6 +97,28 @@ const righeHtml = r => `<details><summary style="cursor:pointer;font-size:12px">
 const cerca = (testo, q) => !q || testo.toUpperCase().includes(q);
 const euro = v => v == null ? '' : v.toLocaleString('it-IT', {style: 'currency', currency: 'EUR'});
 
+const NOMI_TIPO = {DDT: '🚚 DDT di vendita', FATTURA: '🧾 Fatture'};
+function scegli(tipo){
+  document.getElementById('tw-tipo').value = tipo;
+  const inp = document.getElementById('tw-file');
+  inp.value = '';
+  inp.click();
+}
+function fileScelti(){
+  const files = document.getElementById('tw-file').files;
+  if(!files.length) return;
+  const tipo = document.getElementById('tw-tipo').value;
+  document.getElementById('tw-scelta').style.display = 'flex';
+  document.getElementById('tw-scelta-testo').innerHTML =
+    `<b>${NOMI_TIPO[tipo] || 'Documenti'}</b>: ${[...files].map(f => esc(f.name)).join(', ')}`;
+  resetAnteprima();
+  importa(false);                       // anteprima subito: si controlla e poi si conferma
+}
+function annullaScelta(){
+  document.getElementById('tw-file').value = '';
+  document.getElementById('tw-scelta').style.display = 'none';
+  resetAnteprima();
+}
 function resetAnteprima(){
   document.getElementById('tw-esito').innerHTML = '';
   document.getElementById('tw-conferma').disabled = true;
@@ -134,6 +159,8 @@ async function importa(conferma){
   }
   esito.innerHTML = `<span style="color:#1a9e5c;font-weight:700">✅ Importati: ${d.nuovi} nuovi, ${d.aggiornati} aggiornati.</span>` + tabella;
   document.getElementById('tw-conferma').disabled = true;
+  document.getElementById('tw-scelta').style.display = 'none';
+  document.getElementById('tw-file').value = '';
   showToast('✅ Documenti importati');
   caricaQuadro();
 }
@@ -244,6 +271,11 @@ async function apriDoc(id){
 }
 
 const parOrdine = new URLSearchParams(location.search).get('ordine');
+const parCarica = new URLSearchParams(location.search).get('carica');
+if(parCarica){
+  const b = [...document.querySelectorAll('button')].find(x => x.getAttribute('onclick') === `scegli('${parCarica}')`);
+  if(b){ b.style.boxShadow = '0 0 0 3px #ffd84d'; b.focus(); }
+}
 if(parOrdine && document.getElementById('f-ordine')) document.getElementById('f-ordine').value = parOrdine;
 if(document.getElementById('tw-quadro')){ caricaClienti(); caricaQuadro(); }
 {% endblock %}
