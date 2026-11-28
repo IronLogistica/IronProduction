@@ -232,6 +232,52 @@ class ClFattura(db.Model):
     cliente = db.relationship('ClCliente')
 
 
+class ClTwDocumento(db.Model):
+    """Dalla 0008 — Triple Watch: DDT di vendita o fattura letti da PDF Zucchetti."""
+    __bind_key__ = BIND
+    __tablename__ = 'cl_tw_documento'
+    id = db.Column(db.Integer, primary_key=True)
+    tipo = db.Column(db.String(10), nullable=False)
+    numero = db.Column(db.String(30), nullable=False)
+    anno = db.Column(db.Integer, nullable=False, default=0)
+    data_documento = db.Column(db.Date)
+    cliente_id = db.Column(db.Integer, db.ForeignKey('cl_cliente.id'))
+    cliente_nome = db.Column(db.String(200), nullable=False, default='')
+    importo = db.Column(db.Numeric(14, 2))
+    filename = db.Column(db.String(255), nullable=False, default='')
+    testo_grezzo = db.Column(db.Text, nullable=False, default='')
+    caricato_il = db.Column(db.DateTime(timezone=True), nullable=False, default=_adesso)
+    __table_args__ = (db.UniqueConstraint('tipo', 'numero', 'anno', name='uq_cl_tw_documento'),
+                      db.CheckConstraint("tipo IN ('DDT','FATTURA')", name='cl_tw_documento_tipo_check'))
+    cliente = db.relationship('ClCliente')
+    riferimenti = db.relationship('ClTwRiferimento', cascade='all, delete-orphan', back_populates='documento')
+    righe = db.relationship('ClTwRiga', cascade='all, delete-orphan', back_populates='documento',
+                            order_by='ClTwRiga.id')
+
+
+class ClTwRiferimento(db.Model):
+    __bind_key__ = BIND
+    __tablename__ = 'cl_tw_riferimento'
+    id = db.Column(db.Integer, primary_key=True)
+    documento_id = db.Column(db.Integer, db.ForeignKey('cl_tw_documento.id', ondelete='CASCADE'), nullable=False)
+    tipo_rif = db.Column(db.String(10), nullable=False)
+    numero_rif = db.Column(db.String(30), nullable=False)
+    __table_args__ = (db.CheckConstraint("tipo_rif IN ('ORDINE','DDT')", name='cl_tw_riferimento_tipo_rif_check'),)
+    documento = db.relationship('ClTwDocumento', back_populates='riferimenti')
+
+
+class ClTwRiga(db.Model):
+    __bind_key__ = BIND
+    __tablename__ = 'cl_tw_riga'
+    id = db.Column(db.Integer, primary_key=True)
+    documento_id = db.Column(db.Integer, db.ForeignKey('cl_tw_documento.id', ondelete='CASCADE'), nullable=False)
+    numero_ordine_rif = db.Column(db.String(30), nullable=False, default='')
+    codice = db.Column(db.String(100), nullable=False, default='')
+    descrizione = db.Column(db.String(300), nullable=False, default='')
+    quantita = db.Column(db.Numeric(14, 3))
+    documento = db.relationship('ClTwDocumento', back_populates='righe')
+
+
 class ClImpostazione(db.Model):
     """Interruttori/impostazioni del modulo (es. triple_watch_attivo: 'on'/'off')."""
     __bind_key__ = BIND

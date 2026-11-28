@@ -27,6 +27,7 @@ Regole di isolamento che valgono per tutto il modulo:
     comunque tracciata in cl_audit (solo inserimento), intestata a 'capo'.
 """
 import base64
+import re
 import io
 from datetime import datetime
 
@@ -44,7 +45,9 @@ from blueprints.conto_lavoro.importa_ordine import estrai_dati_ordine
 from blueprints.conto_lavoro.models import (ClAudit, ClArticoloCliente, ClCliente, ClDdt, ClFattura,
                                             ClFotoArticolo, ClImpostazione, ClLotto, ClMovimento, ClOrdine,
                                             ClOrdineRiga, ClSchemaVersion, TRACCIAMENTI, UDM, _adesso,
-                                            ClRigaRevisione, ClAnomaliaRisolta, ClAnomalia)
+                                            ClRigaRevisione, ClAnomaliaRisolta, ClAnomalia,
+                                            ClTwDocumento, ClTwRiferimento, ClTwRiga)
+from blueprints.conto_lavoro.importa_documenti import estrai_documenti
 
 VERSIONE_MODULO = 'ordini'
 VERSIONE_SCHEMA_BASE = 1      # clienti/articoli — invariato dalla 0001, non deve regredire
@@ -61,6 +64,7 @@ VERSIONE_SCHEMA_RIGHE_MODIFICABILI = 4
 # 0005 (Mauri, 28/11/2026). Tabelle a parte: tutto il resto funziona anche
 # prima della 0005, solo queste funzioni rispondono 503 finché non c'è.
 VERSIONE_SCHEMA_ANOMALIE = 5
+VERSIONE_SCHEMA_TRIPLE_WATCH = 8      # cl_tw_*: DDT di vendita e fatture da PDF — dalla 0008
 VERSIONE_SCHEMA_ANOMALIE_ANGELO = 7   # cl_anomalia (0006) con tipo TEMPO/PREZZO (0007)
 STATI_ATTIVI = ('CONFERMATO', 'SOSPESO')   # ordini rilasciati: anche se sospesi restano in LIVE/magazzino
 VERSIONE_SCHEMA_RICHIESTA = VERSIONE_SCHEMA_BASE  # compatibilità: usato dal cancello e dal tile "Clienti e articoli"
@@ -212,6 +216,14 @@ def pagina_ordini():
 def pagina_riepilogo():
     """Unito alla pagina Ordini (Mauri, 28/11/2026): il riepilogo sta in cima a /ordini."""
     return redirect('/conto-lavoro/ordini')
+
+
+@cl_bp.get('/triple-watch')
+def pagina_triple_watch():
+    """Triple Watch (Mauri, 28/11/2026): per ogni ordine cliente i DDT di vendita e le
+    fatture collegati, dai PDF Zucchetti importati (a fine mese tutte le fatture)."""
+    return render_template('conto_lavoro/triple_watch.html', active='conto_lavoro', schema=versione_schema(),
+                           schema_richiesto=VERSIONE_SCHEMA_TRIPLE_WATCH)
 
 
 @cl_bp.get('/anomalie')
@@ -814,6 +826,19 @@ def api_importa_ordine():
         db.session.commit()
     except IntegrityError:
         db.session.rollback()
+        a_mano = ClOrdine.query.filter_by(cliente_id=cliente.id, numero_ordine=dati['numero_ordine'],
+                                          filename=ORDINE_A_MANO).first()
+        if a_mano:
+            # l'ordine era stato inserito a mano: il PDF arrivato dopo lo completa (righe invariate)
+            a_mano.filename = f.filename[:255]
+            a_mano.testo_grezzo_pdf = testo
+            a_mano.rif_cliente = dati['rif_cliente'] or a_mano.rif_cliente
+            a_mano.data_documento = _data_ordine(dati['data_documento']) or a_mano.data_documento
+            _audit('ORDINE_A_MANO_COMPLETATO_DA_PDF', 'cl_ordine', a_mano.id, dopo={'file': f.filename[:200]})
+            db.session.commit()
+            return jsonify(ok=True, anteprima=False, agganciato_a_mano=True,
+                           messaggio='Ordine già inserito a mano: agganciato il PDF (righe non toccate, '
+                                     'controllale nel dettaglio).', ordine=_ordine_dict(a_mano, con_righe=True))
         return jsonify(ok=False, error='Esiste già un ordine con questo numero per questo cliente.'), 409
     return jsonify(ok=True, anteprima=False, ordine=_ordine_dict(o, con_righe=True))
 
@@ -1027,6 +1052,329 @@ def api_risolvi_anomalia_angelo(aid):
     _audit('ANOMALIA_RISOLTA', 'cl_anomalia', an.id, dopo={'nota': nota})
     db.session.commit()
     return jsonify(ok=True, anomalia=_anomalia_dict(an))
+
+
+
+# ── TRIPLE WATCH: Ordine cliente <-> DDT di vendita <-> Fattura (Mauri, 28/11/2026) ──
+def _schema_tw_mancante():
+    if versione_schema() < VERSIONE_SCHEMA_TRIPLE_WATCH:
+        return jsonify(ok=False, error=f'Triple Watch disponibile dalla versione {VERSIONE_SCHEMA_TRIPLE_WATCH} delle '
+                                       f'tabelle: impostare CL_MIGRA_AUTO={VERSIONE_SCHEMA_TRIPLE_WATCH:04d} su Railway '
+                                       f'e riavviare.'), 503
+    return None
+
+
+def _cifre(numero):
+    m = re.match(r'\s*(\d+)', str(numero or ''))
+    return str(int(m.group(1))) if m else ''
+
+
+def _data_it(s):
+    try:
+        return datetime.strptime(s, '%d/%m/%Y').date() if s else None
+    except ValueError:
+        return None
+
+
+def _cliente_documento(doc_letto, ordini_rif):
+    """Cliente del documento: per P.IVA, poi dagli ordini richiamati, poi per nome."""
+    if doc_letto.get('cliente_piva'):
+        c = ClCliente.query.filter(ClCliente.piva == doc_letto['cliente_piva']).first()
+        if c:
+            return c
+    for o in ordini_rif:
+        return o.cliente
+    nome = (doc_letto.get('cliente_nome') or '').strip()
+    if nome:
+        return ClCliente.query.filter(db.func.upper(ClCliente.ragione_sociale).like(
+            '%' + nome.upper().split()[0] + '%')).first() if nome.split() else None
+    return None
+
+
+def _ordini_per_numero(numero, data_rif=None, cliente_id=None):
+    """Ordini cliente con quel numero (cifre di '293/IS' = '293'): se piu' d'uno, il piu' vicino
+    (precedente) alla data del documento e dello stesso cliente."""
+    cifre = _cifre(numero)
+    if not cifre:
+        return []
+    candidati = [o for o in ClOrdine.query.filter(ClOrdine.stato != 'ANNULLATO').all()
+                 if _cifre(o.numero_ordine) == cifre and (not cliente_id or o.cliente_id == cliente_id)]
+    if len(candidati) <= 1 or not data_rif:
+        return candidati[:1]
+    prima = [o for o in candidati if o.data_documento and o.data_documento <= data_rif]
+    return [max(prima, key=lambda o: o.data_documento)] if prima else candidati[:1]
+
+
+@cl_bp.post('/api/triple-watch/importa')
+def api_tw_importa():
+    """Uno o piu' PDF (campo 'files'), tipo AUTO|DDT|FATTURA. Senza conferma=true: solo anteprima.
+    Con conferma: salva; un documento gia' presente (stesso tipo, numero, anno) viene aggiornato."""
+    errore = _schema_tw_mancante()
+    if errore:
+        return errore
+    files = request.files.getlist('files')
+    if not files:
+        return jsonify(ok=False, error='Scegli uno o piu\' file PDF.'), 400
+    tipo_richiesto = (request.form.get('tipo') or 'AUTO').upper()
+    conferma = (request.form.get('conferma') or '').lower() == 'true'
+    risultati, salvati, aggiornati = [], 0, 0
+    for f in files:
+        if not f.filename.lower().endswith('.pdf'):
+            risultati.append({'file': f.filename, 'errore': 'Non è un PDF.'})
+            continue
+        raw = f.read()
+        if len(raw) > 30 * 1024 * 1024:
+            risultati.append({'file': f.filename, 'errore': 'File troppo grande (massimo 30 MB).'})
+            continue
+        documenti, err = estrai_documenti(raw, tipo_richiesto)
+        if err:
+            risultati.append({'file': f.filename, 'errore': err})
+            continue
+        for d in documenti:
+            data_doc = _data_it(d['data'])
+            anno = data_doc.year if data_doc else 0
+            ordini_rif = [o for tipo_rif, n in d['riferimenti'] if tipo_rif == 'ORDINE'
+                          for o in _ordini_per_numero(n, data_doc)]
+            cliente = _cliente_documento(d, ordini_rif)
+            ddt_rif = [n for t, n in d['riferimenti'] if t == 'DDT']
+            ddt_trovati = [n for n in ddt_rif if ClTwDocumento.query.filter_by(tipo='DDT', numero=n).first()]
+            voce = {'file': f.filename, 'tipo': d['tipo'], 'numero': d['numero'], 'data': d['data'],
+                    'pagine': d['pagine'], 'cliente': cliente.ragione_sociale if cliente else d['cliente_nome'],
+                    'cliente_riconosciuto': bool(cliente), 'importo': d['importo'],
+                    'ordini_rif': [n for t, n in d['riferimenti'] if t == 'ORDINE'],
+                    'ordini_trovati': [o.numero_ordine for o in ordini_rif],
+                    'ddt_rif': ddt_rif, 'ddt_trovati': ddt_trovati, 'n_righe': len(d['righe']),
+                    'righe': d['righe'][:40]}
+            if not d['tipo'] or not d['numero']:
+                voce['errore'] = 'Documento non riconosciuto (né DDT né fattura) o numero non letto.'
+                risultati.append(voce)
+                continue
+            esistente = ClTwDocumento.query.filter_by(tipo=d['tipo'], numero=d['numero'], anno=anno).first()
+            voce['gia_presente'] = bool(esistente)
+            if conferma:
+                doc = esistente or ClTwDocumento(tipo=d['tipo'], numero=d['numero'], anno=anno)
+                if esistente:
+                    doc.riferimenti.clear()
+                    doc.righe.clear()
+                    aggiornati += 1
+                else:
+                    db.session.add(doc)
+                    salvati += 1
+                doc.data_documento = data_doc
+                doc.cliente_id = cliente.id if cliente else None
+                doc.cliente_nome = (d['cliente_nome'] or (cliente.ragione_sociale if cliente else ''))[:200]
+                doc.importo = d['importo']
+                doc.filename = f.filename[:255]
+                doc.testo_grezzo = d['testo']
+                for t, n in dict.fromkeys(d['riferimenti']):
+                    doc.riferimenti.append(ClTwRiferimento(tipo_rif=t, numero_rif=n[:30]))
+                for r in d['righe']:
+                    doc.righe.append(ClTwRiga(numero_ordine_rif=(r.get('ordine_rif') or '')[:30],
+                                              codice=r['codice'][:100], descrizione=r['descrizione'][:300],
+                                              quantita=r['quantita']))
+                db.session.flush()
+            risultati.append(voce)
+    if conferma:
+        _audit('TRIPLE_WATCH_IMPORT', 'cl_tw_documento', '', dopo={'nuovi': salvati, 'aggiornati': aggiornati,
+                                                                   'file': [f.filename[:100] for f in files]})
+        db.session.commit()
+    return jsonify(ok=True, anteprima=not conferma, documenti=risultati, nuovi=salvati, aggiornati=aggiornati)
+
+
+def _doc_tw_dict(d):
+    return {'id': d.id, 'tipo': d.tipo, 'numero': d.numero, 'anno': d.anno,
+            'data': d.data_documento.strftime('%d/%m/%Y') if d.data_documento else '',
+            'cliente': d.cliente.ragione_sociale if d.cliente else d.cliente_nome,
+            'importo': float(d.importo) if d.importo is not None else None, 'filename': d.filename}
+
+
+@cl_bp.get('/api/triple-watch/quadro')
+def api_tw_quadro():
+    """Per ogni ordine cliente: DDT di vendita e fatture collegati, quantita' spedite e esito.
+    ?cliente_id= filtra; ?mesi=N (default 12) limita agli ordini recenti."""
+    errore = _schema_tw_mancante()
+    if errore:
+        return errore
+    cliente_id = request.args.get('cliente_id', type=int)
+    docs = ClTwDocumento.query.options(db.joinedload(ClTwDocumento.riferimenti), db.joinedload(ClTwDocumento.righe),
+                                       db.joinedload(ClTwDocumento.cliente)).all()
+    ddt = [d for d in docs if d.tipo == 'DDT']
+    fatture = [d for d in docs if d.tipo == 'FATTURA']
+    ordini = (ClOrdine.query.filter(ClOrdine.stato != 'ANNULLATO')
+              .options(db.joinedload(ClOrdine.cliente), db.joinedload(ClOrdine.righe).joinedload(ClOrdineRiga.articolo))
+              .all())
+    per_cifre = {}
+    for o in ordini:
+        per_cifre.setdefault(_cifre(o.numero_ordine), []).append(o)
+
+    def ordine_di(numero, data_doc, cli_id):
+        cand = [o for o in per_cifre.get(_cifre(numero), []) if not cli_id or o.cliente_id == cli_id] or \
+            per_cifre.get(_cifre(numero), [])
+        if len(cand) <= 1 or not data_doc:
+            return cand[:1]
+        prima = [o for o in cand if o.data_documento and o.data_documento <= data_doc]
+        return [max(prima, key=lambda o: o.data_documento)] if prima else cand[:1]
+
+    ddt_ordini = {}            # ddt.id -> [ordine.id]
+    for d in ddt:
+        ids = []
+        for r in d.riferimenti:
+            if r.tipo_rif == 'ORDINE':
+                ids += [o.id for o in ordine_di(r.numero_rif, d.data_documento, d.cliente_id)]
+        ddt_ordini[d.id] = list(dict.fromkeys(ids))
+    ddt_per_cifre = {}
+    for d in ddt:
+        ddt_per_cifre.setdefault(_cifre(d.numero), []).append(d)
+    fatt_ddt, fatt_ordini, ddt_fatture = {}, {}, {}
+    for f in fatture:
+        legati = []
+        for r in f.riferimenti:
+            if r.tipo_rif == 'DDT':
+                cand = ddt_per_cifre.get(_cifre(r.numero_rif), [])
+                if len(cand) > 1 and f.data_documento:
+                    prima = [d for d in cand if d.data_documento and d.data_documento <= f.data_documento]
+                    cand = [max(prima, key=lambda d: d.data_documento)] if prima else cand[:1]
+                legati += cand[:1]
+        fatt_ddt[f.id] = list(dict.fromkeys(d.id for d in legati))
+        ids = [oid for d in legati for oid in ddt_ordini.get(d.id, [])]
+        for r in f.riferimenti:
+            if r.tipo_rif == 'ORDINE':
+                ids += [o.id for o in ordine_di(r.numero_rif, f.data_documento, f.cliente_id)]
+        fatt_ordini[f.id] = list(dict.fromkeys(ids))
+        for did in fatt_ddt[f.id]:
+            ddt_fatture.setdefault(did, []).append(f.id)
+
+    ddt_by_id = {d.id: d for d in ddt}
+    fat_by_id = {f.id: f for f in fatture}
+    usati_ddt, usati_fat, quadro = set(), set(), []
+    for o in sorted(ordini, key=lambda o: (o.data_documento or datetime.min.date(), o.id), reverse=True):
+        if cliente_id and o.cliente_id != cliente_id:
+            continue
+        miei_ddt = [d for d in ddt if o.id in ddt_ordini.get(d.id, [])]
+        mie_fat = [f for f in fatture if o.id in fatt_ordini.get(f.id, [])]
+        if o.stato == 'BOZZA' and not miei_ddt and not mie_fat:
+            continue
+        usati_ddt.update(d.id for d in miei_ddt)
+        usati_fat.update(f.id for f in mie_fat)
+        cifre = _cifre(o.numero_ordine)
+        codici_ordine = {r.articolo.codice.upper() for r in o.righe if r.articolo}
+        spedito = 0.0
+        for d in miei_ddt:
+            solo_questo = len(ddt_ordini.get(d.id, [])) == 1
+            for r in d.righe:
+                if (_cifre(r.numero_ordine_rif) == cifre or (solo_questo and not r.numero_ordine_rif)) \
+                        and (r.codice or '').upper() in codici_ordine:
+                    spedito += float(r.quantita or 0)
+        ordinato = sum(float(r.quantita or 0) for r in o.righe)
+        ddt_senza_fattura = [d for d in miei_ddt if not ddt_fatture.get(d.id)]
+        if not miei_ddt and not mie_fat:
+            esito = 'NESSUN_DDT'
+        elif ddt_senza_fattura or not mie_fat:
+            esito = 'DA_FATTURARE'
+        elif spedito + 1e-6 < ordinato:
+            esito = 'PARZIALE'
+        else:
+            esito = 'COMPLETO'
+        quadro.append({'ordine_id': o.id, 'numero_ordine': o.numero_ordine, 'rif_cliente': o.rif_cliente,
+                       'cliente': o.cliente.ragione_sociale if o.cliente else '', 'stato': o.stato,
+                       'data': o.data_documento.strftime('%d/%m/%Y') if o.data_documento else '',
+                       'ordinato': round(ordinato, 3), 'spedito': round(spedito, 3),
+                       'ddt': [{**_doc_tw_dict(d), 'fatturato': bool(ddt_fatture.get(d.id))} for d in miei_ddt],
+                       'fatture': [_doc_tw_dict(f) for f in mie_fat], 'esito': esito})
+    orfani_ddt = [d for d in ddt if d.id not in usati_ddt and (not cliente_id or d.cliente_id == cliente_id)]
+    orfane_fat = [f for f in fatture if f.id not in usati_fat and (not cliente_id or f.cliente_id == cliente_id)]
+    return jsonify(ok=True, ordini=quadro,
+                   ddt_senza_ordine=[{**_doc_tw_dict(d), 'ordini_rif': [r.numero_rif for r in d.riferimenti
+                                                                        if r.tipo_rif == 'ORDINE']} for d in orfani_ddt],
+                   fatture_senza_abbinamento=[{**_doc_tw_dict(f), 'riferimenti': [f'{r.tipo_rif} {r.numero_rif}'
+                                                                                 for r in f.riferimenti]}
+                                              for f in orfane_fat])
+
+
+@cl_bp.get('/api/triple-watch/documenti/<int:did>')
+def api_tw_documento(did):
+    errore = _schema_tw_mancante()
+    if errore:
+        return errore
+    d = db.session.get(ClTwDocumento, did) or abort(404)
+    return jsonify(ok=True, documento={**_doc_tw_dict(d),
+                   'riferimenti': [{'tipo': r.tipo_rif, 'numero': r.numero_rif} for r in d.riferimenti],
+                   'righe': [{'ordine_rif': r.numero_ordine_rif, 'codice': r.codice, 'descrizione': r.descrizione,
+                              'quantita': float(r.quantita) if r.quantita is not None else None} for r in d.righe],
+                   'testo_grezzo': d.testo_grezzo})
+
+
+@cl_bp.delete('/api/triple-watch/documenti/<int:did>')
+def api_tw_elimina_documento(did):
+    errore = _schema_tw_mancante()
+    if errore:
+        return errore
+    d = db.session.get(ClTwDocumento, did) or abort(404)
+    _audit('TRIPLE_WATCH_DOC_ELIMINATO', 'cl_tw_documento', d.id, prima=_doc_tw_dict(d))
+    db.session.delete(d)
+    db.session.commit()
+    return jsonify(ok=True)
+
+
+# ── Ordine inserito A MANO (Mauri, 28/11/2026): quando non si fa in tempo a
+# metterlo in Zucchetti e stampare il PDF. Solo Angelo. Quando poi arriva il PDF
+# con lo stesso numero, l'import lo aggancia a questo ordine invece di duplicarlo.
+ORDINE_A_MANO = 'INSERITO A MANO'
+
+
+@cl_bp.post('/api/ordini/manuale')
+@solo_angelo
+def api_ordine_manuale():
+    d = request.get_json(silent=True) or {}
+    cliente = db.session.get(ClCliente, d.get('cliente_id') or 0)
+    if not cliente:
+        return jsonify(ok=False, error='Scegli il cliente.'), 400
+    numero = str(d.get('numero_ordine') or '').strip().upper()[:50]
+    if not numero:
+        return jsonify(ok=False, error='Scrivi il numero ordine (es. il numero che avrà in Zucchetti, 300/IS).'), 400
+    righe = []
+    for r in d.get('righe') or []:
+        codice = str(r.get('codice') or '').strip().upper()[:100]
+        if not codice:
+            continue
+        try:
+            q = float(r.get('quantita'))
+        except (TypeError, ValueError):
+            return jsonify(ok=False, error=f'Quantità non valida per {codice}.'), 400
+        if q < 0:
+            return jsonify(ok=False, error=f'Quantità negativa per {codice}.'), 400
+        righe.append((codice, str(r.get('descrizione') or '').strip()[:300], q))
+    if not righe:
+        return jsonify(ok=False, error="Aggiungi almeno una riga (codice e quantità)."), 400
+    try:
+        esistenti = {a.codice: a for a in ClArticoloCliente.query.filter(
+            ClArticoloCliente.cliente_id == cliente.id, ClArticoloCliente.codice.in_([r[0] for r in righe])).all()}
+        creati = []
+        for codice, descr, _ in righe:
+            if codice not in esistenti:
+                a = ClArticoloCliente(cliente_id=cliente.id, codice=codice, descrizione=descr, udm='PZ',
+                                      tracciamento='LOTTO', attivo=True)
+                db.session.add(a)
+                db.session.flush()
+                esistenti[codice] = a
+                creati.append(codice)
+        conferma = d.get('conferma_subito', True) is not False
+        o = ClOrdine(cliente_id=cliente.id, numero_ordine=numero, rif_cliente=str(d.get('rif_cliente') or '')[:50],
+                     data_documento=_data_ordine(d.get('data_documento') or '') or datetime.now().date(),
+                     stato='CONFERMATO' if conferma else 'BOZZA', filename=ORDINE_A_MANO,
+                     note=str(d.get('note') or '')[:2000], confermato_il=_adesso() if conferma else None)
+        db.session.add(o)
+        db.session.flush()
+        for n, (codice, descr, q) in enumerate(righe, start=1):
+            db.session.add(ClOrdineRiga(ordine_id=o.id, n_riga=n, articolo_id=esistenti[codice].id,
+                                        descrizione=descr or esistenti[codice].descrizione, quantita=q))
+        _audit('ORDINE_A_MANO', 'cl_ordine', o.id, dopo={'numero_ordine': numero, 'righe': len(righe),
+                                                         'codici_creati': creati, 'confermato': conferma})
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(ok=False, error='Esiste già un ordine con questo numero per questo cliente.'), 409
+    return jsonify(ok=True, ordine=_ordine_dict(o, con_righe=True), codici_creati=creati)
 
 
 def _numero_opzionale(d, chiave, etichetta):

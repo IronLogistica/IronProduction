@@ -21,6 +21,7 @@
 <div class="mon-section" style="margin-bottom:16px">
   <div style="padding:12px 14px;display:flex;align-items:center;gap:8px;border-bottom:1px solid var(--border)">
     <b style="flex:1">📄 Ordini cliente — importazione PDF e gestione</b>
+    <button class="btn btn-ghost" onclick="apriOrdineManuale()">✍️ Nuovo ordine a mano</button>
     <button class="btn btn-primary" onclick="apriImportOrdine()">📄 Importa PDF</button>
   </div>
   <div style="padding:8px 14px 0;font-size:12px;color:var(--text-dim)">
@@ -29,6 +30,8 @@
     3) aprendo l'ordine si controllano righe e quantità e si preme <b>✅ Conferma ordine</b>: da quel momento è
     rilasciato e compare nel riepilogo e nel LIVE; 4) un ordine confermato si può <b>⏸ sospendere</b> e riattivare,
     e ogni codice si può segnalare <b>🔁 da revisionare</b>. I codici nuovi a mano, fuori dal PDF, li crea solo Angelo.
+    <b>Ordine urgente</b> non ancora in Zucchetti: <b>✍️ Nuovo ordine a mano</b> (solo Angelo) — quando poi si importa il PDF
+    con lo stesso numero, si aggancia all'ordine già inserito senza duplicarlo.
   </div>
   <div style="padding:10px 14px;overflow-x:auto">
     <table class="mon-table" style="width:100%">
@@ -38,34 +41,11 @@
   </div>
 </div>
 
-<!-- TRIPLE WATCH -->
-<div class="mon-section">
-  <div style="padding:12px 14px;display:flex;align-items:center;gap:10px;border-bottom:1px solid var(--border)">
-    <b style="flex:1">🔭 Triple Watch — Ordine ↔ DDT di uscita ↔ Fattura</b>
-    <label style="font-size:12px;display:flex;gap:6px;align-items:center">
-      <input type="checkbox" id="tw-switch" onchange="toggleTripleWatch()"> Vuoi meccanismo Triple Watch?
-    </label>
-  </div>
-  <div style="padding:12px 14px">
-    <p style="font-size:12px;color:var(--text-dim)">
-      Spento: nessun effetto. Acceso: puoi caricare le fatture ed emergono qui gli ordini per cui numero ordine
-      cliente, numero DDT di spedizione e numero fattura sono tutti abbinati — comparirà quando sarà pronto anche
-      il DDT di uscita.
-    </p>
-    <div id="tw-corpo" style="display:none;margin-top:10px">
-      <button class="btn btn-ghost" onclick="apriFattura()">📤 Carica fattura</button>
-      <table class="mon-table" style="width:100%;margin-top:10px">
-        <thead><tr><th>Numero ordine cliente</th><th>Numero DDT spedizione</th><th>Numero fattura</th></tr></thead>
-        <tbody id="lista-triple-watch"><tr><td colspan="3" style="color:var(--text-dim)">—</td></tr></tbody>
-      </table>
-      <div style="margin-top:14px;font-size:12px;color:var(--text-dim)">Fatture caricate</div>
-      <table class="mon-table" style="width:100%;margin-top:6px">
-        <thead><tr><th>Numero</th><th>Cliente</th><th>Data</th><th>Importo</th></tr></thead>
-        <tbody id="lista-fatture"><tr><td colspan="4" style="color:var(--text-dim)">—</td></tr></tbody>
-      </table>
-    </div>
-  </div>
-</div>
+<!-- TRIPLE WATCH: pagina dedicata -->
+<a href="/conto-lavoro/triple-watch" class="mon-section" style="display:block;padding:12px 14px;text-decoration:none;color:inherit">
+  <b>🔭 Triple Watch — Ordine ↔ DDT di vendita ↔ Fattura</b>
+  <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Importa i PDF dei DDT di vendita e delle fatture (anche tutte quelle del mese) e vedi per ogni ordine cosa è stato spedito e fatturato →</div>
+</a>
 {% endif %}
 
 <!-- MODAL IMPORT ORDINE -->
@@ -96,25 +76,32 @@
   </div>
 </div>
 
-<!-- MODAL FATTURA -->
-<div class="modal-overlay" id="modalFattura">
-  <div class="modal-box" style="width:480px">
-    <h3>📤 Carica fattura</h3>
-    <label class="modal-label">Cliente *</label>
-    <select class="modal-input" id="f-cliente"></select>
-    <label class="modal-label">Numero fattura *</label>
-    <input class="modal-input" id="f-numero" maxlength="50">
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
-      <div><label class="modal-label">Data documento</label><input class="modal-input" type="date" id="f-data"></div>
-      <div><label class="modal-label">Importo</label><input class="modal-input" type="number" step="0.01" id="f-importo"></div>
+<!-- MODAL ORDINE A MANO -->
+<div class="modal-overlay" id="modalManuale">
+  <div class="modal-box" style="width:760px;max-height:90vh;overflow:auto">
+    <h3>✍️ Nuovo ordine a mano</h3>
+    <p style="font-size:12px;color:var(--text-dim);margin:-4px 0 8px">Quando non si fa in tempo a inserirlo in Zucchetti e stampare il PDF. Solo Angelo.</p>
+    <div style="display:grid;grid-template-columns:2fr 1fr 1fr 1fr;gap:8px">
+      <div><label class="modal-label">Cliente *</label><select class="modal-input" id="m-cliente" onchange="caricaCatalogoManuale()"></select></div>
+      <div><label class="modal-label">Numero ordine *</label><input class="modal-input" id="m-numero" placeholder="es. 300/IS"></div>
+      <div><label class="modal-label">Rif. cliente</label><input class="modal-input" id="m-rif" placeholder="es. 625/DDT"></div>
+      <div><label class="modal-label">Data</label><input class="modal-input" type="date" id="m-data"></div>
     </div>
-    <div id="esito-fattura" style="font-size:12px;color:#c0392b;min-height:16px;margin-top:6px"></div>
+    <datalist id="m-catalogo"></datalist>
+    <table class="mon-table" style="width:100%;margin-top:10px"><thead><tr><th>Codice *</th><th>Descrizione</th><th>Quantità *</th><th></th></tr></thead>
+      <tbody id="m-righe"></tbody></table>
+    <button class="btn btn-ghost" style="margin-top:6px" onclick="aggiungiRigaManuale()">➕ Riga</button>
+    <label style="font-size:12px;display:flex;gap:6px;align-items:center;margin-top:10px">
+      <input type="checkbox" id="m-conferma" checked> Conferma subito l'ordine (rilasciato: compare nel riepilogo e nel LIVE)</label>
+    <label class="modal-label">Note</label><input class="modal-input" id="m-note" maxlength="500">
+    <div id="m-esito" style="font-size:12px;color:#c0392b;min-height:16px;margin-top:6px"></div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="closeModal('modalFattura')">Annulla</button>
-      <button class="btn btn-primary" onclick="salvaFattura()">💾 Salva</button>
+      <button class="btn btn-ghost" onclick="closeModal('modalManuale')">Annulla</button>
+      <button class="btn btn-primary" onclick="salvaOrdineManuale()">💾 Salva ordine</button>
     </div>
   </div>
 </div>
+
 {% endblock %}
 
 {% block scripts %}
@@ -401,6 +388,62 @@ async function confermaOrdineAperto(){
   caricaOrdini();
 }
 
+// ── Ordine a mano (solo Angelo) ─────────────────────────────────────────
+let CATALOGO_MANUALE = [];
+async function apriOrdineManuale(){
+  const clienti = await chiama('/conto-lavoro/api/clienti');
+  document.getElementById('m-cliente').innerHTML = '<option value="">— scegli —</option>' +
+    (Array.isArray(clienti) ? clienti : []).map(c => `<option value="${c.id}">${esc(c.ragione_sociale)}</option>`).join('');
+  ['m-numero', 'm-rif', 'm-note'].forEach(i => document.getElementById(i).value = '');
+  document.getElementById('m-data').value = new Date().toISOString().slice(0, 10);
+  document.getElementById('m-righe').innerHTML = '';
+  document.getElementById('m-esito').textContent = '';
+  document.getElementById('m-conferma').checked = true;
+  aggiungiRigaManuale();
+  openModal('modalManuale');
+}
+async function caricaCatalogoManuale(){
+  const cid = document.getElementById('m-cliente').value;
+  CATALOGO_MANUALE = cid ? await chiama('/conto-lavoro/api/articoli?cliente_id=' + cid) : [];
+  if(!Array.isArray(CATALOGO_MANUALE)) CATALOGO_MANUALE = [];
+  document.getElementById('m-catalogo').innerHTML = CATALOGO_MANUALE.map(a =>
+    `<option value="${esc(a.codice)}">${esc(a.descrizione)}</option>`).join('');
+}
+function aggiungiRigaManuale(){
+  const tr = document.createElement('tr');
+  tr.innerHTML = `<td><input class="modal-input m-codice" list="m-catalogo" style="width:180px" oninput="descrManuale(this)"></td>
+    <td><input class="modal-input m-descr" style="width:240px"></td>
+    <td><input class="modal-input m-qta" type="number" min="0" step="0.001" style="width:90px"></td>
+    <td><button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" onclick="this.closest('tr').remove()">🗑️</button></td>`;
+  document.getElementById('m-righe').appendChild(tr);
+}
+function descrManuale(inp){
+  const a = CATALOGO_MANUALE.find(x => x.codice.toUpperCase() === inp.value.trim().toUpperCase());
+  const d = inp.closest('tr').querySelector('.m-descr');
+  if(a && !d.value) d.value = a.descrizione;
+}
+async function salvaOrdineManuale(){
+  const corpo = {cliente_id: parseInt(document.getElementById('m-cliente').value) || null,
+    numero_ordine: document.getElementById('m-numero').value.trim(), rif_cliente: document.getElementById('m-rif').value.trim(),
+    data_documento: document.getElementById('m-data').value, note: document.getElementById('m-note').value,
+    conferma_subito: document.getElementById('m-conferma').checked,
+    righe: [...document.querySelectorAll('#m-righe tr')].map(tr => ({codice: tr.querySelector('.m-codice').value.trim(),
+      descrizione: tr.querySelector('.m-descr').value.trim(), quantita: tr.querySelector('.m-qta').value})).filter(r => r.codice)};
+  const esito = document.getElementById('m-esito');
+  let d = await chiama('/conto-lavoro/api/ordini/manuale', 'POST', corpo);
+  if(!d.ok && d.angelo === false){
+    const pin = prompt('Solo Angelo può inserire un ordine a mano.\nPIN di Angelo:');
+    if(!pin) return;
+    const a = await chiama('/conto-lavoro/api/angelo/accesso', 'POST', {pin});
+    if(!a.ok){ esito.textContent = '❌ ' + (a.error || 'PIN errato'); return; }
+    d = await chiama('/conto-lavoro/api/ordini/manuale', 'POST', corpo);
+  }
+  if(!d.ok){ esito.textContent = '❌ ' + (d.error || 'Errore'); return; }
+  closeModal('modalManuale');
+  showToast('✅ Ordine ' + d.ordine.numero_ordine + ' salvato' + (d.codici_creati.length ? ` (${d.codici_creati.length} codici nuovi)` : ''));
+  caricaOrdini();
+}
+
 async function sospendiOrdineAperto(){
   if(!ordineAperto) return;
   const sospendi = ordineAperto.stato !== 'SOSPESO';
@@ -434,60 +477,7 @@ async function eliminaOrdineAperto(){
   caricaOrdini();
 }
 
-// ── Triple Watch ─────────────────────────────────────────────────────────
-async function caricaImpostazioni(){
-  const d = await chiama('/conto-lavoro/api/impostazioni');
-  document.getElementById('tw-switch').checked = !!d.triple_watch_attivo;
-  document.getElementById('tw-corpo').style.display = d.triple_watch_attivo ? '' : 'none';
-  if(d.triple_watch_attivo) caricaTripleWatch();
-}
-
-async function toggleTripleWatch(){
-  const acceso = document.getElementById('tw-switch').checked;
-  const d = await chiama('/conto-lavoro/api/impostazioni/triple-watch', 'POST', {attivo: acceso});
-  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); document.getElementById('tw-switch').checked = !acceso; return; }
-  document.getElementById('tw-corpo').style.display = acceso ? '' : 'none';
-  if(acceso) caricaTripleWatch();
-}
-
-async function caricaTripleWatch(){
-  const righe = await chiama('/conto-lavoro/api/triple-watch');
-  const tb = document.getElementById('lista-triple-watch');
-  tb.innerHTML = (Array.isArray(righe) && righe.length) ? righe.map(r => `
-    <tr><td>${esc(r.numero_ordine_cliente)}</td><td>${esc(r.numero_ddt_spedizione)}</td><td>${esc(r.numero_fattura)}</td></tr>`).join('')
-    : '<tr><td colspan="3" style="color:var(--text-dim)">Nessun abbinamento completo (il DDT di uscita non è ancora attivo).</td></tr>';
-  const fatture = await chiama('/conto-lavoro/api/fatture');
-  const tf = document.getElementById('lista-fatture');
-  tf.innerHTML = (Array.isArray(fatture) && fatture.length) ? fatture.map(f => `
-    <tr><td>${esc(f.numero)}</td><td>${esc(f.cliente)}</td><td>${esc(f.data_documento) || '—'}</td><td>${f.importo != null ? f.importo : '—'}</td></tr>`).join('')
-    : '<tr><td colspan="4" style="color:var(--text-dim)">Nessuna fattura caricata.</td></tr>';
-}
-
-async function apriFattura(){
-  if(!CLIENTI_TW.length) CLIENTI_TW = await chiama('/conto-lavoro/api/clienti?tutti=1');
-  const sel = document.getElementById('f-cliente');
-  sel.innerHTML = CLIENTI_TW.map(c => `<option value="${c.id}">${esc(c.ragione_sociale)}</option>`).join('');
-  document.getElementById('f-numero').value = '';
-  document.getElementById('f-data').value = '';
-  document.getElementById('f-importo').value = '';
-  document.getElementById('esito-fattura').textContent = '';
-  openModal('modalFattura');
-}
-
-async function salvaFattura(){
-  const corpo = {cliente_id: parseInt(document.getElementById('f-cliente').value, 10),
-                numero: document.getElementById('f-numero').value,
-                data_documento: document.getElementById('f-data').value ?
-                  document.getElementById('f-data').value.split('-').reverse().join('/') : '',
-                importo: document.getElementById('f-importo').value || null};
-  const d = await chiama('/conto-lavoro/api/fatture', 'POST', corpo);
-  if(!d.ok){ document.getElementById('esito-fattura').textContent = '❌ ' + (d.error || 'Errore'); return; }
-  closeModal('modalFattura');
-  showToast('✅ Fattura salvata');
-  caricaTripleWatch();
-}
-
-if(document.getElementById('lista-ordini')){ caricaOrdini(); caricaImpostazioni(); }
+if(document.getElementById('lista-ordini')){ caricaOrdini(); }
 
 function claDopoModifica(){ caricaRiepilogo(); }
 

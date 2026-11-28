@@ -1,0 +1,194 @@
+{% extends "base.html" %}
+{% block content %}
+<style>
+  .btn:disabled{opacity:.4;cursor:not-allowed}
+  .tw-esito{display:inline-block;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:800;white-space:nowrap}
+  .tw-esito.COMPLETO{background:#0f3d26;color:#5fe3a1;border:1px solid #1a9e5c}
+  .tw-esito.PARZIALE{background:#3d2a00;color:#ffc94d;border:1px solid #e0a800}
+  .tw-esito.DA_FATTURARE{background:#3d2a00;color:#ffc94d;border:1px solid #e0a800}
+  .tw-esito.NESSUN_DDT{background:#3a1010;color:#ff8a8a;border:1px solid #c0392b}
+  .tw-doc{display:inline-block;margin:2px 4px 2px 0;padding:3px 7px;border-radius:5px;background:var(--dark3,#132a42);
+    font-size:12px;cursor:pointer;white-space:nowrap}
+  .tw-doc small{color:var(--text-dim)}
+  .tw-doc.nofat{border:1px solid #e0a800}
+  .tw-drop{border:2px dashed var(--border);border-radius:10px;padding:16px;text-align:center;color:var(--text-dim)}
+</style>
+<div class="page-toolbar">
+  <div class="page-title">🔭 Conto lavoro — Triple Watch</div>
+  <a class="btn btn-ghost" href="/conto-lavoro/" style="margin-left:auto">← Conto lavoro</a>
+  <a class="btn btn-ghost" href="/conto-lavoro/ordini">📄 Ordini</a>
+</div>
+
+{% if schema < schema_richiesto %}
+<div class="mon-section" style="padding:14px;color:#c0392b;font-weight:700">
+  ⚠️ Tabelle non ancora alla versione {{ schema_richiesto }} (attuale: {{ schema }}) — imposta CL_MIGRA_AUTO = {{ '%04d'|format(schema_richiesto) }} su Railway e riavvia.
+</div>
+{% else %}
+<p style="font-size:12px;color:var(--text-dim);margin:-4px 0 12px">
+  Per ogni <b>ordine cliente</b>: i <b>DDT di vendita</b> con cui è stato spedito e le <b>fatture</b> che li hanno fatturati.
+  Si caricano i PDF di Zucchetti (anche tanti insieme, anche un unico PDF con tutte le fatture del mese): il programma legge
+  numero, data, cliente e i documenti richiamati (<i>Ns. doc.(ORDCL)</i> sul DDT, il DDT sulla fattura) e li aggancia da solo.
+</p>
+
+<div class="mon-section" style="padding:14px;margin-bottom:16px">
+  <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+    <div><label class="modal-label" style="margin:0">Documenti</label>
+      <select class="modal-input" id="tw-tipo" style="width:200px">
+        <option value="AUTO">Riconosci da solo</option><option value="DDT">DDT di vendita</option><option value="FATTURA">Fatture</option>
+      </select></div>
+    <div style="flex:1;min-width:260px"><label class="modal-label" style="margin:0">File PDF (anche più di uno)</label>
+      <input type="file" id="tw-file" accept=".pdf" multiple class="modal-input" onchange="resetAnteprima()"></div>
+    <button class="btn btn-ghost" onclick="importa(false)">🔍 Anteprima</button>
+    <button class="btn btn-primary" id="tw-conferma" onclick="importa(true)" disabled>✅ Conferma importazione</button>
+  </div>
+  <div id="tw-esito" style="margin-top:12px;font-size:12px"></div>
+</div>
+
+<div class="mon-section" style="padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
+  <div><label class="modal-label" style="margin:0">Cliente</label>
+    <select class="modal-input" id="f-cliente" onchange="caricaQuadro()" style="width:220px"><option value="">Tutti</option></select></div>
+  <div><label class="modal-label" style="margin:0">Esito</label>
+    <select class="modal-input" id="f-esito" onchange="disegna()" style="width:220px">
+      <option value="">Tutti</option><option value="NESSUN_DDT">🔴 Nessun DDT</option>
+      <option value="DA_FATTURARE">🟡 DDT da fatturare</option><option value="PARZIALE">🟡 Spedito in parte</option>
+      <option value="COMPLETO">✅ Completo</option></select></div>
+  <div><label class="modal-label" style="margin:0">Ordine</label>
+    <input class="modal-input" id="f-ordine" oninput="disegna()" placeholder="numero ordine" style="width:160px"></div>
+  <div id="tw-conteggi" style="margin-left:auto;font-size:12px;color:var(--text-dim)"></div>
+</div>
+<div id="tw-quadro">Caricamento...</div>
+<div id="tw-orfani" style="margin-top:16px"></div>
+{% endif %}
+
+<div class="modal-overlay" id="modalDoc">
+  <div class="modal-box" style="width:760px;max-height:88vh;overflow:auto">
+    <h3 id="doc-titolo">Documento</h3>
+    <div id="doc-corpo"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalDoc')">Chiudi</button>
+      <button class="btn btn-ghost" id="doc-elimina" style="color:#ff8a8a">🗑️ Elimina documento</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const ETICHETTE = {COMPLETO: '✅ Completo', PARZIALE: '🟡 Spedito in parte', DA_FATTURARE: '🟡 DDT da fatturare',
+                   NESSUN_DDT: '🔴 Nessun DDT'};
+let QUADRO = {ordini: [], ddt_senza_ordine: [], fatture_senza_abbinamento: []};
+const euro = v => v == null ? '' : v.toLocaleString('it-IT', {style: 'currency', currency: 'EUR'});
+
+function resetAnteprima(){
+  document.getElementById('tw-esito').innerHTML = '';
+  document.getElementById('tw-conferma').disabled = true;
+}
+
+async function importa(conferma){
+  const files = document.getElementById('tw-file').files;
+  const esito = document.getElementById('tw-esito');
+  if(!files.length){ esito.innerHTML = '<span style="color:#c0392b">Scegli uno o più PDF.</span>'; return; }
+  const fd = new FormData();
+  [...files].forEach(f => fd.append('files', f));
+  fd.append('tipo', document.getElementById('tw-tipo').value);
+  fd.append('conferma', conferma ? 'true' : 'false');
+  esito.innerHTML = conferma ? 'Importazione in corso…' : 'Lettura dei PDF…';
+  let d;
+  try{ d = await (await fetch('/conto-lavoro/api/triple-watch/importa', {method: 'POST', body: fd})).json(); }
+  catch(e){ esito.innerHTML = '<span style="color:#c0392b">❌ Errore di rete.</span>'; return; }
+  if(!d.ok){ esito.innerHTML = `<span style="color:#c0392b">❌ ${esc(d.error || 'Errore')}</span>`; return; }
+  const validi = d.documenti.filter(x => !x.errore);
+  const tabella = `<table class="mon-table" style="width:100%;margin-top:6px"><thead><tr>
+      <th>File</th><th>Tipo</th><th>Numero</th><th>Data</th><th>Cliente</th><th>Importo</th><th>Richiama</th><th>Righe</th><th></th></tr></thead>
+    <tbody>${d.documenti.map(x => `<tr style="${x.errore ? 'color:#ff8a8a' : ''}">
+      <td style="font-size:11px">${esc(x.file)}${x.pagine > 1 ? ` <span style="color:var(--text-dim)">(${x.pagine} pag.)</span>` : ''}</td>
+      <td>${x.tipo === 'DDT' ? '🚚 DDT' : x.tipo === 'FATTURA' ? '🧾 Fattura' : '?'}</td>
+      <td><b>${esc(x.numero || '')}</b></td><td>${esc(x.data || '')}</td>
+      <td>${esc(x.cliente || '')}${x.cliente && !x.cliente_riconosciuto ? ' <span title="cliente non trovato in anagrafica" style="color:#e0a800">⚠️</span>' : ''}</td>
+      <td>${x.importo != null ? euro(x.importo) : ''}</td>
+      <td style="font-size:11px">${(x.ordini_rif || []).map(n => `ordine ${esc(n)} ${(x.ordini_trovati || []).some(t => t.startsWith(n)) ? '✅' : '❔'}`).join('<br>')}
+        ${(x.ddt_rif || []).map(n => `DDT ${esc(n)} ${(x.ddt_trovati || []).includes(n) ? '✅' : '❔'}`).join('<br>')}</td>
+      <td>${x.n_righe ?? ''}</td>
+      <td style="font-size:11px">${x.errore ? esc(x.errore) : (x.gia_presente ? '♻️ già presente: verrà aggiornato' : '🆕')}</td>
+    </tr>`).join('')}</tbody></table>
+    <div style="font-size:11px;color:var(--text-dim);margin-top:4px">✅ = già trovato nel programma · ❔ = non ancora presente (si aggancerà da solo quando arriva)</div>`;
+  if(d.anteprima){
+    esito.innerHTML = `<b>${validi.length}</b> documento/i letti` + tabella;
+    document.getElementById('tw-conferma').disabled = !validi.length;
+    return;
+  }
+  esito.innerHTML = `<span style="color:#1a9e5c;font-weight:700">✅ Importati: ${d.nuovi} nuovi, ${d.aggiornati} aggiornati.</span>` + tabella;
+  document.getElementById('tw-conferma').disabled = true;
+  showToast('✅ Documenti importati');
+  caricaQuadro();
+}
+
+async function caricaClienti(){
+  const r = await (await fetch('/conto-lavoro/api/clienti')).json().catch(() => []);
+  if(Array.isArray(r)) document.getElementById('f-cliente').innerHTML = '<option value="">Tutti</option>' +
+    r.map(c => `<option value="${c.id}">${esc(c.ragione_sociale)}</option>`).join('');
+}
+
+async function caricaQuadro(){
+  const cid = document.getElementById('f-cliente').value;
+  const d = await (await fetch('/conto-lavoro/api/triple-watch/quadro' + (cid ? '?cliente_id=' + cid : ''))).json().catch(() => null);
+  if(!d || !d.ok){ document.getElementById('tw-quadro').innerHTML = `<p style="color:#c0392b">❌ ${esc((d && d.error) || 'Errore')}</p>`; return; }
+  QUADRO = d;
+  disegna();
+}
+
+const docHtml = (x, tipo) => `<span class="tw-doc ${tipo === 'DDT' && !x.fatturato ? 'nofat' : ''}" onclick="apriDoc(${x.id})"
+    title="${tipo === 'DDT' && !x.fatturato ? 'DDT non ancora fatturato' : 'Apri il documento'}">
+    ${tipo === 'DDT' ? '🚚' : '🧾'} <b>${esc(x.numero)}</b> <small>${esc(x.data)}</small>${x.importo != null ? ' · ' + euro(x.importo) : ''}</span>`;
+
+function disegna(){
+  const esitoF = document.getElementById('f-esito').value;
+  const ordF = document.getElementById('f-ordine').value.trim().toUpperCase();
+  const lista = QUADRO.ordini.filter(o => (!esitoF || o.esito === esitoF) && (!ordF || o.numero_ordine.toUpperCase().includes(ordF)));
+  const conta = k => QUADRO.ordini.filter(o => o.esito === k).length;
+  document.getElementById('tw-conteggi').innerHTML =
+    `✅ ${conta('COMPLETO')} · 🟡 ${conta('DA_FATTURARE') + conta('PARZIALE')} · 🔴 ${conta('NESSUN_DDT')}`;
+  document.getElementById('tw-quadro').innerHTML = lista.length ? `<div class="mon-section" style="padding:10px 14px;overflow-x:auto">
+    <table class="mon-table" style="width:100%"><thead><tr>
+      <th>Ordine cliente</th><th>Cliente</th><th>Spedito / ordinato</th><th>🚚 DDT di vendita</th><th>🧾 Fatture</th><th>Esito</th></tr></thead>
+    <tbody>${lista.map(o => `<tr>
+      <td><b>${esc(o.numero_ordine)}</b><div style="font-size:10px;color:var(--text-dim)">${esc(o.data)}${o.rif_cliente ? ' · rif. ' + esc(o.rif_cliente) : ''}${o.stato === 'SOSPESO' ? ' · ⏸ sospeso' : ''}</div></td>
+      <td>${esc(o.cliente)}</td>
+      <td style="white-space:nowrap"><b style="color:${o.spedito + 1e-6 >= o.ordinato ? '#1a9e5c' : '#e0a800'}">${o.spedito}</b> / ${o.ordinato}</td>
+      <td>${o.ddt.map(x => docHtml(x, 'DDT')).join('') || '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td>${o.fatture.map(x => docHtml(x, 'FATTURA')).join('') || '<span style="color:var(--text-dim)">—</span>'}</td>
+      <td><span class="tw-esito ${o.esito}">${ETICHETTE[o.esito]}</span></td>
+    </tr>`).join('')}</tbody></table></div>` : '<div class="mon-section" style="padding:16px;color:var(--text-dim)">Nessun ordine con questi filtri.</div>';
+
+  const od = QUADRO.ddt_senza_ordine, of = QUADRO.fatture_senza_abbinamento;
+  document.getElementById('tw-orfani').innerHTML = (od.length || of.length) ? `<div class="mon-section" style="padding:12px 14px;border-left:4px solid #e0a800">
+    <b style="color:#e0a800">⚠️ Documenti senza abbinamento</b>
+    <div style="font-size:11px;color:var(--text-dim);margin:2px 0 8px">DDT che non richiamano un ordine presente nel programma, fatture che non richiamano un DDT o un ordine trovati.</div>
+    ${od.map(x => `<div style="margin:3px 0">${docHtml(x, 'DDT')} <small style="color:var(--text-dim)">${esc(x.cliente)} · richiama ordine: ${esc(x.ordini_rif.join(', ') || 'nessuno letto')}</small></div>`).join('')}
+    ${of.map(x => `<div style="margin:3px 0">${docHtml(x, 'FATTURA')} <small style="color:var(--text-dim)">${esc(x.cliente)} · richiama: ${esc(x.riferimenti.join(', ') || 'nessun riferimento letto')}</small></div>`).join('')}
+  </div>` : '';
+}
+
+async function apriDoc(id){
+  const d = await (await fetch('/conto-lavoro/api/triple-watch/documenti/' + id)).json().catch(() => null);
+  if(!d || !d.ok) return;
+  const x = d.documento;
+  document.getElementById('doc-titolo').textContent = `${x.tipo === 'DDT' ? '🚚 DDT di vendita' : '🧾 Fattura'} ${x.numero} del ${x.data}`;
+  document.getElementById('doc-corpo').innerHTML = `
+    <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">${esc(x.cliente)} · file ${esc(x.filename)}${x.importo != null ? ' · ' + euro(x.importo) : ''}</div>
+    <div style="font-size:12px;margin-bottom:8px">Richiama: ${x.riferimenti.map(r => `<b>${esc(r.tipo)} ${esc(r.numero)}</b>`).join(', ') || '—'}</div>
+    <table class="mon-table" style="width:100%"><thead><tr><th>Ordine</th><th>Codice</th><th>Descrizione</th><th>Q.tà</th></tr></thead>
+      <tbody>${x.righe.map(r => `<tr><td>${esc(r.ordine_rif)}</td><td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td><td>${r.quantita ?? ''}</td></tr>`).join('')
+        || '<tr><td colspan="4" style="color:var(--text-dim)">Nessuna riga articolo letta.</td></tr>'}</tbody></table>
+    <details style="margin-top:10px"><summary style="cursor:pointer;font-size:12px">Testo letto dal PDF</summary>
+      <pre style="white-space:pre-wrap;font-size:11px;max-height:300px;overflow:auto">${esc(x.testo_grezzo)}</pre></details>`;
+  document.getElementById('doc-elimina').onclick = async () => {
+    if(!confirm('Eliminare questo documento dal Triple Watch?')) return;
+    const r = await (await fetch('/conto-lavoro/api/triple-watch/documenti/' + id, {method: 'DELETE'})).json();
+    if(r.ok){ closeModal('modalDoc'); showToast('🗑️ Documento eliminato'); caricaQuadro(); }
+  };
+  openModal('modalDoc');
+}
+
+if(document.getElementById('tw-quadro')){ caricaClienti(); caricaQuadro(); }
+{% endblock %}
