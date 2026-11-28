@@ -1223,6 +1223,69 @@ def api_masterwork_codici_interni():
         return jsonify(dict(ex.map(uno, codici)))
 
 
+_ANOMALIE_MW_CACHE = {'t': 0, 'dati': None}
+
+
+@pp_bp.route('/api/masterwork/anomalie', methods=['POST'])
+def api_masterwork_anomalie():
+    """Anomalie segnalate dagli operai su MasterWork (tasto "Segnala anomalia" sul
+    cellulare) che riguardano i codici del Conto Lavoro: {"codici": [codici cliente]}.
+    Il codice cliente viene tradotto nel codice interno MasterWork (interno o esterno).
+    Lo stato "risolta" lo tiene il Conto Lavoro (cl_anomalia_risolta)."""
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+    codici = [str(c).strip() for c in ((request.get_json(silent=True) or {}).get('codici') or []) if str(c).strip()]
+    codici = list(dict.fromkeys(codici))[:300]
+    url_mw = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
+    if not url_mw:
+        return jsonify(ok=False, error='MASTERWORK_URL non impostato', anomalie=[])
+    app = current_app._get_current_object()
+
+    def uno(c):
+        with app.app_context():
+            return c, _info_masterwork(c)['codice_interno']
+    with ThreadPoolExecutor(max_workers=8) as ex:
+        interni = dict(ex.map(uno, codici))
+    # codice interno MasterWork -> codici del Conto Lavoro
+    per_interno = {}
+    for c, i in interni.items():
+        for pezzo in (i or '').split(','):
+            if pezzo.strip():
+                per_interno.setdefault(pezzo.strip().upper(), []).append(c)
+
+    if time.time() - _ANOMALIE_MW_CACHE['t'] > 30 or _ANOMALIE_MW_CACHE['dati'] is None:
+        try:
+            r = requests.get(f'{url_mw}/api/analytics/correzioni_self_service',
+                             params={'tutte': '1', 'giorni': '120'}, timeout=6)
+            dati = r.json() if r.ok else None
+        except (requests.exceptions.RequestException, ValueError):
+            dati = None
+        if not isinstance(dati, list):
+            return jsonify(ok=False, error='MasterWork non risponde', anomalie=_ANOMALIE_MW_CACHE['dati'] or [])
+        _ANOMALIE_MW_CACHE.update(t=time.time(), dati=dati)
+    anomalie = []
+    for a in _ANOMALIE_MW_CACHE['dati'] or []:
+        legati = per_interno.get((a.get('codice_interno') or '').strip().upper())
+        if legati:
+            anomalie.append({**a, 'codici': legati})
+    return jsonify(ok=True, anomalie=anomalie)
+
+
+@pp_bp.route('/api/masterwork/anomalie/segna-lette', methods=['POST'])
+def api_masterwork_anomalie_segna_lette():
+    """Dopo "È stato risolto" nel Conto Lavoro: l'anomalia sparisce anche dall'alert di Angelo su MasterWork."""
+    ids = [int(i) for i in ((request.get_json(silent=True) or {}).get('ids') or []) if str(i).isdigit()]
+    url_mw = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
+    if not ids or not url_mw:
+        return jsonify(ok=False)
+    try:
+        r = requests.post(f'{url_mw}/api/analytics/correzioni_self_service/segna_lette', json={'ids': ids}, timeout=6)
+        _ANOMALIE_MW_CACHE['t'] = 0
+        return jsonify(ok=r.ok)
+    except requests.exceptions.RequestException:
+        return jsonify(ok=False)
+
+
 @pp_bp.route('/api/masterwork/foto-diagnosi/<path:codice>')
 def api_foto_masterwork_diagnosi(codice):
     """Perche' una foto non compare nel LIVE Conto Lavoro: codici provati e risposta di MasterWork."""

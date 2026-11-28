@@ -76,6 +76,7 @@
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal('modalOrdine')">Chiudi</button>
       <button class="btn btn-ghost" id="btn-ord-elimina" onclick="eliminaOrdineAperto()">🗑️ Elimina ordine</button>
+      <button class="btn btn-ghost" id="btn-ord-sospendi" onclick="sospendiOrdineAperto()">⏸ Sospendi ordine</button>
       <button class="btn btn-primary" id="btn-ord-conferma-apertura" onclick="confermaOrdineAperto()">✅ Conferma ordine</button>
     </div>
   </div>
@@ -114,7 +115,7 @@ async function chiama(url, metodo, corpo){
   return d;
 }
 
-const BADGE_STATO = {BOZZA: '#e0a800', CONFERMATO: '#1a9e5c', ANNULLATO: '#c0392b'};
+const BADGE_STATO = {BOZZA: '#e0a800', CONFERMATO: '#1a9e5c', SOSPESO: '#e67e22', ANNULLATO: '#c0392b'};
 
 async function caricaOrdini(){
   const d = await chiama('/conto-lavoro/api/ordini');
@@ -207,7 +208,9 @@ async function apriOrdine(id){
         <th>Codice</th><th>Descrizione</th><th>Ordinata</th><th>Prodotta</th><th>Evasa</th><th>Saldo da produrre</th><th></th>
       </tr></thead>
     <tbody>${d.righe.map(r => `<tr id="riga-ordine-${r.id}">
-        <td><b>${esc(r.codice)}</b></td><td>${esc(r.descrizione)}</td>
+        <td><b>${esc(r.codice)}</b>
+          ${r.revisione ? `<div style="font-size:10px;color:#e0a800;font-weight:800;margin-top:2px" title="${esc(r.revisione.nota)}">🔁 DA REVISIONARE</div>
+              ${r.revisione.nota ? `<div style="font-size:10px;color:var(--text-dim)">${esc(r.revisione.nota)}</div>` : ''}` : ''}</td><td>${esc(r.descrizione)}</td>
         <td><input type="number" min="0" step="0.001" value="${r.quantita}" style="width:75px" id="qta-riga-${r.id}"
              onkeydown="if(event.key==='Enter')salvaRigaOrdine(${r.id})"></td>
         <td>
@@ -223,6 +226,9 @@ async function apriOrdine(id){
         <td style="font-weight:800;color:${r.saldo_da_produrre > 0 ? '#e0a800' : '#1a9e5c'}">${r.saldo_da_produrre}</td>
         <td style="white-space:nowrap">
             <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" title="Salva" onclick="salvaRigaOrdine(${r.id})">💾</button>
+            <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px${r.revisione ? ';color:#e0a800;border-color:#e0a800' : ''}"
+                    title="${r.revisione ? 'Revisionato: togli la segnalazione' : 'Segnala da revisionare (nuovi tempi / nuove fasi)'}"
+                    onclick="revisioneRiga(${r.id}, ${r.revisione ? 'false' : 'true'})">🔁</button>
             <button class="btn btn-ghost" style="font-size:11px;padding:3px 8px" title="Elimina riga" onclick="eliminaRigaOrdine(${r.id})">🗑️</button>
           </td>
       </tr>`).join('')}</tbody></table>
@@ -253,6 +259,9 @@ async function apriOrdine(id){
     </div>`;
   document.getElementById('btn-ord-elimina').style.display = d.movimentato ? 'none' : '';
   document.getElementById('btn-ord-conferma-apertura').style.display = bozza ? '' : 'none';
+  const bs = document.getElementById('btn-ord-sospendi');
+  bs.style.display = (d.stato === 'CONFERMATO' || d.stato === 'SOSPESO') ? '' : 'none';
+  bs.textContent = d.stato === 'SOSPESO' ? '▶ Riattiva ordine' : '⏸ Sospendi ordine';
   openModal('modalOrdine');
   CATALOGO_ORDINE_APERTO = await chiama('/conto-lavoro/api/articoli?cliente_id=' + d.cliente_id + '&tutti=1');
   if(!Array.isArray(CATALOGO_ORDINE_APERTO)) CATALOGO_ORDINE_APERTO = [];
@@ -366,6 +375,30 @@ async function confermaOrdineAperto(){
   showToast('✅ Ordine confermato');
   closeModal('modalOrdine');
   caricaOrdini();
+}
+
+async function sospendiOrdineAperto(){
+  if(!ordineAperto) return;
+  const sospendi = ordineAperto.stato !== 'SOSPESO';
+  const motivo = prompt(sospendi ? 'Motivo della sospensione (facoltativo):' : 'Nota per la riattivazione (facoltativa):', '');
+  if(motivo === null) return;
+  const d = await chiama('/conto-lavoro/api/ordini/' + ordineAperto.id + '/sospendi', 'PUT', {sospeso: sospendi, motivo});
+  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
+  showToast(sospendi ? '⏸ Ordine sospeso' : '▶ Ordine riattivato');
+  apriOrdine(ordineAperto.id);
+  caricaOrdini();
+}
+
+async function revisioneRiga(rid, attiva){
+  let nota = '';
+  if(attiva){
+    nota = prompt('Cosa va revisionato? (es. nuovi tempi, nuove fasi)', '');
+    if(nota === null) return;
+  } else if(!confirm('Codice revisionato: togliere la segnalazione?')) return;
+  const d = await chiama(`/conto-lavoro/api/ordini/${ordineAperto.id}/righe/${rid}/revisione`, 'PUT', {da_revisionare: attiva, nota});
+  if(!d.ok){ showToast('❌ ' + (d.error || 'Errore')); return; }
+  showToast(attiva ? '🔁 Segnalato da revisionare' : '✅ Revisione tolta');
+  apriOrdine(ordineAperto.id);
 }
 
 async function eliminaOrdineAperto(){

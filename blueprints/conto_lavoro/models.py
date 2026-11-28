@@ -129,7 +129,7 @@ class ClOrdine(db.Model):
     confermato_il = db.Column(db.DateTime(timezone=True))
     __table_args__ = (
         db.UniqueConstraint('cliente_id', 'numero_ordine', name='uq_cl_ordine_cliente_numero'),
-        db.CheckConstraint("stato IN ('BOZZA','CONFERMATO','ANNULLATO')", name='ck_cl_ordine_stato'),
+        db.CheckConstraint("stato IN ('BOZZA','CONFERMATO','SOSPESO','ANNULLATO')", name='ck_cl_ordine_stato'),
     )
     cliente = db.relationship('ClCliente')
     righe = db.relationship('ClOrdineRiga', back_populates='ordine', order_by='ClOrdineRiga.n_riga',
@@ -166,6 +166,32 @@ class ClOrdineRiga(db.Model):
     )
     ordine = db.relationship('ClOrdine', back_populates='righe')
     articolo = db.relationship('ClArticoloCliente')
+
+
+class ClRigaRevisione(db.Model):
+    """Dalla 0005: codice dell'ordine segnalato da Angelo DA REVISIONARE (nuovi tempi, nuove fasi)."""
+    __bind_key__ = BIND
+    __tablename__ = 'cl_riga_revisione'
+    riga_id = db.Column(db.Integer, db.ForeignKey('cl_ordine_riga.id', ondelete='CASCADE'), primary_key=True,
+                        autoincrement=False)
+    nota = db.Column(db.Text, nullable=False, default='')
+    segnalata_da = db.Column(db.String(80), nullable=False, default='')
+    segnalata_il = db.Column(db.DateTime(timezone=True), nullable=False, default=_adesso)
+
+
+class ClAnomaliaRisolta(db.Model):
+    """Dalla 0005: anomalia segnalata da un operaio su MasterWork, marcata 'E' stato risolto' con nota."""
+    __bind_key__ = BIND
+    __tablename__ = 'cl_anomalia_risolta'
+    id = db.Column(db.Integer, primary_key=True)
+    mw_id = db.Column(db.Integer, nullable=False, unique=True)
+    operaio = db.Column(db.String(120), nullable=False, default='')
+    codice_interno = db.Column(db.String(80), nullable=False, default='')
+    motivo = db.Column(db.Text, nullable=False, default='')
+    segnalata_il = db.Column(db.DateTime(timezone=True))
+    nota_risoluzione = db.Column(db.Text, nullable=False, default='')
+    risolta_da = db.Column(db.String(80), nullable=False, default='')
+    risolta_il = db.Column(db.DateTime(timezone=True), nullable=False, default=_adesso)
 
 
 class ClFattura(db.Model):

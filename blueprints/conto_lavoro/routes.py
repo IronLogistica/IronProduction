@@ -39,7 +39,8 @@ from blueprints.conto_lavoro.importa_articoli import analizza_file, crea_modello
 from blueprints.conto_lavoro.importa_ordine import estrai_dati_ordine
 from blueprints.conto_lavoro.models import (ClAudit, ClArticoloCliente, ClCliente, ClDdt, ClFattura,
                                             ClFotoArticolo, ClImpostazione, ClLotto, ClMovimento, ClOrdine,
-                                            ClOrdineRiga, ClSchemaVersion, TRACCIAMENTI, UDM, _adesso)
+                                            ClOrdineRiga, ClSchemaVersion, TRACCIAMENTI, UDM, _adesso,
+                                            ClRigaRevisione, ClAnomaliaRisolta)
 
 VERSIONE_MODULO = 'ordini'
 VERSIONE_SCHEMA_BASE = 1      # clienti/articoli — invariato dalla 0001, non deve regredire
@@ -52,6 +53,11 @@ VERSIONE_SCHEMA_LIVE = 3      # foto articolo + monitor LIVE — dalla 0003
 # tocca righe ordine: il cancello qui sotto richiede questa versione per
 # tutto il prefisso ordini/magazzino, non solo le rotte nuove.
 VERSIONE_SCHEMA_RIGHE_MODIFICABILI = 4
+# Ordine SOSPESO, righe DA REVISIONARE, anomalie MasterWork risolte — dalla
+# 0005 (Mauri, 28/11/2026). Tabelle a parte: tutto il resto funziona anche
+# prima della 0005, solo queste funzioni rispondono 503 finché non c'è.
+VERSIONE_SCHEMA_ANOMALIE = 5
+STATI_ATTIVI = ('CONFERMATO', 'SOSPESO')   # ordini rilasciati: anche se sospesi restano in LIVE/magazzino
 VERSIONE_SCHEMA_RICHIESTA = VERSIONE_SCHEMA_BASE  # compatibilità: usato dal cancello e dal tile "Clienti e articoli"
 PREFISSI_SCHEMA_ORDINI = ('/conto-lavoro/api/ordini', '/conto-lavoro/api/impostazioni', '/conto-lavoro/api/fatture',
                           '/conto-lavoro/api/magazzino')
@@ -532,6 +538,29 @@ def _ordine_movimentato(o, mappa_prodotta=None):
     return any(_prodotta_riga(r, mappa_prodotta) > 0 or float(r.quantita_evasa or 0) > 0 for r in o.righe)
 
 
+def _revisioni(riga_ids):
+    """{riga_id: ClRigaRevisione} — vuoto prima della 0005."""
+    riga_ids = list(riga_ids)
+    if not riga_ids or versione_schema() < VERSIONE_SCHEMA_ANOMALIE:
+        return {}
+    return {rv.riga_id: rv for rv in ClRigaRevisione.query.filter(ClRigaRevisione.riga_id.in_(riga_ids)).all()}
+
+
+def _revisione_dict(rv):
+    if not rv:
+        return None
+    return {'nota': rv.nota, 'segnalata_da': rv.segnalata_da,
+            'segnalata_il': rv.segnalata_il.strftime('%d/%m/%Y %H:%M') if rv.segnalata_il else ''}
+
+
+def _schema_anomalie_mancante():
+    if versione_schema() < VERSIONE_SCHEMA_ANOMALIE:
+        return jsonify(ok=False, error=f'Funzione disponibile dalla versione {VERSIONE_SCHEMA_ANOMALIE} delle tabelle '
+                                       f'del Conto lavoro: impostare CL_MIGRA_AUTO={VERSIONE_SCHEMA_ANOMALIE:04d} '
+                                       f'su Railway e riavviare.'), 503
+    return None
+
+
 def _ordine_dict(o, con_righe=False, mappa_prodotta=None):
     d = {'id': o.id, 'cliente_id': o.cliente_id, 'cliente': o.cliente.ragione_sociale if o.cliente else '',
         'numero_ordine': o.numero_ordine, 'rif_cliente': o.rif_cliente,
@@ -541,6 +570,7 @@ def _ordine_dict(o, con_righe=False, mappa_prodotta=None):
         'movimentato': _ordine_movimentato(o, mappa_prodotta)}
     if con_righe:
         righe = []
+        revisioni = _revisioni(r.id for r in o.righe)
         for r in o.righe:
             codice = r.articolo.codice if r.articolo else ''
             ordinata = float(r.quantita)
@@ -551,6 +581,7 @@ def _ordine_dict(o, con_righe=False, mappa_prodotta=None):
                           'quantita_prodotta': prodotta, 'prodotta_manuale': r.quantita_prodotta_manuale is not None,
                           'quantita_evasa': evasa,
                           'saldo_da_produrre': round(ordinata - prodotta, 3),
+                          'revisione': _revisione_dict(revisioni.get(r.id)),
                           'prezzo_unitario': float(r.prezzo_unitario) if r.prezzo_unitario is not None else None})
         d['righe'] = righe
     return d
@@ -674,6 +705,112 @@ def api_conferma_ordine(oid):
     _audit('ORDINE_CONFERMATO', 'cl_ordine', o.id)
     db.session.commit()
     return jsonify(ok=True, ordine=_ordine_dict(o))
+
+
+@cl_bp.put('/api/ordini/<int:oid>/sospendi')
+def api_sospendi_ordine(oid):
+    """{"sospeso": true/false, "motivo": "..."} — un ordine rilasciato (CONFERMATO)
+    può essere SOSPESO e poi riattivato. Il motivo resta nelle note dell'ordine."""
+    errore = _schema_anomalie_mancante()
+    if errore:
+        return errore
+    o = db.session.get(ClOrdine, oid) or abort(404)
+    d = request.get_json(silent=True) or {}
+    sospeso = bool(d.get('sospeso'))
+    motivo = str(d.get('motivo') or '').strip()[:500]
+    if sospeso and o.stato != 'CONFERMATO':
+        return jsonify(ok=False, error='Si può sospendere solo un ordine confermato (rilasciato).'), 409
+    if not sospeso and o.stato != 'SOSPESO':
+        return jsonify(ok=False, error="L'ordine non è sospeso."), 409
+    prima = o.stato
+    o.stato = 'SOSPESO' if sospeso else 'CONFERMATO'
+    quando = datetime.now().strftime('%d/%m/%Y %H:%M')
+    riga_nota = (f'⏸ SOSPESO il {quando}' + (f': {motivo}' if motivo else '')) if sospeso \
+        else (f'▶ RIATTIVATO il {quando}' + (f': {motivo}' if motivo else ''))
+    o.note = ((o.note or '') + '\n' + riga_nota).strip()
+    _audit('ORDINE_SOSPESO' if sospeso else 'ORDINE_RIATTIVATO', 'cl_ordine', o.id,
+           prima={'stato': prima}, dopo={'stato': o.stato, 'motivo': motivo})
+    db.session.commit()
+    return jsonify(ok=True, ordine=_ordine_dict(o))
+
+
+@cl_bp.put('/api/ordini/<int:oid>/righe/<int:rid>/revisione')
+def api_revisione_riga(oid, rid):
+    """{"da_revisionare": true/false, "nota": "..."} — Angelo segnala un codice
+    dell'ordine da revisionare (nuovi tempi, nuove fasi), o toglie la segnalazione."""
+    errore = _schema_anomalie_mancante()
+    if errore:
+        return errore
+    r = db.session.get(ClOrdineRiga, rid)
+    if not r or r.ordine_id != oid:
+        abort(404)
+    d = request.get_json(silent=True) or {}
+    rv = db.session.get(ClRigaRevisione, rid)
+    if d.get('da_revisionare'):
+        nota = str(d.get('nota') or '').strip()[:1000]
+        if rv:
+            rv.nota = nota
+        else:
+            db.session.add(ClRigaRevisione(riga_id=rid, nota=nota, segnalata_da=UTENTE_AUDIT))
+        _audit('RIGA_DA_REVISIONARE', 'cl_ordine_riga', rid, dopo={'nota': nota})
+    elif rv:
+        _audit('RIGA_REVISIONATA', 'cl_ordine_riga', rid, prima={'nota': rv.nota})
+        db.session.delete(rv)
+    db.session.commit()
+    o = db.session.get(ClOrdine, oid)
+    mappa_prodotta = _prodotta_per_codici(x.articolo.codice for x in o.righe if x.articolo)
+    return jsonify(ok=True, ordine=_ordine_dict(o, con_righe=True, mappa_prodotta=mappa_prodotta))
+
+
+# ── Anomalie segnalate dagli operai su MasterWork ───────────────────────────
+# Le anomalie le legge la pagina dal MasterWork tramite IronProduction
+# (/api/masterwork/anomalie, fuori da questo modulo: qui niente rete). Qui si
+# registra solo chi le ha risolte e con quale nota.
+@cl_bp.get('/api/anomalie-risolte')
+def api_anomalie_risolte():
+    errore = _schema_anomalie_mancante()
+    if errore:
+        return errore
+    righe = ClAnomaliaRisolta.query.order_by(ClAnomaliaRisolta.risolta_il.desc()).limit(500).all()
+    return jsonify([{'mw_id': a.mw_id, 'operaio': a.operaio, 'codice_interno': a.codice_interno, 'motivo': a.motivo,
+                     'nota_risoluzione': a.nota_risoluzione, 'risolta_da': a.risolta_da,
+                     'risolta_il': a.risolta_il.strftime('%d/%m/%Y %H:%M') if a.risolta_il else ''} for a in righe])
+
+
+@cl_bp.post('/api/anomalie-risolte')
+def api_risolvi_anomalia():
+    """Pulsante "È stato risolto": {"mw_id", "nota", e la fotografia dell'anomalia
+    (operaio, codice_interno, motivo, segnalata_il)}."""
+    errore = _schema_anomalie_mancante()
+    if errore:
+        return errore
+    d = request.get_json(silent=True) or {}
+    try:
+        mw_id = int(d.get('mw_id'))
+    except (TypeError, ValueError):
+        return jsonify(ok=False, error='Anomalia non indicata.'), 400
+    nota = str(d.get('nota') or '').strip()[:2000]
+    if not nota:
+        return jsonify(ok=False, error='Scrivi una nota su come è stata risolta.'), 400
+    if ClAnomaliaRisolta.query.filter_by(mw_id=mw_id).first():
+        return jsonify(ok=False, error='Anomalia già segnata come risolta.'), 409
+    segnalata_il = None
+    try:
+        segnalata_il = datetime.fromisoformat(str(d.get('segnalata_il') or '')[:26]) if d.get('segnalata_il') else None
+    except ValueError:
+        pass
+    a = ClAnomaliaRisolta(mw_id=mw_id, operaio=str(d.get('operaio') or '')[:120],
+                          codice_interno=str(d.get('codice_interno') or '')[:80],
+                          motivo=str(d.get('motivo') or '')[:5000], segnalata_il=segnalata_il,
+                          nota_risoluzione=nota, risolta_da=str(d.get('risolta_da') or UTENTE_AUDIT)[:80])
+    db.session.add(a)
+    _audit('ANOMALIA_RISOLTA', 'cl_anomalia_risolta', mw_id, dopo={'nota': nota, 'operaio': a.operaio})
+    try:
+        db.session.commit()
+    except IntegrityError:
+        db.session.rollback()
+        return jsonify(ok=False, error='Anomalia già segnata come risolta.'), 409
+    return jsonify(ok=True)
 
 
 def _numero_opzionale(d, chiave, etichetta):
@@ -944,7 +1081,8 @@ def api_live():
     l'indicazione se l'articolo ha una foto di riferimento caricata. Solo
     lettura — stessa eccezione documentata in cima al file per "Prodotta".
     """
-    ordini = (ClOrdine.query.filter(ClOrdine.stato == 'CONFERMATO')
+    stati = STATI_ATTIVI if versione_schema() >= VERSIONE_SCHEMA_ANOMALIE else ('CONFERMATO',)
+    ordini = (ClOrdine.query.filter(ClOrdine.stato.in_(stati))
              .options(db.joinedload(ClOrdine.cliente),
                       db.joinedload(ClOrdine.righe).joinedload(ClOrdineRiga.articolo))
              .order_by(ClOrdine.cliente_id, ClOrdine.numero_ordine).all())
@@ -959,6 +1097,7 @@ def api_live():
     # rete" per troppe query.
     mappa_prodotta = _prodotta_per_codici(r.articolo.codice for o in ordini for r in o.righe if r.articolo)
 
+    revisioni = _revisioni(r.id for o in ordini for r in o.righe)
     gruppi = {}
     for o in ordini:
         g = gruppi.setdefault(o.cliente_id, {'cliente_id': o.cliente_id,
@@ -970,11 +1109,13 @@ def api_live():
             prodotta = _prodotta_riga(r, mappa_prodotta)
             saldo = round(ordinata - prodotta, 3)
             pct = round(min(100, prodotta / ordinata * 100)) if ordinata > 0 else 100
-            righe.append({'articolo_id': r.articolo_id, 'codice': codice, 'descrizione': r.descrizione,
+            righe.append({'riga_id': r.id, 'revisione': _revisione_dict(revisioni.get(r.id)),
+                          'articolo_id': r.articolo_id, 'codice': codice, 'descrizione': r.descrizione,
                           'quantita': ordinata, 'quantita_prodotta': prodotta,
                           'quantita_evasa': float(r.quantita_evasa or 0),
                           'saldo_da_produrre': saldo, 'pct': pct, 'ha_foto': r.articolo_id in con_foto})
-        g['ordini'].append({'id': o.id, 'numero_ordine': o.numero_ordine, 'rif_cliente': o.rif_cliente, 'righe': righe})
+        g['ordini'].append({'id': o.id, 'numero_ordine': o.numero_ordine, 'rif_cliente': o.rif_cliente,
+                            'sospeso': o.stato == 'SOSPESO', 'righe': righe})
     return jsonify(sorted(gruppi.values(), key=lambda g: g['cliente']))
 
 
@@ -1005,13 +1146,13 @@ def api_magazzino():
     if versione_schema() >= VERSIONE_SCHEMA_ORDINI:
         righe_ordine = (db.session.query(ClOrdineRiga.articolo_id, db.func.coalesce(db.func.sum(ClOrdineRiga.quantita), 0))
                         .join(ClOrdine, ClOrdine.id == ClOrdineRiga.ordine_id)
-                        .filter(ClOrdine.stato == 'CONFERMATO', ClOrdineRiga.articolo_id.in_(articolo_ids))
+                        .filter(ClOrdine.stato.in_(STATI_ATTIVI), ClOrdineRiga.articolo_id.in_(articolo_ids))
                         .group_by(ClOrdineRiga.articolo_id).all())
         ordinate = dict(righe_ordine)
     if versione_schema() >= VERSIONE_SCHEMA_RIGHE_MODIFICABILI:
         righe_evase = (db.session.query(ClOrdineRiga.articolo_id, db.func.coalesce(db.func.sum(ClOrdineRiga.quantita_evasa), 0))
                        .join(ClOrdine, ClOrdine.id == ClOrdineRiga.ordine_id)
-                       .filter(ClOrdine.stato == 'CONFERMATO', ClOrdineRiga.articolo_id.in_(articolo_ids))
+                       .filter(ClOrdine.stato.in_(STATI_ATTIVI), ClOrdineRiga.articolo_id.in_(articolo_ids))
                        .group_by(ClOrdineRiga.articolo_id).all())
         evase = dict(righe_evase)
 

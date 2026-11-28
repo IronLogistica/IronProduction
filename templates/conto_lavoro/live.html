@@ -53,12 +53,36 @@
   .popup-numero.saldo.completo{border-color:#1a9e5c}
   .popup-numero.saldo.completo b{color:#1a9e5c}
   .popup-chiudi{margin-top:auto;background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px;font-weight:800;cursor:pointer;font-size:14px}
+  tr.sospeso td{opacity:.45}
+  tr.sospeso td.cella-ordine{opacity:1}
+  .tag{display:inline-block;margin-top:3px;padding:2px 6px;border-radius:4px;font-size:9px;font-weight:800;letter-spacing:.3px}
+  .tag-sospeso{background:#5a1010;color:#ff8a8a;border:1px solid #c0392b}
+  .tag-revisione{background:#3d2a00;color:#ffc94d;border:1px solid #e0a800}
+  .tag-anomalia{background:#5a1010;color:#fff;border:1px solid #ff4d4d;animation:lampeggia 1.4s infinite}
+  @keyframes lampeggia{50%{opacity:.55}}
+  #anomalie{margin-bottom:18px}
+  .anomalie-box{border:2px solid #ff4d4d;border-radius:10px;background:#1a0b0f;padding:10px 14px}
+  .anomalie-titolo{font-weight:900;color:#ff6b6b;font-size:15px;margin-bottom:8px}
+  .anomalia{display:flex;gap:12px;align-items:center;padding:8px 0;border-top:1px solid rgba(255,77,77,.25)}
+  .anomalia:first-of-type{border-top:0}
+  .anomalia-testo{flex:1;font-size:12px}
+  .anomalia-testo b{color:#fff}
+  .anomalia-motivo{font-size:14px;color:#ffd6d6;margin-top:2px}
+  .anomalia-meta{font-size:11px;color:#c79a9a}
+  .btn-risolto{background:#1a9e5c;color:#fff;border:0;border-radius:8px;padding:8px 12px;font-weight:800;cursor:pointer;white-space:nowrap}
+  .popup-box.semplice{border:0;padding:0;background:transparent;box-shadow:none}
+  .popup-sezione{background:#0f2237;border-radius:8px;padding:10px 12px;font-size:12px}
+  .popup-sezione.rossa{border:1px solid #ff4d4d;background:#1a0b0f}
+  .popup-sezione.gialla{border:1px solid #e0a800;background:#1d1600}
+  .risolvi-box{background:#0a1623;border:2px solid #1a9e5c;border-radius:12px;padding:20px;width:min(560px,94vw)}
+  .risolvi-box textarea{width:100%;min-height:110px;background:#0f2237;color:#fff;border:1px solid #1e6fa5;border-radius:8px;padding:10px;font:inherit;font-size:14px}
   .vuoto{color:var(--text-dim);font-style:italic;padding:20px;text-align:center}
 </style>
 </head>
 <body>
 <h1>🔴 LIVE Conto lavoro</h1>
 <div class="sottotitolo" id="sottotitolo">Aggiornamento automatico ogni 20 secondi.</div>
+<div id="anomalie"></div>
 <div id="contenuto"><div class="vuoto">Caricamento…</div></div>
 <div id="popup" onclick="if(event.target===this) chiudiPopup()"><div class="popup-box" id="popup-box"></div></div>
 
@@ -91,6 +115,7 @@ function apriPopup(i){
   const {g, o, r} = righeLive[i] || {};
   if(!r) return;
   const interno = codiciInterni[r.codice];
+  document.getElementById('popup-box').classList.remove('semplice');
   document.getElementById('popup-box').innerHTML = `
     <img class="popup-foto" src="${srcFoto(r)}" onerror="this.outerHTML='<div class=&quot;popup-foto-vuota&quot;>📦</div>'">
     <div class="popup-dati">
@@ -98,6 +123,10 @@ function apriPopup(i){
       ${interno ? `<div class="popup-interno">Cod. interno: ${esc(interno)}</div>` : ''}
       <div class="popup-descr">${esc(r.descrizione)}</div>
       <div class="popup-rif">👥 ${esc(g.cliente)} · Ordine ${esc(o.numero_ordine)}${o.rif_cliente ? ' · ' + esc(o.rif_cliente) : ''}</div>
+      ${o.sospeso ? `<div class="popup-sezione rossa">⏸ <b>ORDINE SOSPESO</b> — non produrre finché non viene riattivato</div>` : ''}
+      ${r.revisione ? `<div class="popup-sezione gialla">🔁 <b>DA REVISIONARE</b>${r.revisione.nota ? ': ' + esc(r.revisione.nota) : ''}</div>` : ''}
+      ${anomaliePerCodice(r.codice).map(a => `<div class="popup-sezione rossa">⚠️ <b>${esc(a.operaio)}</b> (${esc(dataOra(a.creato_il))}): “${esc(a.motivo)}”
+          <div style="margin-top:6px"><button class="btn-risolto" onclick="apriRisolvi(${a.id})">✅ È stato risolto</button></div></div>`).join('')}
       <div class="popup-numero"><span>Q.tà ordinata</span><b>${r.quantita}</b></div>
       <div class="popup-numero"><span>Q.tà prodotta</span><b>${r.quantita_prodotta}</b></div>
       <div class="popup-numero"><span>Q.tà consegnata</span><b>${r.quantita_evasa}</b></div>
@@ -109,13 +138,89 @@ function apriPopup(i){
 function chiudiPopup(){ document.getElementById('popup').classList.remove('aperto'); }
 document.addEventListener('keydown', e => { if(e.key === 'Escape') chiudiPopup(); });
 
+// ── Anomalie segnalate dagli operai da MasterWork (richiesta di Mauri, 28/11/2026)
+let ANOMALIE = [], RISOLTE = new Set(), avvisoSchema = '';
+const anomaliePerCodice = c => ANOMALIE.filter(a => (a.codici || []).includes(c));
+const dataOra = iso => { if(!iso) return ''; const d = new Date(iso.length <= 19 ? iso + 'Z' : iso);
+  return isNaN(d) ? iso : d.toLocaleString('it-IT', {timeZone:'Europe/Rome', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}); };
+async function caricaAnomalie(codici){
+  try{
+    const rr = await fetch('/conto-lavoro/api/anomalie-risolte');
+    const ris = await rr.json();
+    if(Array.isArray(ris)){ RISOLTE = new Set(ris.map(x => x.mw_id)); avvisoSchema = ''; }
+    else avvisoSchema = ris.error || '';
+    const r = await fetch('/api/masterwork/anomalie', {method:'POST', headers:{'Content-Type':'application/json'},
+                                                      body: JSON.stringify({codici})});
+    const d = await r.json();
+    ANOMALIE = (d.anomalie || []).filter(a => !RISOLTE.has(a.id));
+  }catch(e){}
+  disegnaAnomalie();
+}
+function anomaliaHtml(a){
+  return `<div class="anomalia">
+    <div class="anomalia-testo">
+      <div><b>${esc((a.codici || []).join(', '))}</b> · cod. interno ${esc(a.codice_interno)}${a.fase ? ' · fase ' + esc(a.fase) : ''}</div>
+      <div class="anomalia-motivo">“${esc(a.motivo)}”</div>
+      <div class="anomalia-meta">👷 Segnalata da <b>${esc(a.operaio)}</b> · ${esc(dataOra(a.creato_il))}${a.azione && a.azione !== 'SEGNALAZIONE' ? ' · ' + esc(a.azione) : ''}</div>
+    </div>
+    <button class="btn-risolto" onclick="apriRisolvi(${a.id})">✅ È stato risolto</button>
+  </div>`;
+}
+function disegnaAnomalie(){
+  const box = document.getElementById('anomalie');
+  box.innerHTML = ANOMALIE.length ? `<div class="anomalie-box">
+      <div class="anomalie-titolo">⚠️ ANOMALIE SEGNALATE DAGLI OPERAI (${ANOMALIE.length})</div>
+      ${avvisoSchema ? `<div class="anomalia-meta" style="margin-bottom:6px">⚠️ ${esc(avvisoSchema)}</div>` : ''}
+      ${ANOMALIE.map(anomaliaHtml).join('')}</div>` : '';
+}
+function apriRisolvi(id){
+  const a = ANOMALIE.find(x => x.id === id);
+  if(!a) return;
+  document.getElementById('popup-box').classList.add('semplice');
+  document.getElementById('popup-box').innerHTML = `<div class="risolvi-box">
+      <div class="popup-codice" style="font-size:20px">✅ Anomalia risolta</div>
+      <div class="anomalia-motivo" style="margin:8px 0">“${esc(a.motivo)}”</div>
+      <div class="anomalia-meta" style="margin-bottom:12px">👷 ${esc(a.operaio)} · ${esc((a.codici || []).join(', '))} · ${esc(dataOra(a.creato_il))}</div>
+      <label class="popup-rif">Nota: come è stata risolta *</label>
+      <textarea id="nota-risolto" placeholder="es. ripresi i tempi, aggiunta la fase di sbavatura…"></textarea>
+      <div id="esito-risolto" style="color:#ff6b6b;font-size:12px;min-height:16px;margin-top:6px"></div>
+      <div style="display:flex;gap:8px;margin-top:10px">
+        <button class="popup-chiudi" style="background:#33475e;margin:0;flex:1" onclick="chiudiPopup()">Annulla</button>
+        <button class="popup-chiudi" style="background:#1a9e5c;margin:0;flex:2" onclick="confermaRisolto(${a.id})">✅ Conferma: è stato risolto</button>
+      </div></div>`;
+  document.getElementById('popup').classList.add('aperto');
+  setTimeout(() => document.getElementById('nota-risolto').focus(), 50);
+}
+async function confermaRisolto(id){
+  const a = ANOMALIE.find(x => x.id === id);
+  const nota = document.getElementById('nota-risolto').value.trim();
+  const esito = document.getElementById('esito-risolto');
+  if(!nota){ esito.textContent = 'Scrivi una nota su come è stata risolta.'; return; }
+  const r = await fetch('/conto-lavoro/api/anomalie-risolte', {method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({mw_id: id, nota, operaio: a.operaio, codice_interno: a.codice_interno,
+                            motivo: a.motivo, segnalata_il: a.creato_il})});
+  const d = await r.json().catch(() => ({}));
+  if(!d.ok){ esito.textContent = d.error || 'Errore'; return; }
+  fetch('/api/masterwork/anomalie/segna-lette', {method:'POST', headers:{'Content-Type':'application/json'},
+                                                body: JSON.stringify({ids: [id]})});
+  RISOLTE.add(id);
+  ANOMALIE = ANOMALIE.filter(x => x.id !== id);
+  chiudiPopup();
+  disegnaAnomalie();
+  carica();
+}
+
 async function carica(){
   let gruppi;
   try{ gruppi = await (await fetch('/conto-lavoro/api/live')).json(); }
   catch(e){ document.getElementById('contenuto').innerHTML = '<div class="vuoto">❌ Errore di rete.</div>'; return; }
   const box = document.getElementById('contenuto');
   if(Array.isArray(gruppi))
-    await caricaCodiciInterni([...new Set(gruppi.flatMap(g => g.ordini.flatMap(o => o.righe.map(r => r.codice))))]);
+  {
+    const codici = [...new Set(gruppi.flatMap(g => g.ordini.flatMap(o => o.righe.map(r => r.codice))))];
+    await caricaCodiciInterni(codici);
+    await caricaAnomalie(codici);
+  }
   if(!Array.isArray(gruppi) || !gruppi.length){
     box.innerHTML = '<div class="vuoto">Nessun ordine confermato al momento.</div>';
     return;
@@ -125,18 +230,21 @@ async function carica(){
     </tr>`;
   righeLive = [];
   const rigaHtml = (g, o, r) => { const i = righeLive.push({g, o, r}) - 1; return `
-    <tr>
+    <tr class="${o.sospeso ? 'sospeso' : ''}">
       <td class="codice-cella" onclick="apriPopup(${i})" title="Clicca per ingrandire">
         ${r.ha_foto
           ? `<img class="miniatura" src="/conto-lavoro/api/articoli/${r.articolo_id}/foto" loading="lazy">`
           : `<img class="miniatura" src="/api/masterwork/foto/${encodeURIComponent(r.codice)}" loading="lazy"
                  onerror="this.outerHTML='<div class=&quot;miniatura-vuota&quot;>📦</div>'">`}
-        <div><div class="codice">${esc(r.codice)}</div><div class="descr">${esc(r.descrizione)}</div></div>
+        <div><div class="codice">${esc(r.codice)}</div><div class="descr">${esc(r.descrizione)}</div>
+          ${r.revisione ? `<span class="tag tag-revisione" title="${esc(r.revisione.nota)}">🔁 DA REVISIONARE</span>` : ''}
+          ${anomaliePerCodice(r.codice).length ? `<span class="tag tag-anomalia">⚠️ ${anomaliePerCodice(r.codice).length} ANOMALIA</span>` : ''}</div>
       </td>
       <td>${codiciInterni[r.codice]
             ? `<span class="cod-interno">${esc(codiciInterni[r.codice])}</span>`
             : `<span class="cod-interno manca">—</span>`}</td>
-      <td>${esc(o.numero_ordine)}${o.rif_cliente ? `<div class="descr">${esc(o.rif_cliente)}</div>` : ''}</td>
+      <td class="cella-ordine">${esc(o.numero_ordine)}${o.rif_cliente ? `<div class="descr">${esc(o.rif_cliente)}</div>` : ''}
+        ${o.sospeso ? `<span class="tag tag-sospeso">⏸ SOSPESO</span>` : ''}</td>
       <td>${r.quantita}</td>
       <td>${r.quantita_prodotta}</td>
       <td>${r.quantita_evasa}</td>
