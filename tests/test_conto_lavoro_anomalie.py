@@ -173,6 +173,15 @@ class TestAnomalieContoLavoro(unittest.TestCase):
         r = c.post('/conto-lavoro/live/sblocca', data={'pin': '2468'})
         self.assertEqual(r.status_code, 302)
         self.assertEqual(c.get('/conto-lavoro/ordini', headers=html).status_code, 200)   # sbloccato
+        # Angelo: col PIN il suo browser va dovunque anche se era stato segnato come postazione
+        ang = self.app.test_client()
+        ang.get('/conto-lavoro/live')
+        self.assertEqual(ang.get('/conto-lavoro/ordini', headers=html).status_code, 302)
+        self.assertTrue(ang.post('/conto-lavoro/api/angelo/accesso', json={'pin': '2468'}).json['ok'])
+        self.assertEqual(ang.get('/conto-lavoro/ordini', headers=html).status_code, 200)
+        r = ang.get('/conto-lavoro/live')                         # riaprendo il LIVE non si blocca piu'
+        self.assertIn('ip_postazione_live=;', r.headers.get('Set-Cookie', ''))
+        self.assertEqual(ang.get('/conto-lavoro/anagrafiche', headers=html).status_code, 200)
         capo = self.app.test_client()
         r = capo.get('/conto-lavoro/live?capo=1')                # il capo non viene bloccato
         self.assertNotIn('ip_postazione_live', r.headers.get('Set-Cookie', ''))

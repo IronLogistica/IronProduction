@@ -153,7 +153,9 @@ def api_angelo_accesso():
         return jsonify(ok=False, error='PIN errato.'), 403
     session['cl_angelo'] = True
     session.permanent = True
-    return jsonify(ok=True)
+    r = jsonify(ok=True)
+    r.delete_cookie(COOKIE_TOTEM)     # il browser di Angelo non resta mai bloccato come postazione LIVE
+    return r
 
 
 @cl_bp.post('/api/angelo/esci')
@@ -256,7 +258,7 @@ _TOTEM_POST = ('/api/masterwork/codici-interni', '/api/masterwork/anomalie')
 
 
 def _consentito_alla_postazione(metodo, percorso):
-    if percorso.startswith('/conto-lavoro/live/sblocca'):
+    if percorso.startswith('/conto-lavoro/live/sblocca') or percorso == '/conto-lavoro/api/angelo/accesso':
         return True
     if metodo in ('GET', 'HEAD'):
         if percorso.startswith('/conto-lavoro/api/articoli/') and percorso.endswith('/foto'):
@@ -272,6 +274,8 @@ def _consentito_alla_postazione(metodo, percorso):
 def _blocca_postazione_live():
     if request.cookies.get(COOKIE_TOTEM) != '1':
         return None
+    if angelo_attivo():          # Angelo va dovunque, anche da un dispositivo segnato come postazione
+        return None
     if _consentito_alla_postazione(request.method, request.path):
         return None
     if request.method == 'GET' and 'text/html' in (request.headers.get('Accept') or ''):
@@ -284,10 +288,12 @@ def pagina_live():
     """Monitor LIVE Conto lavoro — stile del monitor MasterWork (Saldatura,
     ecc.): niente sidebar/topbar, pensato per un totem/monitor d'officina.
     Aperto senza ?capo=1 il dispositivo diventa POSTAZIONE LIVE (vedi sopra)."""
-    capo = request.args.get('capo') == '1' and request.cookies.get(COOKIE_TOTEM) != '1'
+    capo = angelo_attivo() or (request.args.get('capo') == '1' and request.cookies.get(COOKIE_TOTEM) != '1')
     risposta = current_app.make_response(render_template('conto_lavoro/live.html', schema=versione_schema(),
                                                          schema_richiesto=VERSIONE_SCHEMA_LIVE, postazione=not capo))
-    if not capo:
+    if angelo_attivo():
+        risposta.delete_cookie(COOKIE_TOTEM)
+    elif not capo:
         risposta.set_cookie(COOKIE_TOTEM, '1', max_age=10 * 365 * 24 * 3600, httponly=True, samesite='Lax',
                             secure=request.is_secure or request.headers.get('X-Forwarded-Proto') == 'https')
     risposta.headers['Cache-Control'] = 'no-store'
@@ -306,7 +312,12 @@ def pagina_sblocca_postazione():
         elif not pin or not hmac.compare_digest(pin, atteso):
             errore = 'PIN errato.'
         else:
-            r = redirect('/conto-lavoro/')
+            # il dispositivo torna libero e il browser resta riconosciuto come quello di Angelo:
+            # aprendo di nuovo il LIVE non verra' piu' bloccato
+            session['cl_angelo'] = True
+            session.permanent = True
+            vai = request.args.get('vai') or ''
+            r = redirect(vai if vai.startswith('/') and not vai.startswith('//') else '/conto-lavoro/')
             r.delete_cookie(COOKIE_TOTEM)
             return r
     return f"""<!DOCTYPE html><html lang="it"><head><meta charset="UTF-8">

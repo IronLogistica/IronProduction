@@ -91,6 +91,8 @@
 <body>
 <h1>🔴 LIVE Conto lavoro</h1>
 <div class="sottotitolo" id="sottotitolo">Aggiornamento automatico ogni 20 secondi.</div>
+{% if postazione %}<a href="/conto-lavoro/live/sblocca" title="Sblocca (PIN di Angelo)"
+   style="position:fixed;right:10px;bottom:8px;font-size:14px;opacity:.35;text-decoration:none">🔒</a>{% endif %}
 <div id="anomalie"></div>
 <div id="contenuto"><div class="vuoto">Caricamento…</div></div>
 <div id="popup" onclick="if(event.target===this) chiudiPopup()"><div class="popup-box" id="popup-box"></div></div>
