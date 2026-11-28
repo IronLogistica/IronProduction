@@ -1143,6 +1143,53 @@ def api_matrice_competenze_operai_da_registrare():
     return jsonify(mancanti)
 
 
+# ── Foto articolo da MasterWork (Mauri, 28/11/2026: il LIVE del Conto Lavoro deve mostrare le immagini
+# dei lavori, che MasterWork tiene in anagrafica_articoli.foto_url) ─────────────────────────────────────
+# Sta qui e non nel blueprint conto_lavoro perche' quel modulo per regola non chiama mai servizi esterni:
+# la pagina LIVE si limita a puntare un <img> a questo indirizzo.
+_FOTO_MW_CACHE = {}          # codice -> (istante, url o '')
+_FOTO_MW_TTL = 3600
+
+
+def _foto_masterwork(codice):
+    import time
+    codice = (codice or '').strip().upper()
+    if not codice:
+        return ''
+    ora = time.time()
+    in_cache = _FOTO_MW_CACHE.get(codice)
+    if in_cache and ora - in_cache[0] < _FOTO_MW_TTL:
+        return in_cache[1]
+    url_mw = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
+    trovata = ''
+    if url_mw:
+        # il codice cliente puo' avere un nome diverso dentro MasterWork (mappa codici)
+        candidati = [codice] + [m.codice_masterwork.strip().upper() for m in
+                                MappaCodiceMasterWork.query.filter(
+                                    db.func.upper(MappaCodiceMasterWork.codice_ironproduction) == codice).all()]
+        for c in dict.fromkeys(candidati):
+            try:
+                r = requests.get(f'{url_mw}/api/fasi_articolo/{requests.utils.quote(c, safe="")}', timeout=4)
+                foto = (r.json() or {}).get('foto_url') if r.ok else ''
+            except (requests.exceptions.RequestException, ValueError):
+                foto = ''
+            if foto and foto != 'None':
+                trovata = foto
+                break
+    _FOTO_MW_CACHE[codice] = (ora, trovata)
+    return trovata
+
+
+@pp_bp.route('/api/masterwork/foto/<path:codice>')
+def api_foto_masterwork(codice):
+    """Reindirizza all'immagine dell'articolo in MasterWork (Supabase/Dropbox...), 404 se non c'e'."""
+    from flask import redirect
+    foto = _foto_masterwork(codice)
+    if not foto:
+        return ('', 404)
+    return redirect(foto, code=302)
+
+
 @pp_bp.route('/api/matrice-competenze/cerca-operatore-masterwork')
 def api_matrice_competenze_cerca_operatore_masterwork():
     """
