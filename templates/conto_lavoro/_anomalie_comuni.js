@@ -63,6 +63,12 @@ function claCodice(codice){
   return `<a href="/conto-lavoro/anomalie?codice=${encodeURIComponent(codice)}" target="_blank" onclick="event.stopPropagation()"
              style="color:#ff6b6b;font-weight:900;text-decoration:underline" title="Anomalie da risolvere: clicca">⚠️ ${claEsc(codice)}</a>`;
 }
+// Pulsante per segnalare un'anomalia su un codice (Riepilogo ordini)
+function claPulsanteSegnala(articolo_id, codice, ordine_id, descr){
+  return `<button type="button" class="cla-btn-segnala" title="Segnala un'anomalia (tempo o prezzo) su questo codice"
+            onclick='event.stopPropagation(); claSegnala(${JSON.stringify({articolo_id, codice, ordine_id: ordine_id || null, descr: descr || ''}).replace(/'/g, "&#39;")})'>⚠️ Segnala</button>`;
+}
+
 // ── finestre (stile proprio: funzionano sia nelle pagine normali sia nel LIVE)
 (function(){
   const st = document.createElement('style');
