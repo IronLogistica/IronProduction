@@ -44,16 +44,21 @@
   <div id="tw-esito" style="margin-top:12px;font-size:12px"></div>
 </div>
 
+<div style="display:flex;gap:6px;margin-bottom:10px">
+  <button class="btn btn-primary tw-tab" data-vista="ordini" onclick="vista(this)">📋 Quadro per ordine</button>
+  <button class="btn btn-ghost tw-tab" data-vista="ddt" onclick="vista(this)">🚚 Riepilogo DDT di vendita</button>
+  <button class="btn btn-ghost tw-tab" data-vista="fatture" onclick="vista(this)">🧾 Riepilogo fatture</button>
+</div>
 <div class="mon-section" style="padding:12px 14px;margin-bottom:12px;display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap">
   <div><label class="modal-label" style="margin:0">Cliente</label>
     <select class="modal-input" id="f-cliente" onchange="caricaQuadro()" style="width:220px"><option value="">Tutti</option></select></div>
-  <div><label class="modal-label" style="margin:0">Esito</label>
+  <div id="box-esito"><label class="modal-label" style="margin:0">Esito</label>
     <select class="modal-input" id="f-esito" onchange="disegna()" style="width:220px">
       <option value="">Tutti</option><option value="NESSUN_DDT">🔴 Nessun DDT</option>
       <option value="DA_FATTURARE">🟡 DDT da fatturare</option><option value="PARZIALE">🟡 Spedito in parte</option>
       <option value="COMPLETO">✅ Completo</option></select></div>
-  <div><label class="modal-label" style="margin:0">Ordine</label>
-    <input class="modal-input" id="f-ordine" oninput="disegna()" placeholder="numero ordine" style="width:160px"></div>
+  <div><label class="modal-label" style="margin:0">Cerca</label>
+    <input class="modal-input" id="f-ordine" oninput="disegna()" placeholder="numero ordine, DDT, fattura o codice" style="width:260px"></div>
   <div id="tw-conteggi" style="margin-left:auto;font-size:12px;color:var(--text-dim)"></div>
 </div>
 <div id="tw-quadro">Caricamento...</div>
@@ -76,7 +81,17 @@
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const ETICHETTE = {COMPLETO: '✅ Completo', PARZIALE: '🟡 Spedito in parte', DA_FATTURARE: '🟡 DDT da fatturare',
                    NESSUN_DDT: '🔴 Nessun DDT'};
-let QUADRO = {ordini: [], ddt_senza_ordine: [], fatture_senza_abbinamento: []};
+let QUADRO = {ordini: [], ddt_tutti: [], fatture_tutte: [], ddt_senza_ordine: [], fatture_senza_abbinamento: []};
+let VISTA = 'ordini';
+function vista(b){
+  VISTA = b.dataset.vista;
+  document.querySelectorAll('.tw-tab').forEach(x => x.className = 'btn tw-tab ' + (x === b ? 'btn-primary' : 'btn-ghost'));
+  document.getElementById('box-esito').style.display = VISTA === 'ordini' ? '' : 'none';
+  disegna();
+}
+const righeHtml = r => `<details><summary style="cursor:pointer;font-size:12px">${r.length} righe</summary>
+  <div style="font-size:11px;margin-top:4px">${r.map(x => `${esc(x.codice)} <span style="color:var(--text-dim)">${esc(x.descrizione)}</span> <b>${x.quantita ?? ''}</b>`).join('<br>')}</div></details>`;
+const cerca = (testo, q) => !q || testo.toUpperCase().includes(q);
 const euro = v => v == null ? '' : v.toLocaleString('it-IT', {style: 'currency', currency: 'EUR'});
 
 function resetAnteprima(){
@@ -141,10 +156,44 @@ const docHtml = (x, tipo) => `<span class="tw-doc ${tipo === 'DDT' && !x.fattura
     title="${tipo === 'DDT' && !x.fatturato ? 'DDT non ancora fatturato' : 'Apri il documento'}">
     ${tipo === 'DDT' ? '🚚' : '🧾'} <b>${esc(x.numero)}</b> <small>${esc(x.data)}</small>${x.importo != null ? ' · ' + euro(x.importo) : ''}</span>`;
 
+function disegnaDdt(q){
+  const lista = QUADRO.ddt_tutti.filter(d => cerca([d.numero, d.cliente, ...d.ordini_rif, ...d.ordini, ...d.fatture,
+                                                    ...d.righe.map(r => r.codice)].join(' '), q));
+  document.getElementById('tw-conteggi').innerHTML = `${lista.length} DDT · ${lista.filter(d => !d.fatture.length).length} da fatturare`;
+  document.getElementById('tw-orfani').innerHTML = '';
+  document.getElementById('tw-quadro').innerHTML = lista.length ? `<div class="mon-section" style="padding:10px 14px;overflow-x:auto">
+    <table class="mon-table" style="width:100%"><thead><tr><th>DDT</th><th>Data</th><th>Cliente</th><th>Ordine richiamato</th><th>Pezzi</th><th>Righe</th><th>Fatturato</th></tr></thead>
+    <tbody>${lista.map(d => `<tr>
+      <td>${docHtml({...d, fatturato: d.fatture.length > 0}, 'DDT')}</td><td>${esc(d.data)}</td><td>${esc(d.cliente)}</td>
+      <td>${d.ordini_rif.map(n => `${esc(n)} ${d.ordini.some(o => o.startsWith(n)) ? '✅' : '<span title="ordine non presente nel programma">❔</span>'}`).join('<br>') || '—'}</td>
+      <td><b>${d.pezzi}</b></td><td>${righeHtml(d.righe)}</td>
+      <td>${d.fatture.length ? d.fatture.map(n => '🧾 ' + esc(n)).join('<br>') : '<span class="tw-esito DA_FATTURARE">🟡 da fatturare</span>'}</td>
+    </tr>`).join('')}</tbody></table></div>` : '<div class="mon-section" style="padding:16px;color:var(--text-dim)">Nessun DDT di vendita caricato.</div>';
+}
+function disegnaFatture(q){
+  const lista = QUADRO.fatture_tutte.filter(f => cerca([f.numero, f.cliente, ...f.ddt_rif, ...f.ordini,
+                                                         ...f.righe.map(r => r.codice)].join(' '), q));
+  const tot = lista.reduce((a, f) => a + (f.importo || 0), 0);
+  document.getElementById('tw-conteggi').innerHTML = `${lista.length} fatture · totale ${euro(tot)}`;
+  document.getElementById('tw-orfani').innerHTML = '';
+  document.getElementById('tw-quadro').innerHTML = lista.length ? `<div class="mon-section" style="padding:10px 14px;overflow-x:auto">
+    <table class="mon-table" style="width:100%"><thead><tr><th>Fattura</th><th>Data</th><th>Cliente</th><th>Importo</th><th>DDT richiamati</th><th>Ordini</th><th>Pezzi</th><th>Righe</th></tr></thead>
+    <tbody>${lista.map(f => `<tr>
+      <td>${docHtml(f, 'FATTURA')}</td><td>${esc(f.data)}</td><td>${esc(f.cliente)}</td><td><b>${euro(f.importo)}</b></td>
+      <td style="font-size:12px">${f.ddt_rif.map(n => `${esc(n)} ${f.ddt_trovati.includes(n) ? '✅' : '<span title="DDT non ancora caricato">❔</span>'}`).join(' · ') || '—'}</td>
+      <td>${f.ordini.map(esc).join(', ') || '—'}</td><td><b>${f.pezzi}</b></td><td>${righeHtml(f.righe)}</td>
+    </tr>`).join('')}</tbody></table>
+    <div style="font-size:11px;color:var(--text-dim);margin-top:6px">✅ DDT già caricato · ❔ DDT non ancora caricato: caricandolo si aggancia da solo</div></div>`
+    : '<div class="mon-section" style="padding:16px;color:var(--text-dim)">Nessuna fattura caricata.</div>';
+}
+
 function disegna(){
+  const q = document.getElementById('f-ordine').value.trim().toUpperCase();
+  if(VISTA === 'ddt') return disegnaDdt(q);
+  if(VISTA === 'fatture') return disegnaFatture(q);
   const esitoF = document.getElementById('f-esito').value;
-  const ordF = document.getElementById('f-ordine').value.trim().toUpperCase();
-  const lista = QUADRO.ordini.filter(o => (!esitoF || o.esito === esitoF) && (!ordF || o.numero_ordine.toUpperCase().includes(ordF)));
+  const ordF = q;
+  const lista = QUADRO.ordini.filter(o => (!esitoF || o.esito === esitoF) && cerca([o.numero_ordine, o.cliente, ...o.ddt.map(x => x.numero), ...o.fatture.map(x => x.numero)].join(' '), ordF));
   const conta = k => QUADRO.ordini.filter(o => o.esito === k).length;
   document.getElementById('tw-conteggi').innerHTML =
     `✅ ${conta('COMPLETO')} · 🟡 ${conta('DA_FATTURARE') + conta('PARZIALE')} · 🔴 ${conta('NESSUN_DDT')}`;

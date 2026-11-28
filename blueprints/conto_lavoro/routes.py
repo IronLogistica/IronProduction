@@ -1292,9 +1292,27 @@ def api_tw_quadro():
                        'ordinato': round(ordinato, 3), 'spedito': round(spedito, 3),
                        'ddt': [{**_doc_tw_dict(d), 'fatturato': bool(ddt_fatture.get(d.id))} for d in miei_ddt],
                        'fatture': [_doc_tw_dict(f) for f in mie_fat], 'esito': esito})
+    # Riepiloghi dal database (niente rilettura dei PDF): tutti i DDT di vendita e tutte le fatture
+    ord_by_id = {o.id: o for o in ordini}
+
+    def righe_doc(d):
+        return [{'ordine_rif': r.numero_ordine_rif, 'codice': r.codice, 'descrizione': r.descrizione,
+                 'quantita': float(r.quantita) if r.quantita is not None else None} for r in d.righe]
+    elenco_ddt = [{**_doc_tw_dict(d), 'ordini_rif': [r.numero_rif for r in d.riferimenti if r.tipo_rif == 'ORDINE'],
+                   'ordini': [ord_by_id[i].numero_ordine for i in ddt_ordini.get(d.id, []) if i in ord_by_id],
+                   'fatture': [fat_by_id[i].numero for i in ddt_fatture.get(d.id, [])],
+                   'pezzi': round(sum(float(r.quantita or 0) for r in d.righe), 3), 'righe': righe_doc(d)}
+                  for d in sorted(ddt, key=lambda d: (d.data_documento or datetime.min.date(), d.id), reverse=True)
+                  if not cliente_id or d.cliente_id == cliente_id]
+    elenco_fatture = [{**_doc_tw_dict(f), 'ddt_rif': [r.numero_rif for r in f.riferimenti if r.tipo_rif == 'DDT'],
+                       'ddt_trovati': [ddt_by_id[i].numero for i in fatt_ddt.get(f.id, [])],
+                       'ordini': [ord_by_id[i].numero_ordine for i in fatt_ordini.get(f.id, []) if i in ord_by_id],
+                       'pezzi': round(sum(float(r.quantita or 0) for r in f.righe), 3), 'righe': righe_doc(f)}
+                      for f in sorted(fatture, key=lambda f: (f.data_documento or datetime.min.date(), f.id), reverse=True)
+                      if not cliente_id or f.cliente_id == cliente_id]
     orfani_ddt = [d for d in ddt if d.id not in usati_ddt and (not cliente_id or d.cliente_id == cliente_id)]
     orfane_fat = [f for f in fatture if f.id not in usati_fat and (not cliente_id or f.cliente_id == cliente_id)]
-    return jsonify(ok=True, ordini=quadro,
+    return jsonify(ok=True, ordini=quadro, ddt_tutti=elenco_ddt, fatture_tutte=elenco_fatture,
                    ddt_senza_ordine=[{**_doc_tw_dict(d), 'ordini_rif': [r.numero_rif for r in d.riferimenti
                                                                         if r.tipo_rif == 'ORDINE']} for d in orfani_ddt],
                    fatture_senza_abbinamento=[{**_doc_tw_dict(f), 'riferimenti': [f'{r.tipo_rif} {r.numero_rif}'

@@ -62,6 +62,95 @@ Scadenze"""
 FATT_46 = FATT_45.replace('45 /FT', '46 /FT').replace('DDT n. 617', 'DDT n. 999').replace('91,50', '10,00')
 
 
+# Formati REALI Zucchetti (PDF di Mauri, 28/11/2026), con dati di fantasia
+DDT_REALE = """1Destinazione:
+Destinatario:
+000567
+CLIENTE PROVA Srl
+Codice cliente
+000567Partita IVA o codice fiscale
+03042380547Data documento 28/11/2026
+Numero documento 721
+D.D.T. - Uscita Merci
+Ns. doc.(ORDCL) n.:367 27/11/2026
+Vs.doc. n.: 299/DDT/713/T 25/11/2026
+R.(ORDCL) vs ord 299 - DDT/713/T
+T9US90-00 CARCASSA T9US/EU 90 n. 15,000
+PUNTATURA + SALDATURA
+Trasporto a mezzo Porto
+Vettore Data e ora del trasporto"""
+FATT_REALE_P1 = """1Partita IVA
+01314940543
+Data Fattura
+31/10/2026Numero Fattura
+119Pag.
+Descrizione U.M. Quantita Prezzo Sconti Importo
+FATTURA DI VENDITA
+Destinatario:
+000001
+CLIENTE STELLE SpA
+Ns. doc.(DDTLA) n.:604 01/10/2026
+230279 STELLE KL DX n. 100,000 3,30000 330,00 22
+Totale documento  EU
+>>> SEGUE >>>"""
+FATT_REALE_P2 = """2Partita IVA
+01314940543
+Data Fattura
+31/10/2026Numero Fattura
+119Pag.
+FATTURA DI VENDITA
+Ns. doc.(DDTLA) n.:665 30/10/2026
+230340 STELLE K SX n. 100,000 3,30000 330,00 22
+Spese di incasso Spese di imballo5.775,00 1.270,50Totale documento  EU
+7.045,50"""
+ORDINE_FEMAC = """Destinatario:
+000567
+CLIENTE PROVA Srl
+Partita IVA o codice fiscale
+03042380547
+Data documento
+27/11/2026Numero documento
+            367
+Codice Descrizione U.M. Quantita Prezzo Sconti Importo C.I.Valuta
+CONFERMA ORDINE CLIENTE
+Rif. des. cliente Rif. n. cliente
+299 /DDT/713/T Del: 25/11/2026Cod.cliente
+367 /IS
+T9US90-00 CARCASSA T9US/EU 90 n. 15,000
+PUNTATURA + SALDATURA45,00000 675,00 22
+T9US110-00 CARCASSA T9US/EU 110 n. 5,000
+PUNTATURA + SALDATURA90,00000 450,00 22"""
+
+
+class TestFormatiReali(unittest.TestCase):
+    def test_ddt_vendita_numero_documento(self):
+        d = estrai_documenti(pdf(DDT_REALE))[0][0]
+        self.assertEqual((d['tipo'], d['numero'], d['data'], d['riferimenti']),
+                         ('DDT', '721', '28/11/2026', [('ORDINE', '367')]))
+        self.assertEqual([(r['codice'], r['quantita']) for r in d['righe']], [('T9US90-00', 15.0)])
+
+    def test_fattura_su_due_pagine(self):
+        docs = estrai_documenti(pdf(FATT_REALE_P1, FATT_REALE_P2))[0]
+        self.assertEqual(len(docs), 1)
+        d = docs[0]
+        self.assertEqual((d['tipo'], d['numero'], d['data'], d['importo'], d['pagine']),
+                         ('FATTURA', '119', '31/10/2026', 7045.5, 2))
+        self.assertEqual(d['riferimenti'], [('DDT', '604'), ('DDT', '665')])
+
+    def test_ordine_prezzo_sulla_riga_sotto(self):
+        from blueprints.conto_lavoro.importa_ordine import estrai_dati_ordine
+        o = estrai_dati_ordine(ORDINE_FEMAC)
+        self.assertEqual((o['numero_ordine'], o['rif_cliente']), ('367/IS', '299/DDT/713/T'))
+        self.assertEqual([(r['codice'], r['quantita'], r['prezzo_unitario']) for r in o['righe']],
+                         [('T9US90-00', 15.0, 45.0), ('T9US110-00', 5.0, 90.0)])
+        riga_faza = 'AS_001693 TELAIO FRANGIZOLLE FCH n. 3,000 25,00000 75,00 22'
+        o2 = estrai_dati_ordine('Codice Descrizione\n' + riga_faza)
+        self.assertEqual((o2['righe'][0]['quantita'], o2['righe'][0]['prezzo_unitario']), (3.0, 25.0))
+
+    def test_ordine_non_scambiato_per_fattura(self):
+        self.assertIsNone(estrai_documenti(pdf(ORDINE_FEMAC))[0][0]['tipo'])
+
+
 class TestLettura(unittest.TestCase):
     def test_pdf_con_piu_fatture(self):
         docs, err = estrai_documenti(pdf(FATT_45, FATT_46))

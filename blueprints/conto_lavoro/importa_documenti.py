@@ -58,6 +58,8 @@ def pagine_pdf(raw):
 def riconosci_tipo(testo):
     """DDT di vendita o fattura, a punteggio sulle parole tipiche dei due documenti Zucchetti."""
     t = testo.upper()
+    if 'CONFERMA ORDINE' in t:      # e' un ordine cliente: si carica dalla pagina Ordini
+        return None
     punti_ddt = sum(1 for k in ('USCITA MERCI', 'DOCUMENTO DI TRASPORTO', 'D.D.T', 'ASPETTO DEI BENI', 'VETTORE',
                                 'CAUSALE DEL TRASPORTO', 'ORDCL', 'PORTO') if k in t)
     punti_ddt += 2 if _numero_documento(testo, 'DDT') else 0
@@ -74,7 +76,12 @@ def _linee(testo):
 
 
 def _numero_documento(testo, suffissi):
-    """'NNN /DDT' o 'NNN /FT' sulla prima riga che NON e' un riferimento ad altri documenti."""
+    """Numero del documento. Formati Zucchetti reali (PDF di Mauri, 28/11/2026):
+    DDT di vendita "Numero documento 721", fattura "Numero Fattura" + "119" sulla riga sotto;
+    in mancanza, 'NNN /DDT' o 'NNN /FT' su una riga che NON richiama altri documenti."""
+    m = re.search(r'Numero\s+(?:documento|fattura)\s*:?\s*\n?\s*(\d+)', testo, re.I)
+    if m:
+        return m.group(1)
     re_num = re.compile(r'(\d+)\s*/\s*(' + suffissi + r')\b')
     for linea in _linee(testo):
         if re.search(r'Rif\.|Ns\.\s*doc|Vs\.|riferimento', linea, re.I):
@@ -99,7 +106,7 @@ def _numero_documento(testo, suffissi):
 
 
 def _data_documento(testo):
-    m = re.search(r'Data\s+documento\s*\n?\s*(\d{2}/\d{2}/\d{4})', testo, re.I)
+    m = re.search(r'Data\s+(?:documento|fattura)\s*:?\s*\n?\s*(\d{2}/\d{2}/\d{4})', testo, re.I)
     if m:
         return m.group(1)
     m = RE_DATA.search(testo)

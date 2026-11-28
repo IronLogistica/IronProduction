@@ -24,9 +24,13 @@ UDM_RICONOSCIUTE = ('n', 'pz', 'kg', 'm', 'mq', 'ml', 'lt', 'mt', 'nr', 'cad')
 MAPPA_UDM_ORDINE = {'N': 'PZ', 'PZ': 'PZ', 'NR': 'PZ', 'CAD': 'PZ', 'KG': 'KG',
                     'M': 'M', 'MQ': 'M', 'ML': 'M', 'MT': 'M', 'LT': 'KG'}
 
+# Prezzo, importo e codice IVA sulla stessa riga (formato FAZA) OPPURE sulla riga
+# sotto, attaccati alla descrizione della lavorazione (formato FEMAC, 28/11/2026:
+# "T9US90-00 CARCASSA T9US/EU 90 n. 15,000" / "PUNTATURA + SALDATURA45,00000 675,00 22").
 RIGA_ARTICOLO_RE = re.compile(
     r'^([A-Za-z0-9][A-Za-z0-9._/-]*)\s+(.+?)\s+(' + '|'.join(UDM_RICONOSCIUTE) + r')\.\s+'
-    r'([\d.,]+)\s+(?:([\d.,]+)\s+([\d.,]+)\s+)?(\d+)$')
+    r'([\d.,]+)(?:\s+([\d.,]+)\s+([\d.,]+))?(?:\s+(\d+))?$')
+PREZZO_RIGA_SOTTO_RE = re.compile(r'([\d.]+,\d{2,5})\s+([\d.]+,\d{2})\s+\d+\s*$')
 
 
 def _numero_it(s):
@@ -107,16 +111,21 @@ def estrai_dati_ordine(testo_completo):
             idx_header = i
             break
     linee_articoli = linee[idx_header + 1:] if idx_header is not None else linee
-    for linea in linee_articoli:
+    for i, linea in enumerate(linee_articoli):
         m = RIGA_ARTICOLO_RE.match(linea)
         if not m:
             continue
         udm_grezza = m.group(3).upper()
+        prezzo = _numero_it(m.group(5))
+        if prezzo is None and i + 1 < len(linee_articoli) and not RIGA_ARTICOLO_RE.match(linee_articoli[i + 1]):
+            m_p = PREZZO_RIGA_SOTTO_RE.search(linee_articoli[i + 1])
+            if m_p:
+                prezzo = _numero_it(m_p.group(1))
         dati['righe'].append({
             'codice': m.group(1).strip().upper(),
             'descrizione': m.group(2).strip(),
             'udm': MAPPA_UDM_ORDINE.get(udm_grezza, 'PZ'),
             'quantita': _numero_it(m.group(4)),
-            'prezzo_unitario': _numero_it(m.group(5)),
+            'prezzo_unitario': prezzo,
         })
     return dati
