@@ -107,9 +107,15 @@ class TestAnomalieContoLavoro(unittest.TestCase):
         with self.app.app_context():
             aid = clm.ClArticoloCliente.query.first().id
         self.assertEqual(self.c.post('/conto-lavoro/api/anomalie-angelo',
-                                     json={'articolo_id': aid, 'descrizione': ' '}).status_code, 400)
+                                     json={'articolo_id': aid, 'tipo': 'TEMPO', 'descrizione': ' '}).status_code, 400)
+        self.assertEqual(self.c.post('/conto-lavoro/api/anomalie-angelo',            # tipo obbligatorio
+                                     json={'articolo_id': aid, 'descrizione': 'x'}).status_code, 400)
         r = self.c.post('/conto-lavoro/api/anomalie-angelo',
-                        json={'articolo_id': aid, 'ordine_id': self.oid, 'descrizione': 'tempi da rivedere'})
+                        json={'articolo_id': aid, 'tipo': 'PREZZO', 'descrizione': 'rinegoziare'})
+        self.assertEqual(r.json['anomalia']['tipo'], 'PREZZO')
+        self.c.post(f"/conto-lavoro/api/anomalie-angelo/{r.json['anomalia']['id']}/risolvi", json={'nota': 'ok'})
+        r = self.c.post('/conto-lavoro/api/anomalie-angelo',
+                        json={'articolo_id': aid, 'ordine_id': self.oid, 'tipo': 'TEMPO', 'descrizione': 'tempi da rivedere'})
         self.assertTrue(r.json['ok'])
         an = r.json['anomalia']
         self.assertEqual((an['codice'], an['numero_ordine'], an['segnalata_da'], an['cliente']),

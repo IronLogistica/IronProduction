@@ -184,7 +184,8 @@ document.addEventListener('keydown', e => { if(e.key === 'Escape') chiudiPopup()
 {% include "conto_lavoro/_anomalie_comuni.js" %}
 // ── Anomalie (operai da MasterWork + Angelo) — funzioni comuni in _anomalie_comuni.js
 let codiciLive = new Set();
-const anomaliePerCodice = c => CLA.perCodice[c] || [];
+// Nel LIVE solo le anomalie di TEMPO/produzione: quelle di PREZZO si trattano col cliente (Mauri, 28/11/2026)
+const anomaliePerCodice = c => (CLA.perCodice[c] || []).filter(a => a.genere !== 'PREZZO');
 const dataOra = claData;
 async function caricaAnomalie(codici){
   codiciLive = new Set(codici);
@@ -203,7 +204,7 @@ function anomaliaHtml(a){
 }
 function disegnaAnomalie(){
   const box = document.getElementById('anomalie');
-  const lista = CLA.aperte.filter(a => a.codici.some(c => codiciLive.has(c)));
+  const lista = CLA.aperte.filter(a => a.genere !== 'PREZZO' && a.codici.some(c => codiciLive.has(c)));
   box.innerHTML = lista.length ? `<div class="anomalie-box">
       <div class="anomalie-titolo">⚠️ ANOMALIE DA RISOLVERE (${lista.length})
         <a href="/conto-lavoro/anomalie" target="_blank" style="float:right;font-size:12px;color:#ffb3b3">apri pagina Anomalie →</a></div>

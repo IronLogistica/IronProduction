@@ -18,6 +18,9 @@ async function claJson(url, opzioni){
 const claPost = (url, corpo) => claJson(url, {method:'POST', headers:{'Content-Type':'application/json'},
                                               body: JSON.stringify(corpo || {})});
 
+// genere: TEMPO = problema di produzione (operai e anomalie di tempo di Angelo) → compare nel LIVE;
+//         PREZZO = tempi già ottimizzati, si tratta solo col cliente → NON compare nel LIVE.
+const CLA_GENERI = {TEMPO: '⏱ Tempo', PREZZO: '💶 Prezzo'};
 // Carica le anomalie APERTE delle due fonti. codici = codici cliente da controllare per MasterWork.
 async function claCarica(codici){
   const avvisi = [];
@@ -32,11 +35,11 @@ async function claCarica(codici){
   if(!Array.isArray(angelo) && angelo && angelo.error) avvisi.push(angelo.error);
   const lista = [];
   ((mw && mw.anomalie) || []).filter(a => !giaRisolte.has(a.id)).forEach(a => lista.push({
-    chiave: 'mw-' + a.id, tipo: 'mw', id: a.id, fonte: 'OPERAIO', codici: a.codici || [],
+    chiave: 'mw-' + a.id, tipo: 'mw', id: a.id, fonte: 'OPERAIO', genere: 'TEMPO', codici: a.codici || [],
     chi: a.operaio || '', descrizione: a.motivo || '', quando: a.creato_il || '', fase: a.fase || '',
     codice_interno: a.codice_interno || '', azione: a.azione || '', grezza: a}));
   (Array.isArray(angelo) ? angelo : []).forEach(a => lista.push({
-    chiave: 'an-' + a.id, tipo: 'angelo', id: a.id, fonte: 'ANGELO', codici: [a.codice],
+    chiave: 'an-' + a.id, tipo: 'angelo', id: a.id, fonte: 'ANGELO', genere: a.tipo || 'TEMPO', codici: [a.codice],
     chi: a.segnalata_da || '', descrizione: a.descrizione || '', quando: a.segnalata_il || '',
     numero_ordine: a.numero_ordine || '', cliente: a.cliente || '', grezza: a}));
   lista.sort((x, y) => String(y.quando).localeCompare(String(x.quando)));
@@ -85,6 +88,14 @@ function claCodice(codice){
   .cla-err{color:#ff6b6b;font-size:12px;min-height:16px;margin-top:6px}
   .cla-azioni{display:flex;gap:8px;margin-top:12px}
   .cla-azioni button{border:0;border-radius:8px;padding:10px;font-weight:800;cursor:pointer;font-size:14px;color:#fff}
+  .cla-tipi{display:flex;gap:8px}
+  .cla-tipo{flex:1;text-align:left;background:#0f2237;color:#fff;border:2px solid #33475e;border-radius:10px;padding:10px;
+    font-weight:900;font-size:15px;cursor:pointer}
+  .cla-tipo small{display:block;font-size:11px;font-weight:400;color:#9fb8d0;margin-top:4px}
+  .cla-tipo[data-tipo="TEMPO"].scelto{border-color:#e0a800;background:#2a2000}
+  .cla-tipo[data-tipo="PREZZO"].scelto{border-color:#a970ff;background:#1e1235}
+  .cla-genere{display:inline-block;padding:1px 6px;border-radius:4px;font-size:10px;font-weight:800}
+  .cla-genere.TEMPO{background:#3d2a00;color:#ffc94d}.cla-genere.PREZZO{background:#2a1a48;color:#c9a5ff}
   .cla-annulla{background:#33475e;flex:1}.cla-ok{background:#1a9e5c;flex:2}.cla-ok.rosso{background:#c0392b}`;
   document.head.appendChild(st);
 })();
@@ -104,29 +115,41 @@ document.addEventListener('keydown', e => { if(e.key === 'Escape') claChiudi(); 
 const claNome = () => { try{ return localStorage.getItem('cla_nome') || 'Angelo'; }catch(e){ return 'Angelo'; } };
 const claSalvaNome = n => { try{ localStorage.setItem('cla_nome', n); }catch(e){} };
 
-// Angelo segnala un'anomalia su un codice
+// Angelo segnala un'anomalia su un codice: di TEMPO o di PREZZO
 function claSegnala(info){
   claFinestra(`<div class="cla-box rossa">
     <div class="cla-tit">⚠️ Segnala anomalia</div>
     <div class="cla-sub"><b>${claEsc(info.codice)}</b> ${claEsc(info.descr)}</div>
+    <label class="cla-lab">Tipo di anomalia *</label>
+    <div class="cla-tipi">
+      <button type="button" class="cla-tipo" data-tipo="TEMPO" onclick="claScegliTipo(this)">⏱ TEMPO
+        <small>problema di produzione: tempi, fasi, pezzo — la vedono plant manager e operai nel LIVE</small></button>
+      <button type="button" class="cla-tipo" data-tipo="PREZZO" onclick="claScegliTipo(this)">💶 PREZZO
+        <small>tempi già ottimizzati: si parla solo col cliente — NON compare nel LIVE</small></button>
+    </div>
     <label class="cla-lab">Descrizione dell'anomalia *</label>
-    <textarea id="cla-descr" placeholder="es. tempi da rivedere, manca una fase, disegno diverso dal pezzo…"></textarea>
+    <textarea id="cla-descr" placeholder="es. tempi della fase di saldatura da rivedere / prezzo non più remunerativo…"></textarea>
     <label class="cla-lab">Segnalata da</label>
     <input id="cla-chi" value="${claEsc(claNome())}">
     <div class="cla-err" id="cla-err"></div>
     <div class="cla-azioni"><button class="cla-annulla" onclick="claChiudi()">Annulla</button>
       <button class="cla-ok rosso" id="cla-conferma">⚠️ Segnala</button></div></div>`);
   document.getElementById('cla-conferma').onclick = async () => {
+    const scelto = document.querySelector('.cla-tipo.scelto');
     const descrizione = document.getElementById('cla-descr').value.trim();
     const chi = document.getElementById('cla-chi').value.trim() || 'Angelo';
+    if(!scelto){ document.getElementById('cla-err').textContent = 'Scegli il tipo: TEMPO o PREZZO.'; return; }
     if(!descrizione){ document.getElementById('cla-err').textContent = "Descrivi l'anomalia."; return; }
-    const d = await claPost('/conto-lavoro/api/anomalie-angelo',
-                            {articolo_id: info.articolo_id, ordine_id: info.ordine_id, descrizione, segnalata_da: chi});
+    const d = await claPost('/conto-lavoro/api/anomalie-angelo', {articolo_id: info.articolo_id, ordine_id: info.ordine_id,
+                            tipo: scelto.dataset.tipo, descrizione, segnalata_da: chi});
     if(!d || !d.ok){ document.getElementById('cla-err').textContent = (d && d.error) || 'Errore di rete'; return; }
     claSalvaNome(chi);
     claChiudi();
     if(typeof claDopoModifica === 'function') claDopoModifica();
   };
+}
+function claScegliTipo(b){
+  document.querySelectorAll('.cla-tipo').forEach(x => x.classList.toggle('scelto', x === b));
 }
 
 // "È stato risolto" con nota — vale per tutte e due le fonti
@@ -136,7 +159,7 @@ function claRisolvi(chiave){
   claFinestra(`<div class="cla-box verde">
     <div class="cla-tit">✅ Anomalia risolta</div>
     <div class="cla-cit">“${claEsc(a.descrizione)}”</div>
-    <div class="cla-sub">${a.fonte === 'OPERAIO' ? '👷' : '🧑‍💼'} ${claEsc(a.chi)} · ${claEsc(a.codici.join(', '))} · ${claEsc(claData(a.quando))}</div>
+    <div class="cla-sub"><span class="cla-genere ${a.genere}">${CLA_GENERI[a.genere] || ''}</span> ${a.fonte === 'OPERAIO' ? '👷' : '🧑‍💼'} ${claEsc(a.chi)} · ${claEsc(a.codici.join(', '))} · ${claEsc(claData(a.quando))}</div>
     <label class="cla-lab">Nota: come è stata risolta *</label>
     <textarea id="cla-nota" placeholder="es. ripresi i tempi, aggiunta la fase di sbavatura…"></textarea>
     <label class="cla-lab">Risolta da</label>

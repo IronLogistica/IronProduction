@@ -57,7 +57,7 @@ VERSIONE_SCHEMA_RIGHE_MODIFICABILI = 4
 # 0005 (Mauri, 28/11/2026). Tabelle a parte: tutto il resto funziona anche
 # prima della 0005, solo queste funzioni rispondono 503 finché non c'è.
 VERSIONE_SCHEMA_ANOMALIE = 5
-VERSIONE_SCHEMA_ANOMALIE_ANGELO = 6   # cl_anomalia: anomalie segnalate da Angelo per codice — dalla 0006
+VERSIONE_SCHEMA_ANOMALIE_ANGELO = 7   # cl_anomalia (0006) con tipo TEMPO/PREZZO (0007)
 STATI_ATTIVI = ('CONFERMATO', 'SOSPESO')   # ordini rilasciati: anche se sospesi restano in LIVE/magazzino
 VERSIONE_SCHEMA_RICHIESTA = VERSIONE_SCHEMA_BASE  # compatibilità: usato dal cancello e dal tile "Clienti e articoli"
 PREFISSI_SCHEMA_ORDINI = ('/conto-lavoro/api/ordini', '/conto-lavoro/api/impostazioni', '/conto-lavoro/api/fatture',
@@ -837,7 +837,7 @@ def _anomalia_dict(a):
             'descrizione_articolo': a.articolo.descrizione if a.articolo else '',
             'cliente': a.articolo.cliente.ragione_sociale if a.articolo and a.articolo.cliente else '',
             'ordine_id': a.ordine_id, 'numero_ordine': a.ordine.numero_ordine if a.ordine else '',
-            'descrizione': a.descrizione, 'segnalata_da': a.segnalata_da,
+            'tipo': a.tipo, 'descrizione': a.descrizione, 'segnalata_da': a.segnalata_da,
             'segnalata_il': a.segnalata_il.isoformat() if a.segnalata_il else '',
             'risolta': a.risolta_il is not None,
             'risolta_il': a.risolta_il.isoformat() if a.risolta_il else '',
@@ -864,7 +864,9 @@ def api_anomalie_angelo():
 
 @cl_bp.post('/api/anomalie-angelo')
 def api_crea_anomalia_angelo():
-    """{"articolo_id", "ordine_id"?, "descrizione", "segnalata_da"?} — pulsante ⚠️ su un codice."""
+    """{"articolo_id", "ordine_id"?, "tipo": TEMPO|PREZZO, "descrizione", "segnalata_da"?}.
+    TEMPO = problema di produzione (compare nel LIVE); PREZZO = tempi già ottimizzati,
+    si tratta solo col cliente (NON compare nel LIVE)."""
     errore = _schema_anomalie_angelo_mancante()
     if errore:
         return errore
@@ -878,11 +880,14 @@ def api_crea_anomalia_angelo():
     ordine_id = d.get('ordine_id') or None
     if ordine_id and not db.session.get(ClOrdine, ordine_id):
         ordine_id = None
-    an = ClAnomalia(articolo_id=a.id, ordine_id=ordine_id, descrizione=descrizione,
+    tipo = str(d.get('tipo') or '').strip().upper()
+    if tipo not in ('TEMPO', 'PREZZO'):
+        return jsonify(ok=False, error="Scegli il tipo: anomalia di TEMPO o di PREZZO."), 400
+    an = ClAnomalia(articolo_id=a.id, ordine_id=ordine_id, descrizione=descrizione, tipo=tipo,
                     segnalata_da=str(d.get('segnalata_da') or 'Angelo').strip()[:80] or 'Angelo')
     db.session.add(an)
     db.session.flush()
-    _audit('ANOMALIA_SEGNALATA', 'cl_anomalia', an.id, dopo={'codice': a.codice, 'descrizione': descrizione})
+    _audit('ANOMALIA_SEGNALATA', 'cl_anomalia', an.id, dopo={'codice': a.codice, 'tipo': tipo, 'descrizione': descrizione})
     db.session.commit()
     return jsonify(ok=True, anomalia=_anomalia_dict(an))
 

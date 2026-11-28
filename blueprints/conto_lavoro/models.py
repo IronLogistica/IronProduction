@@ -201,13 +201,15 @@ class ClAnomalia(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     articolo_id = db.Column(db.Integer, db.ForeignKey('cl_articolo_cliente.id'), nullable=False)
     ordine_id = db.Column(db.Integer, db.ForeignKey('cl_ordine.id', ondelete='SET NULL'))
+    tipo = db.Column(db.String(10), nullable=False, default='TEMPO')   # TEMPO | PREZZO — dalla 0007
     descrizione = db.Column(db.Text, nullable=False)
     segnalata_da = db.Column(db.String(80), nullable=False, default='')
     segnalata_il = db.Column(db.DateTime(timezone=True), nullable=False, default=_adesso)
     risolta_il = db.Column(db.DateTime(timezone=True))
     nota_risoluzione = db.Column(db.Text, nullable=False, default='')
     risolta_da = db.Column(db.String(80), nullable=False, default='')
-    __table_args__ = (db.CheckConstraint('length(trim(descrizione)) > 0', name='ck_cl_anomalia_descrizione'),)
+    __table_args__ = (db.CheckConstraint('length(trim(descrizione)) > 0', name='ck_cl_anomalia_descrizione'),
+                      db.CheckConstraint("tipo IN ('TEMPO','PREZZO')", name='ck_cl_anomalia_tipo'))
     articolo = db.relationship('ClArticoloCliente')
     ordine = db.relationship('ClOrdine')
 

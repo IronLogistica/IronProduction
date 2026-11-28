@@ -36,9 +36,9 @@ async function caricaStorico(codici){
     .filter(Boolean).forEach(x => (perInterno[x] = perInterno[x] || []).push(c)));
   const aggiungi = (c, voce) => (STORICO[c] = STORICO[c] || []).push(voce);
   (Array.isArray(mwRis) ? mwRis : []).forEach(a => (perInterno[(a.codice_interno || '').toUpperCase()] || []).forEach(c =>
-    aggiungi(c, {fonte: 'OPERAIO', chi: a.operaio, descrizione: a.motivo, quando: a.segnalata_il,
+    aggiungi(c, {fonte: 'OPERAIO', genere: 'TEMPO', chi: a.operaio, descrizione: a.motivo, quando: a.segnalata_il,
                  risolta_il: a.risolta_il, risolta_da: a.risolta_da, nota: a.nota_risoluzione, extra: 'int. ' + (a.codice_interno || '')})));
-  (Array.isArray(anRis) ? anRis : []).forEach(a => aggiungi(a.codice, {fonte: 'ANGELO', chi: a.segnalata_da,
+  (Array.isArray(anRis) ? anRis : []).forEach(a => aggiungi(a.codice, {fonte: 'ANGELO', genere: a.tipo || 'TEMPO', chi: a.segnalata_da,
     descrizione: a.descrizione, quando: a.segnalata_il, risolta_il: a.risolta_il, risolta_da: a.risolta_da,
     nota: a.nota_risoluzione, extra: a.numero_ordine ? 'ordine ' + a.numero_ordine : ''}));
   Object.values(STORICO).forEach(l => l.sort((x, y) => String(y.risolta_il).localeCompare(String(x.risolta_il))));
@@ -58,7 +58,7 @@ function apriStorico(codice){
     <div class="cla-tit">📜 Storico anomalie risolte</div>
     <div class="cla-sub"><b>${claEsc(codice)}</b> ${claEsc(a.descrizione || '')} — ${lista.length} anomalia/e risolta/e</div>
     ${lista.map(x => `<div style="border:1px solid #1e6fa5;border-radius:8px;padding:10px 12px;margin-top:8px;background:#0f2237">
-        <div style="font-size:11px;color:#9fb8d0">${x.fonte === 'OPERAIO' ? '👷 Operaio' : '🧑‍💼 Angelo'} <b style="color:#fff">${claEsc(x.chi)}</b>
+        <div style="font-size:11px;color:#9fb8d0"><span class="cla-genere ${x.genere}">${CLA_GENERI[x.genere] || ''}</span> ${x.fonte === 'OPERAIO' ? '👷 Operaio' : '🧑‍💼 Angelo'} <b style="color:#fff">${claEsc(x.chi)}</b>
           · segnalata ${claEsc(claData(x.quando))}${x.extra ? ' · ' + claEsc(x.extra) : ''}</div>
         <div style="font-size:14px;color:#ffd6d6;margin:4px 0">⚠️ “${claEsc(x.descrizione)}”</div>
         <div style="font-size:13px;color:#7ee2a8">✅ ${claEsc(x.nota)}</div>

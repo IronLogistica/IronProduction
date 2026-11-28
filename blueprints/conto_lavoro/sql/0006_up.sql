@@ -14,13 +14,15 @@ CREATE TABLE cl_anomalia (
     id                  SERIAL PRIMARY KEY,
     articolo_id         INTEGER NOT NULL REFERENCES cl_articolo_cliente(id),
     ordine_id           INTEGER REFERENCES cl_ordine(id) ON DELETE SET NULL,
+    tipo                VARCHAR(10) NOT NULL DEFAULT 'TEMPO',
     descrizione         TEXT NOT NULL,
     segnalata_da        VARCHAR(80) NOT NULL DEFAULT '',
     segnalata_il        TIMESTAMPTZ NOT NULL DEFAULT now(),
     risolta_il          TIMESTAMPTZ,
     nota_risoluzione    TEXT NOT NULL DEFAULT '',
     risolta_da          VARCHAR(80) NOT NULL DEFAULT '',
-    CONSTRAINT ck_cl_anomalia_descrizione CHECK (length(trim(descrizione)) > 0)
+    CONSTRAINT ck_cl_anomalia_descrizione CHECK (length(trim(descrizione)) > 0),
+    CONSTRAINT ck_cl_anomalia_tipo CHECK (tipo IN ('TEMPO','PREZZO'))
 );
 CREATE INDEX ix_cl_anomalia_aperte ON cl_anomalia (articolo_id) WHERE risolta_il IS NULL;
 

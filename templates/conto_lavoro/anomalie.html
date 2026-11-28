@@ -16,8 +16,8 @@
 
 <p style="font-size:12px;color:var(--text-dim);margin:-4px 0 12px">
   Tutte le anomalie dei codici in conto lavoro: quelle segnalate dagli <b>operai</b> col tasto sul cellulare in MasterWork
-  e quelle segnalate da <b>Angelo</b> col pulsante ⚠️ Segnala su ogni codice (Magazzino, Riepilogo ordini).
-  Si chiudono con <b>✅ È stato risolto</b> e una nota.
+  e quelle segnalate da <b>Angelo</b> qui sotto, di <b>tempo</b> (problema di produzione, compaiono nel LIVE) o di
+  <b>prezzo</b> (si tratta col cliente, non compaiono nel LIVE). Si chiudono con <b>✅ È stato risolto</b> e una nota.
 </p>
 
 <div class="mon-section" style="padding:12px 14px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
@@ -56,10 +56,10 @@ async function carica(){
   const [mwRis, anRis] = await Promise.all([claJson('/conto-lavoro/api/anomalie-risolte'),
                                             claJson('/conto-lavoro/api/anomalie-angelo?stato=risolte')]);
   RISOLTE = [
-    ...(Array.isArray(mwRis) ? mwRis : []).map(a => ({fonte: 'OPERAIO', codici: [], codice_interno: a.codice_interno,
+    ...(Array.isArray(mwRis) ? mwRis : []).map(a => ({fonte: 'OPERAIO', genere: 'TEMPO', codici: [], codice_interno: a.codice_interno,
         chi: a.operaio, descrizione: a.motivo, quando: a.segnalata_il, risolta_il: a.risolta_il,
         risolta_da: a.risolta_da, nota: a.nota_risoluzione})),
-    ...(Array.isArray(anRis) ? anRis : []).map(a => ({fonte: 'ANGELO', codici: [a.codice], cliente: a.cliente,
+    ...(Array.isArray(anRis) ? anRis : []).map(a => ({fonte: 'ANGELO', genere: a.tipo || 'TEMPO', codici: [a.codice], cliente: a.cliente,
         numero_ordine: a.numero_ordine, chi: a.segnalata_da, descrizione: a.descrizione, quando: a.segnalata_il,
         risolta_il: a.risolta_il, risolta_da: a.risolta_da, nota: a.nota_risoluzione})),
   ].sort((x, y) => String(y.risolta_il).localeCompare(String(x.risolta_il)));
@@ -78,43 +78,57 @@ function filtra(lista){
     (!cod || a.codici.some(c => c.toUpperCase().includes(cod)) || (a.codice_interno || '').toUpperCase().includes(cod)));
 }
 
+const SEZIONI = [
+  {genere: 'TEMPO', titolo: '⏱ Anomalie di TEMPO / produzione', colore: '#e0a800',
+   nota: 'Segnalate dagli operai e da Angelo: tempi, fasi, pezzo — compaiono nel LIVE per plant manager e operai.'},
+  {genere: 'PREZZO', titolo: '💶 Anomalie di PREZZO', colore: '#a970ff',
+   nota: 'Tempi già ottimizzati: si tratta solo col cliente — NON compaiono nel LIVE.'},
+];
+function tabellaAperte(lista){
+  if(!lista.length) return '<div style="padding:12px;color:#1a9e5c;font-weight:700">✅ Nessuna anomalia da risolvere.</div>';
+  return `<table class="mon-table" style="width:100%"><thead><tr>
+      <th>Segnalata il</th><th>Da</th><th>Chi</th><th>Codice</th><th>Anomalia</th><th></th></tr></thead>
+    <tbody>${lista.map(a => `<tr>
+      <td style="white-space:nowrap">${esc(claData(a.quando))}</td>
+      <td>${fonteHtml(a.fonte)}</td>
+      <td><b>${esc(a.chi)}</b></td>
+      <td><b>${esc(a.codici.join(', '))}</b>
+        <div style="font-size:10px;color:var(--text-dim)">${esc(a.cliente || clienteDi(a.codici[0]))}${a.codice_interno ? ' · int. ' + esc(a.codice_interno) : ''}${a.fase ? ' · fase ' + esc(a.fase) : ''}${a.numero_ordine ? ' · ordine ' + esc(a.numero_ordine) : ''}</div></td>
+      <td style="font-size:13px;max-width:420px">${esc(a.descrizione)}</td>
+      <td><button class="btn btn-primary" style="background:#1a9e5c;white-space:nowrap" onclick="claRisolvi('${a.chiave}')">✅ È stato risolto</button></td>
+    </tr>`).join('')}</tbody></table>`;
+}
+function tabellaRisolte(lista){
+  if(!lista.length) return '<div style="padding:12px;color:var(--text-dim)">Nessuna anomalia risolta.</div>';
+  return `<table class="mon-table" style="width:100%"><thead><tr>
+      <th>Segnalata il</th><th>Da</th><th>Chi</th><th>Codice</th><th>Anomalia</th><th>Risolta il</th><th>Da chi</th><th>Nota</th></tr></thead>
+    <tbody>${lista.map(a => `<tr>
+      <td style="white-space:nowrap">${esc(claData(a.quando))}</td>
+      <td>${fonteHtml(a.fonte)}</td>
+      <td>${esc(a.chi)}</td>
+      <td><b>${esc(a.codici.join(', ') || ('int. ' + (a.codice_interno || '')))}</b>
+        ${a.numero_ordine ? `<div style="font-size:10px;color:var(--text-dim)">ordine ${esc(a.numero_ordine)}</div>` : ''}</td>
+      <td style="font-size:12px;max-width:300px">${esc(a.descrizione)}</td>
+      <td style="white-space:nowrap">${esc(claData(a.risolta_il))}</td>
+      <td>${esc(a.risolta_da)}</td>
+      <td style="font-size:12px;max-width:300px;color:#1a9e5c">${esc(a.nota)}</td>
+    </tr>`).join('')}</tbody></table>`;
+}
 function disegna(){
   const box = document.getElementById('anomalie-box');
   const vista = document.getElementById('f-vista').value;
   const avviso = CLA.avviso ? `<div style="font-size:12px;color:#e0a800;margin-bottom:8px">⚠️ ${esc(CLA.avviso)}</div>` : '';
-  if(vista === 'aperte'){
-    const lista = filtra(CLA.aperte);
-    box.innerHTML = avviso + (lista.length ? `<div class="mon-section" style="padding:10px 14px;overflow-x:auto">
-      <table class="mon-table" style="width:100%"><thead><tr>
-        <th>Segnalata il</th><th>Da</th><th>Chi</th><th>Codice</th><th>Anomalia</th><th></th></tr></thead>
-      <tbody>${lista.map(a => `<tr>
-        <td style="white-space:nowrap">${esc(claData(a.quando))}</td>
-        <td>${fonteHtml(a.fonte)}</td>
-        <td><b>${esc(a.chi)}</b></td>
-        <td><b>${esc(a.codici.join(', '))}</b>
-          <div style="font-size:10px;color:var(--text-dim)">${esc(a.cliente || clienteDi(a.codici[0]))}${a.codice_interno ? ' · int. ' + esc(a.codice_interno) : ''}${a.fase ? ' · fase ' + esc(a.fase) : ''}${a.numero_ordine ? ' · ordine ' + esc(a.numero_ordine) : ''}</div></td>
-        <td style="font-size:13px;max-width:420px">${esc(a.descrizione)}</td>
-        <td><button class="btn btn-primary" style="background:#1a9e5c;white-space:nowrap" onclick="claRisolvi('${a.chiave}')">✅ È stato risolto</button></td>
-      </tr>`).join('')}</tbody></table></div>`
-      : '<div class="mon-section" style="padding:16px;color:#1a9e5c;font-weight:700">✅ Nessuna anomalia da risolvere.</div>');
-  } else {
-    const lista = filtra(RISOLTE);
-    box.innerHTML = avviso + (lista.length ? `<div class="mon-section" style="padding:10px 14px;overflow-x:auto">
-      <table class="mon-table" style="width:100%"><thead><tr>
-        <th>Segnalata il</th><th>Da</th><th>Chi</th><th>Codice</th><th>Anomalia</th><th>Risolta il</th><th>Da chi</th><th>Nota</th></tr></thead>
-      <tbody>${lista.map(a => `<tr>
-        <td style="white-space:nowrap">${esc(claData(a.quando))}</td>
-        <td>${fonteHtml(a.fonte)}</td>
-        <td>${esc(a.chi)}</td>
-        <td><b>${esc(a.codici.join(', ') || ('int. ' + (a.codice_interno || '')))}</b>
-          ${a.numero_ordine ? `<div style="font-size:10px;color:var(--text-dim)">ordine ${esc(a.numero_ordine)}</div>` : ''}</td>
-        <td style="font-size:12px;max-width:300px">${esc(a.descrizione)}</td>
-        <td style="white-space:nowrap">${esc(claData(a.risolta_il))}</td>
-        <td>${esc(a.risolta_da)}</td>
-        <td style="font-size:12px;max-width:300px;color:#1a9e5c">${esc(a.nota)}</td>
-      </tr>`).join('')}</tbody></table></div>`
-      : '<div class="mon-section" style="padding:16px;color:var(--text-dim)">Nessuna anomalia risolta.</div>');
-  }
+  const sorgente = filtra(vista === 'aperte' ? CLA.aperte : RISOLTE);
+  box.innerHTML = avviso + SEZIONI.map(sz => {
+    const lista = sorgente.filter(a => (a.genere || 'TEMPO') === sz.genere);
+    return `<div class="mon-section" style="margin-bottom:16px;border-left:4px solid ${sz.colore}">
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border)">
+        <b style="color:${sz.colore};font-size:15px">${sz.titolo}</b>
+        <span style="font-size:12px;color:var(--text-dim)"> — ${lista.length} ${vista === 'aperte' ? 'da risolvere' : 'risolte'}</span>
+        <div style="font-size:11px;color:var(--text-dim);margin-top:2px">${sz.nota}</div></div>
+      <div style="padding:10px 14px;overflow-x:auto">${vista === 'aperte' ? tabellaAperte(lista) : tabellaRisolte(lista)}</div>
+    </div>`;
+  }).join('');
 }
 
 function nuovaAnomalia(){
