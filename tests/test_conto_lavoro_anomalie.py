@@ -103,6 +103,31 @@ class TestAnomalieContoLavoro(unittest.TestCase):
         self.assertEqual(self.c.post('/conto-lavoro/api/anomalie-risolte',
                                      json={'mw_id': 7, 'nota': 'x'}).status_code, 409)
 
+    def test_anomalia_segnalata_da_angelo(self):
+        with self.app.app_context():
+            aid = clm.ClArticoloCliente.query.first().id
+        self.assertEqual(self.c.post('/conto-lavoro/api/anomalie-angelo',
+                                     json={'articolo_id': aid, 'descrizione': ' '}).status_code, 400)
+        r = self.c.post('/conto-lavoro/api/anomalie-angelo',
+                        json={'articolo_id': aid, 'ordine_id': self.oid, 'descrizione': 'tempi da rivedere'})
+        self.assertTrue(r.json['ok'])
+        an = r.json['anomalia']
+        self.assertEqual((an['codice'], an['numero_ordine'], an['segnalata_da'], an['cliente']),
+                         ('AS_001693', '293/IS', 'Angelo', 'FAZA Srl'))
+        self.assertEqual(len(self.c.get('/conto-lavoro/api/anomalie-angelo').json), 1)
+        self.assertEqual(self.c.post(f"/conto-lavoro/api/anomalie-angelo/{an['id']}/risolvi", json={}).status_code, 400)
+        r = self.c.post(f"/conto-lavoro/api/anomalie-angelo/{an['id']}/risolvi", json={'nota': 'tempi aggiornati'})
+        self.assertTrue(r.json['anomalia']['risolta'])
+        self.assertEqual(self.c.get('/conto-lavoro/api/anomalie-angelo').json, [])
+        self.assertEqual(self.c.get('/conto-lavoro/api/anomalie-angelo?stato=risolte').json[0]['nota_risoluzione'],
+                         'tempi aggiornati')
+
+    def test_pagine_si_aprono(self):
+        self.app.context_processor(lambda: {'now': '', 'kanban_gruppi': [], 'macchine_monitor': [], 'sidebar_gruppi': []})
+        for url in ('/conto-lavoro/anomalie', '/conto-lavoro/magazzino', '/conto-lavoro/riepilogo', '/conto-lavoro/live',
+                    '/conto-lavoro/'):
+            self.assertEqual(self.c.get(url).status_code, 200, url)
+
 
 if __name__ == '__main__':
     unittest.main()

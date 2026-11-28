@@ -138,8 +138,8 @@ function apriPopup(i){
       <div class="popup-rif">👥 ${esc(g.cliente)} · Ordine ${esc(o.numero_ordine)}${o.rif_cliente ? ' · ' + esc(o.rif_cliente) : ''}</div>
       ${o.sospeso ? `<div class="popup-sezione rossa">⏸ <b>ORDINE SOSPESO</b> — non produrre finché non viene riattivato</div>` : ''}
       ${r.revisione ? `<div class="popup-sezione gialla">🔁 <b>DA REVISIONARE</b>${r.revisione.nota ? ': ' + esc(r.revisione.nota) : ''}</div>` : ''}
-      ${anomaliePerCodice(r.codice).map(a => `<div class="popup-sezione rossa">⚠️ <b>${esc(a.operaio)}</b> (${esc(dataOra(a.creato_il))}): “${esc(a.motivo)}”
-          <div style="margin-top:6px"><button class="btn-risolto" onclick="apriRisolvi(${a.id})">✅ È stato risolto</button></div></div>`).join('')}
+      ${anomaliePerCodice(r.codice).map(a => `<div class="popup-sezione rossa">⚠️ <b>${esc(a.chi)}</b> (${esc(dataOra(a.quando))}): “${esc(a.descrizione)}”
+          <div style="margin-top:6px"><button class="btn-risolto" onclick="claRisolvi('${a.chiave}')">✅ È stato risolto</button></div></div>`).join('')}
       <div class="popup-numero"><span>Q.tà ordinata</span><b>${r.quantita}</b></div>
       <div class="popup-numero"><span>Q.tà prodotta</span><b>${r.quantita_prodotta}</b></div>
       <div class="popup-numero"><span>Q.tà consegnata</span><b>${r.quantita_evasa}</b></div>
@@ -181,77 +181,36 @@ async function caricaTempi(r){
 function chiudiPopup(){ document.getElementById('popup').classList.remove('aperto'); }
 document.addEventListener('keydown', e => { if(e.key === 'Escape') chiudiPopup(); });
 
-// ── Anomalie segnalate dagli operai da MasterWork (richiesta di Mauri, 28/11/2026)
-let ANOMALIE = [], RISOLTE = new Set(), avvisoSchema = '';
-const anomaliePerCodice = c => ANOMALIE.filter(a => (a.codici || []).includes(c));
-const dataOra = iso => { if(!iso) return ''; const d = new Date(iso.length <= 19 ? iso + 'Z' : iso);
-  return isNaN(d) ? iso : d.toLocaleString('it-IT', {timeZone:'Europe/Rome', day:'2-digit', month:'2-digit', hour:'2-digit', minute:'2-digit'}); };
+{% include "conto_lavoro/_anomalie_comuni.js" %}
+// ── Anomalie (operai da MasterWork + Angelo) — funzioni comuni in _anomalie_comuni.js
+let codiciLive = new Set();
+const anomaliePerCodice = c => CLA.perCodice[c] || [];
+const dataOra = claData;
 async function caricaAnomalie(codici){
-  try{
-    const rr = await fetch('/conto-lavoro/api/anomalie-risolte');
-    const ris = await rr.json();
-    if(Array.isArray(ris)){ RISOLTE = new Set(ris.map(x => x.mw_id)); avvisoSchema = ''; }
-    else avvisoSchema = ris.error || '';
-    const r = await fetch('/api/masterwork/anomalie', {method:'POST', headers:{'Content-Type':'application/json'},
-                                                      body: JSON.stringify({codici})});
-    const d = await r.json();
-    ANOMALIE = (d.anomalie || []).filter(a => !RISOLTE.has(a.id));
-  }catch(e){}
+  codiciLive = new Set(codici);
+  await claCarica(codici);
   disegnaAnomalie();
 }
 function anomaliaHtml(a){
   return `<div class="anomalia">
     <div class="anomalia-testo">
-      <div><b>${esc((a.codici || []).join(', '))}</b> · cod. interno ${esc(a.codice_interno)}${a.fase ? ' · fase ' + esc(a.fase) : ''}</div>
-      <div class="anomalia-motivo">“${esc(a.motivo)}”</div>
-      <div class="anomalia-meta">👷 Segnalata da <b>${esc(a.operaio)}</b> · ${esc(dataOra(a.creato_il))}${a.azione && a.azione !== 'SEGNALAZIONE' ? ' · ' + esc(a.azione) : ''}</div>
+      <div><b>${esc(a.codici.join(', '))}</b>${a.codice_interno ? ' · cod. interno ' + esc(a.codice_interno) : ''}${a.fase ? ' · fase ' + esc(a.fase) : ''}${a.numero_ordine ? ' · ordine ' + esc(a.numero_ordine) : ''}</div>
+      <div class="anomalia-motivo">“${esc(a.descrizione)}”</div>
+      <div class="anomalia-meta">${a.fonte === 'OPERAIO' ? '👷 Segnalata dall\'operaio' : '🧑‍💼 Segnalata da'} <b>${esc(a.chi)}</b> · ${esc(dataOra(a.quando))}</div>
     </div>
-    <button class="btn-risolto" onclick="apriRisolvi(${a.id})">✅ È stato risolto</button>
+    <button class="btn-risolto" onclick="claRisolvi('${a.chiave}')">✅ È stato risolto</button>
   </div>`;
 }
 function disegnaAnomalie(){
   const box = document.getElementById('anomalie');
-  box.innerHTML = ANOMALIE.length ? `<div class="anomalie-box">
-      <div class="anomalie-titolo">⚠️ ANOMALIE SEGNALATE DAGLI OPERAI (${ANOMALIE.length})</div>
-      ${avvisoSchema ? `<div class="anomalia-meta" style="margin-bottom:6px">⚠️ ${esc(avvisoSchema)}</div>` : ''}
-      ${ANOMALIE.map(anomaliaHtml).join('')}</div>` : '';
+  const lista = CLA.aperte.filter(a => a.codici.some(c => codiciLive.has(c)));
+  box.innerHTML = lista.length ? `<div class="anomalie-box">
+      <div class="anomalie-titolo">⚠️ ANOMALIE DA RISOLVERE (${lista.length})
+        <a href="/conto-lavoro/anomalie" target="_blank" style="float:right;font-size:12px;color:#ffb3b3">apri pagina Anomalie →</a></div>
+      ${CLA.avviso ? `<div class="anomalia-meta" style="margin-bottom:6px">⚠️ ${esc(CLA.avviso)}</div>` : ''}
+      ${lista.map(anomaliaHtml).join('')}</div>` : '';
 }
-function apriRisolvi(id){
-  const a = ANOMALIE.find(x => x.id === id);
-  if(!a) return;
-  document.getElementById('popup-box').classList.add('semplice');
-  document.getElementById('popup-box').innerHTML = `<div class="risolvi-box">
-      <div class="popup-codice" style="font-size:20px">✅ Anomalia risolta</div>
-      <div class="anomalia-motivo" style="margin:8px 0">“${esc(a.motivo)}”</div>
-      <div class="anomalia-meta" style="margin-bottom:12px">👷 ${esc(a.operaio)} · ${esc((a.codici || []).join(', '))} · ${esc(dataOra(a.creato_il))}</div>
-      <label class="popup-rif">Nota: come è stata risolta *</label>
-      <textarea id="nota-risolto" placeholder="es. ripresi i tempi, aggiunta la fase di sbavatura…"></textarea>
-      <div id="esito-risolto" style="color:#ff6b6b;font-size:12px;min-height:16px;margin-top:6px"></div>
-      <div style="display:flex;gap:8px;margin-top:10px">
-        <button class="popup-chiudi" style="background:#33475e;margin:0;flex:1" onclick="chiudiPopup()">Annulla</button>
-        <button class="popup-chiudi" style="background:#1a9e5c;margin:0;flex:2" onclick="confermaRisolto(${a.id})">✅ Conferma: è stato risolto</button>
-      </div></div>`;
-  document.getElementById('popup').classList.add('aperto');
-  setTimeout(() => document.getElementById('nota-risolto').focus(), 50);
-}
-async function confermaRisolto(id){
-  const a = ANOMALIE.find(x => x.id === id);
-  const nota = document.getElementById('nota-risolto').value.trim();
-  const esito = document.getElementById('esito-risolto');
-  if(!nota){ esito.textContent = 'Scrivi una nota su come è stata risolta.'; return; }
-  const r = await fetch('/conto-lavoro/api/anomalie-risolte', {method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({mw_id: id, nota, operaio: a.operaio, codice_interno: a.codice_interno,
-                            motivo: a.motivo, segnalata_il: a.creato_il})});
-  const d = await r.json().catch(() => ({}));
-  if(!d.ok){ esito.textContent = d.error || 'Errore'; return; }
-  fetch('/api/masterwork/anomalie/segna-lette', {method:'POST', headers:{'Content-Type':'application/json'},
-                                                body: JSON.stringify({ids: [id]})});
-  RISOLTE.add(id);
-  ANOMALIE = ANOMALIE.filter(x => x.id !== id);
-  chiudiPopup();
-  disegnaAnomalie();
-  carica();
-}
+function claDopoModifica(){ chiudiPopup(); disegnaAnomalie(); carica(); }
 
 async function carica(){
   let gruppi;

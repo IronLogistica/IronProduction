@@ -194,6 +194,24 @@ class ClAnomaliaRisolta(db.Model):
     risolta_il = db.Column(db.DateTime(timezone=True), nullable=False, default=_adesso)
 
 
+class ClAnomalia(db.Model):
+    """Dalla 0006: anomalia segnalata da Angelo su un codice (Magazzino / Riepilogo ordini)."""
+    __bind_key__ = BIND
+    __tablename__ = 'cl_anomalia'
+    id = db.Column(db.Integer, primary_key=True)
+    articolo_id = db.Column(db.Integer, db.ForeignKey('cl_articolo_cliente.id'), nullable=False)
+    ordine_id = db.Column(db.Integer, db.ForeignKey('cl_ordine.id', ondelete='SET NULL'))
+    descrizione = db.Column(db.Text, nullable=False)
+    segnalata_da = db.Column(db.String(80), nullable=False, default='')
+    segnalata_il = db.Column(db.DateTime(timezone=True), nullable=False, default=_adesso)
+    risolta_il = db.Column(db.DateTime(timezone=True))
+    nota_risoluzione = db.Column(db.Text, nullable=False, default='')
+    risolta_da = db.Column(db.String(80), nullable=False, default='')
+    __table_args__ = (db.CheckConstraint('length(trim(descrizione)) > 0', name='ck_cl_anomalia_descrizione'),)
+    articolo = db.relationship('ClArticoloCliente')
+    ordine = db.relationship('ClOrdine')
+
+
 class ClFattura(db.Model):
     """Predisposta dalla 0002 per il Triple Watch — non ancora usata finché
     non viene attivato l'interruttore (cl_impostazione.triple_watch_attivo)."""

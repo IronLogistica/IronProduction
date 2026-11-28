@@ -1,0 +1,132 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-toolbar">
+  <div class="page-title">⚠️ Conto lavoro — Anomalie</div>
+  <a class="btn btn-ghost" href="/conto-lavoro/" style="margin-left:auto">← Conto lavoro</a>
+  <a class="btn btn-ghost" href="/conto-lavoro/magazzino">📦 Magazzino</a>
+  <a class="btn btn-ghost" href="/conto-lavoro/riepilogo">📊 Riepilogo ordini</a>
+  <a class="btn btn-ghost" href="/conto-lavoro/live" target="_blank">🔴 LIVE</a>
+</div>
+
+{% if schema < schema_richiesto %}
+<div class="mon-section" style="padding:14px;color:#c0392b;font-weight:700">
+  ⚠️ Tabelle non ancora alla versione {{ schema_richiesto }} (attuale: {{ schema }}) — imposta CL_MIGRA_AUTO = {{ '%04d'|format(schema_richiesto) }} su Railway e riavvia.
+</div>
+{% endif %}
+
+<p style="font-size:12px;color:var(--text-dim);margin:-4px 0 12px">
+  Tutte le anomalie dei codici in conto lavoro: quelle segnalate dagli <b>operai</b> col tasto sul cellulare in MasterWork
+  e quelle segnalate da <b>Angelo</b> col pulsante ⚠️ Segnala su ogni codice (Magazzino, Riepilogo ordini).
+  Si chiudono con <b>✅ È stato risolto</b> e una nota.
+</p>
+
+<div class="mon-section" style="padding:12px 14px;margin-bottom:14px;display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end">
+  <div><label class="modal-label" style="margin:0">Vista</label>
+    <select class="modal-input" id="f-vista" onchange="disegna()" style="width:170px">
+      <option value="aperte">Da risolvere</option><option value="risolte">Risolte</option></select></div>
+  <div><label class="modal-label" style="margin:0">Provenienza</label>
+    <select class="modal-input" id="f-fonte" onchange="disegna()" style="width:170px">
+      <option value="">Tutte</option><option value="OPERAIO">👷 Operai (MasterWork)</option><option value="ANGELO">🧑‍💼 Angelo</option></select></div>
+  <div><label class="modal-label" style="margin:0">Codice</label>
+    <input class="modal-input" id="f-codice" oninput="disegna()" placeholder="filtra per codice" style="width:200px"></div>
+  <div style="margin-left:auto;display:flex;gap:6px;align-items:flex-end">
+    <div><label class="modal-label" style="margin:0">Nuova anomalia sul codice</label>
+      <input class="modal-input" id="nuova-codice" list="elenco-codici" placeholder="scegli il codice" style="width:220px"></div>
+    <datalist id="elenco-codici"></datalist>
+    <button class="btn btn-primary" onclick="nuovaAnomalia()">⚠️ Segnala</button>
+  </div>
+</div>
+
+<div id="anomalie-box">Caricamento...</div>
+{% endblock %}
+
+{% block scripts %}
+{% include "conto_lavoro/_anomalie_comuni.js" %}
+const esc = claEsc;
+let ARTICOLI = [], RISOLTE = [];
+
+function claDopoModifica(){ carica(); }
+
+async function carica(){
+  const mag = await claJson('/conto-lavoro/api/magazzino');
+  ARTICOLI = Array.isArray(mag) ? mag.flatMap(g => g.articoli.map(a => ({...a, cliente: g.cliente}))) : [];
+  document.getElementById('elenco-codici').innerHTML =
+    ARTICOLI.map(a => `<option value="${esc(a.codice)}">${esc(a.cliente)} — ${esc(a.descrizione)}</option>`).join('');
+  await claCarica(ARTICOLI.map(a => a.codice));
+  const [mwRis, anRis] = await Promise.all([claJson('/conto-lavoro/api/anomalie-risolte'),
+                                            claJson('/conto-lavoro/api/anomalie-angelo?stato=risolte')]);
+  RISOLTE = [
+    ...(Array.isArray(mwRis) ? mwRis : []).map(a => ({fonte: 'OPERAIO', codici: [], codice_interno: a.codice_interno,
+        chi: a.operaio, descrizione: a.motivo, quando: a.segnalata_il, risolta_il: a.risolta_il,
+        risolta_da: a.risolta_da, nota: a.nota_risoluzione})),
+    ...(Array.isArray(anRis) ? anRis : []).map(a => ({fonte: 'ANGELO', codici: [a.codice], cliente: a.cliente,
+        numero_ordine: a.numero_ordine, chi: a.segnalata_da, descrizione: a.descrizione, quando: a.segnalata_il,
+        risolta_il: a.risolta_il, risolta_da: a.risolta_da, nota: a.nota_risoluzione})),
+  ].sort((x, y) => String(y.risolta_il).localeCompare(String(x.risolta_il)));
+  disegna();
+}
+
+const clienteDi = c => (ARTICOLI.find(a => a.codice === c) || {}).cliente || '';
+const fonteHtml = f => f === 'OPERAIO'
+  ? '<span style="color:#7fd3ff;font-weight:800">👷 Operaio</span>'
+  : '<span style="color:#ffc94d;font-weight:800">🧑‍💼 Angelo</span>';
+
+function filtra(lista){
+  const fonte = document.getElementById('f-fonte').value;
+  const cod = document.getElementById('f-codice').value.trim().toUpperCase();
+  return lista.filter(a => (!fonte || a.fonte === fonte) &&
+    (!cod || a.codici.some(c => c.toUpperCase().includes(cod)) || (a.codice_interno || '').toUpperCase().includes(cod)));
+}
+
+function disegna(){
+  const box = document.getElementById('anomalie-box');
+  const vista = document.getElementById('f-vista').value;
+  const avviso = CLA.avviso ? `<div style="font-size:12px;color:#e0a800;margin-bottom:8px">⚠️ ${esc(CLA.avviso)}</div>` : '';
+  if(vista === 'aperte'){
+    const lista = filtra(CLA.aperte);
+    box.innerHTML = avviso + (lista.length ? `<div class="mon-section" style="padding:10px 14px;overflow-x:auto">
+      <table class="mon-table" style="width:100%"><thead><tr>
+        <th>Segnalata il</th><th>Da</th><th>Chi</th><th>Codice</th><th>Anomalia</th><th></th></tr></thead>
+      <tbody>${lista.map(a => `<tr>
+        <td style="white-space:nowrap">${esc(claData(a.quando))}</td>
+        <td>${fonteHtml(a.fonte)}</td>
+        <td><b>${esc(a.chi)}</b></td>
+        <td><b>${esc(a.codici.join(', '))}</b>
+          <div style="font-size:10px;color:var(--text-dim)">${esc(a.cliente || clienteDi(a.codici[0]))}${a.codice_interno ? ' · int. ' + esc(a.codice_interno) : ''}${a.fase ? ' · fase ' + esc(a.fase) : ''}${a.numero_ordine ? ' · ordine ' + esc(a.numero_ordine) : ''}</div></td>
+        <td style="font-size:13px;max-width:420px">${esc(a.descrizione)}</td>
+        <td><button class="btn btn-primary" style="background:#1a9e5c;white-space:nowrap" onclick="claRisolvi('${a.chiave}')">✅ È stato risolto</button></td>
+      </tr>`).join('')}</tbody></table></div>`
+      : '<div class="mon-section" style="padding:16px;color:#1a9e5c;font-weight:700">✅ Nessuna anomalia da risolvere.</div>');
+  } else {
+    const lista = filtra(RISOLTE);
+    box.innerHTML = avviso + (lista.length ? `<div class="mon-section" style="padding:10px 14px;overflow-x:auto">
+      <table class="mon-table" style="width:100%"><thead><tr>
+        <th>Segnalata il</th><th>Da</th><th>Chi</th><th>Codice</th><th>Anomalia</th><th>Risolta il</th><th>Da chi</th><th>Nota</th></tr></thead>
+      <tbody>${lista.map(a => `<tr>
+        <td style="white-space:nowrap">${esc(claData(a.quando))}</td>
+        <td>${fonteHtml(a.fonte)}</td>
+        <td>${esc(a.chi)}</td>
+        <td><b>${esc(a.codici.join(', ') || ('int. ' + (a.codice_interno || '')))}</b>
+          ${a.numero_ordine ? `<div style="font-size:10px;color:var(--text-dim)">ordine ${esc(a.numero_ordine)}</div>` : ''}</td>
+        <td style="font-size:12px;max-width:300px">${esc(a.descrizione)}</td>
+        <td style="white-space:nowrap">${esc(claData(a.risolta_il))}</td>
+        <td>${esc(a.risolta_da)}</td>
+        <td style="font-size:12px;max-width:300px;color:#1a9e5c">${esc(a.nota)}</td>
+      </tr>`).join('')}</tbody></table></div>`
+      : '<div class="mon-section" style="padding:16px;color:var(--text-dim)">Nessuna anomalia risolta.</div>');
+  }
+}
+
+function nuovaAnomalia(){
+  const cod = document.getElementById('nuova-codice').value.trim().toUpperCase();
+  const a = ARTICOLI.find(x => x.codice.toUpperCase() === cod);
+  if(!a){ showToast('❌ Scegli un codice dall\'elenco'); return; }
+  claSegnala({articolo_id: a.articolo_id, codice: a.codice, ordine_id: null, descr: a.descrizione});
+  document.getElementById('nuova-codice').value = '';
+}
+
+const parametro = new URLSearchParams(location.search).get('codice');
+if(parametro) document.getElementById('f-codice').value = parametro;
+carica();
+setInterval(() => { if(!document.querySelector('.cla-overlay')) carica(); }, 60000);
+{% endblock %}

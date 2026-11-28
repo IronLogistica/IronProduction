@@ -40,7 +40,7 @@ from blueprints.conto_lavoro.importa_ordine import estrai_dati_ordine
 from blueprints.conto_lavoro.models import (ClAudit, ClArticoloCliente, ClCliente, ClDdt, ClFattura,
                                             ClFotoArticolo, ClImpostazione, ClLotto, ClMovimento, ClOrdine,
                                             ClOrdineRiga, ClSchemaVersion, TRACCIAMENTI, UDM, _adesso,
-                                            ClRigaRevisione, ClAnomaliaRisolta)
+                                            ClRigaRevisione, ClAnomaliaRisolta, ClAnomalia)
 
 VERSIONE_MODULO = 'ordini'
 VERSIONE_SCHEMA_BASE = 1      # clienti/articoli — invariato dalla 0001, non deve regredire
@@ -57,6 +57,7 @@ VERSIONE_SCHEMA_RIGHE_MODIFICABILI = 4
 # 0005 (Mauri, 28/11/2026). Tabelle a parte: tutto il resto funziona anche
 # prima della 0005, solo queste funzioni rispondono 503 finché non c'è.
 VERSIONE_SCHEMA_ANOMALIE = 5
+VERSIONE_SCHEMA_ANOMALIE_ANGELO = 6   # cl_anomalia: anomalie segnalate da Angelo per codice — dalla 0006
 STATI_ATTIVI = ('CONFERMATO', 'SOSPESO')   # ordini rilasciati: anche se sospesi restano in LIVE/magazzino
 VERSIONE_SCHEMA_RICHIESTA = VERSIONE_SCHEMA_BASE  # compatibilità: usato dal cancello e dal tile "Clienti e articoli"
 PREFISSI_SCHEMA_ORDINI = ('/conto-lavoro/api/ordini', '/conto-lavoro/api/impostazioni', '/conto-lavoro/api/fatture',
@@ -166,6 +167,15 @@ def pagina_riepilogo():
     questi numeri."""
     return render_template('conto_lavoro/riepilogo.html', active='conto_lavoro',
                            schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_LIVE)
+
+
+@cl_bp.get('/anomalie')
+def pagina_anomalie():
+    """Tutte le anomalie del Conto Lavoro in un posto solo (Mauri, 28/11/2026): quelle
+    degli operai (tasto sul cellulare in MasterWork) e quelle segnalate da Angelo dal
+    pulsante su ogni codice in Magazzino / Riepilogo ordini. ?codice= filtra un codice."""
+    return render_template('conto_lavoro/anomalie.html', active='conto_lavoro', schema=versione_schema(),
+                           schema_richiesto=VERSIONE_SCHEMA_ANOMALIE_ANGELO)
 
 
 @cl_bp.get('/magazzino')
@@ -774,7 +784,8 @@ def api_anomalie_risolte():
     righe = ClAnomaliaRisolta.query.order_by(ClAnomaliaRisolta.risolta_il.desc()).limit(500).all()
     return jsonify([{'mw_id': a.mw_id, 'operaio': a.operaio, 'codice_interno': a.codice_interno, 'motivo': a.motivo,
                      'nota_risoluzione': a.nota_risoluzione, 'risolta_da': a.risolta_da,
-                     'risolta_il': a.risolta_il.strftime('%d/%m/%Y %H:%M') if a.risolta_il else ''} for a in righe])
+                     'segnalata_il': a.segnalata_il.isoformat() if a.segnalata_il else '',
+                     'risolta_il': a.risolta_il.isoformat() if a.risolta_il else ''} for a in righe])
 
 
 @cl_bp.post('/api/anomalie-risolte')
@@ -811,6 +822,89 @@ def api_risolvi_anomalia():
         db.session.rollback()
         return jsonify(ok=False, error='Anomalia già segnata come risolta.'), 409
     return jsonify(ok=True)
+
+
+def _schema_anomalie_angelo_mancante():
+    if versione_schema() < VERSIONE_SCHEMA_ANOMALIE_ANGELO:
+        return jsonify(ok=False, error=f'Funzione disponibile dalla versione {VERSIONE_SCHEMA_ANOMALIE_ANGELO} delle '
+                                       f'tabelle del Conto lavoro: impostare CL_MIGRA_AUTO='
+                                       f'{VERSIONE_SCHEMA_ANOMALIE_ANGELO:04d} su Railway e riavviare.'), 503
+    return None
+
+
+def _anomalia_dict(a):
+    return {'id': a.id, 'articolo_id': a.articolo_id, 'codice': a.articolo.codice if a.articolo else '',
+            'descrizione_articolo': a.articolo.descrizione if a.articolo else '',
+            'cliente': a.articolo.cliente.ragione_sociale if a.articolo and a.articolo.cliente else '',
+            'ordine_id': a.ordine_id, 'numero_ordine': a.ordine.numero_ordine if a.ordine else '',
+            'descrizione': a.descrizione, 'segnalata_da': a.segnalata_da,
+            'segnalata_il': a.segnalata_il.isoformat() if a.segnalata_il else '',
+            'risolta': a.risolta_il is not None,
+            'risolta_il': a.risolta_il.isoformat() if a.risolta_il else '',
+            'nota_risoluzione': a.nota_risoluzione, 'risolta_da': a.risolta_da}
+
+
+@cl_bp.get('/api/anomalie-angelo')
+def api_anomalie_angelo():
+    """?stato=aperte (default) | risolte | tutte"""
+    errore = _schema_anomalie_angelo_mancante()
+    if errore:
+        return errore
+    q = ClAnomalia.query.options(db.joinedload(ClAnomalia.articolo).joinedload(ClArticoloCliente.cliente),
+                                 db.joinedload(ClAnomalia.ordine))
+    stato = request.args.get('stato', 'aperte')
+    if stato == 'aperte':
+        q = q.filter(ClAnomalia.risolta_il.is_(None)).order_by(ClAnomalia.segnalata_il.desc())
+    elif stato == 'risolte':
+        q = q.filter(ClAnomalia.risolta_il.isnot(None)).order_by(ClAnomalia.risolta_il.desc())
+    else:
+        q = q.order_by(ClAnomalia.segnalata_il.desc())
+    return jsonify([_anomalia_dict(a) for a in q.limit(500).all()])
+
+
+@cl_bp.post('/api/anomalie-angelo')
+def api_crea_anomalia_angelo():
+    """{"articolo_id", "ordine_id"?, "descrizione", "segnalata_da"?} — pulsante ⚠️ su un codice."""
+    errore = _schema_anomalie_angelo_mancante()
+    if errore:
+        return errore
+    d = request.get_json(silent=True) or {}
+    a = db.session.get(ClArticoloCliente, d.get('articolo_id') or 0)
+    if not a:
+        return jsonify(ok=False, error='Codice non trovato.'), 404
+    descrizione = str(d.get('descrizione') or '').strip()[:5000]
+    if not descrizione:
+        return jsonify(ok=False, error="Descrivi l'anomalia."), 400
+    ordine_id = d.get('ordine_id') or None
+    if ordine_id and not db.session.get(ClOrdine, ordine_id):
+        ordine_id = None
+    an = ClAnomalia(articolo_id=a.id, ordine_id=ordine_id, descrizione=descrizione,
+                    segnalata_da=str(d.get('segnalata_da') or 'Angelo').strip()[:80] or 'Angelo')
+    db.session.add(an)
+    db.session.flush()
+    _audit('ANOMALIA_SEGNALATA', 'cl_anomalia', an.id, dopo={'codice': a.codice, 'descrizione': descrizione})
+    db.session.commit()
+    return jsonify(ok=True, anomalia=_anomalia_dict(an))
+
+
+@cl_bp.post('/api/anomalie-angelo/<int:aid>/risolvi')
+def api_risolvi_anomalia_angelo(aid):
+    errore = _schema_anomalie_angelo_mancante()
+    if errore:
+        return errore
+    an = db.session.get(ClAnomalia, aid) or abort(404)
+    d = request.get_json(silent=True) or {}
+    nota = str(d.get('nota') or '').strip()[:2000]
+    if not nota:
+        return jsonify(ok=False, error='Scrivi una nota su come è stata risolta.'), 400
+    if an.risolta_il:
+        return jsonify(ok=False, error='Anomalia già segnata come risolta.'), 409
+    an.risolta_il = _adesso()
+    an.nota_risoluzione = nota
+    an.risolta_da = str(d.get('risolta_da') or UTENTE_AUDIT).strip()[:80]
+    _audit('ANOMALIA_RISOLTA', 'cl_anomalia', an.id, dopo={'nota': nota})
+    db.session.commit()
+    return jsonify(ok=True, anomalia=_anomalia_dict(an))
 
 
 def _numero_opzionale(d, chiave, etichetta):
