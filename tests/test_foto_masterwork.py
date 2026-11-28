@@ -21,9 +21,10 @@ class TestFotoMasterWork(unittest.TestCase):
             db.session.commit()
         pp._FOTO_MW_CACHE.clear()
 
-    def _risposta(self, url, timeout=None):
+    def _risposta(self, url, params=None, timeout=None):
         r = mock.Mock(ok=True)
-        r.json.return_value = {'foto_url': 'https://xyz.supabase.co/foto/s1sx.jpg' if url.endswith('/S1-SX') else ''}
+        cod = (params or {}).get('codice') or url.rsplit('/', 1)[-1]
+        r.json.return_value = {'foto_url': 'https://xyz.supabase.co/foto/s1sx.jpg' if cod == 'S1-SX' else ''}
         return r
 
     def test_codice_tradotto_con_la_mappa(self):

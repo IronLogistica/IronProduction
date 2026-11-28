@@ -1168,13 +1168,19 @@ def _foto_masterwork(codice):
                                 MappaCodiceMasterWork.query.filter(
                                     db.func.upper(MappaCodiceMasterWork.codice_ironproduction) == codice).all()]
         for c in dict.fromkeys(candidati):
-            try:
-                r = requests.get(f'{url_mw}/api/fasi_articolo/{requests.utils.quote(c, safe="")}', timeout=4)
-                foto = (r.json() or {}).get('foto_url') if r.ok else ''
-            except (requests.exceptions.RequestException, ValueError):
-                foto = ''
-            if foto and foto != 'None':
-                trovata = foto
+            # 1) codice interno O esterno (il codice del cliente) — /api/foto_articolo di MasterWork;
+            # 2) vecchio endpoint per codice interno, se MasterWork non e' ancora aggiornato
+            for indirizzo, parametri in ((f'{url_mw}/api/foto_articolo', {'codice': c}),
+                                         (f'{url_mw}/api/fasi_articolo/{requests.utils.quote(c, safe="")}', None)):
+                try:
+                    r = requests.get(indirizzo, params=parametri, timeout=4)
+                    foto = (r.json() or {}).get('foto_url') if r.ok else ''
+                except (requests.exceptions.RequestException, ValueError):
+                    foto = ''
+                if foto and foto != 'None':
+                    trovata = foto
+                    break
+            if trovata:
                 break
     _FOTO_MW_CACHE[codice] = (ora, trovata)
     return trovata
@@ -1191,13 +1197,16 @@ def api_foto_masterwork_diagnosi(codice):
     for c in dict.fromkeys(candidati):
         if not url_mw:
             break
-        try:
-            r = requests.get(f'{url_mw}/api/fasi_articolo/{requests.utils.quote(c, safe="")}', timeout=6)
-            j = r.json() if r.ok else {}
-            prove.append({'codice_masterwork': c, 'http': r.status_code, 'fasi': len(j.get('fasi') or []),
-                          'foto_url': j.get('foto_url') or ''})
-        except (requests.exceptions.RequestException, ValueError) as e:
-            prove.append({'codice_masterwork': c, 'errore': str(e)[:200]})
+        for nome, indirizzo, parametri in (
+                ('interno o esterno', f'{url_mw}/api/foto_articolo', {'codice': c}),
+                ('solo interno', f'{url_mw}/api/fasi_articolo/{requests.utils.quote(c, safe="")}', None)):
+            try:
+                r = requests.get(indirizzo, params=parametri, timeout=6)
+                j = r.json() if r.ok else {}
+                prove.append({'codice': c, 'ricerca': nome, 'http': r.status_code,
+                              'trovati': j.get('articoli', j.get('fasi', [])), 'foto_url': j.get('foto_url') or ''})
+            except (requests.exceptions.RequestException, ValueError) as e:
+                prove.append({'codice': c, 'ricerca': nome, 'errore': str(e)[:200]})
     return jsonify({'codice': c0, 'MASTERWORK_URL': url_mw or 'NON IMPOSTATO', 'prove': prove,
                     'in_cache': _FOTO_MW_CACHE.get(c0, (None, None))[1]})
 
