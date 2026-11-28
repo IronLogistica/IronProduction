@@ -46,6 +46,22 @@ class TestFotoMasterWork(unittest.TestCase):
                                             json={'codici': ['AS_001693', 'STELLA-SX', 'NIENTE']})
         self.assertEqual(r.json, {'AS_001693': 'FZ240', 'STELLA-SX': 'S1-SX', 'NIENTE': ''})
 
+    def test_tempi_standard_per_fase(self):
+        def finto(url, params=None, timeout=None):
+            if url.endswith('/api/analytics/articoli'):
+                m = mock.Mock(ok=True)
+                m.json.return_value = [
+                    {'codice_interno': 'FZ240', 'fase': '20 SALDATURA', 'descrizione_fase': 'Saldatura', 'tempo_stimato': 12.5},
+                    {'codice_interno': 'FZ240', 'fase': '10 TAGLIO', 'descrizione_fase': 'Taglio', 'tempo_stimato': 3},
+                    {'codice_interno': 'ALTRO', 'fase': '10', 'tempo_stimato': 9}]
+                return m
+            return self._risposta(url, params, timeout)
+        pp._TEMPI_MW_CACHE.update(t=0, dati=None)
+        with mock.patch.object(pp.requests, 'get', side_effect=finto):
+            r = self.app.test_client().get('/api/masterwork/tempi-standard/AS_001693')
+        self.assertEqual([f['fase'] for f in r.json['fasi']], ['10 TAGLIO', '20 SALDATURA'])
+        self.assertEqual(r.json['totale_minuti'], 15.5)
+
 
 if __name__ == '__main__':
     unittest.main()

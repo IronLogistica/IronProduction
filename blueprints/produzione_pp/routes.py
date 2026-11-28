@@ -1223,6 +1223,45 @@ def api_masterwork_codici_interni():
         return jsonify(dict(ex.map(uno, codici)))
 
 
+_TEMPI_MW_CACHE = {'t': 0, 'dati': None}
+
+
+@pp_bp.route('/api/masterwork/tempi-standard/<path:codice>')
+def api_masterwork_tempi_standard(codice):
+    """Tempi standard fase per fase (anagrafica_articoli.tempo_stimato, minuti/pezzo) di un
+    codice del Conto Lavoro, letti da MasterWork (/api/analytics/articoli, gia' usato da
+    MasterAnalytics). Il codice cliente viene tradotto nel codice interno MasterWork."""
+    import time
+    url_mw = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
+    if not url_mw:
+        return jsonify(ok=False, error='MASTERWORK_URL non impostato', fasi=[])
+    interni = [i.strip().upper() for i in (_info_masterwork(codice)['codice_interno'] or '').split(',') if i.strip()]
+    if not interni:
+        return jsonify(ok=True, codice_interno='', fasi=[], totale_minuti=0)
+    if time.time() - _TEMPI_MW_CACHE['t'] > 600 or _TEMPI_MW_CACHE['dati'] is None:
+        try:
+            r = requests.get(f'{url_mw}/api/analytics/articoli', timeout=15)
+            dati = r.json() if r.ok else None
+        except (requests.exceptions.RequestException, ValueError):
+            dati = None
+        if isinstance(dati, list):
+            _TEMPI_MW_CACHE.update(t=time.time(), dati=dati)
+        elif _TEMPI_MW_CACHE['dati'] is None:
+            return jsonify(ok=False, error='MasterWork non risponde', fasi=[])
+    fasi = []
+    for a in _TEMPI_MW_CACHE['dati']:
+        if (a.get('codice_interno') or '').strip().upper() in interni:
+            try:
+                minuti = float(a.get('tempo_stimato') or 0)
+            except (TypeError, ValueError):
+                minuti = 0
+            fasi.append({'codice_interno': a.get('codice_interno'), 'fase': a.get('fase') or '',
+                         'descrizione_fase': a.get('descrizione_fase') or '', 'minuti': round(minuti, 2)})
+    fasi.sort(key=lambda f: (f['codice_interno'] or '', f['fase']))
+    return jsonify(ok=True, codice_interno=', '.join(interni), fasi=fasi,
+                   totale_minuti=round(sum(f['minuti'] for f in fasi), 2))
+
+
 _ANOMALIE_MW_CACHE = {'t': 0, 'dati': None}
 
 
