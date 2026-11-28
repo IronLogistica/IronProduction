@@ -138,8 +138,7 @@ function apriPopup(i){
       <div class="popup-rif">👥 ${esc(g.cliente)} · Ordine ${esc(o.numero_ordine)}${o.rif_cliente ? ' · ' + esc(o.rif_cliente) : ''}</div>
       ${o.sospeso ? `<div class="popup-sezione rossa">⏸ <b>ORDINE SOSPESO</b> — non produrre finché non viene riattivato</div>` : ''}
       ${r.revisione ? `<div class="popup-sezione gialla">🔁 <b>DA REVISIONARE</b>${r.revisione.nota ? ': ' + esc(r.revisione.nota) : ''}</div>` : ''}
-      ${anomaliePerCodice(r.codice).map(a => `<div class="popup-sezione rossa">⚠️ <b>${esc(a.chi)}</b> (${esc(dataOra(a.quando))}): “${esc(a.descrizione)}”
-          <div style="margin-top:6px"><button class="btn-risolto" onclick="claRisolvi('${a.chiave}')">✅ È stato risolto</button></div></div>`).join('')}
+      ${anomaliePerCodice(r.codice).map(a => `<div class="popup-sezione rossa">⚠️ <b>${esc(a.chi)}</b> (${esc(dataOra(a.quando))}): “${esc(a.descrizione)}”</div>`).join('')}
       <div class="popup-numero"><span>Q.tà ordinata</span><b>${r.quantita}</b></div>
       <div class="popup-numero"><span>Q.tà prodotta</span><b>${r.quantita_prodotta}</b></div>
       <div class="popup-numero"><span>Q.tà consegnata</span><b>${r.quantita_evasa}</b></div>
@@ -192,24 +191,10 @@ async function caricaAnomalie(codici){
   await claCarica(codici);
   disegnaAnomalie();
 }
-function anomaliaHtml(a){
-  return `<div class="anomalia">
-    <div class="anomalia-testo">
-      <div><b>${esc(a.codici.join(', '))}</b>${a.codice_interno ? ' · cod. interno ' + esc(a.codice_interno) : ''}${a.fase ? ' · fase ' + esc(a.fase) : ''}${a.numero_ordine ? ' · ordine ' + esc(a.numero_ordine) : ''}</div>
-      <div class="anomalia-motivo">“${esc(a.descrizione)}”</div>
-      <div class="anomalia-meta">${a.fonte === 'OPERAIO' ? '👷 Segnalata dall\'operaio' : '🧑‍💼 Segnalata da'} <b>${esc(a.chi)}</b> · ${esc(dataOra(a.quando))}</div>
-    </div>
-    <button class="btn-risolto" onclick="claRisolvi('${a.chiave}')">✅ È stato risolto</button>
-  </div>`;
-}
+// Nel LIVE niente riquadro in cima e niente "È stato risolto" (Mauri, 28/11/2026): le anomalie di tempo
+// restano solo come etichetta sulla riga e dentro il popup del codice; si risolvono dalla pagina Anomalie.
 function disegnaAnomalie(){
-  const box = document.getElementById('anomalie');
-  const lista = CLA.aperte.filter(a => a.genere !== 'PREZZO' && a.codici.some(c => codiciLive.has(c)));
-  box.innerHTML = lista.length ? `<div class="anomalie-box">
-      <div class="anomalie-titolo">⚠️ ANOMALIE DA RISOLVERE (${lista.length})
-        <a href="/conto-lavoro/anomalie" target="_blank" style="float:right;font-size:12px;color:#ffb3b3">apri pagina Anomalie →</a></div>
-      ${CLA.avviso ? `<div class="anomalia-meta" style="margin-bottom:6px">⚠️ ${esc(CLA.avviso)}</div>` : ''}
-      ${lista.map(anomaliaHtml).join('')}</div>` : '';
+  document.getElementById('anomalie').innerHTML = '';
 }
 function claDopoModifica(){ chiudiPopup(); disegnaAnomalie(); carica(); }
 
