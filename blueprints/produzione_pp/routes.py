@@ -1180,6 +1180,28 @@ def _foto_masterwork(codice):
     return trovata
 
 
+@pp_bp.route('/api/masterwork/foto-diagnosi/<path:codice>')
+def api_foto_masterwork_diagnosi(codice):
+    """Perche' una foto non compare nel LIVE Conto Lavoro: codici provati e risposta di MasterWork."""
+    url_mw = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
+    c0 = (codice or '').strip().upper()
+    candidati = [c0] + [m.codice_masterwork.strip().upper() for m in MappaCodiceMasterWork.query.filter(
+        db.func.upper(MappaCodiceMasterWork.codice_ironproduction) == c0).all()]
+    prove = []
+    for c in dict.fromkeys(candidati):
+        if not url_mw:
+            break
+        try:
+            r = requests.get(f'{url_mw}/api/fasi_articolo/{requests.utils.quote(c, safe="")}', timeout=6)
+            j = r.json() if r.ok else {}
+            prove.append({'codice_masterwork': c, 'http': r.status_code, 'fasi': len(j.get('fasi') or []),
+                          'foto_url': j.get('foto_url') or ''})
+        except (requests.exceptions.RequestException, ValueError) as e:
+            prove.append({'codice_masterwork': c, 'errore': str(e)[:200]})
+    return jsonify({'codice': c0, 'MASTERWORK_URL': url_mw or 'NON IMPOSTATO', 'prove': prove,
+                    'in_cache': _FOTO_MW_CACHE.get(c0, (None, None))[1]})
+
+
 @pp_bp.route('/api/masterwork/foto/<path:codice>')
 def api_foto_masterwork(codice):
     """Reindirizza all'immagine dell'articolo in MasterWork (Supabase/Dropbox...), 404 se non c'e'."""
