@@ -14,7 +14,7 @@ RADICE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 class TestAnagrafiche(unittest.TestCase):
     def setUp(self):
         self.app = Flask(__name__, template_folder=os.path.join(RADICE, 'templates'))
-        self.app.config.update(TESTING=True, SECRET_KEY='x', CL_ENABLED=True,
+        self.app.config.update(TESTING=True, SECRET_KEY='x', CL_ENABLED=True, CL_PIN_ANGELO='9999',
                                SQLALCHEMY_DATABASE_URI='sqlite:///:memory:',
                                SQLALCHEMY_BINDS={'conto_lavoro': 'sqlite:///:memory:'},
                                SQLALCHEMY_TRACK_MODIFICATIONS=False)
@@ -30,6 +30,8 @@ class TestAnagrafiche(unittest.TestCase):
         db.session.add(ClSchemaVersion(versione=1, descrizione='test'))
         db.session.commit()
         self.c = self.app.test_client()
+        with self.c.session_transaction() as ss:   # accesso di Angelo (inserimenti a mano)
+            ss['cl_angelo'] = True
 
     def tearDown(self):
         db.session.remove()

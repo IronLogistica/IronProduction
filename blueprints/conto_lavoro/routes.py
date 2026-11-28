@@ -31,7 +31,11 @@ import io
 from datetime import datetime
 
 import PyPDF2
-from flask import Blueprint, Response, abort, current_app, jsonify, render_template, request
+import hmac
+import os
+from functools import wraps
+
+from flask import Blueprint, Response, abort, current_app, jsonify, redirect, render_template, request, session
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 
 from models import db, OrdineProduzione  # sola lettura, vedi eccezione documentata sopra
@@ -107,6 +111,53 @@ def _cancello_modulo():
                                            f'impostare CL_MIGRA_AUTO={richiesta:04d} su Railway e riavviare.'), 503
 
 
+# ── Accesso di Angelo (Mauri, 28/11/2026) ───────────────────────────────────
+# Inserire/modificare a mano clienti e codici (oltre all'import PDF) lo può fare
+# solo Angelo: PIN nella variabile Railway CL_PIN_ANGELO, valido per la sessione
+# del browser. Senza variabile la funzione resta bloccata.
+def _pin_angelo():
+    return (os.environ.get('CL_PIN_ANGELO') or current_app.config.get('CL_PIN_ANGELO') or '').strip()
+
+
+def angelo_attivo():
+    return bool(session.get('cl_angelo')) and bool(_pin_angelo())
+
+
+def solo_angelo(f):
+    @wraps(f)
+    def _avvolta(*a, **k):
+        if not angelo_attivo():
+            return jsonify(ok=False, angelo=False,
+                           error='Solo Angelo può inserire o modificare a mano clienti e codici: '
+                                 'premi "🔒 Accesso Angelo" e inserisci il PIN.'), 403
+        return f(*a, **k)
+    return _avvolta
+
+
+@cl_bp.get('/api/angelo')
+def api_angelo_stato():
+    return jsonify(attivo=angelo_attivo(), configurato=bool(_pin_angelo()))
+
+
+@cl_bp.post('/api/angelo/accesso')
+def api_angelo_accesso():
+    pin = str((request.get_json(silent=True) or {}).get('pin') or '').strip()
+    atteso = _pin_angelo()
+    if not atteso:
+        return jsonify(ok=False, error='PIN di Angelo non impostato: aggiungere CL_PIN_ANGELO su Railway.'), 503
+    if not pin or not hmac.compare_digest(pin, atteso):
+        return jsonify(ok=False, error='PIN errato.'), 403
+    session['cl_angelo'] = True
+    session.permanent = True
+    return jsonify(ok=True)
+
+
+@cl_bp.post('/api/angelo/esci')
+def api_angelo_esci():
+    session.pop('cl_angelo', None)
+    return jsonify(ok=True)
+
+
 def _audit(azione, entita, entita_id='', prima=None, dopo=None):
     db.session.add(ClAudit(azione=azione, entita=entita, entita_id=str(entita_id or ''),
                            prima=prima, dopo={**(dopo or {}), '_utente': UTENTE_AUDIT},
@@ -159,14 +210,8 @@ def pagina_ordini():
 
 @cl_bp.get('/riepilogo')
 def pagina_riepilogo():
-    """Riepilogo ordini — stessa vista d'insieme del monitor LIVE (ordini
-    CONFERMATO raggruppati per cliente, con Ordinata/Prodotta/Evasa/Saldo),
-    ma come pagina normale con sidebar/topbar per consultazione da PC
-    (indicazione di Mauri, 29/09/2026), non per un monitor/totem d'officina.
-    Usa la stessa /api/live del monitor LIVE — un solo posto che calcola
-    questi numeri."""
-    return render_template('conto_lavoro/riepilogo.html', active='conto_lavoro',
-                           schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_LIVE)
+    """Unito alla pagina Ordini (Mauri, 28/11/2026): il riepilogo sta in cima a /ordini."""
+    return redirect('/conto-lavoro/ordini')
 
 
 @cl_bp.get('/anomalie')
@@ -180,14 +225,8 @@ def pagina_anomalie():
 
 @cl_bp.get('/magazzino')
 def pagina_magazzino():
-    """Magazzino Conto lavoro — TUTTI i codici articolo dei clienti passano
-    da qui (indicazione di Mauri, 29/09/2026), raggruppati per cliente:
-    Giacenza (dai movimenti cl_movimento — 0 finché DDT ricezione/consumi
-    non sono costruiti, la tabella esiste dalla 0001 ma nessuno ci scrive
-    ancora) affiancata a Ordinata/Prodotta/Evasa/Saldo per dare un quadro
-    unico, non solo i codici con un ordine confermato."""
-    return render_template('conto_lavoro/magazzino.html', active='conto_lavoro',
-                           schema=versione_schema(), schema_richiesto=VERSIONE_SCHEMA_ORDINI)
+    """Unito a Clienti (Mauri, 28/11/2026): pagina "Clienti e magazzino"."""
+    return redirect('/conto-lavoro/anagrafiche#magazzino')
 
 
 @cl_bp.get('/live')
@@ -243,6 +282,7 @@ def _applica_cliente(c, d):
 
 
 @cl_bp.post('/api/clienti')
+@solo_angelo
 def api_crea_cliente():
     d = request.get_json(silent=True) or {}
     try:
@@ -262,6 +302,7 @@ def api_crea_cliente():
 
 
 @cl_bp.put('/api/clienti/<int:cid>')
+@solo_angelo
 def api_modifica_cliente(cid):
     c = db.session.get(ClCliente, cid) or abort(404)
     d = request.get_json(silent=True) or {}
@@ -319,6 +360,7 @@ def _applica_articolo(a, d, nuovo):
 
 
 @cl_bp.post('/api/articoli')
+@solo_angelo
 def api_crea_articolo():
     d = request.get_json(silent=True) or {}
     try:
@@ -338,6 +380,7 @@ def api_crea_articolo():
 
 
 @cl_bp.put('/api/articoli/<int:aid>')
+@solo_angelo
 def api_modifica_articolo(aid):
     a = db.session.get(ClArticoloCliente, aid) or abort(404)
     d = request.get_json(silent=True) or {}
@@ -364,6 +407,7 @@ def api_modello_articoli():
 
 
 @cl_bp.post('/api/articoli/importa')
+@solo_angelo
 def api_importa_articoli():
     """
     Carica gli articoli di UN cliente da file. Senza conferma=true: SOLO
@@ -1020,6 +1064,9 @@ def api_aggiungi_riga_ordine(oid):
 
     articolo = ClArticoloCliente.query.filter_by(cliente_id=o.cliente_id, codice=codice).first()
     nuovo_codice = False
+    if not articolo and not angelo_attivo():
+        return jsonify(ok=False, angelo=False, error=f'Il codice "{codice}" non esiste ancora: un codice nuovo a mano '
+                                                     f'lo può creare solo Angelo (🔒 Accesso Angelo).'), 403
     if not articolo:
         descrizione = _testo(d, 'descrizione', 300)
         if not descrizione:

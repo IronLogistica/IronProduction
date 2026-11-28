@@ -28,7 +28,7 @@ class TestAnomalieContoLavoro(unittest.TestCase):
         eng.dispose()
         migra.applica_su_con_lock(PG_URL, migra.MIGRAZIONI[-1], out=lambda *_: None)
         self.app = Flask(__name__, template_folder=os.path.join(RADICE, 'templates'))
-        self.app.config.update(TESTING=True, CL_ENABLED=True, MASTERWORK_URL='https://mw.example',
+        self.app.config.update(TESTING=True, CL_ENABLED=True, SECRET_KEY='test', MASTERWORK_URL='https://mw.example',
                                SQLALCHEMY_DATABASE_URI='sqlite:///:memory:', SQLALCHEMY_TRACK_MODIFICATIONS=False,
                                SQLALCHEMY_BINDS={'conto_lavoro': {'url': PG_URL, 'execution_options':
                                                  {'schema_translate_map': {None: 'conto_lavoro'}}}})
@@ -130,9 +130,28 @@ class TestAnomalieContoLavoro(unittest.TestCase):
 
     def test_pagine_si_aprono(self):
         self.app.context_processor(lambda: {'now': '', 'kanban_gruppi': [], 'macchine_monitor': [], 'sidebar_gruppi': []})
-        for url in ('/conto-lavoro/anomalie', '/conto-lavoro/magazzino', '/conto-lavoro/riepilogo', '/conto-lavoro/live',
+        for url in ('/conto-lavoro/anomalie', '/conto-lavoro/anagrafiche', '/conto-lavoro/ordini', '/conto-lavoro/live',
                     '/conto-lavoro/'):
             self.assertEqual(self.c.get(url).status_code, 200, url)
+        self.assertEqual(self.c.get('/conto-lavoro/magazzino').status_code, 302)    # uniti
+        self.assertEqual(self.c.get('/conto-lavoro/riepilogo').status_code, 302)
+
+    def test_solo_angelo_inserisce_codici_a_mano(self):
+        with self.app.app_context():
+            cid = clm.ClCliente.query.first().id
+        corpo = {'cliente_id': cid, 'codice': 'URGENTE-1', 'descrizione': 'pezzo urgente', 'udm': 'PZ'}
+        self.assertEqual(self.c.post('/conto-lavoro/api/articoli', json=corpo).status_code, 403)
+        r = self.c.post(f'/conto-lavoro/api/ordini/{self.oid}/righe', json={'codice': 'NUOVO-X', 'quantita': 2,
+                                                                             'descrizione': 'x'})
+        self.assertEqual(r.status_code, 403)
+        self.assertEqual(self.c.post('/conto-lavoro/api/angelo/accesso', json={'pin': '1'}).status_code, 503)  # PIN non impostato
+        self.app.config['CL_PIN_ANGELO'] = '2468'
+        self.assertEqual(self.c.post('/conto-lavoro/api/angelo/accesso', json={'pin': '1'}).status_code, 403)
+        self.assertTrue(self.c.post('/conto-lavoro/api/angelo/accesso', json={'pin': '2468'}).json['ok'])
+        self.assertTrue(self.c.get('/conto-lavoro/api/angelo').json['attivo'])
+        self.assertTrue(self.c.post('/conto-lavoro/api/articoli', json=corpo).json['ok'])
+        self.c.post('/conto-lavoro/api/angelo/esci')
+        self.assertEqual(self.c.post('/conto-lavoro/api/articoli', json={**corpo, 'codice': 'URGENTE-2'}).status_code, 403)
 
 
 if __name__ == '__main__':

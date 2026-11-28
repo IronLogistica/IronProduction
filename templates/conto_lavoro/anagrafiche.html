@@ -1,8 +1,10 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-toolbar">
-  <div class="page-title">🤝 Conto lavoro — Clienti e articoli</div>
+  <div class="page-title">🤝 Conto lavoro — Clienti e magazzino</div>
   <a class="btn btn-ghost" href="/conto-lavoro/" style="margin-left:auto">← Conto lavoro</a>
+  <a class="btn btn-ghost" href="/conto-lavoro/anomalie">⚠️ Anomalie</a>
+  <button class="btn btn-ghost" id="btn-angelo" onclick="toggleAngelo()">🔒 Accesso Angelo</button>
 </div>
 
 {% if schema < 1 %}
@@ -35,6 +37,16 @@
       </table>
     </div>
   </div>
+</div>
+
+<!-- MAGAZZINO (unito a Clienti — Mauri, 28/11/2026) -->
+<div id="magazzino" style="margin-top:22px">
+  <div style="font-size:16px;font-weight:800;margin-bottom:4px">📦 Magazzino conto lavoro</div>
+  <p style="font-size:12px;color:var(--text-dim);margin:0 0 12px">
+    Tutti i codici articolo dei clienti, raggruppati per cliente — anche quelli senza ancora un ordine confermato.
+    Giacenza = quanto risulta dai movimenti di magazzino; resta a 0 finché il modulo DDT di ricezione non è attivo.
+  </p>
+  <div id="magazzino-box">Caricamento...</div>
 </div>
 {% endif %}
 
@@ -109,6 +121,7 @@
 {% endblock %}
 
 {% block scripts %}
+{% include "conto_lavoro/_anomalie_comuni.js" %}
 const CAMPI_CLIENTE = ['ragione_sociale','piva','codice_fiscale','indirizzo','cap','citta','provincia','nazione'];
 let CLIENTI = [], ARTICOLI = [], clienteSel = null, clienteInModifica = null, articoloInModifica = null;
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -119,6 +132,31 @@ async function chiama(url, metodo, corpo){
   const d = await r.json().catch(() => ({ok:false, error:'Risposta non valida'}));
   if(!r.ok && d.ok !== false) d.ok = false;
   return d;
+}
+
+// ── Solo Angelo inserisce/modifica a mano clienti e codici (PIN: variabile Railway CL_PIN_ANGELO)
+let ANGELO = {attivo: false, configurato: false};
+async function statoAngelo(){
+  ANGELO = await chiama('/conto-lavoro/api/angelo');
+  const b = document.getElementById('btn-angelo');
+  b.textContent = ANGELO.attivo ? '🔓 Angelo — esci' : '🔒 Accesso Angelo';
+  b.style.borderColor = ANGELO.attivo ? '#1a9e5c' : '';
+  b.style.color = ANGELO.attivo ? '#1a9e5c' : '';
+}
+async function richiediAngelo(){
+  if(ANGELO.attivo) return true;
+  if(!ANGELO.configurato){ showToast('❌ PIN di Angelo non impostato: aggiungere CL_PIN_ANGELO su Railway', true); return false; }
+  const pin = prompt('Solo Angelo può inserire o modificare a mano clienti e codici.\nPIN di Angelo:');
+  if(!pin) return false;
+  const d = await chiama('/conto-lavoro/api/angelo/accesso', 'POST', {pin});
+  if(!d.ok){ showToast('❌ ' + (d.error || 'PIN errato'), true); return false; }
+  await statoAngelo();
+  showToast('🔓 Accesso Angelo attivo');
+  return true;
+}
+async function toggleAngelo(){
+  if(ANGELO.attivo){ await chiama('/conto-lavoro/api/angelo/esci', 'POST'); await statoAngelo(); showToast('🔒 Uscito'); }
+  else await richiediAngelo();
 }
 
 async function caricaClienti(){
@@ -161,7 +199,8 @@ async function selezionaCliente(id){
     </tr>`).join('') : '<tr><td colspan="6" style="color:var(--text-dim)">Nessun articolo per questo cliente.</td></tr>';
 }
 
-function apriCliente(id){
+async function apriCliente(id){
+  if(!(await richiediAngelo())) return;
   clienteInModifica = id;
   const c = CLIENTI.find(x => x.id === id) || {nazione:'IT', attivo:true};
   document.getElementById('titolo-modal-cliente').textContent = id ? 'Modifica cliente' : 'Nuovo cliente';
@@ -183,7 +222,8 @@ async function salvaCliente(){
   selezionaCliente(d.cliente.id);
 }
 
-function apriArticolo(id){
+async function apriArticolo(id){
+  if(!(await richiediAngelo())) return;
   articoloInModifica = id;
   const a = ARTICOLI.find(x => x.id === id) || {udm:'PZ', tracciamento:'LOTTO', attivo:true};
   document.getElementById('titolo-modal-articolo').textContent = id ? 'Modifica articolo' : 'Nuovo articolo';
@@ -207,6 +247,7 @@ async function salvaArticolo(){
   closeModal('modalArticolo');
   showToast('✅ Articolo salvato');
   selezionaCliente(clienteSel);
+  caricaMagazzino();
 }
 
 async function caricaFotoArticolo(aid, input){
@@ -222,7 +263,8 @@ async function caricaFotoArticolo(aid, input){
   selezionaCliente(clienteSel);
 }
 
-function apriImport(){
+async function apriImport(){
+  if(!(await richiediAngelo())) return;
   const c = CLIENTI.find(x => x.id === clienteSel);
   document.getElementById('imp-cliente').textContent = c ? c.ragione_sociale : '';
   document.getElementById('imp-file').value = '';
@@ -267,5 +309,83 @@ async function importa(conferma){
   selezionaCliente(clienteSel);
 }
 
-if(document.getElementById('lista-clienti')) caricaClienti();
+
+function claDopoModifica(){ caricaMagazzino(); }
+
+// Storico delle anomalie RISOLTE per codice (popup) — Mauri, 28/11/2026
+let STORICO = {};
+async function caricaStorico(codici){
+  STORICO = {};
+  const [interni, mwRis, anRis] = await Promise.all([
+    claPost('/api/masterwork/codici-interni', {codici}),
+    claJson('/conto-lavoro/api/anomalie-risolte'),
+    claJson('/conto-lavoro/api/anomalie-angelo?stato=risolte')]);
+  const perInterno = {};
+  Object.entries(interni || {}).forEach(([c, i]) => String(i || '').split(',').map(x => x.trim().toUpperCase())
+    .filter(Boolean).forEach(x => (perInterno[x] = perInterno[x] || []).push(c)));
+  const aggiungi = (c, voce) => (STORICO[c] = STORICO[c] || []).push(voce);
+  (Array.isArray(mwRis) ? mwRis : []).forEach(a => (perInterno[(a.codice_interno || '').toUpperCase()] || []).forEach(c =>
+    aggiungi(c, {fonte: 'OPERAIO', genere: 'TEMPO', chi: a.operaio, descrizione: a.motivo, quando: a.segnalata_il,
+                 risolta_il: a.risolta_il, risolta_da: a.risolta_da, nota: a.nota_risoluzione, extra: 'int. ' + (a.codice_interno || '')})));
+  (Array.isArray(anRis) ? anRis : []).forEach(a => aggiungi(a.codice, {fonte: 'ANGELO', genere: a.tipo || 'TEMPO', chi: a.segnalata_da,
+    descrizione: a.descrizione, quando: a.segnalata_il, risolta_il: a.risolta_il, risolta_da: a.risolta_da,
+    nota: a.nota_risoluzione, extra: a.numero_ordine ? 'ordine ' + a.numero_ordine : ''}));
+  Object.values(STORICO).forEach(l => l.sort((x, y) => String(y.risolta_il).localeCompare(String(x.risolta_il))));
+}
+let ARTICOLI_MAG = {};
+function pulsanteStorico(a){
+  ARTICOLI_MAG[a.codice] = a;
+  const n = (STORICO[a.codice] || []).length;
+  return n ? `<button type="button" class="btn btn-ghost" style="font-size:11px;padding:3px 8px"
+                 onclick='apriStorico(${JSON.stringify(a.codice).replace(/'/g, "&#39;")})'>📜 Storico risolte (${n})</button>`
+           : '<span style="font-size:11px;color:var(--text-dim)">nessuna risolta</span>';
+}
+function apriStorico(codice){
+  const a = ARTICOLI_MAG[codice] || {};
+  const lista = STORICO[codice] || [];
+  claFinestra(`<div class="cla-box" style="width:min(820px,96vw);max-height:88vh;overflow:auto">
+    <div class="cla-tit">📜 Storico anomalie risolte</div>
+    <div class="cla-sub"><b>${claEsc(codice)}</b> ${claEsc(a.descrizione || '')} — ${lista.length} anomalia/e risolta/e</div>
+    ${lista.map(x => `<div style="border:1px solid #1e6fa5;border-radius:8px;padding:10px 12px;margin-top:8px;background:#0f2237">
+        <div style="font-size:11px;color:#9fb8d0"><span class="cla-genere ${x.genere}">${CLA_GENERI[x.genere] || ''}</span> ${x.fonte === 'OPERAIO' ? '👷 Operaio' : '🧑‍💼 Angelo'} <b style="color:#fff">${claEsc(x.chi)}</b>
+          · segnalata ${claEsc(claData(x.quando))}${x.extra ? ' · ' + claEsc(x.extra) : ''}</div>
+        <div style="font-size:14px;color:#ffd6d6;margin:4px 0">⚠️ “${claEsc(x.descrizione)}”</div>
+        <div style="font-size:13px;color:#7ee2a8">✅ ${claEsc(x.nota)}</div>
+        <div style="font-size:11px;color:#9fb8d0">risolta ${claEsc(claData(x.risolta_il))} da <b>${claEsc(x.risolta_da)}</b></div>
+      </div>`).join('')}
+    <div class="cla-azioni"><button class="cla-annulla" onclick="claChiudi()">Chiudi</button></div></div>`);
+}
+
+async function caricaMagazzino(){
+  const box = document.getElementById('magazzino-box');
+  let gruppi;
+  try{ gruppi = await (await fetch('/conto-lavoro/api/magazzino')).json(); }
+  catch(e){ box.innerHTML = '<p style="color:#c0392b">❌ Errore di rete.</p>'; return; }
+  if(!Array.isArray(gruppi) || !gruppi.length){
+    box.innerHTML = '<p style="color:var(--text-dim)">Nessun codice articolo attivo per ora.</p>';
+    return;
+  }
+  const codici = [...new Set(gruppi.flatMap(g => g.articoli.map(a => a.codice)))];
+  await Promise.all([claCarica(codici), caricaStorico(codici)]);
+  box.innerHTML = gruppi.map(g => `
+    <div class="mon-section" style="margin-bottom:16px">
+      <div style="padding:12px 14px;border-bottom:1px solid var(--border)"><b>👥 ${esc(g.cliente)}</b>
+        <span style="font-size:11px;color:var(--text-dim)"> — ${g.articoli.length} codice/i</span></div>
+      <div style="padding:10px 14px;overflow-x:auto">
+        <table class="mon-table" style="width:100%">
+          <thead><tr><th></th><th>Codice</th><th>Descrizione</th><th>U.M.</th><th>Giacenza</th><th>Ordinata</th><th>Prodotta</th><th>Evasa</th><th>Saldo da produrre</th><th>Anomalie / storico</th></tr></thead>
+          <tbody>${g.articoli.map(a => `<tr>
+              <td>${a.ha_foto ? `<img src="/conto-lavoro/api/articoli/${a.articolo_id}/foto" style="width:28px;height:28px;object-fit:cover;border-radius:4px">` : '📦'}</td>
+              <td>${claCodice(a.codice)}</td><td>${esc(a.descrizione)}</td><td>${esc(a.udm)}</td>
+              <td style="font-weight:800">${a.giacenza}</td>
+              <td>${a.quantita_ordinata}</td><td>${a.quantita_prodotta}</td><td>${a.quantita_evasa}</td>
+              <td style="font-weight:800;color:${a.saldo_da_produrre > 0 ? '#e0a800' : '#1a9e5c'}">${a.saldo_da_produrre}</td>
+              <td style="white-space:nowrap">${claBadge(a.codice)} ${pulsanteStorico(a)}</td>
+            </tr>`).join('')}</tbody>
+        </table>
+      </div>
+    </div>`).join('');
+}
+
+if(document.getElementById('lista-clienti')){ statoAngelo(); caricaClienti(); caricaMagazzino(); }
 {% endblock %}
