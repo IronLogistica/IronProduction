@@ -1148,7 +1148,8 @@ def api_matrice_competenze_operai_da_registrare():
 # Sta qui e non nel blueprint conto_lavoro perche' quel modulo per regola non chiama mai servizi esterni:
 # la pagina LIVE si limita a puntare un <img> a questo indirizzo.
 _FOTO_MW_CACHE = {}          # codice -> (istante, url o '')
-_FOTO_MW_TTL = 3600
+_FOTO_MW_TTL = 3600          # foto trovata: 1 ora
+_FOTO_MW_TTL_VUOTA = 120     # foto non trovata: si riprova dopo 2 minuti (MasterWork puo' essere aggiornato)
 
 
 def _foto_masterwork(codice):
@@ -1158,7 +1159,7 @@ def _foto_masterwork(codice):
         return ''
     ora = time.time()
     in_cache = _FOTO_MW_CACHE.get(codice)
-    if in_cache and ora - in_cache[0] < _FOTO_MW_TTL:
+    if in_cache and ora - in_cache[0] < (_FOTO_MW_TTL if in_cache[1] else _FOTO_MW_TTL_VUOTA):
         return in_cache[1]
     url_mw = current_app.config.get('MASTERWORK_URL', '').rstrip('/')
     trovata = ''
@@ -1217,7 +1218,7 @@ def api_foto_masterwork(codice):
     from flask import redirect
     foto = _foto_masterwork(codice)
     if not foto:
-        return ('', 404)
+        return ('', 404, {'Cache-Control': 'no-store'})
     return redirect(foto, code=302)
 
 
