@@ -32,6 +32,27 @@
   .barra-avanzamento{background:#132a42;border-radius:4px;height:8px;overflow:hidden;width:100%}
   .barra-avanzamento > div{height:100%;background:#2589c7}
   .pct{font-size:10px;color:#9fb8d0;margin-top:3px}
+  .codice-cella{cursor:zoom-in}
+  #popup{position:fixed;inset:0;background:rgba(2,8,18,.88);display:none;align-items:center;justify-content:center;z-index:50;padding:20px}
+  #popup.aperto{display:flex}
+  .popup-box{flex-wrap:wrap;overflow:auto;background:#0a1623;border:2px solid var(--accent);border-radius:12px;display:flex;gap:22px;padding:20px;
+    max-width:96vw;max-height:92vh;box-shadow:0 10px 40px rgba(0,0,0,.6)}
+  .popup-foto{width:min(62vw,820px);height:min(80vh,820px);object-fit:contain;background:#132a42;border-radius:8px}
+  .popup-foto-vuota{width:min(40vw,500px);height:min(60vh,500px);display:flex;align-items:center;justify-content:center;
+    background:#132a42;border-radius:8px;font-size:90px;color:#3d6b8f}
+  .popup-dati{min-width:270px;display:flex;flex-direction:column;gap:10px}
+  .popup-codice{font-size:28px;font-weight:900;color:#fff;line-height:1.1}
+  .popup-interno{font-size:16px;font-weight:800;color:#7fd3ff}
+  .popup-descr{font-size:13px;color:#9fb8d0}
+  .popup-rif{font-size:12px;color:var(--text-dim)}
+  .popup-numero{display:flex;justify-content:space-between;align-items:baseline;background:#0f2237;border-radius:8px;padding:10px 14px}
+  .popup-numero span{font-size:12px;text-transform:uppercase;color:#4d9fd6;font-weight:700}
+  .popup-numero b{font-size:30px;color:#fff}
+  .popup-numero.saldo{border:2px solid #e0a800}
+  .popup-numero.saldo b{color:#e0a800}
+  .popup-numero.saldo.completo{border-color:#1a9e5c}
+  .popup-numero.saldo.completo b{color:#1a9e5c}
+  .popup-chiudi{margin-top:auto;background:var(--accent);color:#fff;border:0;border-radius:8px;padding:10px;font-weight:800;cursor:pointer;font-size:14px}
   .vuoto{color:var(--text-dim);font-style:italic;padding:20px;text-align:center}
 </style>
 </head>
@@ -39,6 +60,7 @@
 <h1>🔴 LIVE Conto lavoro</h1>
 <div class="sottotitolo" id="sottotitolo">Aggiornamento automatico ogni 20 secondi.</div>
 <div id="contenuto"><div class="vuoto">Caricamento…</div></div>
+<div id="popup" onclick="if(event.target===this) chiudiPopup()"><div class="popup-box" id="popup-box"></div></div>
 
 <script>
 const esc = t => String(t ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -60,6 +82,33 @@ async function caricaCodiciInterni(codici){
     Object.assign(codiciInterni, await r.json());
   }catch(e){}
 }
+// Popup: foto grande + riepilogo della riga (richiesta di Mauri, 28/11/2026)
+let righeLive = [];
+function srcFoto(r){
+  return r.ha_foto ? `/conto-lavoro/api/articoli/${r.articolo_id}/foto` : `/api/masterwork/foto/${encodeURIComponent(r.codice)}`;
+}
+function apriPopup(i){
+  const {g, o, r} = righeLive[i] || {};
+  if(!r) return;
+  const interno = codiciInterni[r.codice];
+  document.getElementById('popup-box').innerHTML = `
+    <img class="popup-foto" src="${srcFoto(r)}" onerror="this.outerHTML='<div class=&quot;popup-foto-vuota&quot;>📦</div>'">
+    <div class="popup-dati">
+      <div class="popup-codice">${esc(r.codice)}</div>
+      ${interno ? `<div class="popup-interno">Cod. interno: ${esc(interno)}</div>` : ''}
+      <div class="popup-descr">${esc(r.descrizione)}</div>
+      <div class="popup-rif">👥 ${esc(g.cliente)} · Ordine ${esc(o.numero_ordine)}${o.rif_cliente ? ' · ' + esc(o.rif_cliente) : ''}</div>
+      <div class="popup-numero"><span>Q.tà ordinata</span><b>${r.quantita}</b></div>
+      <div class="popup-numero"><span>Q.tà prodotta</span><b>${r.quantita_prodotta}</b></div>
+      <div class="popup-numero"><span>Q.tà consegnata</span><b>${r.quantita_evasa}</b></div>
+      <div class="popup-numero saldo ${r.saldo_da_produrre <= 0 ? 'completo' : ''}"><span>Saldo</span><b>${r.saldo_da_produrre}</b></div>
+      <button class="popup-chiudi" onclick="chiudiPopup()">✕ Chiudi</button>
+    </div>`;
+  document.getElementById('popup').classList.add('aperto');
+}
+function chiudiPopup(){ document.getElementById('popup').classList.remove('aperto'); }
+document.addEventListener('keydown', e => { if(e.key === 'Escape') chiudiPopup(); });
+
 async function carica(){
   let gruppi;
   try{ gruppi = await (await fetch('/conto-lavoro/api/live')).json(); }
@@ -74,9 +123,10 @@ async function carica(){
   const intestazione = `<tr>
       <th style="width:26%">Codice</th><th>Cod. interno</th><th>Ordine</th><th>Ordinata</th><th>Prodotta</th><th>Evasa</th><th>Saldo</th><th style="width:16%">Avanzamento</th>
     </tr>`;
-  const rigaHtml = (o, r) => `
+  righeLive = [];
+  const rigaHtml = (g, o, r) => { const i = righeLive.push({g, o, r}) - 1; return `
     <tr>
-      <td class="codice-cella">
+      <td class="codice-cella" onclick="apriPopup(${i})" title="Clicca per ingrandire">
         ${r.ha_foto
           ? `<img class="miniatura" src="/conto-lavoro/api/articoli/${r.articolo_id}/foto" loading="lazy">`
           : `<img class="miniatura" src="/api/masterwork/foto/${encodeURIComponent(r.codice)}" loading="lazy"
@@ -95,14 +145,14 @@ async function carica(){
         <div class="barra-avanzamento"><div style="width:${r.pct}%"></div></div>
         <div class="pct">${r.pct}%</div>
       </td>
-    </tr>`;
-  const tabella = righe => `<table><thead>${intestazione}</thead><tbody>${righe.map(({o, r}) => rigaHtml(o, r)).join('')}</tbody></table>`;
+    </tr>`; };
+  const tabella = righe => `<table><thead>${intestazione}</thead><tbody>${righe.map(({g, o, r}) => rigaHtml(g, o, r)).join('')}</tbody></table>`;
 
   box.innerHTML = gruppi.map(g => {
     // Righe di tutti gli ordini di questo cliente, appiattite in un'unica
     // lista — con tanti codici si divide su 2 colonne affiancate così
     // entrano tutti senza scorrere troppo (richiesta di Mauri, 29/09/2026).
-    const righeFlat = g.ordini.flatMap(o => o.righe.map(r => ({o, r})));
+    const righeFlat = g.ordini.flatMap(o => o.righe.map(r => ({g, o, r})));
     const meta = Math.ceil(righeFlat.length / 2);
     const colonne = righeFlat.length > 6 ? [righeFlat.slice(0, meta), righeFlat.slice(meta)] : [righeFlat];
     return `
